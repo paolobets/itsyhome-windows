@@ -38,6 +38,8 @@ export class HAClient {
     this.disposed = true
     this.clearReconnect()
     this.stopPingHeartbeat()
+    for (const p of this.pending.values()) p.reject(new Error('Disconnected'))
+    this.pending.clear()
     this.ws?.close()
     this.ws = null
   }

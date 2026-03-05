@@ -101,20 +101,18 @@ export class Store {
 
   // ─── Derived connection credentials (from active environment) ────────────
 
-  getHAUrl(): string {
+  getActiveEnvironment(): HAEnvironment | null {
     const id = this.getActiveEnvironmentId()
-    if (!id) return ''
-    return this.getEnvironments().find(e => e.id === id)?.haUrl ?? ''
+    if (!id) return null
+    return this.getEnvironments().find(e => e.id === id) ?? null
   }
 
-  getHAToken(): string {
-    const id = this.getActiveEnvironmentId()
-    if (!id) return ''
-    return this.getEnvironments().find(e => e.id === id)?.haToken ?? ''
-  }
+  getHAUrl():   string { return this.getActiveEnvironment()?.haUrl   ?? '' }
+  getHAToken(): string { return this.getActiveEnvironment()?.haToken ?? '' }
 
   hasCredentials(): boolean {
-    return !!this.getHAUrl() && !!this.getHAToken()
+    const env = this.getActiveEnvironment()
+    return !!env?.haUrl && !!env?.haToken
   }
 
   /** Legacy compat: update active env's credentials, or create a new env if none active. */

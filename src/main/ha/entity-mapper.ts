@@ -67,21 +67,16 @@ export class EntityMapper {
       return null
     }
 
-    // Count update entities from states (persistent_notification count comes from
-    // haClient.getNotifications() in index.ts and is applied after map() returns)
+    // Single pass: count updates + map entities
     let notificationCount = 0   // placeholder; overridden in refreshMenuData()
     let updateCount       = 0
-    for (const state of states) {
-      const domain = state.entity_id.split('.')[0]
-      if (domain === 'update' && state.state === 'on') updateCount++
-    }
-
     const allEntities: AppEntity[] = []
     const scenes:   SceneEntity[]  = []
     const cameras:  CameraEntity[] = []
 
     for (const state of states) {
       const domain = state.entity_id.split('.')[0]
+      if (domain === 'update' && state.state === 'on') updateCount++
       if (EXCLUDED_DOMAINS.has(domain)) continue
 
       const entry = entryMap.get(state.entity_id)
@@ -119,11 +114,12 @@ export class EntityMapper {
     }
 
     // Build ordered rooms
-    const roomOrder = this.store.getRoomOrder()
-    const allAreaIds = [...roomMap.keys()]
+    const roomOrder    = this.store.getRoomOrder()
+    const roomOrderSet = new Set(roomOrder)
+    const allAreaIds   = [...roomMap.keys()]
     const orderedAreaIds = [
       ...roomOrder.filter(id => roomMap.has(id)),
-      ...allAreaIds.filter(id => !roomOrder.includes(id)).sort((a, b) => {
+      ...allAreaIds.filter(id => !roomOrderSet.has(id)).sort((a, b) => {
         const na = areaMap.get(a)?.name ?? a
         const nb = areaMap.get(b)?.name ?? b
         return na.localeCompare(nb)
@@ -158,7 +154,8 @@ export class EntityMapper {
     const saved    = this.store.getDeviceOrder(areaId)
     const entityMap = new Map(entities.map(e => [e.entityId, e]))
     const ordered  = saved.filter(id => entityMap.has(id)).map(id => entityMap.get(id)!)
-    const rest     = entities.filter(e => !saved.includes(e.entityId)).sort((a, b) => a.name.localeCompare(b.name))
+    const savedSet = new Set(saved)
+    const rest     = entities.filter(e => !savedSet.has(e.entityId)).sort((a, b) => a.name.localeCompare(b.name))
     return [...ordered, ...rest]
   }
 

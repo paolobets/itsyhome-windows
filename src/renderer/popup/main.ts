@@ -26,8 +26,15 @@ const sectionCollapsed = new Map<string, boolean>()   // sectionKey → collapse
 const cardExpanded     = new Map<string, boolean>()   // entityId (+ suffix) → expanded
 
 // Detail panel state
-let detailOpen:      boolean     = false
-let selectedRoomKey: string|null = null
+let detailOpen:         boolean            = false
+let selectedRoomKey:    string | null      = null
+let detailCloseHandler: (() => void) | null = null
+
+// Resize dedupe – only one RAF in flight at a time
+let resizeRafId = 0
+
+// 2D hue picker draw fns
+const huePickers = new WeakMap<HTMLElement, () => void>()
 
 // ─── Startup ──────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
@@ -206,7 +213,9 @@ function buildEnvSection(): HTMLElement {
 }
 
 function resize() {
-  requestAnimationFrame(() => {
+  if (resizeRafId) cancelAnimationFrame(resizeRafId)
+  resizeRafId = requestAnimationFrame(() => {
+    resizeRafId = 0
     const topBar   = document.getElementById('top-bar')!
     const menuList = document.getElementById('menu-list')!
     const h = topBar.offsetHeight + menuList.offsetHeight
@@ -310,6 +319,11 @@ function openDetailPanel(key: string, icon: string, name: string, entities: AppE
   entities.forEach(e => detailList.appendChild(buildCard(e)))
 
   const panel = document.getElementById('detail-panel')!
+  // Cancel any in-progress close animation to prevent its animationend from firing
+  if (detailCloseHandler) {
+    panel.removeEventListener('animationend', detailCloseHandler)
+    detailCloseHandler = null
+  }
   panel.classList.remove('closing')
   panel.classList.add('open')
 
@@ -329,11 +343,13 @@ function closeDetailPanel(): void {
 
   const panel = document.getElementById('detail-panel')!
   panel.classList.add('closing')
-  panel.addEventListener('animationend', () => {
+  detailCloseHandler = () => {
     panel.classList.remove('open', 'closing')
+    detailCloseHandler = null
     detailOpen = false
     resize()
-  }, { once: true })
+  }
+  panel.addEventListener('animationend', detailCloseHandler, { once: true })
 }
 
 // ─── Entity card dispatch ─────────────────────────────────────────────────────
@@ -517,8 +533,8 @@ function buildHueSatPicker(e: LightEntity): HTMLElement {
     ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h)
   }
 
-  // Store draw fn so callers can trigger it after element becomes visible
-  ;(wrap as HTMLElement & { __draw?: () => void }).__draw = draw
+  // Register draw fn so callers can trigger it after element becomes visible
+  huePickers.set(wrap, draw)
 
   positionThumb(curHue, curSat)
 
@@ -539,16 +555,18 @@ function buildHueSatPicker(e: LightEntity): HTMLElement {
     moveHandler(ev)
     wrap.addEventListener('pointermove', moveHandler)
   })
-  wrap.addEventListener('pointerup', () => {
+  const cleanupPointer = () => {
     if (moveHandler) { wrap.removeEventListener('pointermove', moveHandler); moveHandler = null }
-  })
+  }
+  wrap.addEventListener('pointerup',     cleanupPointer)
+  wrap.addEventListener('pointercancel', cleanupPointer)
 
   return wrap
 }
 
 function drawPendingHuePickers(container: HTMLElement) {
   requestAnimationFrame(() => {
-    container.querySelectorAll<HTMLElement & { __draw?: () => void }>('.light-hue-picker').forEach(el => el.__draw?.())
+    container.querySelectorAll<HTMLElement>('.light-hue-picker').forEach(el => huePickers.get(el)?.())
   })
 }
 
@@ -842,6 +860,7 @@ function buildCameraCard(e: CameraEntity): HTMLElement {
   if (expanded) startRefresh()
 
   async function loadSnapshot() {
+    if (!snapBox.isConnected) { clearInterval(refreshTimer); return }
     const src = await window.api.cameras.getSnapshot(e.entityId)
     if (src) {
       snapBox.innerHTML = ''

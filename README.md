@@ -119,6 +119,7 @@ src/
 
 | Versione | Note |
 |----------|------|
+| 1.0.3    | Bug fix & ottimizzazioni: reject pending WebSocket su disconnect, race condition animationend, interval leak telecamere, pointercancel hue picker, O(n²)→O(n) ordinamento aree/dispositivi, singolo loop stati HA, resize RAF debounce, WeakMap draw fn |
 | 1.0.2    | Redesign UX popup: animazioni fade + slide pannello dettaglio, picker colore 2D canvas per luci RGB, slider luminosità inline, bottone colore ring-style, badge con icone 🔔/⬆ |
 | 1.0.1    | Menu popup spostabile (drag dalla top bar), bottone _ per nascondere nella tray invece di chiudere |
 | 1.0.0    | Prima release pubblica — multi-env, badge notifiche/aggiornamenti, preferiti, eye-toggle, icone cover/sensor |
