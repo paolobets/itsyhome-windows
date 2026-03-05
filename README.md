@@ -19,7 +19,7 @@ Controlla luci, termostati, cover, scene e molto altro direttamente dalla barra 
 - **Preferiti** in cima: dispositivi contrassegnati come preferiti, ad accesso rapido
 - **Room/aree** in ordine personalizzabile con collapse/espandi
 - **Controllo per tipo di entità:**
-  - 💡 **Luci** — toggle on/off + slider luminosità + selettore colore temperatura
+  - 💡 **Luci** — toggle on/off + slider luminosità inline + bottone colore (anello arcobaleno RGB / sfumatura temperatura bianco); clic sul bottone apre un **picker 2D a canvas** drag-and-drop (asse X = tonalità, asse Y = saturazione/luminosità)
   - 🔌 **Switch** — toggle on/off
   - 🌡️ **Clima** (termostati) — temperatura target +/- e modalità operative
   - 🪟 **Cover** (tapparelle, garage, porte) — pulsanti Apri / Stop / Chiudi
@@ -119,6 +119,7 @@ src/
 
 | Versione | Note |
 |----------|------|
+| 1.0.2    | Redesign UX popup: animazioni fade + slide pannello dettaglio, picker colore 2D canvas per luci RGB, slider luminosità inline, bottone colore ring-style, badge con icone 🔔/⬆ |
 | 1.0.1    | Menu popup spostabile (drag dalla top bar), bottone _ per nascondere nella tray invece di chiudere |
 | 1.0.0    | Prima release pubblica — multi-env, badge notifiche/aggiornamenti, preferiti, eye-toggle, icone cover/sensor |
 

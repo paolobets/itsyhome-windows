@@ -1,6 +1,6 @@
 {
   "name": "itsyhome-windows",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "ItsyHome for Windows – Home Assistant system-tray client",
   "main": "out/main/index.js",
   "author": { "name": "ItsyHome" },

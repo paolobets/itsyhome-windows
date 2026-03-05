@@ -309,7 +309,9 @@ function openDetailPanel(key: string, icon: string, name: string, entities: AppE
   detailList.innerHTML    = ''
   entities.forEach(e => detailList.appendChild(buildCard(e)))
 
-  document.getElementById('detail-panel')!.classList.add('open')
+  const panel = document.getElementById('detail-panel')!
+  panel.classList.remove('closing')
+  panel.classList.add('open')
 
   // Highlight the selected row
   document.querySelectorAll<HTMLElement>('[data-room-key]').forEach(el => {
@@ -322,13 +324,16 @@ function openDetailPanel(key: string, icon: string, name: string, entities: AppE
 
 function closeDetailPanel(): void {
   selectedRoomKey = null
-  detailOpen = false
-
-  document.getElementById('detail-panel')!.classList.remove('open')
   document.querySelectorAll('.row-selected').forEach(el => el.classList.remove('row-selected'))
-
   updateTopBar()   // clear camera button highlight
-  resize()
+
+  const panel = document.getElementById('detail-panel')!
+  panel.classList.add('closing')
+  panel.addEventListener('animationend', () => {
+    panel.classList.remove('open', 'closing')
+    detailOpen = false
+    resize()
+  }, { once: true })
 }
 
 // ─── Entity card dispatch ─────────────────────────────────────────────────────
@@ -394,45 +399,157 @@ async function toggleFavorite(entity: AppEntity): Promise<void> {
 
 // ─── LIGHT ───────────────────────────────────────────────────────────────────
 function buildLightCard(e: LightEntity): HTMLElement {
-  const card = div('entity-card')
+  const card  = div('entity-card')
   if (!e.isAvailable) card.classList.add('unavailable')
 
-  const row    = makeRow('💡', e.name)
+  const hasColor = e.supportsRgb
+  const hasTemp  = e.supportsColorTemp && !!e.minColorTemp && !!e.maxColorTemp
+
+  const row   = makeRow('💡', e.name)
+  const right = row.querySelector('.entity-right')!
+
+  // Color button (color wins over temp-only)
+  let colorExpanded = cardExpanded.get(e.entityId + ':color') ?? false
+  let colorBtn: HTMLButtonElement | null = null
+  if (hasColor || hasTemp) {
+    colorBtn = document.createElement('button')
+    colorBtn.className = 'light-color-btn ' + (hasColor ? 'has-rgb' : 'has-temp')
+    if (colorExpanded) colorBtn.classList.add('active')
+    colorBtn.title = 'Colore / Temperatura'
+    right.appendChild(colorBtn)
+  }
+
+  // Inline brightness slider
+  if (e.supportsBrightness) {
+    const wrap  = document.createElement('div')
+    const input = document.createElement('input')
+    wrap.className   = 'light-brightness-wrap'
+    input.className  = 'light-brightness-slider'
+    input.type = 'range'; input.min = '0'; input.max = '100'
+    input.value = String(e.brightness ?? 0)
+    let bTimer = 0
+    input.addEventListener('input', ev => {
+      ev.stopPropagation()
+      clearTimeout(bTimer)
+      bTimer = window.setTimeout(() =>
+        call('light', 'turn_on', e.entityId, { brightness_pct: Number(input.value) }), 120)
+    })
+    input.addEventListener('click', ev => ev.stopPropagation())
+    wrap.appendChild(input)
+    right.appendChild(wrap)
+  }
+
   const toggle = makeToggle(e.isOn, v => call('light', v ? 'turn_on' : 'turn_off', e.entityId))
-  row.querySelector('.entity-right')!.appendChild(toggle)
+  right.appendChild(toggle)
   card.appendChild(row)
 
-  let expanded = cardExpanded.get(e.entityId) ?? false
-  const controls = div('controls')
-
-  if (e.supportsBrightness) {
-    controls.appendChild(makeSlider('Brightness', e.brightness ?? 0, 0, 100, '%', val => {
-      call('light', 'turn_on', e.entityId, { brightness_pct: val })
-    }))
-  }
-  if (e.supportsColorTemp && e.minColorTemp && e.maxColorTemp) {
-    controls.appendChild(makeSlider('Color temp', e.colorTemp ?? e.minColorTemp, e.minColorTemp, e.maxColorTemp, 'K',
-      val => call('light', 'turn_on', e.entityId, { color_temp: val }), true))
-  }
-  if (e.supportsRgb) {
-    controls.appendChild(makeSlider('Hue', e.hue ?? 0, 0, 360, '°',
-      val => call('light', 'turn_on', e.entityId, { hs_color: [val, e.saturation ?? 100] })))
-    controls.appendChild(makeSlider('Saturation', e.saturation ?? 100, 0, 100, '%',
-      val => call('light', 'turn_on', e.entityId, { hs_color: [e.hue ?? 0, val] })))
-  }
-
-  if (controls.children.length) {
-    controls.style.display = expanded ? '' : 'none'
+  // Expandable color controls (only if color/temp supported)
+  if (colorBtn) {
+    const controls = div('controls controls-color')
+    if (hasColor) {
+      controls.appendChild(buildHueSatPicker(e))
+    }
+    if (hasTemp) {
+      controls.appendChild(makeSlider('Temp. colore', e.colorTemp ?? e.minColorTemp!, e.minColorTemp!, e.maxColorTemp!, 'K',
+        val => call('light', 'turn_on', e.entityId, { color_temp: val }), true))
+    }
+    controls.style.display = colorExpanded ? '' : 'none'
     card.appendChild(controls)
-    row.addEventListener('click', ev => {
-      if ((ev.target as HTMLElement).closest('.toggle-btn, .fav-btn')) return
-      expanded = !expanded
-      cardExpanded.set(e.entityId, expanded)
-      controls.style.display = expanded ? '' : 'none'
+
+    colorBtn.addEventListener('click', ev => {
+      ev.stopPropagation()
+      colorExpanded = !colorExpanded
+      cardExpanded.set(e.entityId + ':color', colorExpanded)
+      controls.style.display = colorExpanded ? '' : 'none'
+      colorBtn!.classList.toggle('active', colorExpanded)
+      if (colorExpanded) drawPendingHuePickers(controls)
       resize()
     })
+
+    if (colorExpanded) requestAnimationFrame(() => drawPendingHuePickers(controls))
   }
+
   return card
+}
+
+
+// ─── 2D HUE-SAT PICKER ───────────────────────────────────────────────────────
+
+function buildHueSatPicker(e: LightEntity): HTMLElement {
+  const wrap   = div('light-hue-picker')
+  const canvas = document.createElement('canvas')
+  const thumb  = div('hue-thumb')
+  wrap.appendChild(canvas)
+  wrap.appendChild(thumb)
+
+  let curHue = e.hue ?? 0
+  let curSat = e.saturation ?? 100
+
+  function positionThumb(h: number, s: number) {
+    thumb.style.left = (h / 360 * 100) + '%'
+    thumb.style.top  = ((1 - s / 100) * 100) + '%'
+  }
+
+  function draw() {
+    const w = wrap.offsetWidth
+    const h = wrap.offsetHeight
+    if (!w || !h) return
+    const dpr = window.devicePixelRatio || 1
+    canvas.width  = Math.round(w * dpr)
+    canvas.height = Math.round(h * dpr)
+    canvas.style.width  = w + 'px'
+    canvas.style.height = h + 'px'
+    const ctx = canvas.getContext('2d')!
+    ctx.scale(dpr, dpr)
+    // Hue left → right
+    const hg = ctx.createLinearGradient(0, 0, w, 0)
+    for (let i = 0; i <= 12; i++) hg.addColorStop(i / 12, `hsl(${i * 30},100%,50%)`)
+    ctx.fillStyle = hg; ctx.fillRect(0, 0, w, h)
+    // White → transparent (top half brightens)
+    const wg = ctx.createLinearGradient(0, 0, 0, h)
+    wg.addColorStop(0, 'rgba(255,255,255,0.80)')
+    wg.addColorStop(0.5, 'rgba(255,255,255,0)')
+    ctx.fillStyle = wg; ctx.fillRect(0, 0, w, h)
+    // Transparent → black (bottom half darkens)
+    const bg = ctx.createLinearGradient(0, 0, 0, h)
+    bg.addColorStop(0.5, 'rgba(0,0,0,0)')
+    bg.addColorStop(1,   'rgba(0,0,0,0.55)')
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h)
+  }
+
+  // Store draw fn so callers can trigger it after element becomes visible
+  ;(wrap as HTMLElement & { __draw?: () => void }).__draw = draw
+
+  positionThumb(curHue, curSat)
+
+  let moveHandler: ((ev: PointerEvent) => void) | null = null
+
+  wrap.addEventListener('pointerdown', ev => {
+    ev.stopPropagation()
+    wrap.setPointerCapture(ev.pointerId)
+    moveHandler = (ev2: PointerEvent) => {
+      const rect = wrap.getBoundingClientRect()
+      const x = Math.max(0, Math.min(1, (ev2.clientX - rect.left)  / rect.width))
+      const y = Math.max(0, Math.min(1, (ev2.clientY - rect.top)   / rect.height))
+      curHue = Math.round(x * 360)
+      curSat = Math.round((1 - y) * 100)
+      positionThumb(curHue, curSat)
+      call('light', 'turn_on', e.entityId, { hs_color: [curHue, curSat] })
+    }
+    moveHandler(ev)
+    wrap.addEventListener('pointermove', moveHandler)
+  })
+  wrap.addEventListener('pointerup', () => {
+    if (moveHandler) { wrap.removeEventListener('pointermove', moveHandler); moveHandler = null }
+  })
+
+  return wrap
+}
+
+function drawPendingHuePickers(container: HTMLElement) {
+  requestAnimationFrame(() => {
+    container.querySelectorAll<HTMLElement & { __draw?: () => void }>('.light-hue-picker').forEach(el => el.__draw?.())
+  })
 }
 
 // ─── SWITCH ───────────────────────────────────────────────────────────────────
@@ -874,8 +991,10 @@ function setupTopBar() {
   document.getElementById('btn-hide')!.addEventListener('click', () => window.api.window.hide())
   document.getElementById('btn-open-ha')!.addEventListener('click', () => window.api.window.openHaUrl())
 
-  // Reload area icons each time the popup gains focus (so Settings changes are picked up immediately)
+  // Entrance animation + reload area icons each time the popup gains focus
   window.addEventListener('focus', async () => {
+    document.body.classList.remove('popup-enter')
+    requestAnimationFrame(() => document.body.classList.add('popup-enter'))
     areaIcons = await window.api.accessories.getAreaIcons()
     if (menuData) render()
   })
