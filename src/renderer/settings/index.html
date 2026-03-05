@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ItsyHome Settings</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <aside id="sidebar">
+    <div class="app-logo">🏠 ItsyHome</div>
+    <nav>
+      <button class="nav-item active" data-tab="ha">Home Assistant</button>
+      <button class="nav-item"        data-tab="accessories">Accessories</button>
+      <button class="nav-item"        data-tab="cameras">Cameras</button>
+      <button class="nav-item"        data-tab="general">General</button>
+      <button class="nav-item"        data-tab="about">About</button>
+    </nav>
+  </aside>
+  <main id="content">
+    <!-- Tab: Home Assistant -->
+    <section id="tab-ha" class="tab-pane active">
+      <h2>Home Assistant Servers</h2>
+
+      <!-- Environments list (rendered by JS) -->
+      <div id="env-list" class="env-list"></div>
+
+      <button id="btn-add-env" class="btn-secondary">+ Add Server</button>
+
+      <!-- Add / Edit form -->
+      <div id="env-form" class="env-form" style="display:none">
+        <div class="env-form-header" id="env-form-title">New Server</div>
+        <div class="form-group">
+          <label for="env-name">Name</label>
+          <input id="env-name" type="text" placeholder="My Home" />
+        </div>
+        <div class="form-group">
+          <label for="env-url">Server URL</label>
+          <input id="env-url" type="url" placeholder="http://homeassistant.local:8123" />
+        </div>
+        <div class="form-group">
+          <label for="env-token">Access Token</label>
+          <input id="env-token" type="password" placeholder="Long-lived access token" />
+          <small class="hint">Profile → Security → Long-Lived Access Tokens</small>
+        </div>
+        <div class="form-actions">
+          <button id="btn-env-test"   class="btn-secondary">Test</button>
+          <button id="btn-env-save"   class="btn-primary">Save</button>
+          <button id="btn-env-cancel" class="btn-secondary">Cancel</button>
+        </div>
+        <p id="env-test-result" class="test-result"></p>
+      </div>
+    </section>
+
+    <!-- Tab: Accessories -->
+    <section id="tab-accessories" class="tab-pane">
+      <h2>Accessories</h2>
+      <p class="hint">Clicca 👁 per mostrare/nascondere. Trascina ⠿ per riordinare.</p>
+      <div id="accessories-list" class="accessories-list"></div>
+    </section>
+
+    <!-- Tab: Cameras -->
+    <section id="tab-cameras" class="tab-pane">
+      <h2>Cameras</h2>
+      <div class="form-group row">
+        <label>Show cameras in menu</label>
+        <button id="cameras-toggle" class="toggle-btn"></button>
+      </div>
+      <small class="hint">Camera snapshots load on demand when you expand a camera in the menu.</small>
+    </section>
+
+    <!-- Tab: General -->
+    <section id="tab-general" class="tab-pane">
+      <h2>General</h2>
+      <div class="form-group row">
+        <label>Launch ItsyHome at login</label>
+        <button id="autostart-toggle" class="toggle-btn"></button>
+      </div>
+    </section>
+
+    <!-- Tab: About -->
+    <section id="tab-about" class="tab-pane">
+      <h2>About ItsyHome</h2>
+      <div class="about-content">
+        <div class="about-icon">🏠</div>
+        <h3>ItsyHome for Windows</h3>
+        <p class="version">Version 1.0.0</p>
+        <p>A Home Assistant client for your system tray.</p>
+        <p>Direct port of the original macOS ItsyHome app.</p>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ItsyHome</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div id="popup-body">
+    <div id="detail-panel">
+      <div id="detail-header">
+        <button id="btn-back" title="Back">‹</button>
+        <span id="detail-icon"></span>
+        <span id="detail-title"></span>
+      </div>
+      <div id="detail-list"></div>
+    </div>
+    <div id="main-panel">
+      <div id="top-bar">
+        <div id="top-left">
+          <span id="top-dot"></span>
+          <span id="top-env-name">–</span>
+          <span id="badge-notifications" class="top-badge badge-notify" title="Notifiche">0</span>
+          <span id="badge-updates"       class="top-badge badge-update" title="Aggiornamenti disponibili">0</span>
+        </div>
+        <div id="top-right">
+          <button id="btn-open-ha"   title="Apri Home Assistant">🌐</button>
+          <button id="btn-cameras"   title="Telecamere">📷</button>
+          <button id="btn-reconnect" title="Reconnect">↻</button>
+          <button id="btn-settings"  title="Impostazioni">⚙</button>
+          <button id="btn-hide"      title="Nascondi nella tray">_</button>
+        </div>
+      </div>
+      <div id="menu-list"></div>
+    </div>
+  </div>
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

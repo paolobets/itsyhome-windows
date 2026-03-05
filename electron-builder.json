@@ -1,0 +1,25 @@
+{
+  "appId": "com.itsyhome.windows",
+  "productName": "ItsyHome",
+  "directories": { "buildResources": "resources", "output": "release" },
+  "files": ["out/**"],
+  "extraResources": [
+    { "from": "resources/tray-default.png",    "to": "tray-default.png" },
+    { "from": "resources/tray-error.png",       "to": "tray-error.png" },
+    { "from": "resources/tray-connecting.png",  "to": "tray-connecting.png" }
+  ],
+  "win": {
+    "target": [{ "target": "nsis", "arch": ["x64"] }],
+    "icon": "resources/icon.ico"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": false,
+    "createStartMenuShortcut": true
+  },
+  "linux": {
+    "target": ["AppImage", "deb"],
+    "icon": "resources/icon.png"
+  }
+}
