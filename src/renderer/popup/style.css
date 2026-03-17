@@ -718,3 +718,83 @@ input.light-brightness-slider::-webkit-slider-thumb {
   transition: transform 160ms var(--ease-spring);
 }
 input.light-brightness-slider::-webkit-slider-thumb:active { transform: scale(1.18); }
+
+/* ─── Toast notifications (Phase 2) ─────────────────────────────────────── */
+#toast-container {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 9999;
+  pointer-events: none;
+}
+
+.toast {
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 200ms ease, transform 200ms ease;
+  pointer-events: auto;
+  white-space: nowrap;
+  font-family: inherit;
+}
+.toast.show   { opacity: 1; transform: translateY(0); }
+.toast-error  { background: var(--danger);     color: white; }
+.toast-success{ background: var(--toggle-on);  color: white; }
+.toast-info   { background: var(--surface-hi); color: var(--text); }
+
+/* ─── Search bar (Phase 2) ───────────────────────────────────────────────── */
+.search-bar {
+  position: relative;
+  padding: 6px 10px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  animation: fadeIn 150ms ease-out both;
+}
+.search-bar.hidden { display: none; }
+
+.search-bar input {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 10px;
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color var(--t) var(--ease-out),
+              box-shadow   var(--t) var(--ease-out);
+}
+.search-bar input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(10,132,255,0.25);
+}
+.search-bar input::placeholder { color: var(--text-dim); }
+
+/* Icon button – shared by search open/close */
+.icon-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px 5px;
+  border-radius: var(--radius-xs);
+  transition: background var(--t) var(--ease-out),
+              color      var(--t) var(--ease-out),
+              transform  120ms   var(--ease-spring);
+  outline: none;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.icon-btn:hover  { background: var(--surface-hi); color: var(--text); }
+.icon-btn:active { transform: scale(0.84); }

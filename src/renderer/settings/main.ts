@@ -1,7 +1,6 @@
-import type { AppConfig, AppEntity, CoverEntity, HAEnvironment, SensorEntity, SettingsAPI } from '@shared/types'
+import type { AppConfig, AppEntity, CoverEntity, HAEnvironment, SensorEntity } from '@shared/types'
 import { AREA_ICONS, roomIcon } from '@shared/roomIcons'
-
-declare const window: Window & { api: SettingsAPI }
+import { api } from '@lib/api'
 
 let config: AppConfig = { haUrl: '', haToken: '', camerasEnabled: true, launchAtLogin: false, activeEnvId: null }
 let allEntities: AppEntity[] = []
@@ -29,19 +28,19 @@ const FAVORITES_AREA = '__favorites__'
 window.addEventListener('DOMContentLoaded', () => {
   setupTabs()
   load()
-  window.api.ha.onStatusChange(() => renderEnvList())
+  api.ha.onStatusChange(() => renderEnvList())
 })
 
 async function load() {
   const [cfg, entities, envs, envId, roomList, icons, hidden, favIds] = await Promise.all([
-    window.api.config.get(),
-    window.api.accessories.getAll(),
-    window.api.environments.getAll(),
-    window.api.environments.getActiveId(),
-    window.api.accessories.getRooms(),
-    window.api.accessories.getAreaIcons(),
-    window.api.accessories.getHidden(),
-    window.api.accessories.getFavorites(),
+    api.config.get(),
+    api.accessories.getAll(),
+    api.environments.getAll(),
+    api.environments.getActiveId(),
+    api.accessories.getRooms(),
+    api.accessories.getAreaIcons(),
+    api.accessories.getHidden(),
+    api.accessories.getFavorites(),
   ])
   config       = cfg
   allEntities  = entities
@@ -111,13 +110,13 @@ function renderEnvList() {
     `
 
     row.querySelector<HTMLButtonElement>('[data-action="connect"]')?.addEventListener('click', async () => {
-      await window.api.environments.connect(env.id)
+      await api.environments.connect(env.id)
       activeEnvId = env.id
       renderEnvList()
     })
 
     row.querySelector<HTMLButtonElement>('[data-action="disconnect"]')?.addEventListener('click', async () => {
-      await window.api.config.disconnect()
+      await api.config.disconnect()
       activeEnvId = null
       renderEnvList()
     })
@@ -129,9 +128,9 @@ function renderEnvList() {
     row.querySelector<HTMLButtonElement>('[data-action="delete"]')?.addEventListener('click', async () => {
       // eslint-disable-next-line no-alert
       if (!confirm(`Remove "${env.name}"?`)) return
-      await window.api.environments.remove(env.id)
+      await api.environments.remove(env.id)
       if (env.id === activeEnvId) {
-        await window.api.config.disconnect()
+        await api.config.disconnect()
         activeEnvId = null
       }
       environments = environments.filter(e => e.id !== env.id)
@@ -180,7 +179,7 @@ function wireEnvFormButtons() {
     result.textContent = 'Testing…'
     result.style.display = 'block'
 
-    const { ok, entityCount, error } = await window.api.environments.test(
+    const { ok, entityCount, error } = await api.environments.test(
       urlInput.value.trim(), tokenInput.value.trim()
     )
     result.className  = ok ? 'test-result ok' : 'test-result err'
@@ -206,13 +205,13 @@ function wireEnvFormButtons() {
 
     if (editingEnvId) {
       const updated: HAEnvironment = { id: editingEnvId, name, haUrl: url, haToken: token }
-      await window.api.environments.update(updated)
+      await api.environments.update(updated)
       environments = environments.map(e => e.id === editingEnvId ? updated : e)
       if (editingEnvId === activeEnvId) {
-        await window.api.environments.connect(editingEnvId)
+        await api.environments.connect(editingEnvId)
       }
     } else {
-      const newEnv = await window.api.environments.add(name, url, token)
+      const newEnv = await api.environments.add(name, url, token)
       environments.push(newEnv)
     }
 
@@ -361,7 +360,7 @@ function buildFavoritesGroup(favIds: string[], entityMap: Map<string, AppEntity>
       const [moved] = favorites.splice(srcIdx, 1)
       favorites.splice(dstIdx, 0, moved)
       dragType = null; dragSourceEntId = null; dragSourceAreaId = null
-      await window.api.accessories.setFavoritesOrder(favorites)
+      await api.accessories.setFavoritesOrder(favorites)
       renderAccessoriesTab()
     })
 
@@ -387,7 +386,7 @@ function buildEyeBtn(entity: AppEntity, row: HTMLElement): HTMLButtonElement {
     btn.classList.toggle('active', !nowHidden)
     btn.title = nowHidden ? 'Hidden – click to show' : 'Visible – click to hide'
     row.querySelector<HTMLElement>('.acc-name')?.classList.toggle('name-hidden', nowHidden)
-    await window.api.accessories.setHidden([...hiddenSet])
+    await api.accessories.setHidden([...hiddenSet])
   })
 
   return btn
@@ -494,7 +493,7 @@ function buildAreaGroup(areaId: string, areaName: string, entities: AppEntity[])
       const [moved] = rooms.splice(srcIdx, 1)
       rooms.splice(dstIdx, 0, moved)
       dragType = null; dragSourceAreaId = null
-      await window.api.accessories.setRoomOrder(rooms.map(r => r.areaId))
+      await api.accessories.setRoomOrder(rooms.map(r => r.areaId))
       renderAccessoriesTab()
     })
   }
@@ -512,7 +511,7 @@ function buildAreaGroup(areaId: string, areaName: string, entities: AppEntity[])
     btn.textContent = icon
     btn.title = icon
     btn.addEventListener('click', async () => {
-      await window.api.accessories.setAreaIcon(areaId, icon)
+      await api.accessories.setAreaIcon(areaId, icon)
       areaIcons[areaId] = icon
       const iconBtn = header.querySelector<HTMLButtonElement>('.area-icon-btn')
       if (iconBtn) iconBtn.textContent = icon
@@ -580,7 +579,7 @@ function buildAreaGroup(areaId: string, areaName: string, entities: AppEntity[])
       const newOrder = allEntities
         .filter(en => (en.areaId ?? '') === areaId)
         .map(en => en.entityId)
-      await window.api.accessories.setDeviceOrder(areaId, newOrder)
+      await api.accessories.setDeviceOrder(areaId, newOrder)
       renderAccessoriesTab()
     })
 
@@ -598,7 +597,7 @@ function renderCamerasTab() {
   btn.addEventListener('click', async () => {
     config.camerasEnabled = !config.camerasEnabled
     updateToggle(btn, config.camerasEnabled)
-    await window.api.config.setCamerasEnabled(config.camerasEnabled)
+    await api.config.setCamerasEnabled(config.camerasEnabled)
   })
 }
 
@@ -609,7 +608,7 @@ function renderGeneralTab() {
   btn.addEventListener('click', async () => {
     config.launchAtLogin = !config.launchAtLogin
     updateToggle(btn, config.launchAtLogin)
-    await window.api.config.setLaunchAtLogin(config.launchAtLogin)
+    await api.config.setLaunchAtLogin(config.launchAtLogin)
   })
 }
 

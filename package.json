@@ -1,27 +1,22 @@
 {
-  "name": "itsyhome-windows",
-  "version": "1.0.3",
-  "description": "ItsyHome for Windows – Home Assistant system-tray client",
-  "main": "out/main/index.js",
-  "author": { "name": "ItsyHome" },
-  "license": "MIT",
+  "name": "itsyhome",
+  "version": "2.0.0",
   "scripts": {
-    "dev":       "node scripts/dev.cjs",
-    "build":     "electron-vite build",
-    "preview":   "electron-vite preview",
-    "dist":      "npm run build && (electron-builder || true) && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --prepackaged release/win-unpacked",
-    "dist:win":  "npm run build && (electron-builder --win || true) && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win --prepackaged release/win-unpacked"
+    "dev":        "tauri dev",
+    "build":      "tauri build",
+    "dev:vite":   "vite",
+    "build:vite": "vite build"
   },
   "dependencies": {
-    "electron-store": "^8.2.0",
-    "ws": "^8.18.0"
+    "@tauri-apps/api":             "^2",
+    "@tauri-apps/plugin-store":    "^2",
+    "@tauri-apps/plugin-autostart":"^2",
+    "@tauri-apps/plugin-shell":    "^2"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
-    "@types/ws":   "^8.5.13",
-    "electron":         "^33.4.11",
-    "electron-builder": "^25.1.8",
-    "electron-vite":    "^2.3.0",
-    "typescript":       "^5.7.3"
+    "@tauri-apps/cli": "^2",
+    "typescript":      "^5.7.3",
+    "vite":            "^6",
+    "@types/node":     "^22"
   }
 }

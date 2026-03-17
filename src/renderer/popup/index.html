@@ -27,14 +27,20 @@
         <div id="top-right">
           <button id="btn-open-ha"   title="Apri Home Assistant">🌐</button>
           <button id="btn-cameras"   title="Telecamere">📷</button>
+          <button id="btn-search"    class="icon-btn" title="Cerca">🔍</button>
           <button id="btn-reconnect" title="Reconnect">↻</button>
           <button id="btn-settings"  title="Impostazioni">⚙</button>
           <button id="btn-hide"      title="Nascondi nella tray">_</button>
         </div>
       </div>
+      <div id="search-bar" class="search-bar hidden">
+        <input type="text" id="search-input" placeholder="Cerca dispositivo…" autocomplete="off" />
+        <button id="btn-search-clear" class="icon-btn" title="Cancella ricerca">✕</button>
+      </div>
       <div id="menu-list"></div>
     </div>
   </div>
+  <div id="toast-container"></div>
   <script type="module" src="./main.ts"></script>
 </body>
 </html>

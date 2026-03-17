@@ -1,0 +1,700 @@
+/**
+ * Entity card renderers – one builder function per domain.
+ * Each builder returns a fully-wired HTMLElement ready to be inserted into the
+ * DOM.  All HA service calls are routed through the `callService` wrapper that
+ * is passed in at construction time so that error feedback (toast) is handled
+ * centrally in main.ts.
+ */
+
+import type {
+  AppEntity,
+  LightEntity,
+  SwitchEntity,
+  ClimateEntity,
+  CoverEntity,
+  LockEntity,
+  FanEntity,
+  HumidifierEntity,
+  ValveEntity,
+  SensorEntity,
+  AlarmEntity,
+  CameraEntity,
+  SceneEntity,
+  MenuData,
+} from '@shared/types'
+import { api } from '@lib/api'
+
+// ─── Shared mutable state injected from main.ts ───────────────────────────────
+
+/** Set externally so entity renderers can read current menuData.tempUnit */
+export let sharedMenuData: MenuData | null = null
+export function setSharedMenuData(d: MenuData | null): void { sharedMenuData = d }
+
+/** Persisted expand state for cards (entity-id + optional suffix → boolean) */
+export const cardExpanded = new Map<string, boolean>()
+
+/** 2D hue-picker draw callbacks, keyed by the wrapper element */
+export const huePickers = new WeakMap<HTMLElement, () => void>()
+
+/** Throttled resize trigger – set by main.ts so entities can request a resize */
+export let requestResize: () => void = () => { /* no-op until wired by main */ }
+export function setResizeCallback(fn: () => void): void { requestResize = fn }
+
+// ─── callService wrapper type (provided by main.ts) ──────────────────────────
+export type CallService = (
+  domain:    string,
+  service:   string,
+  entityId:  string,
+  data?:     Record<string, unknown>,
+) => void
+
+// ─── Dispatch ─────────────────────────────────────────────────────────────────
+
+export function buildCard(e: AppEntity, cs: CallService, favorites: Set<string>, onFavToggle: (e: AppEntity) => Promise<void>): HTMLElement {
+  const card = buildCardInner(e, cs)
+  // Favorite star for actionable entities (not scenes / cameras)
+  if (e.type !== 'scene' && e.type !== 'camera') {
+    const right = card.querySelector('.entity-right')
+    if (right) right.insertBefore(makeFavoriteStar(e, favorites, onFavToggle), right.firstChild)
+  }
+  return card
+}
+
+function buildCardInner(e: AppEntity, cs: CallService): HTMLElement {
+  switch (e.type) {
+    case 'light':      return buildLightCard(e, cs)
+    case 'switch':     return buildSwitchCard(e, cs)
+    case 'climate':    return buildClimateCard(e, cs)
+    case 'cover':      return buildCoverCard(e, cs)
+    case 'lock':       return buildLockCard(e, cs)
+    case 'fan':        return buildFanCard(e, cs)
+    case 'humidifier': return buildHumidifierCard(e, cs)
+    case 'valve':      return buildValveCard(e, cs)
+    case 'sensor':     return buildSensorCard(e)
+    case 'alarm':      return buildAlarmCard(e, cs)
+    case 'camera':     return buildCameraCard(e)
+    case 'scene':      return buildSceneCard(e, cs)
+    default:           return div('entity-card')
+  }
+}
+
+// ─── Favorite star ────────────────────────────────────────────────────────────
+
+function makeFavoriteStar(
+  e:            AppEntity,
+  favorites:    Set<string>,
+  onFavToggle:  (e: AppEntity) => Promise<void>,
+): HTMLElement {
+  const isFav = favorites.has(e.entityId)
+  const btn = document.createElement('button')
+  btn.className   = 'fav-btn' + (isFav ? ' active' : '')
+  btn.textContent = isFav ? '★' : '☆'
+  btn.title       = isFav ? 'Remove from Favorites' : 'Add to Favorites'
+  btn.addEventListener('click', async ev => {
+    ev.stopPropagation()
+    await onFavToggle(e)
+    const nowFav = favorites.has(e.entityId)
+    btn.textContent = nowFav ? '★' : '☆'
+    btn.classList.toggle('active', nowFav)
+    btn.title = nowFav ? 'Remove from Favorites' : 'Add to Favorites'
+  })
+  return btn
+}
+
+// ─── LIGHT ────────────────────────────────────────────────────────────────────
+
+function buildLightCard(e: LightEntity, cs: CallService): HTMLElement {
+  const card = div('entity-card')
+  if (!e.isAvailable) card.classList.add('unavailable')
+
+  const hasColor = e.supportsRgb
+  const hasTemp  = e.supportsColorTemp && !!e.minColorTemp && !!e.maxColorTemp
+
+  const row   = makeRow('💡', e.name)
+  const right = row.querySelector('.entity-right')!
+
+  // Color / temp expand button
+  let colorExpanded = cardExpanded.get(e.entityId + ':color') ?? false
+  let colorBtn: HTMLButtonElement | null = null
+  if (hasColor || hasTemp) {
+    colorBtn = document.createElement('button')
+    colorBtn.className = 'light-color-btn ' + (hasColor ? 'has-rgb' : 'has-temp')
+    if (colorExpanded) colorBtn.classList.add('active')
+    colorBtn.title = 'Colore / Temperatura'
+    right.appendChild(colorBtn)
+  }
+
+  // Inline brightness slider
+  if (e.supportsBrightness) {
+    const wrap  = document.createElement('div')
+    const input = document.createElement('input')
+    wrap.className  = 'light-brightness-wrap'
+    input.className = 'light-brightness-slider'
+    input.type = 'range'; input.min = '0'; input.max = '100'
+    input.value = String(e.brightness ?? 0)
+    let bTimer = 0
+    input.addEventListener('input', ev => {
+      ev.stopPropagation()
+      clearTimeout(bTimer)
+      bTimer = window.setTimeout(() =>
+        cs('light', 'turn_on', e.entityId, { brightness_pct: Number(input.value) }), 120)
+    })
+    input.addEventListener('click', ev => ev.stopPropagation())
+    wrap.appendChild(input)
+    right.appendChild(wrap)
+  }
+
+  right.appendChild(makeToggle(e.isOn, v => cs('light', v ? 'turn_on' : 'turn_off', e.entityId)))
+  card.appendChild(row)
+
+  // Expandable color controls
+  if (colorBtn) {
+    const controls = div('controls controls-color')
+    if (hasColor) controls.appendChild(buildHueSatPicker(e, cs))
+    if (hasTemp) {
+      controls.appendChild(makeSlider(
+        'Temp. colore',
+        e.colorTemp ?? e.minColorTemp!,
+        e.minColorTemp!, e.maxColorTemp!, 'K',
+        val => cs('light', 'turn_on', e.entityId, { color_temp: val }),
+        true,
+      ))
+    }
+    controls.style.display = colorExpanded ? '' : 'none'
+    card.appendChild(controls)
+
+    colorBtn.addEventListener('click', ev => {
+      ev.stopPropagation()
+      colorExpanded = !colorExpanded
+      cardExpanded.set(e.entityId + ':color', colorExpanded)
+      controls.style.display = colorExpanded ? '' : 'none'
+      colorBtn!.classList.toggle('active', colorExpanded)
+      if (colorExpanded) drawPendingHuePickers(controls)
+      requestResize()
+    })
+
+    if (colorExpanded) requestAnimationFrame(() => drawPendingHuePickers(controls))
+  }
+
+  return card
+}
+
+// ─── 2D HUE-SAT PICKER ───────────────────────────────────────────────────────
+
+function buildHueSatPicker(e: LightEntity, cs: CallService): HTMLElement {
+  const wrap   = div('light-hue-picker')
+  const canvas = document.createElement('canvas')
+  const thumb  = div('hue-thumb')
+  wrap.appendChild(canvas)
+  wrap.appendChild(thumb)
+
+  let curHue = e.hue ?? 0
+  let curSat = e.saturation ?? 100
+
+  function positionThumb(h: number, s: number) {
+    thumb.style.left = (h / 360 * 100) + '%'
+    thumb.style.top  = ((1 - s / 100) * 100) + '%'
+  }
+
+  function draw() {
+    const w = wrap.offsetWidth
+    const h = wrap.offsetHeight
+    if (!w || !h) return
+    const dpr = window.devicePixelRatio || 1
+    canvas.width  = Math.round(w * dpr)
+    canvas.height = Math.round(h * dpr)
+    canvas.style.width  = w + 'px'
+    canvas.style.height = h + 'px'
+    const ctx = canvas.getContext('2d')!
+    ctx.scale(dpr, dpr)
+    const hg = ctx.createLinearGradient(0, 0, w, 0)
+    for (let i = 0; i <= 12; i++) hg.addColorStop(i / 12, `hsl(${i * 30},100%,50%)`)
+    ctx.fillStyle = hg; ctx.fillRect(0, 0, w, h)
+    const wg = ctx.createLinearGradient(0, 0, 0, h)
+    wg.addColorStop(0,   'rgba(255,255,255,0.80)')
+    wg.addColorStop(0.5, 'rgba(255,255,255,0)')
+    ctx.fillStyle = wg; ctx.fillRect(0, 0, w, h)
+    const bg = ctx.createLinearGradient(0, 0, 0, h)
+    bg.addColorStop(0.5, 'rgba(0,0,0,0)')
+    bg.addColorStop(1,   'rgba(0,0,0,0.55)')
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h)
+  }
+
+  huePickers.set(wrap, draw)
+  positionThumb(curHue, curSat)
+
+  let moveHandler: ((ev: PointerEvent) => void) | null = null
+  wrap.addEventListener('pointerdown', ev => {
+    ev.stopPropagation()
+    wrap.setPointerCapture(ev.pointerId)
+    moveHandler = (ev2: PointerEvent) => {
+      const rect = wrap.getBoundingClientRect()
+      const x = Math.max(0, Math.min(1, (ev2.clientX - rect.left) / rect.width))
+      const y = Math.max(0, Math.min(1, (ev2.clientY - rect.top)  / rect.height))
+      curHue = Math.round(x * 360)
+      curSat = Math.round((1 - y) * 100)
+      positionThumb(curHue, curSat)
+      cs('light', 'turn_on', e.entityId, { hs_color: [curHue, curSat] })
+    }
+    moveHandler(ev)
+    wrap.addEventListener('pointermove', moveHandler)
+  })
+  const cleanupPointer = () => {
+    if (moveHandler) { wrap.removeEventListener('pointermove', moveHandler); moveHandler = null }
+  }
+  wrap.addEventListener('pointerup',     cleanupPointer)
+  wrap.addEventListener('pointercancel', cleanupPointer)
+  return wrap
+}
+
+export function drawPendingHuePickers(container: HTMLElement): void {
+  requestAnimationFrame(() => {
+    container.querySelectorAll<HTMLElement>('.light-hue-picker').forEach(el => huePickers.get(el)?.())
+  })
+}
+
+// ─── SWITCH ───────────────────────────────────────────────────────────────────
+
+function buildSwitchCard(e: SwitchEntity, cs: CallService): HTMLElement {
+  const card   = div('entity-card')
+  if (!e.isAvailable) card.classList.add('unavailable')
+  const domain = e.entityId.startsWith('input_boolean') ? 'input_boolean' : 'switch'
+  const row    = makeRow('🔌', e.name)
+  row.querySelector('.entity-right')!.appendChild(
+    makeToggle(e.isOn, v => cs(domain, v ? 'turn_on' : 'turn_off', e.entityId)),
+  )
+  card.appendChild(row)
+  return card
+}
+
+// ─── CLIMATE ──────────────────────────────────────────────────────────────────
+
+function buildClimateCard(e: ClimateEntity, cs: CallService): HTMLElement {
+  const card      = div('entity-card')
+  if (!e.isAvailable) card.classList.add('unavailable')
+  const tempUnit  = sharedMenuData?.tempUnit ?? '°C'
+  const tempDisplay = e.currentTemp != null
+    ? `${e.currentTemp.toFixed(1)}${tempUnit}`
+    : e.hvacMode
+  const row = makeRow('🌡️', e.name)
+  row.querySelector('.entity-right')!.innerHTML = `<span class="entity-state">${esc(tempDisplay)}</span>`
+  card.appendChild(row)
+
+  if (e.hvacModes.length) {
+    const pills = div('mode-pills')
+    e.hvacModes.forEach(mode => {
+      const btn = document.createElement('button')
+      btn.className = 'mode-pill' + (mode === e.hvacMode ? ' active' : '')
+      btn.textContent = modeLabel(mode)
+      btn.addEventListener('click', () => {
+        cs('climate', 'set_hvac_mode', e.entityId, { hvac_mode: mode })
+        pills.querySelectorAll('.mode-pill').forEach(p => p.classList.remove('active'))
+        btn.classList.add('active')
+      })
+      pills.appendChild(btn)
+    })
+    card.appendChild(pills)
+  }
+
+  if (e.hvacMode !== 'off' && e.targetTemp != null) {
+    const controls = div('controls')
+    controls.appendChild(makeSlider(
+      'Target', e.targetTemp, e.minTemp, e.maxTemp, tempUnit,
+      val => cs('climate', 'set_temperature', e.entityId, { temperature: val }),
+      false, e.tempStep,
+    ))
+    card.appendChild(controls)
+  }
+  return card
+}
+
+// ─── COVER ────────────────────────────────────────────────────────────────────
+
+function buildCoverCard(e: CoverEntity, cs: CallService): HTMLElement {
+  const card = div('entity-card')
+  if (!e.isAvailable) card.classList.add('unavailable')
+  const icon = e.deviceClass === 'garage_door' ? '🚗' : e.deviceClass === 'door' ? '🚪' : '🪟'
+  const row  = makeRow(icon, e.name)
+  const right = row.querySelector('.entity-right')!
+  right.appendChild(coverBtn('▲', () => cs('cover', 'open_cover',  e.entityId)))
+  right.appendChild(coverBtn('■', () => cs('cover', 'stop_cover',  e.entityId)))
+  right.appendChild(coverBtn('▼', () => cs('cover', 'close_cover', e.entityId)))
+  card.appendChild(row)
+
+  const controls = div('controls')
+  if (e.supportsPosition && e.position != null) {
+    controls.appendChild(makeSlider('Position', e.position, 0, 100, '%',
+      val => cs('cover', 'set_cover_position', e.entityId, { position: val })))
+  }
+  if (e.supportsTilt && e.tilt != null) {
+    controls.appendChild(makeSlider('Tilt', e.tilt, 0, 100, '%',
+      val => cs('cover', 'set_cover_tilt_position', e.entityId, { tilt_position: val })))
+  }
+  if (controls.children.length) card.appendChild(controls)
+  return card
+}
+
+// ─── LOCK ─────────────────────────────────────────────────────────────────────
+
+function buildLockCard(e: LockEntity, cs: CallService): HTMLElement {
+  const card  = div('entity-card')
+  if (!e.isAvailable) card.classList.add('unavailable')
+  const row   = makeRow('🔒', e.name)
+  const right = row.querySelector('.entity-right')!
+  const stateEl = document.createElement('span')
+  stateEl.className   = `lock-state ${e.lockState}`
+  stateEl.textContent = lockLabel(e.lockState)
+  right.appendChild(stateEl)
+  if (e.lockState === 'locked' || e.lockState === 'unlocked' || e.lockState === 'unknown') {
+    right.appendChild(makeToggle(e.lockState === 'locked',
+      v => cs('lock', v ? 'lock' : 'unlock', e.entityId)))
+  }
+  card.appendChild(row)
+  return card
+}
+
+// ─── FAN ──────────────────────────────────────────────────────────────────────
+
+function buildFanCard(e: FanEntity, cs: CallService): HTMLElement {
+  const card = div('entity-card')
+  if (!e.isAvailable) card.classList.add('unavailable')
+  const row = makeRow('💨', e.name)
+  row.querySelector('.entity-right')!.appendChild(
+    makeToggle(e.isOn, v => cs('fan', v ? 'turn_on' : 'turn_off', e.entityId)),
+  )
+  card.appendChild(row)
+
+  const controls = div('controls')
+  if (e.supportsPercentage && e.percentage != null) {
+    controls.appendChild(makeSlider('Speed', e.percentage, 0, 100, '%',
+      val => cs('fan', 'set_percentage', e.entityId, { percentage: val })))
+  }
+  if (e.supportsOscillation && e.oscillating != null) {
+    const cr = div('control-row')
+    cr.innerHTML = `<span class="control-label">Oscillate</span>`
+    cr.appendChild(makeToggle(e.oscillating,
+      v => cs('fan', 'oscillate', e.entityId, { oscillating: v })))
+    controls.appendChild(cr)
+  }
+  if (e.presetModes.length > 0) {
+    const pills = div('mode-pills')
+    e.presetModes.forEach(mode => {
+      const btn = document.createElement('button')
+      btn.className = 'mode-pill' + (mode === e.presetMode ? ' active' : '')
+      btn.textContent = mode
+      btn.addEventListener('click', () => {
+        cs('fan', 'set_preset_mode', e.entityId, { preset_mode: mode })
+        pills.querySelectorAll('.mode-pill').forEach(p => p.classList.remove('active'))
+        btn.classList.add('active')
+      })
+      pills.appendChild(btn)
+    })
+    controls.appendChild(pills)
+  }
+  if (controls.children.length) card.appendChild(controls)
+  return card
+}
+
+// ─── HUMIDIFIER ───────────────────────────────────────────────────────────────
+
+function buildHumidifierCard(e: HumidifierEntity, cs: CallService): HTMLElement {
+  const card = div('entity-card')
+  if (!e.isAvailable) card.classList.add('unavailable')
+  const row = makeRow('💧', e.name)
+  row.querySelector('.entity-right')!.appendChild(
+    makeToggle(e.isOn, v => cs('humidifier', v ? 'turn_on' : 'turn_off', e.entityId)),
+  )
+  card.appendChild(row)
+
+  const controls = div('controls')
+  if (e.isOn && e.targetHumidity != null) {
+    controls.appendChild(makeSlider('Humidity', e.targetHumidity, 0, 100, '%',
+      val => cs('humidifier', 'set_humidity', e.entityId, { humidity: val })))
+  }
+  if (e.modes.length > 0) {
+    const pills = div('mode-pills')
+    e.modes.forEach(mode => {
+      const btn = document.createElement('button')
+      btn.className = 'mode-pill' + (mode === e.mode ? ' active' : '')
+      btn.textContent = mode
+      btn.addEventListener('click', () => {
+        cs('humidifier', 'set_mode', e.entityId, { mode })
+        pills.querySelectorAll('.mode-pill').forEach(p => p.classList.remove('active'))
+        btn.classList.add('active')
+      })
+      pills.appendChild(btn)
+    })
+    controls.appendChild(pills)
+  }
+  if (controls.children.length) card.appendChild(controls)
+  return card
+}
+
+// ─── VALVE ────────────────────────────────────────────────────────────────────
+
+function buildValveCard(e: ValveEntity, cs: CallService): HTMLElement {
+  const card = div('entity-card')
+  if (!e.isAvailable) card.classList.add('unavailable')
+  const row  = makeRow('🚰', e.name)
+  row.querySelector('.entity-right')!.appendChild(makeToggle(e.isOpen,
+    v => cs('valve', v ? 'open_valve' : 'close_valve', e.entityId)))
+  card.appendChild(row)
+
+  if (e.supportsPosition && e.position != null) {
+    let expanded = cardExpanded.get(e.entityId) ?? false
+    const controls = div('controls')
+    controls.appendChild(makeSlider('Position', e.position, 0, 100, '%',
+      val => cs('valve', 'set_valve_position', e.entityId, { position: val })))
+    controls.style.display = expanded ? '' : 'none'
+    card.appendChild(controls)
+    row.addEventListener('click', ev => {
+      if ((ev.target as HTMLElement).closest('.toggle-btn, .fav-btn')) return
+      expanded = !expanded
+      cardExpanded.set(e.entityId, expanded)
+      controls.style.display = expanded ? '' : 'none'
+      requestResize()
+    })
+  }
+  return card
+}
+
+// ─── SENSOR ───────────────────────────────────────────────────────────────────
+
+function buildSensorCard(e: SensorEntity): HTMLElement {
+  const card = div('entity-card')
+  if (!e.isAvailable) card.classList.add('unavailable')
+  const icon  = e.deviceClass === 'humidity' ? '💧' : '🌡️'
+  const row   = makeRow(icon, e.name)
+  const valEl = document.createElement('span')
+  valEl.className   = 'sensor-value'
+  valEl.textContent = e.unit ? `${e.value} ${e.unit}` : e.value
+  row.querySelector('.entity-right')!.appendChild(valEl)
+  card.appendChild(row)
+  return card
+}
+
+// ─── ALARM ────────────────────────────────────────────────────────────────────
+
+function buildAlarmCard(e: AlarmEntity, cs: CallService): HTMLElement {
+  const card = div('entity-card')
+  if (!e.isAvailable) card.classList.add('unavailable')
+  const row = makeRow('🔐', e.name)
+  row.querySelector('.entity-right')!.innerHTML =
+    `<span class="entity-state">${esc(alarmLabel(e.alarmState))}</span>`
+  card.appendChild(row)
+
+  const ALARM_MODES: { mode: string; label: string; service: string }[] = [
+    { mode: 'disarmed',            label: 'Disarm',   service: 'alarm_disarm'            },
+    { mode: 'armed_home',          label: 'Home',     service: 'alarm_arm_home'          },
+    { mode: 'armed_away',          label: 'Away',     service: 'alarm_arm_away'          },
+    { mode: 'armed_night',         label: 'Night',    service: 'alarm_arm_night'         },
+    { mode: 'armed_vacation',      label: 'Vacation', service: 'alarm_arm_vacation'      },
+    { mode: 'armed_custom_bypass', label: 'Custom',   service: 'alarm_arm_custom_bypass' },
+  ]
+  const available = ALARM_MODES.filter(m => m.mode === 'disarmed' || e.supportedModes.includes(m.mode))
+  if (available.length) {
+    const pills = div('mode-pills')
+    available.forEach(m => {
+      const btn = document.createElement('button')
+      btn.className = 'mode-pill' + (e.alarmState === m.mode ? ' active' : '')
+      btn.textContent = m.label
+      btn.addEventListener('click', () => {
+        cs('alarm_control_panel', m.service, e.entityId)
+        pills.querySelectorAll('.mode-pill').forEach(p => p.classList.remove('active'))
+        btn.classList.add('active')
+      })
+      pills.appendChild(btn)
+    })
+    card.appendChild(pills)
+  }
+  return card
+}
+
+// ─── CAMERA ───────────────────────────────────────────────────────────────────
+
+function buildCameraCard(e: CameraEntity): HTMLElement {
+  const card = div('entity-card')
+  if (!e.isAvailable) card.classList.add('unavailable')
+  const row     = makeRow('📷', e.name)
+  const stateEl = document.createElement('span')
+  stateEl.className   = 'entity-state'
+  stateEl.textContent = e.state
+  row.querySelector('.entity-right')!.appendChild(stateEl)
+  card.appendChild(row)
+
+  const snapBox     = div('camera-snapshot')
+  const img         = document.createElement('img')
+  const placeholder = div('snap-placeholder')
+  placeholder.textContent = '▸ Click to load snapshot'
+  snapBox.appendChild(placeholder)
+
+  const snapKey = e.entityId + ':snap'
+  let expanded  = cardExpanded.get(snapKey) ?? false
+  snapBox.style.display = expanded ? '' : 'none'
+  card.appendChild(snapBox)
+
+  let refreshTimer = 0
+
+  function startRefresh() {
+    placeholder.textContent = 'Loading…'
+    loadSnapshot()
+    refreshTimer = window.setInterval(() => loadSnapshot(), 5000)
+  }
+
+  row.addEventListener('click', () => {
+    expanded = !expanded
+    cardExpanded.set(snapKey, expanded)
+    snapBox.style.display = expanded ? '' : 'none'
+    if (expanded) { startRefresh() } else { clearInterval(refreshTimer) }
+    requestResize()
+  })
+
+  if (expanded) startRefresh()
+
+  async function loadSnapshot() {
+    if (!snapBox.isConnected) { clearInterval(refreshTimer); return }
+    const src = await api.cameras.getSnapshot(e.entityId)
+    if (src) {
+      snapBox.innerHTML = ''
+      img.src = src
+      snapBox.appendChild(img)
+    } else {
+      placeholder.textContent = 'Snapshot unavailable'
+      if (!snapBox.contains(placeholder)) { snapBox.innerHTML = ''; snapBox.appendChild(placeholder) }
+    }
+  }
+
+  return card
+}
+
+// ─── SCENE ────────────────────────────────────────────────────────────────────
+
+function buildSceneCard(e: SceneEntity, cs: CallService): HTMLElement {
+  const card = div('entity-card')
+  if (!e.isAvailable) card.classList.add('unavailable')
+  const row = makeRow('✨', e.name)
+  const btn = document.createElement('button')
+  btn.className   = 'scene-btn'
+  btn.textContent = '▶'
+  btn.title       = 'Activate scene'
+  btn.addEventListener('click', ev => {
+    ev.stopPropagation()
+    cs('scene', 'turn_on', e.entityId)
+    btn.classList.add('fired')
+    btn.textContent = '✓'
+    setTimeout(() => { btn.classList.remove('fired'); btn.textContent = '▶' }, 1500)
+  })
+  row.querySelector('.entity-right')!.appendChild(btn)
+  card.appendChild(row)
+  return card
+}
+
+// ─── Shared DOM helpers ───────────────────────────────────────────────────────
+
+export function makeRow(icon: string, name: string): HTMLElement {
+  const row = div('entity-row')
+  row.innerHTML = `
+    <span class="entity-icon">${icon}</span>
+    <span class="entity-name" title="${esc(name)}">${esc(name)}</span>
+    <span class="entity-right"></span>`
+  return row
+}
+
+export function makeToggle(isOn: boolean, onChange: (v: boolean) => void): HTMLElement {
+  const btn = document.createElement('button')
+  btn.className = 'toggle-btn' + (isOn ? ' on' : '')
+  btn.addEventListener('click', ev => {
+    ev.stopPropagation()
+    const next = !btn.classList.contains('on')
+    btn.classList.toggle('on', next)
+    onChange(next)
+  })
+  return btn
+}
+
+export function makeSlider(
+  label:    string,
+  value:    number,
+  min:      number,
+  max:      number,
+  unit:     string,
+  onChange: (v: number) => void,
+  reverse   = false,
+  step      = 1,
+): HTMLElement {
+  const row   = div('control-row')
+  const lbl   = document.createElement('span')
+  lbl.className   = 'control-label'
+  lbl.textContent = label
+
+  const track = div('slider-track')
+  const input = document.createElement('input')
+  input.type  = 'range'
+  input.min   = String(reverse ? -max : min)
+  input.max   = String(reverse ? -min : max)
+  input.step  = String(step)
+  input.value = String(reverse ? -value : value)
+
+  const valLabel = document.createElement('span')
+  valLabel.className   = 'slider-value'
+  valLabel.textContent = `${value}${unit}`
+
+  let timer = 0
+  input.addEventListener('input', () => {
+    const raw = Number(input.value)
+    const v   = reverse ? -raw : raw
+    valLabel.textContent = `${Math.round(v)}${unit}`
+    clearTimeout(timer)
+    timer = window.setTimeout(() => onChange(v), 120)
+  })
+
+  track.appendChild(input)
+  row.appendChild(lbl); row.appendChild(track); row.appendChild(valLabel)
+  return row
+}
+
+function coverBtn(label: string, onClick: () => void): HTMLElement {
+  const btn = document.createElement('button')
+  btn.className   = 'cover-btn'
+  btn.textContent = label
+  btn.addEventListener('click', ev => { ev.stopPropagation(); onClick() })
+  return btn
+}
+
+export function div(cls: string): HTMLDivElement {
+  const el = document.createElement('div')
+  el.className = cls
+  return el
+}
+
+export function esc(s: string): string {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+}
+
+// ─── Label helpers ────────────────────────────────────────────────────────────
+
+function modeLabel(mode: string): string {
+  const MAP: Record<string, string> = {
+    off: 'Off', heat: 'Heat', cool: 'Cool', auto: 'Auto',
+    heat_cool: 'Heat/Cool', dry: 'Dry', fan_only: 'Fan',
+  }
+  return MAP[mode] ?? mode
+}
+
+function lockLabel(s: string): string {
+  const MAP: Record<string, string> = {
+    locked: 'Locked', unlocked: 'Unlocked', locking: 'Locking…',
+    unlocking: 'Unlocking…', jammed: 'Jammed!', unknown: 'Unknown',
+  }
+  return MAP[s] ?? s
+}
+
+function alarmLabel(s: string): string {
+  const MAP: Record<string, string> = {
+    disarmed: 'Disarmed', armed_home: 'Home', armed_away: 'Away',
+    armed_night: 'Night', armed_vacation: 'Vacation',
+    armed_custom_bypass: 'Custom', pending: 'Pending…',
+    triggered: 'TRIGGERED', arming: 'Arming…',
+  }
+  return MAP[s] ?? s
+}

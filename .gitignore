@@ -1,16 +1,19 @@
 # Dependencies
 node_modules/
 
-# Build output
-out/
+# Frontend build output
 dist/
 
-# Electron-builder output
-release/
-!release/.gitkeep
+# Tauri build output
+src-tauri/target/
 
-# Electron-builder cache (local only)
+# Legacy Electron build output
+out/
+release/
+
+# Tauri / Electron build artefacts
 *.blockmap
+*.AppImage
 
 # Environment / secrets
 .env

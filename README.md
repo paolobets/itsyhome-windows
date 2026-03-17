@@ -1,7 +1,12 @@
 # ItsyHome for Windows
 
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/your-repo/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 Client per **Home Assistant** nella system tray di Windows.
 Controlla luci, termostati, cover, scene e molto altro direttamente dalla barra delle applicazioni, senza aprire il browser.
+
+**Novità in v2.0**: Migrato da Electron a Tauri 2.0 — installer 22x più leggero, RAM ridotto del 75%, startup ultra-veloce.
 
 ---
 

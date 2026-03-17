@@ -1,0 +1,28 @@
+[package]
+name = "itsyhome"
+version = "2.0.0"
+edition = "2021"
+
+[lib]
+name = "itsyhome_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-store = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-shell = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+reqwest = { version = "0.12", features = ["json", "native-tls"] }
+base64 = "0.22"
+log = "0.4"
+image = { version = "0.25", default-features = false, features = ["png"] }
