@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use tauri::{
     image::Image,
-    tray::{TrayIconBuilder, TrayIconEvent},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Listener, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_autostart::MacosLauncher;
@@ -90,7 +90,14 @@ pub fn run() {
                 .on_tray_icon_event({
                     let app_handle = app.handle().clone();
                     move |_tray, event| {
-                        if let TrayIconEvent::Click { position, .. } = event {
+                        // Only fire on left-button UP to avoid double-toggle
+                        // (Tauri fires Click for both MouseDown and MouseUp).
+                        if let TrayIconEvent::Click {
+                            position,
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } = event {
                             // Store tray position for popup positioning
                             {
                                 let s = app_handle.state::<Arc<Mutex<AppState>>>();
