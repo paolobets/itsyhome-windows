@@ -433,30 +433,33 @@ pub async fn window_resize(
     let new_h = h.max(120).min(680);
     let new_w = w.max(300).min(900);
 
-    let outer_pos = popup.outer_position().map_err(|e| e.to_string())?;
+    // JS offsetHeight/offsetWidth are CSS (logical) pixels — use LogicalSize.
+    let scale = popup.scale_factor().unwrap_or(1.0);
+    let outer_pos  = popup.outer_position().map_err(|e| e.to_string())?;
     let outer_size = popup.outer_size().map_err(|e| e.to_string())?;
-    let current_w = outer_size.width;
+    // Convert current physical width to logical for comparison.
+    let current_w_logical = (outer_size.width as f64 / scale).round() as u32;
 
-    if new_w != current_w {
-        // Width changing: keep RIGHT EDGE fixed.
+    if new_w != current_w_logical {
+        // Width changing: keep RIGHT EDGE fixed (right edge stays in physical coords).
         let right_edge = outer_pos.x + outer_size.width as i32;
-        let new_x = (right_edge - new_w as i32).max(0);
+        let new_x = (right_edge - (new_w as f64 * scale) as i32).max(0);
         popup
             .set_position(tauri::PhysicalPosition::new(new_x, outer_pos.y))
             .map_err(|e| e.to_string())?;
         popup
-            .set_size(tauri::PhysicalSize::new(new_w, new_h))
+            .set_size(tauri::LogicalSize::new(new_w as f64, new_h as f64))
             .map_err(|e| e.to_string())?;
     } else if new_w > 300 {
         // Height-only change with detail panel open: keep X, recalculate Y only.
         popup
-            .set_size(tauri::PhysicalSize::new(new_w, new_h))
+            .set_size(tauri::LogicalSize::new(new_w as f64, new_h as f64))
             .map_err(|e| e.to_string())?;
         reposition_y_only(&state, &popup)?;
     } else {
         // Normal height change at 300 px: full reposition to tray anchor.
         popup
-            .set_size(tauri::PhysicalSize::new(300, new_h))
+            .set_size(tauri::LogicalSize::new(300.0_f64, new_h as f64))
             .map_err(|e| e.to_string())?;
         reposition_popup(&state, &popup)?;
     }

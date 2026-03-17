@@ -78,31 +78,30 @@ body.popup-enter { animation: popupIn 200ms cubic-bezier(0.16, 1, 0.3, 1) both; 
   to   { opacity: 1; transform: scale(1)    translateY(0);    }
 }
 
-/* ─── Two-panel layout ───────────────────────────────────────────────────── */
+/* ─── Layout ──────────────────────────────────────────────────────────────── */
 #popup-body {
-  display: flex;
-  flex-direction: row;
-  align-items: stretch;
+  position: relative;
   width: 100%;
+  overflow: hidden;
 }
 
 #main-panel {
   width: 300px;
-  flex-shrink: 0;
   display: flex;
   flex-direction: column;
 }
 
-/* ─── Detail panel ───────────────────────────────────────────────────────── */
+/* ─── Detail panel — full-window overlay ─────────────────────────────────── */
 #detail-panel {
   display: none;
   flex-direction: column;
-  width: 280px;
-  flex-shrink: 0;
-  border-right: 0.5px solid var(--border);
-  min-height: 0;
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: var(--bg);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  backdrop-filter: blur(40px) saturate(180%);
   overflow: hidden;
-  max-height: 100vh;
 }
 #detail-panel.open {
   display: flex;
@@ -113,12 +112,12 @@ body.popup-enter { animation: popupIn 200ms cubic-bezier(0.16, 1, 0.3, 1) both; 
 }
 
 @keyframes detailIn {
-  from { opacity: 0; transform: translateX(-14px); }
-  to   { opacity: 1; transform: translateX(0);     }
+  from { opacity: 0; transform: translateX(100%); }
+  to   { opacity: 1; transform: translateX(0);    }
 }
 @keyframes detailOut {
-  from { opacity: 1; transform: translateX(0);     }
-  to   { opacity: 0; transform: translateX(-14px); }
+  from { opacity: 1; transform: translateX(0);    }
+  to   { opacity: 0; transform: translateX(100%); }
 }
 
 @keyframes fadeIn  { from { opacity: 0; } to { opacity: 1; } }

@@ -296,7 +296,7 @@ function resize(): void {
     const topBar   = document.getElementById('top-bar')!
     const menuList = document.getElementById('menu-list')!
     const h = topBar.offsetHeight + menuList.offsetHeight
-    const w = detailOpen ? 580 : 300
+    const w = 300
     api.window.resize(h, w).catch(() => { /* ignore */ })
   })
 }
