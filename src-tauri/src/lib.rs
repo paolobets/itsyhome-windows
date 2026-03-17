@@ -55,11 +55,24 @@ pub fn run() {
             .inner_size(300.0, 54.0)
             .build()?;
 
-            // Hide popup on blur (only if settings window is not open)
+            // Hide popup on blur (only if settings window is not open).
+            // Guard: ignore blur events within 500 ms of the popup being shown
+            // to avoid it disappearing immediately after a tray-icon click.
             {
                 let app_handle = app.handle().clone();
                 popup.on_window_event(move |event| {
                     if let tauri::WindowEvent::Focused(false) = event {
+                        // Suppress the spurious blur fired right after show().
+                        let just_shown = {
+                            let s = app_handle.state::<Arc<Mutex<AppState>>>();
+                            let shown_at = s.lock().unwrap().popup_shown_at;
+                            shown_at
+                                .map(|t| t.elapsed() < std::time::Duration::from_millis(500))
+                                .unwrap_or(false)
+                        };
+                        if just_shown {
+                            return;
+                        }
                         if app_handle.get_webview_window("settings").is_none() {
                             if let Some(w) = app_handle.get_webview_window("popup") {
                                 let _ = w.hide();
@@ -213,6 +226,11 @@ pub fn show_popup(app: &AppHandle) {
         }
     }
 
+    // Record the time the popup becomes visible so the blur guard works.
+    {
+        let s = app.state::<Arc<Mutex<AppState>>>();
+        s.lock().unwrap().popup_shown_at = Some(std::time::Instant::now());
+    }
     let _ = popup.show();
     let _ = popup.set_focus();
 }
