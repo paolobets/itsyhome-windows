@@ -191,6 +191,7 @@ function buildDetailRow(
   head.innerHTML = `
     <span class="row-icon">${icon}</span>
     <span class="row-name">${esc(name)}</span>
+    <span class="row-badge">${entities.length}</span>
     <span class="row-chevron">›</span>`
 
   if (state.selectedRoomKey === key) head.classList.add('row-selected')

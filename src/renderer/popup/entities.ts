@@ -316,9 +316,9 @@ function buildCoverCard(e: CoverEntity, cs: CallService): HTMLElement {
   const icon = e.deviceClass === 'garage_door' ? '🚗' : e.deviceClass === 'door' ? '🚪' : '🪟'
   const row  = makeRow(icon, e.name)
   const right = row.querySelector('.entity-right')!
-  right.appendChild(coverBtn('▲', () => cs('cover', 'open_cover',  e.entityId)))
-  right.appendChild(coverBtn('■', () => cs('cover', 'stop_cover',  e.entityId)))
-  right.appendChild(coverBtn('▼', () => cs('cover', 'close_cover', e.entityId)))
+  right.appendChild(coverBtn('▲', 'Open',  () => cs('cover', 'open_cover',  e.entityId)))
+  right.appendChild(coverBtn('■', 'Stop',  () => cs('cover', 'stop_cover',  e.entityId)))
+  right.appendChild(coverBtn('▼', 'Close', () => cs('cover', 'close_cover', e.entityId)))
   card.appendChild(row)
 
   const controls = div('controls')
@@ -653,10 +653,12 @@ export function makeSlider(
   return row
 }
 
-function coverBtn(label: string, onClick: () => void): HTMLElement {
+function coverBtn(label: string, title: string, onClick: () => void): HTMLElement {
   const btn = document.createElement('button')
   btn.className   = 'cover-btn'
   btn.textContent = label
+  btn.title       = title
+  btn.setAttribute('aria-label', title)
   btn.addEventListener('click', ev => { ev.stopPropagation(); onClick() })
   return btn
 }

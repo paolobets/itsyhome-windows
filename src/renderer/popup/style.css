@@ -4,7 +4,7 @@
   --surface:      rgba(50, 50, 54, 0.85);
   --surface-hi:   rgba(68, 68, 74, 1);
   --text:         rgba(255, 255, 255, 0.88);
-  --text-dim:     rgba(255, 255, 255, 0.38);
+  --text-dim:     rgba(255, 255, 255, 0.50);
   --accent:       #0a84ff;
   --toggle-on:    #30d158;
   --toggle-off:   rgba(120, 120, 128, 0.36);
@@ -28,7 +28,7 @@
     --surface:    rgba(255, 255, 255, 0.85);
     --surface-hi: rgba(220, 220, 228, 1);
     --text:       rgba(0, 0, 0, 0.85);
-    --text-dim:   rgba(0, 0, 0, 0.38);
+    --text-dim:   rgba(0, 0, 0, 0.50);
     --accent:     #007aff;
     --toggle-on:  #30d158;
     --toggle-off: rgba(120, 120, 128, 0.22);
@@ -42,6 +42,13 @@
 
 /* ─── Reset & base ───────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* Global focus-visible ring — replaces blanket outline:none */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 5px;
+}
 
 html, body {
   width: 100%;
@@ -106,12 +113,12 @@ body.popup-enter { animation: popupIn 200ms cubic-bezier(0.16, 1, 0.3, 1) both; 
 }
 
 @keyframes detailIn {
-  from { opacity: 0; transform: translateX(18px); }
-  to   { opacity: 1; transform: translateX(0);    }
+  from { opacity: 0; transform: translateX(-14px); }
+  to   { opacity: 1; transform: translateX(0);     }
 }
 @keyframes detailOut {
-  from { opacity: 1; transform: translateX(0);    }
-  to   { opacity: 0; transform: translateX(18px); }
+  from { opacity: 1; transform: translateX(0);     }
+  to   { opacity: 0; transform: translateX(-14px); }
 }
 
 @keyframes fadeIn  { from { opacity: 0; } to { opacity: 1; } }
@@ -197,8 +204,8 @@ body.popup-enter { animation: popupIn 200ms cubic-bezier(0.16, 1, 0.3, 1) both; 
 }
 
 #top-dot {
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--border);
   flex-shrink: 0;
@@ -353,6 +360,18 @@ body.popup-enter { animation: popupIn 200ms cubic-bezier(0.16, 1, 0.3, 1) both; 
 }
 .row-header:not(.collapsed) .row-chevron { transform: rotate(90deg); }
 
+/* Room entity count badge */
+.row-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--surface-hi);
+  border-radius: 8px;
+  padding: 1px 6px;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Selected room row */
 .row-selected {
   background: var(--accent) !important;
@@ -360,6 +379,7 @@ body.popup-enter { animation: popupIn 200ms cubic-bezier(0.16, 1, 0.3, 1) both; 
 }
 .row-selected .row-name,
 .row-selected .row-chevron { color: white; opacity: 1; }
+.row-selected .row-badge { background: rgba(255,255,255,0.20); color: white; }
 .row-selected:hover { background: var(--accent) !important; }
 
 .section-content { padding-bottom: 2px; }
@@ -422,7 +442,6 @@ body.popup-enter { animation: popupIn 200ms cubic-bezier(0.16, 1, 0.3, 1) both; 
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 140px;
 }
 .entity-right {
   display: flex;
@@ -584,7 +603,8 @@ input[type=range]::-webkit-slider-thumb:active { transform: scale(1.18); }
   background: var(--surface-hi);
   border: none;
   border-radius: 6px;
-  padding: 4px 9px;
+  padding: 5px 9px;
+  min-height: 28px;
   color: var(--text);
   cursor: pointer;
   transition: background var(--t) var(--ease-out),
@@ -666,18 +686,25 @@ input[type=range]::-webkit-slider-thumb:active { transform: scale(1.18); }
   line-height: 1;
   background: none;
   border: none;
-  padding: 0 3px;
+  padding: 4px;
   cursor: pointer;
   color: var(--text-dim);
-  opacity: 0.25;
+  opacity: 0;
+  min-width: 28px;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   transition: opacity var(--t) var(--ease-out),
               color    var(--t) var(--ease-out),
               transform 160ms  var(--ease-spring);
   outline: none;
 }
-.fav-btn:hover  { opacity: 0.70; }
+/* Show star on card hover or when active (favorited) */
+.entity-card:hover .fav-btn     { opacity: 0.50; }
+.entity-card:hover .fav-btn:hover { opacity: 0.90; }
 .fav-btn:active { transform: scale(1.25); }
-.fav-btn.active { opacity: 1; color: #ff9f0a; }
+.fav-btn.active { opacity: 1 !important; color: #ff9f0a; }
 
 /* ─── Light color button (ring/donut style) ──────────────────────────────── */
 .light-color-btn {
@@ -847,8 +874,8 @@ input.light-brightness-slider::-webkit-slider-thumb:active { transform: scale(1.
 
 /* Icon button – shared by search open/close */
 .icon-btn {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -866,3 +893,13 @@ input.light-brightness-slider::-webkit-slider-thumb:active { transform: scale(1.
 .icon-btn svg { display: block; }
 .icon-btn:hover  { background: var(--surface-hi); color: var(--text); }
 .icon-btn:active { transform: scale(0.84); }
+
+/* Separate destructive close button from settings */
+#btn-hide {
+  margin-left: 3px;
+  border-left: 0.5px solid var(--border);
+  padding-left: 6px;
+}
+
+/* Scrollbar hint on hover */
+#menu-list:hover::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); }

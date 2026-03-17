@@ -396,7 +396,14 @@ function setupTopBar(): void {
 function updateTopBar(): void {
   const dot    = document.getElementById('top-dot')
   const nameEl = document.getElementById('top-env-name')
-  if (dot)    dot.className = status
+  if (dot) {
+    dot.className = status
+    const dotTitles: Record<string, string> = {
+      connected: 'Connected', connecting: 'Connecting…',
+      disconnected: 'Disconnected', error: 'Connection error',
+    }
+    dot.title = dotTitles[status] ?? status
+  }
   if (nameEl) nameEl.textContent = envList.find(e => e.id === activeEnvId)?.name ?? '–'
 
   const camBtn = document.getElementById('btn-cameras')
