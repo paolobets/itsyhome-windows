@@ -596,6 +596,7 @@ fn make_ws_url(http_url: &str) -> String {
     let replaced = if base.starts_with("https://") {
         base.replacen("https://", "wss://", 1)
     } else {
+        log::warn!("[HA] Using unencrypted ws:// — upgrade to https:// for security");
         base.replacen("http://", "ws://", 1)
     };
     format!("{}/api/websocket", replaced)

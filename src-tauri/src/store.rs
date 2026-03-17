@@ -36,7 +36,11 @@ impl StoreWrapper {
     fn set(&self, key: &str, value: Value) {
         if let Ok(store) = self.app.store(STORE_FILE) {
             let _ = store.set(key, value);
-            let _ = store.save();
+            if let Err(e) = store.save() {
+                log::warn!("[store] Failed to persist key '{key}': {e}");
+            }
+        } else {
+            log::warn!("[store] Could not open store to write key '{key}'");
         }
     }
 

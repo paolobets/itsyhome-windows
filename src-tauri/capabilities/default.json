@@ -13,7 +13,7 @@
     "core:window:allow-set-always-on-top",
     "core:window:allow-outer-size",
     "core:window:allow-outer-position",
-    "shell:allow-open",
+    "opener:allow-open-url",
     "store:allow-load",
     "store:allow-get",
     "store:allow-set",

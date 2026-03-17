@@ -24,6 +24,8 @@
   },
   "app": {
     "withGlobalTauri": false,
-    "security": { "csp": null }
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws: wss:"
+    }
   }
 }

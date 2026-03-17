@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{
     image::Image,
     tray::{TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Listener, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuilder,
+    AppHandle, Listener, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_autostart::MacosLauncher;
 
@@ -31,7 +31,7 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             None,
         ))
-        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             // Initialise shared state
             let store = StoreWrapper::new(app.handle().clone());

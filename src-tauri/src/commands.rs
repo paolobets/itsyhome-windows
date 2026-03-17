@@ -127,7 +127,7 @@ pub async fn set_ha_credentials(
     token: String,
 ) -> Result<(), String> {
     {
-        let mut guard = state.lock().unwrap();
+        let guard = state.lock().unwrap();
         guard.store.set_ha_credentials(&url, &token);
     }
     connect_ha_internal(&state, &app).await;
@@ -141,7 +141,7 @@ pub async fn set_launch_at_login(
     enabled: bool,
 ) -> Result<(), String> {
     {
-        let mut guard = state.lock().unwrap();
+        let guard = state.lock().unwrap();
         guard.store.set_launch_at_login(enabled);
     }
     apply_autostart(&app, enabled).await;
@@ -155,7 +155,7 @@ pub async fn set_cameras_enabled(
     enabled: bool,
 ) -> Result<(), String> {
     {
-        let mut guard = state.lock().unwrap();
+        let guard = state.lock().unwrap();
         guard.store.set_cameras_enabled(enabled);
     }
     crate::refresh::trigger_refresh(&app).await;
@@ -221,7 +221,7 @@ pub async fn environments_connect(
     id: String,
 ) -> Result<(), String> {
     {
-        let mut guard = state.lock().unwrap();
+        let guard = state.lock().unwrap();
         guard.store.set_active_environment_id(Some(&id));
     }
     connect_ha_internal(&state, &app).await;
@@ -409,8 +409,8 @@ pub async fn window_close_settings(app: AppHandle) -> Result<(), String> {
 pub async fn window_open_ha_url(state: AppStateArg<'_>, app: AppHandle) -> Result<(), String> {
     let url = state.lock().unwrap().store.get_ha_url();
     if !url.is_empty() {
-        use tauri_plugin_shell::ShellExt as _;
-        app.shell().open(&url, None).map_err(|e| e.to_string())?;
+        use tauri_plugin_opener::OpenerExt as _;
+        app.opener().open_url(&url, None::<&str>).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
