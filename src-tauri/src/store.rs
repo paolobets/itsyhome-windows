@@ -328,6 +328,36 @@ impl StoreWrapper {
 
     // ─── App settings ─────────────────────────────────────────────────────────
 
+    // ─── Notification registration ────────────────────────────────────────────
+
+    pub fn get_notif_registration(&self) -> Option<crate::types::NotifRegistration> {
+        self.get("notifRegistration")
+            .and_then(|v| serde_json::from_value(v).ok())
+    }
+
+    pub fn set_notif_registration(&self, reg: Option<&crate::types::NotifRegistration>) {
+        match reg {
+            Some(r) => self.set(
+                "notifRegistration",
+                serde_json::to_value(r).unwrap_or(Value::Null),
+            ),
+            None => self.set("notifRegistration", Value::Null),
+        }
+    }
+
+    pub fn get_notif_port(&self) -> u16 {
+        self.get("notifPort")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u16)
+            .unwrap_or(7421)
+    }
+
+    pub fn set_notif_port(&self, port: u16) {
+        self.set("notifPort", Value::Number(port.into()));
+    }
+
+    // ─── App settings ─────────────────────────────────────────────────────────
+
     pub fn get_cameras_enabled(&self) -> bool {
         self.get_bool("camerasEnabled", true)
     }

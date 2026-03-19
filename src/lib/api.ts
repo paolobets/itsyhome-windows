@@ -178,6 +178,32 @@ export const api = {
       invoke<void>('config_disconnect'),
   },
 
+  // ── Notifications ─────────────────────────────────────────────────────────
+
+  notifications: {
+    getStatus: (): Promise<{
+      registered: boolean
+      deviceName?: string
+      port: number
+      pushUrl?: string
+      serviceName?: string
+    }> => invoke('notifications_get_status'),
+
+    register: (port?: number): Promise<{
+      registered: boolean
+      deviceName?: string
+      port: number
+      pushUrl?: string
+      serviceName?: string
+    }> => invoke('notifications_register', { port }),
+
+    unregister: (): Promise<void> =>
+      invoke<void>('notifications_unregister'),
+
+    test: (): Promise<void> =>
+      invoke<void>('notifications_test'),
+  },
+
   // ── Window ────────────────────────────────────────────────────────────────
 
   window: {

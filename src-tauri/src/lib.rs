@@ -11,6 +11,7 @@ use tauri_plugin_autostart::MacosLauncher;
 
 pub mod commands;
 pub mod ha;
+pub mod notification;
 pub mod refresh;
 pub mod state;
 pub mod store;
@@ -33,11 +34,25 @@ pub fn run() {
             None,
         ))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             // Initialise shared state
             let store = StoreWrapper::new(app.handle().clone());
             let app_state = Arc::new(Mutex::new(AppState::new(store)));
             app.manage(app_state.clone());
+
+            // Start notification webhook server if already registered
+            {
+                let guard = app_state.lock().unwrap();
+                if let Some(reg) = guard.store.get_notif_registration() {
+                    let push_secret = reg.push_secret.clone();
+                    let port = reg.port;
+                    let app2 = app.handle().clone();
+                    tokio::spawn(async move {
+                        crate::notification::start_webhook_server(port, push_secret, app2).await;
+                    });
+                }
+            }
 
             // Create popup window (hidden initially)
             let popup = WebviewWindowBuilder::new(
@@ -209,6 +224,11 @@ pub fn run() {
             commands::window_close_settings,
             commands::window_open_ha_url,
             commands::window_resize,
+            // Notifications
+            commands::notifications_get_status,
+            commands::notifications_register,
+            commands::notifications_unregister,
+            commands::notifications_test,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ItsyHome");

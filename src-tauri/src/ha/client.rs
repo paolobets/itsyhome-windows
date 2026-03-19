@@ -395,6 +395,18 @@ async fn run_actor(
                                 .send(Message::Text(sub.to_string()))
                                 .await;
 
+                            // Subscribe to persistent_notification_created for desktop toasts
+                            let notif_sub_id = msg_id;
+                            msg_id += 1;
+                            let notif_sub = json!({
+                                "type": "subscribe_events",
+                                "event_type": "persistent_notification_created",
+                                "id": notif_sub_id
+                            });
+                            let _ = write.lock().await
+                                .send(Message::Text(notif_sub.to_string()))
+                                .await;
+
                             // Trigger initial data refresh
                             let app2 = app_clone.clone();
                             tokio::spawn(async move {
@@ -442,6 +454,13 @@ async fn run_actor(
                                     sleep(Duration::from_millis(300)).await;
                                     crate::refresh::trigger_refresh(&app2).await;
                                 }));
+                            } else if et == "persistent_notification_created" {
+                                let data = &v["event"]["data"];
+                                let title = data["title"].as_str().unwrap_or("ItsyHome");
+                                let message = data["message"].as_str().unwrap_or("");
+                                if !message.is_empty() {
+                                    crate::notification::show_toast(&app_clone, title, message);
+                                }
                             }
                         }
 

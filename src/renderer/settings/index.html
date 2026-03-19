@@ -14,6 +14,7 @@
       <button class="nav-item"        data-tab="accessories">Accessories</button>
       <button class="nav-item"        data-tab="cameras">Cameras</button>
       <button class="nav-item"        data-tab="general">General</button>
+      <button class="nav-item"        data-tab="notifications">Notifiche</button>
       <button class="nav-item"        data-tab="about">About</button>
     </nav>
   </aside>
@@ -75,6 +76,60 @@
       <div class="form-group row">
         <label>Launch ItsyHome at login</label>
         <button id="autostart-toggle" class="toggle-btn"></button>
+      </div>
+    </section>
+
+    <!-- Tab: Notifiche -->
+    <section id="tab-notifications" class="tab-pane">
+      <h2>Notifiche push</h2>
+
+      <!-- Status card -->
+      <div id="notif-status-card" class="notif-card">
+        <div class="notif-status-row">
+          <span class="notif-status-label">Stato:</span>
+          <span id="notif-status-badge" class="status-badge disconnected">Non registrato</span>
+        </div>
+        <div id="notif-device-row" class="notif-info-row" style="display:none">
+          <span class="notif-info-label">Dispositivo:</span>
+          <span id="notif-device-name" class="notif-info-value"></span>
+        </div>
+        <div id="notif-service-row" class="notif-info-row" style="display:none">
+          <span class="notif-info-label">Servizio HA:</span>
+          <code id="notif-service-name" class="notif-code"></code>
+        </div>
+        <div id="notif-url-row" class="notif-info-row" style="display:none">
+          <span class="notif-info-label">Push URL:</span>
+          <code id="notif-push-url" class="notif-code notif-url-truncate"></code>
+        </div>
+      </div>
+
+      <!-- Port configuration -->
+      <div id="notif-port-section" class="notif-card" style="margin-top:12px">
+        <div class="form-group">
+          <label for="notif-port">Porta webhook</label>
+          <input id="notif-port" type="text" placeholder="7421" style="max-width:120px" />
+          <small class="hint">La porta deve essere aperta nel firewall di Windows per ricevere notifiche da HA.</small>
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div class="form-actions" style="margin-top:16px">
+        <button id="btn-notif-register"   class="btn-primary">Registra con HA</button>
+        <button id="btn-notif-unregister" class="btn-danger"   style="display:none">Annulla registrazione</button>
+        <button id="btn-notif-test"       class="btn-secondary">Testa notifica</button>
+      </div>
+      <p id="notif-result" class="test-result"></p>
+
+      <!-- Instructions -->
+      <div class="notif-instructions">
+        <p class="hint" style="margin-top:16px">
+          Dopo la registrazione usa il servizio indicato sopra nelle automazioni HA per
+          inviare notifiche a questo PC. Esempio di azione automazione:
+        </p>
+        <pre class="notif-code-block">service: notify.mobile_app_&lt;nome_pc&gt;
+data:
+  title: "Attenzione"
+  message: "Porta aperta"</pre>
       </div>
     </section>
 

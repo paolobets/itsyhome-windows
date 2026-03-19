@@ -514,6 +514,83 @@ small.hint, .hint {
   margin-bottom: 14px;
 }
 
+/* ─── Notifications tab ──────────────────────────────────────────────────── */
+.notif-card {
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.notif-status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.notif-status-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-label);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.notif-info-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.notif-info-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  min-width: 90px;
+}
+
+.notif-info-value {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.notif-code {
+  font-family: 'Cascadia Code', 'Consolas', monospace;
+  font-size: 11px;
+  background: var(--surface-hi);
+  padding: 2px 6px;
+  border-radius: 5px;
+  color: var(--accent);
+  word-break: break-all;
+}
+
+.notif-url-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 340px;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.notif-instructions {
+  margin-top: 4px;
+}
+
+.notif-code-block {
+  font-family: 'Cascadia Code', 'Consolas', monospace;
+  font-size: 11px;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-top: 8px;
+  color: var(--text-dim);
+  white-space: pre;
+  overflow-x: auto;
+}
+
 /* ─── About ──────────────────────────────────────────────────────────────── */
 .about-content {
   text-align: center;

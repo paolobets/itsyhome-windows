@@ -84,6 +84,7 @@ window.addEventListener('DOMContentLoaded', () => {
   setupTabs()
   load()
   api.ha.onStatusChange(() => renderEnvList())
+  renderNotificationsTab()
 })
 
 async function load() {
@@ -649,6 +650,108 @@ function renderGeneralTab() {
     config.launchAtLogin = !config.launchAtLogin
     updateToggle(btn, config.launchAtLogin)
     await api.config.setLaunchAtLogin(config.launchAtLogin)
+  })
+}
+
+// ─── Notifications tab ────────────────────────────────────────────────────────
+
+async function renderNotificationsTab() {
+  const portInput      = document.getElementById('notif-port')       as HTMLInputElement
+  const statusBadge    = document.getElementById('notif-status-badge')!
+  const deviceRow      = document.getElementById('notif-device-row')!
+  const deviceName     = document.getElementById('notif-device-name')!
+  const serviceRow     = document.getElementById('notif-service-row')!
+  const serviceName    = document.getElementById('notif-service-name')!
+  const urlRow         = document.getElementById('notif-url-row')!
+  const pushUrl        = document.getElementById('notif-push-url')!
+  const btnRegister    = document.getElementById('btn-notif-register')   as HTMLButtonElement
+  const btnUnregister  = document.getElementById('btn-notif-unregister') as HTMLButtonElement
+  const btnTest        = document.getElementById('btn-notif-test')       as HTMLButtonElement
+  const resultEl       = document.getElementById('notif-result')!
+
+  function applyStatus(s: {
+    registered: boolean
+    deviceName?: string
+    port: number
+    pushUrl?: string
+    serviceName?: string
+  }) {
+    portInput.value = String(s.port)
+
+    if (s.registered) {
+      statusBadge.className = 'status-badge connected'
+      statusBadge.textContent = 'Registrato'
+      deviceRow.style.display = ''
+      deviceName.textContent = s.deviceName ?? ''
+      serviceRow.style.display = ''
+      serviceName.textContent = s.serviceName ?? ''
+      urlRow.style.display = ''
+      pushUrl.textContent  = s.pushUrl ?? ''
+      pushUrl.title        = s.pushUrl ?? ''
+      btnRegister.style.display   = 'none'
+      btnUnregister.style.display = ''
+    } else {
+      statusBadge.className = 'status-badge disconnected'
+      statusBadge.textContent = 'Non registrato'
+      deviceRow.style.display  = 'none'
+      serviceRow.style.display = 'none'
+      urlRow.style.display     = 'none'
+      btnRegister.style.display   = ''
+      btnUnregister.style.display = 'none'
+    }
+  }
+
+  function showResult(msg: string, ok: boolean) {
+    resultEl.className   = ok ? 'test-result ok' : 'test-result err'
+    resultEl.textContent = msg
+  }
+
+  // Load initial status
+  try {
+    const status = await api.notifications.getStatus()
+    applyStatus(status)
+  } catch {
+    // not critical
+  }
+
+  btnRegister.addEventListener('click', async () => {
+    const port = parseInt(portInput.value.trim(), 10) || 7421
+    btnRegister.disabled = true
+    resultEl.className = 'test-result'
+    resultEl.textContent = ''
+    try {
+      const status = await api.notifications.register(port)
+      applyStatus(status)
+      showResult('Registrazione completata. Usa il servizio indicato nelle automazioni HA.', true)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      showResult(`Errore: ${msg}`, false)
+    } finally {
+      btnRegister.disabled = false
+    }
+  })
+
+  btnUnregister.addEventListener('click', async () => {
+    // eslint-disable-next-line no-alert
+    if (!confirm('Annullare la registrazione notifiche?')) return
+    try {
+      await api.notifications.unregister()
+      applyStatus({ registered: false, port: parseInt(portInput.value, 10) || 7421 })
+      showResult('Registrazione rimossa.', true)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      showResult(`Errore: ${msg}`, false)
+    }
+  })
+
+  btnTest.addEventListener('click', async () => {
+    try {
+      await api.notifications.test()
+      showResult('Notifica di test inviata.', true)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      showResult(`Errore: ${msg}`, false)
+    }
   })
 }
 

@@ -259,3 +259,26 @@ pub struct TestConnectionResult {
     pub entity_count: Option<u32>,
     pub error: Option<String>,
 }
+
+// ─── Notification registration ────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotifRegistration {
+    /// HA's webhook_id returned after mobile_app registration.
+    pub webhook_id: String,
+    /// Our own random secret used in the push_url path for security.
+    pub push_secret: String,
+    pub device_name: String,
+    pub port: u16,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotifStatus {
+    pub registered: bool,
+    pub device_name: Option<String>,
+    pub port: u16,
+    pub push_url: Option<String>,
+    pub service_name: Option<String>,
+}

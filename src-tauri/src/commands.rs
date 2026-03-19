@@ -5,9 +5,12 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use uuid::Uuid;
+
 use crate::ha::client::{spawn_ha_task, test_connection as ha_test_connection};
+use crate::notification::{get_local_ip, start_webhook_server};
 use crate::state::AppState;
-use crate::types::{AppConfig, AppEntity, HaEnvironment, MenuData, TestConnectionResult};
+use crate::types::{AppConfig, AppEntity, HaEnvironment, MenuData, NotifRegistration, NotifStatus, TestConnectionResult};
 
 type AppStateArg<'a> = State<'a, Arc<Mutex<AppState>>>;
 
@@ -446,6 +449,154 @@ pub async fn window_resize(
     // anchored above/below the taskbar correctly after every height change.
     reposition_from_tray(&state, &popup)?;
 
+    Ok(())
+}
+
+// ─── Notifications ────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn notifications_get_status(state: AppStateArg<'_>) -> Result<NotifStatus, String> {
+    let guard = state.lock().unwrap();
+    let port = guard.store.get_notif_port();
+    let reg = guard.store.get_notif_registration();
+    let local_ip = get_local_ip();
+
+    Ok(match reg {
+        Some(r) => NotifStatus {
+            registered: true,
+            device_name: Some(r.device_name.clone()),
+            port: r.port,
+            push_url: Some(format!(
+                "http://{}:{}/push/{}",
+                local_ip, r.port, r.push_secret
+            )),
+            service_name: Some(format!(
+                "notify.mobile_app_{}",
+                r.device_name.to_lowercase().replace([' ', '-'], "_")
+            )),
+        },
+        None => NotifStatus {
+            registered: false,
+            device_name: None,
+            port,
+            push_url: None,
+            service_name: None,
+        },
+    })
+}
+
+#[tauri::command]
+pub async fn notifications_register(
+    state: AppStateArg<'_>,
+    app: AppHandle,
+    port: Option<u16>,
+) -> Result<NotifStatus, String> {
+    let (ha_url, ha_token) = {
+        let guard = state.lock().unwrap();
+        (guard.store.get_ha_url(), guard.store.get_ha_token())
+    };
+
+    if ha_url.is_empty() || ha_token.is_empty() {
+        return Err("Not connected to Home Assistant".to_owned());
+    }
+
+    let port = port.unwrap_or_else(|| state.lock().unwrap().store.get_notif_port());
+    let local_ip = get_local_ip();
+    let push_secret = Uuid::new_v4().to_string();
+    let push_url = format!("http://{}:{}/push/{}", local_ip, port, push_secret);
+
+    // Get device name from hostname
+    let hostname = std::env::var("COMPUTERNAME")
+        .unwrap_or_else(|_| "itsyhome-pc".to_string());
+    let device_name = hostname.clone();
+    let device_id = format!("itsyhome_{}", hostname.to_lowercase().replace([' ', '-'], "_"));
+
+    // Register with HA mobile_app integration
+    let client = reqwest::Client::new();
+    let payload = serde_json::json!({
+        "device_id": device_id,
+        "app_id": "com.itsyhome.app",
+        "app_name": "ItsyHome",
+        "app_version": "2.0.1",
+        "device_name": device_name,
+        "manufacturer": "ItsyHome",
+        "model": "Windows Desktop",
+        "os_name": "Windows",
+        "os_version": "11",
+        "supports_encryption": false,
+        "app_data": {
+            "push_url": push_url
+        }
+    });
+
+    let resp = client
+        .post(format!("{}/api/mobile_app/registrations", ha_url.trim_end_matches('/')))
+        .header("Authorization", format!("Bearer {}", ha_token))
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("Registration request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("HA registration failed ({status}): {body}"));
+    }
+
+    let data: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse registration response: {e}"))?;
+
+    let webhook_id = data["webhook_id"]
+        .as_str()
+        .ok_or_else(|| "No webhook_id in HA response".to_owned())?
+        .to_string();
+
+    let reg = NotifRegistration {
+        webhook_id,
+        push_secret: push_secret.clone(),
+        device_name: device_name.clone(),
+        port,
+    };
+
+    {
+        let guard = state.lock().unwrap();
+        guard.store.set_notif_registration(Some(&reg));
+        guard.store.set_notif_port(port);
+    }
+
+    // Start webhook server in background
+    let push_secret_clone = push_secret.clone();
+    let app_clone = app.clone();
+    tokio::spawn(async move {
+        start_webhook_server(port, push_secret_clone, app_clone).await;
+    });
+
+    let service_name = format!(
+        "notify.mobile_app_{}",
+        device_name.to_lowercase().replace([' ', '-'], "_")
+    );
+
+    Ok(NotifStatus {
+        registered: true,
+        device_name: Some(device_name),
+        port,
+        push_url: Some(format!("http://{}:{}/push/{}", local_ip, port, push_secret)),
+        service_name: Some(service_name),
+    })
+}
+
+#[tauri::command]
+pub async fn notifications_unregister(state: AppStateArg<'_>) -> Result<(), String> {
+    state.lock().unwrap().store.set_notif_registration(None);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn notifications_test(_state: AppStateArg<'_>, app: AppHandle) -> Result<(), String> {
+    crate::notification::show_toast(&app, "ItsyHome", "Notifiche funzionanti!");
     Ok(())
 }
 
