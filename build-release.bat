@@ -1,10 +1,10 @@
 @echo off
-set PATH=%USERPROFILE%\.cargo\bin;%PATH%
+set PATH=%USERPROFILE%\.cargo\bin;C:\Program Files\nodejs;%PATH%
 cd /d C:\Users\Betse\itsyhome-windows
 echo [1/3] Building frontend (Vite)...
 call npm run build:vite
 if errorlevel 1 ( echo Vite build FAILED & exit /b 1 )
-echo [2/3] Building Rust binary...
+echo [2/3] Building Rust binary (with custom-protocol)...
 cd src-tauri
 cargo build --release
 if errorlevel 1 ( echo Cargo build FAILED & exit /b 1 )
