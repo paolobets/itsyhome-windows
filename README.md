@@ -1,11 +1,12 @@
 # ItsyHome for Windows
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/paolobets/itsyhome-windows/releases)
+[![Version](https://img.shields.io/badge/version-2.1.1-blue.svg)](https://github.com/paolobets/itsyhome-windows/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Client per **Home Assistant** nella system tray di Windows.
 Controlla luci, termostati, cover, scene e molto altro direttamente dalla barra delle applicazioni, senza aprire il browser.
 
+**Novità in v2.1**: Notifiche push da Home Assistant tramite registrazione mobile app, WebSocket persistente, e webhook locale configurable.
 **Novità in v2.0**: Migrato da Electron a Tauri 2.0 — installer 22x più leggero, RAM ridotto dell'80%, startup 4x più veloce.
 
 ---
@@ -37,6 +38,12 @@ Controlla luci, termostati, cover, scene e molto altro direttamente dalla barra 
   - 📷 **Camere** — anteprima MJPEG integrata nel popup (attivabile/disattivabile)
   - ✨ **Scene** — attivazione con un clic
 - **Aggiornamento in tempo reale** via WebSocket (nessun polling)
+
+### Notifiche push
+- **Tre canali di notifica** disponibili contemporaneamente:
+  - **Canale WebSocket** (sempre attivo): sottoscrizione a `persistent_notification_created` di Home Assistant. Funziona subito con qualunque automazione HA che usa `persistent_notification.create`.
+  - **Registrazione mobile app**: creazione di `notify.mobile_app_itsyhome_<hostname>` in HA automazioni (come l'app companion ufficiale). Un clic su "Registra con Home Assistant" nella sezione Notifiche.
+  - **Webhook locale** (Axum, porta default 7421): Home Assistant invia notifiche direttamente all'app quando `notify.mobile_app_*` è chiamato in un'automazione. Richiede una regola nel firewall di Windows per la porta configurata.
 
 ### Multi-Ambiente
 - Gestione di **più server Home Assistant** con credenziali separate
@@ -74,6 +81,53 @@ Controlla luci, termostati, cover, scene e molto altro direttamente dalla barra 
 
 Scarica `ItsyHome-Setup-x.x.x.exe` dalla sezione **Releases** ed eseguilo.
 L'installer NSIS permette di scegliere la cartella di installazione e crea un collegamento nel menu Start.
+
+---
+
+## Configurazione notifiche
+
+### Setup rapido (canale WebSocket - nessuna configurazione richiesta)
+Le notifiche via WebSocket funzionano subito: qualunque automazione HA che chiama `persistent_notification.create` arriverà all'app.
+
+Esempio di automazione HA:
+```yaml
+alias: Test notifica
+trigger:
+  platform: time_pattern
+  minutes: "/10"
+action:
+  - service: persistent_notification.create
+    data:
+      title: "Test ItsyHome"
+      message: "Notifica di prova"
+```
+
+### Setup avanzato (registrazione mobile app + webhook)
+Per creare un servizio `notify.mobile_app_*` personalizzato:
+
+1. **Installa ItsyHome** ed eseguilo.
+2. Apri **Impostazioni → Notifiche**.
+3. Configura la porta webhook (default **7421**) se necessario.
+4. Clicca **"Registra con Home Assistant"**.
+5. Dopo il successo, vedrai il nome del servizio: es. `notify.mobile_app_mypc`.
+6. Apri il firewall di Windows per la porta configurata (7421 di default).
+   - Opzionalmente usa `netsh advfirewall firewall` per aggiungere la regola in automatico (vedi documentazione Tauri).
+7. Usa il servizio nelle tue automazioni HA:
+
+```yaml
+alias: Allarme rilevato
+trigger:
+  platform: state
+  entity_id: binary_sensor.entrance_motion
+  to: 'on'
+action:
+  - service: notify.mobile_app_mypc
+    data:
+      title: "Allarme"
+      message: "Movimento rilevato all'ingresso"
+```
+
+**Nota**: La porta del webhook deve essere raggiungibile dal server Home Assistant (solitamente nella stessa rete locale). Se HA è in cloud o in rete diversa, la connessione non avrà successo.
 
 ---
 
@@ -147,6 +201,9 @@ Miglioramenti significativi rispetto a Electron v1.x:
 
 | Versione | Note |
 |----------|------|
+| 2.1.1    | Fix: mobile app registration schema validation — HA richiede `push_token` e `push_url` insieme nel gruppo `app_data` |
+| 2.1.0    | Notifiche push da Home Assistant: canale WebSocket persistente, registrazione mobile app con `notify.mobile_app_*`, webhook locale (Axum) configurabile |
+| 2.0.1    | Fix: custom-protocol Cargo feature per embedded frontend, versioning manifests, build script PATH |
 | 2.0.0    | Migrazione da Electron a Tauri 2.0 — 22x installer più piccolo, 5x meno RAM, 4x startup più veloce |
 | 1.0.3    | Bug fix & ottimizzazioni: reject pending WebSocket su disconnect, race condition animationend, interval leak telecamere, pointercancel hue picker, O(n²)→O(n) ordinamento aree/dispositivi, singolo loop stati HA, resize RAF debounce, WeakMap draw fn |
 | 1.0.2    | Redesign UX popup: animazioni fade + slide pannello dettaglio, picker colore 2D canvas per luci RGB, slider luminosità inline, bottone colore ring-style, badge con icone 🔔/⬆ |

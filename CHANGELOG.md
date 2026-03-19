@@ -5,6 +5,53 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [2.1.1] - 2026-03-19
+
+### Fixed
+- **Mobile app registration schema validation** — HA `mobile_app/registrations` endpoint requires both `push_token` and `push_url` to be included in the `app_data` inclusion group; registration was failing with 400 Bad Request. Fixed by adding `push_token = device_id` to satisfy the schema validation. Now `notify.mobile_app_itsyhome_<hostname>` service is created correctly in HA automations.
+
+---
+
+## [2.1.0] - 2026-03-19
+
+### Added
+- **Push notifications from Home Assistant** — Three notification channels now available:
+  1. **WebSocket channel** (sempre attivo): Subscribe to `persistent_notification_created` HA events. Works immediately with any HA automation using `persistent_notification.create` service — no registration required.
+  2. **Mobile app registration**: POST to `/api/mobile_app/registrations` creates `notify.mobile_app_itsyhome_<hostname>` service in HA automations, exactly like the official HA companion app. One-click setup from Settings > Notifiche tab.
+  3. **Local webhook server** (Axum backend, configurable port default 7421): HA pushes notifications directly to the app when `notify.mobile_app_*` is called in an automation. Requires Windows Firewall rule to allow inbound traffic on the configured port.
+
+- **Notifications Settings tab** — new UI section for notification management:
+  - Register/Unregister buttons to manage mobile app registration
+  - Port configuration field (default 7421)
+  - Status card showing device name, HA service name (`notify.mobile_app_*`), and webhook push URL after registration
+  - Test notification button
+  - Built-in example HA automation YAML
+
+Example Home Assistant automation using the registered service:
+```yaml
+alias: Alarm triggered
+trigger:
+  platform: state
+  entity_id: binary_sensor.front_door
+  to: 'on'
+action:
+  - service: notify.mobile_app_itsyhome_MYPC
+    data:
+      title: "Alarm triggered"
+      message: "Motion detected at entrance"
+```
+
+---
+
+## [2.0.1] - 2026-03-19
+
+### Fixed
+- **App fails on clean installation** — Missing `custom-protocol` Cargo feature meant embedded frontend was not served correctly. `tauri build` adds the feature automatically but direct `cargo build --release` does not. Added `custom-protocol` feature explicitly to `Cargo.toml` so frontend is always served via `tauri://localhost/` regardless of build method.
+- **Version number misalignment** — `package.json`, `Cargo.toml`, `tauri.conf.json`, and git tag were not in sync (files at 2.0.0, git tag v2.0.1). All manifests bumped to 2.0.1 for consistency.
+- **Build script Node.js PATH** — `build-release.bat` updated with correct Node.js PATH for build pipeline.
+
+---
+
 ## [2.0.0] - 2026-03-19 (Patch 2)
 
 ### Fixed
