@@ -525,6 +525,7 @@ pub async fn notifications_register(
         "os_version": "11",
         "supports_encryption": false,
         "app_data": {
+            "push_token": device_id,
             "push_url": push_url
         }
     });
