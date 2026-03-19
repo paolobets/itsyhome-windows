@@ -31,7 +31,7 @@ pub struct HaDevice {
 pub struct HaEntityEntry {
     pub entity_id: String,
     pub name: Option<String>,
-    pub platform: String,
+    pub platform: Option<String>,
     pub device_id: Option<String>,
     pub area_id: Option<String>,
     pub disabled_by: Option<String>,

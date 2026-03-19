@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use tauri::{
     image::Image,
+    menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Listener, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuilder,
 };
@@ -82,11 +83,24 @@ pub fn run() {
                 });
             }
 
+            // Build tray context menu (right-click)
+            let tray_menu = Menu::with_items(app, &[
+                &MenuItem::with_id(app, "settings", "Impostazioni", true, None::<&str>)?,
+                &PredefinedMenuItem::separator(app)?,
+                &MenuItem::with_id(app, "quit", "Esci da ItsyHome", true, None::<&str>)?,
+            ])?;
+
             // Build tray icon
             let tray_icon = load_tray_icon(app.handle(), "default");
             TrayIconBuilder::with_id("tray")
                 .icon(tray_icon)
                 .tooltip("ItsyHome – Home Assistant")
+                .menu(&tray_menu)
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "settings" => { open_settings_window(app).ok(); }
+                    "quit"     => { app.exit(0); }
+                    _          => {}
+                })
                 .on_tray_icon_event({
                     let app_handle = app.handle().clone();
                     move |_tray, event| {
@@ -218,18 +232,22 @@ pub fn show_popup(app: &AppHandle) {
         None => return,
     };
 
-    // Reposition relative to last tray click
-    if let Ok(size) = popup.outer_size() {
-        if let Some(tray_pos) = app
-            .state::<Arc<Mutex<AppState>>>()
-            .lock()
-            .unwrap()
-            .last_tray_pos
-        {
-            if let Ok(Some(monitor)) = popup.current_monitor() {
-                let pos = calc_popup_position(tray_pos, size, &monitor);
-                let _ = popup.set_position(pos);
-            }
+    // Reposition relative to last tray click.
+    // Use the known logical width (300px × scale) rather than outer_size() so
+    // the X calculation is stable even if the size was changed while hidden.
+    if let Some(tray_pos) = app
+        .state::<Arc<Mutex<AppState>>>()
+        .lock()
+        .unwrap()
+        .last_tray_pos
+    {
+        if let Ok(Some(monitor)) = popup.current_monitor() {
+            let scale = popup.scale_factor().unwrap_or(1.0);
+            let known_phys_w = (300.0_f64 * scale).round() as u32;
+            let actual_h    = popup.outer_size().map(|s| s.height).unwrap_or(54);
+            let size = tauri::PhysicalSize::new(known_phys_w, actual_h);
+            let pos  = calc_popup_position(tray_pos, size, &monitor);
+            let _ = popup.set_position(pos);
         }
     }
 

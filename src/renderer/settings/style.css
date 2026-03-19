@@ -274,12 +274,13 @@ small.hint, .hint {
   background: var(--surface);
   border: 1px solid var(--border-subtle);
   cursor: default;
+  user-select: none;
   transition: background var(--t), border-color var(--t);
 }
 .acc-row:hover     { background: var(--surface-hi); }
 .acc-row.dragging  { opacity: 0.4; }
 .acc-row.drag-over { border-color: var(--accent); background: var(--surface-hi); }
-.acc-drag   { cursor: grab; color: var(--text-label); font-size: 14px; }
+.acc-drag   { cursor: grab; color: var(--text-label); font-size: 14px; -webkit-user-drag: element; }
 .acc-icon   { font-size: 16px; width: 22px; text-align: center; }
 .acc-name   { flex: 1; font-size: 13px; color: var(--text); transition: color var(--t); }
 .acc-name.name-hidden { color: var(--text-dim); }
@@ -329,7 +330,7 @@ small.hint, .hint {
   border-bottom: 1px solid var(--border-subtle);
   user-select: none;
 }
-.area-header[draggable="true"] { cursor: grab; }
+.area-header[draggable="true"] { cursor: grab; -webkit-user-drag: element; }
 .area-header.dragging { opacity: 0.35; }
 
 /* Icon button inside area header */
@@ -346,6 +347,12 @@ small.hint, .hint {
   transition: background var(--t);
 }
 .area-icon-btn:hover { background: rgba(128,128,128,0.18); }
+
+/* Area-level eye button — sits left of the collapse chevron */
+.area-eye-btn {
+  margin-left: auto;
+  margin-right: 2px;
+}
 
 /* Collapse chevron */
 .area-collapse-btn {

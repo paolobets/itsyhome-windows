@@ -223,7 +223,7 @@ pub struct MenuData {
     pub favorites: Vec<AppEntity>,
     pub rooms: Vec<Room>,
     pub scenes: Vec<SceneEntity>,
-    pub cameras: Vec<CameraEntity>,
+    pub cameras: Vec<AppEntity>,
     pub temp_unit: String,
     pub notification_count: u32,
     pub update_count: u32,

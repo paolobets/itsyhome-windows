@@ -9,10 +9,65 @@ let rooms: Array<{ areaId: string; name: string }> = []
 let areaIcons:  Record<string, string> = {}
 let favorites:  string[] = []
 
-// Drag state
-let dragType:          'area' | 'device' | null = null
-let dragSourceAreaId:  string | null            = null
-let dragSourceEntId:   string | null            = null
+// ─── Pointer-based drag (replaces HTML5 DnD — unreliable in WebView2) ────────
+function setupPointerDrag<T extends HTMLElement>(opts: {
+  handle:     HTMLElement
+  dragEl:     HTMLElement
+  getTargets: () => T[]
+  onMove:     (target: T | null) => void
+  onDrop:     (target: T) => Promise<void> | void
+}): void {
+  const { handle, dragEl, getTargets, onMove, onDrop } = opts
+  handle.style.touchAction = 'none'
+  handle.addEventListener('pointerdown', (e: PointerEvent) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    handle.setPointerCapture(e.pointerId)
+    let active = false
+    let lastTarget: T | null = null
+    const startX = e.clientX, startY = e.clientY
+
+    const findTarget = (x: number, y: number): T | null => {
+      dragEl.style.pointerEvents = 'none'
+      const under = document.elementFromPoint(x, y)
+      dragEl.style.pointerEvents = ''
+      if (!under) return null
+      for (const t of getTargets()) {
+        if (t === dragEl) continue
+        if (t === under || t.contains(under)) return t
+      }
+      return null
+    }
+
+    const onMoveHandler = (ev: PointerEvent) => {
+      if (!active) {
+        if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 5) return
+        active = true
+        dragEl.classList.add('dragging')
+      }
+      const target = findTarget(ev.clientX, ev.clientY)
+      if (target !== lastTarget) {
+        onMove(null)
+        lastTarget = target
+        if (target) onMove(target)
+      }
+    }
+
+    const onUpHandler = (ev: PointerEvent) => {
+      handle.removeEventListener('pointermove', onMoveHandler)
+      handle.removeEventListener('pointerup', onUpHandler)
+      handle.removeEventListener('pointercancel', onUpHandler)
+      dragEl.classList.remove('dragging')
+      const t = active ? findTarget(ev.clientX, ev.clientY) : null
+      onMove(null)
+      if (t) onDrop(t)
+    }
+
+    handle.addEventListener('pointermove', onMoveHandler)
+    handle.addEventListener('pointerup', onUpHandler)
+    handle.addEventListener('pointercancel', onUpHandler)
+  })
+}
 
 // UI state for accessories tab
 const areaCollapsed         = new Map<string, boolean>()
@@ -318,7 +373,6 @@ function buildFavoritesGroup(favIds: string[], entityMap: Map<string, AppEntity>
 
     const row = document.createElement('div')
     row.className = 'acc-row'
-    row.draggable = true
     row.dataset.entityId = entityId
 
     const isHidden = hiddenSet.has(entityId)
@@ -330,38 +384,25 @@ function buildFavoritesGroup(favIds: string[], entityMap: Map<string, AppEntity>
     `
     row.appendChild(buildEyeBtn(entity, row))
 
-    row.addEventListener('dragstart', e => {
-      dragType         = 'device'
-      dragSourceEntId  = entityId
-      dragSourceAreaId = FAVORITES_AREA
-      e.dataTransfer!.effectAllowed = 'move'
-      row.classList.add('dragging')
-    })
-    row.addEventListener('dragend', () => {
-      row.classList.remove('dragging')
-      dragType = null; dragSourceEntId = null; dragSourceAreaId = null
-    })
-    row.addEventListener('dragover', e => {
-      if (dragType !== 'device' || dragSourceEntId === entityId) return
-      if (dragSourceAreaId !== FAVORITES_AREA) return
-      e.preventDefault()
-      e.dataTransfer!.dropEffect = 'move'
-      row.classList.add('drag-over')
-    })
-    row.addEventListener('dragleave', () => row.classList.remove('drag-over'))
-    row.addEventListener('drop', async e => {
-      e.preventDefault()
-      row.classList.remove('drag-over')
-      if (dragType !== 'device' || !dragSourceEntId || dragSourceEntId === entityId) return
-      if (dragSourceAreaId !== FAVORITES_AREA) return
-      const srcIdx = favorites.indexOf(dragSourceEntId)
-      const dstIdx = favorites.indexOf(entityId)
-      if (srcIdx < 0 || dstIdx < 0) return
-      const [moved] = favorites.splice(srcIdx, 1)
-      favorites.splice(dstIdx, 0, moved)
-      dragType = null; dragSourceEntId = null; dragSourceAreaId = null
-      await api.accessories.setFavoritesOrder(favorites)
-      renderAccessoriesTab()
+    setupPointerDrag({
+      handle:     row.querySelector<HTMLElement>('.acc-drag')!,
+      dragEl:     row,
+      getTargets: () => [...entityList.querySelectorAll<HTMLElement>('.acc-row')],
+      onMove:     (t) => {
+        entityList.querySelectorAll('.acc-row').forEach(r => r.classList.remove('drag-over'))
+        t?.classList.add('drag-over')
+      },
+      onDrop: async (t) => {
+        const targetId = t.dataset.entityId
+        if (!targetId || targetId === entityId) return
+        const srcIdx = favorites.indexOf(entityId)
+        const dstIdx = favorites.indexOf(targetId)
+        if (srcIdx < 0 || dstIdx < 0) return
+        const [moved] = favorites.splice(srcIdx, 1)
+        favorites.splice(dstIdx, 0, moved)
+        await api.accessories.setFavoritesOrder(favorites)
+        renderAccessoriesTab()
+      },
     })
 
     entityList.appendChild(row)
@@ -419,6 +460,7 @@ function buildAreaGroup(areaId: string, areaName: string, entities: AppEntity[])
     iconBtn.className = 'area-icon-btn'
     iconBtn.textContent = currentIcon
     iconBtn.title = 'Change icon'
+    iconBtn.draggable = false
     iconBtn.addEventListener('click', e => {
       e.stopPropagation()
       const isOpen = iconPickerOpenAreaId === areaId
@@ -442,10 +484,36 @@ function buildAreaGroup(areaId: string, areaName: string, entities: AppEntity[])
   countEl.textContent = String(entities.length)
   header.appendChild(countEl)
 
+  // ── Area hide/show button ─────────────────────────────────────────────
+  const areaEyeBtn = document.createElement('button')
+  areaEyeBtn.className = 'acc-eye-btn area-eye-btn'
+  areaEyeBtn.draggable = false
+  const allHidden = () => entities.every(en => hiddenSet.has(en.entityId))
+  const syncAreaEye = () => {
+    const hidden = allHidden()
+    areaEyeBtn.classList.toggle('active', !hidden)
+    areaEyeBtn.title = hidden ? 'Area nascosta – click per mostrare' : 'Area visibile – click per nascondere'
+    areaEyeBtn.textContent = '👁'
+  }
+  syncAreaEye()
+  areaEyeBtn.addEventListener('click', async e => {
+    e.stopPropagation()
+    const hide = !allHidden()
+    entities.forEach(en => {
+      if (hide) hiddenSet.add(en.entityId)
+      else      hiddenSet.delete(en.entityId)
+    })
+    await api.accessories.setHidden([...hiddenSet])
+    syncAreaEye()
+    renderAccessoriesTab()
+  })
+  header.appendChild(areaEyeBtn)
+
   const collapseBtn = document.createElement('button')
   collapseBtn.className = 'area-collapse-btn'
   collapseBtn.title = isCollapsed ? 'Expand' : 'Collapse'
   collapseBtn.textContent = '▾'
+  collapseBtn.draggable = false
   if (isCollapsed) group.classList.add('collapsed')
   collapseBtn.addEventListener('click', e => {
     e.stopPropagation()
@@ -462,39 +530,25 @@ function buildAreaGroup(areaId: string, areaName: string, entities: AppEntity[])
   header.appendChild(collapseBtn)
 
   if (isDraggable) {
-    header.addEventListener('dragstart', e => {
-      dragType         = 'area'
-      dragSourceAreaId = areaId
-      e.dataTransfer!.effectAllowed = 'move'
-      header.classList.add('dragging')
-    })
-    header.addEventListener('dragend', () => {
-      header.classList.remove('dragging')
-      dragType         = null
-      dragSourceAreaId = null
-    })
-
-    group.addEventListener('dragover', e => {
-      if (dragType !== 'area' || dragSourceAreaId === areaId) return
-      e.preventDefault()
-      e.dataTransfer!.dropEffect = 'move'
-      group.classList.add('drag-over-area')
-    })
-    group.addEventListener('dragleave', e => {
-      if (!group.contains(e.relatedTarget as Node)) group.classList.remove('drag-over-area')
-    })
-    group.addEventListener('drop', async e => {
-      e.preventDefault()
-      group.classList.remove('drag-over-area')
-      if (dragType !== 'area' || !dragSourceAreaId || dragSourceAreaId === areaId) return
-      const srcIdx = rooms.findIndex(r => r.areaId === dragSourceAreaId)
-      const dstIdx = rooms.findIndex(r => r.areaId === areaId)
-      if (srcIdx < 0 || dstIdx < 0) return
-      const [moved] = rooms.splice(srcIdx, 1)
-      rooms.splice(dstIdx, 0, moved)
-      dragType = null; dragSourceAreaId = null
-      await api.accessories.setRoomOrder(rooms.map(r => r.areaId))
-      renderAccessoriesTab()
+    setupPointerDrag({
+      handle:     dragHandle,
+      dragEl:     header,
+      getTargets: () => [...document.querySelectorAll<HTMLElement>('.area-group[data-area-id]')],
+      onMove:     (t) => {
+        document.querySelectorAll('.area-group').forEach(g => g.classList.remove('drag-over-area'))
+        t?.classList.add('drag-over-area')
+      },
+      onDrop: async (t) => {
+        const targetAreaId = t.dataset.areaId
+        if (!targetAreaId || targetAreaId === areaId || targetAreaId === '') return
+        const srcIdx = rooms.findIndex(r => r.areaId === areaId)
+        const dstIdx = rooms.findIndex(r => r.areaId === targetAreaId)
+        if (srcIdx < 0 || dstIdx < 0) return
+        const [moved] = rooms.splice(srcIdx, 1)
+        rooms.splice(dstIdx, 0, moved)
+        await api.accessories.setRoomOrder(rooms.map(r => r.areaId))
+        renderAccessoriesTab()
+      },
     })
   }
 
@@ -534,7 +588,6 @@ function buildAreaGroup(areaId: string, areaName: string, entities: AppEntity[])
   for (const entity of entities) {
     const row = document.createElement('div')
     row.className = 'acc-row'
-    row.draggable = true
     row.dataset.entityId = entity.entityId
 
     const isHidden = hiddenSet.has(entity.entityId)
@@ -546,41 +599,28 @@ function buildAreaGroup(areaId: string, areaName: string, entities: AppEntity[])
     `
     row.appendChild(buildEyeBtn(entity, row))
 
-    row.addEventListener('dragstart', e => {
-      dragType          = 'device'
-      dragSourceEntId   = entity.entityId
-      dragSourceAreaId  = areaId
-      e.dataTransfer!.effectAllowed = 'move'
-      row.classList.add('dragging')
-    })
-    row.addEventListener('dragend', () => {
-      row.classList.remove('dragging')
-      dragType = null; dragSourceEntId = null; dragSourceAreaId = null
-    })
-    row.addEventListener('dragover', e => {
-      if (dragType !== 'device' || dragSourceEntId === entity.entityId) return
-      if (dragSourceAreaId !== areaId) return
-      e.preventDefault()
-      e.dataTransfer!.dropEffect = 'move'
-      row.classList.add('drag-over')
-    })
-    row.addEventListener('dragleave', () => row.classList.remove('drag-over'))
-    row.addEventListener('drop', async e => {
-      e.preventDefault()
-      row.classList.remove('drag-over')
-      if (dragType !== 'device' || !dragSourceEntId || dragSourceEntId === entity.entityId) return
-      if (dragSourceAreaId !== areaId) return
-      const srcIdx = allEntities.findIndex(en => en.entityId === dragSourceEntId)
-      const dstIdx = allEntities.findIndex(en => en.entityId === entity.entityId)
-      if (srcIdx < 0 || dstIdx < 0) return
-      const [moved] = allEntities.splice(srcIdx, 1)
-      allEntities.splice(dstIdx, 0, moved)
-      dragType = null; dragSourceEntId = null; dragSourceAreaId = null
-      const newOrder = allEntities
-        .filter(en => (en.areaId ?? '') === areaId)
-        .map(en => en.entityId)
-      await api.accessories.setDeviceOrder(areaId, newOrder)
-      renderAccessoriesTab()
+    setupPointerDrag({
+      handle:     row.querySelector<HTMLElement>('.acc-drag')!,
+      dragEl:     row,
+      getTargets: () => [...entityList.querySelectorAll<HTMLElement>('.acc-row')],
+      onMove:     (t) => {
+        entityList.querySelectorAll('.acc-row').forEach(r => r.classList.remove('drag-over'))
+        t?.classList.add('drag-over')
+      },
+      onDrop: async (t) => {
+        const targetId = t.dataset.entityId
+        if (!targetId || targetId === entity.entityId) return
+        const srcIdx = allEntities.findIndex(en => en.entityId === entity.entityId)
+        const dstIdx = allEntities.findIndex(en => en.entityId === targetId)
+        if (srcIdx < 0 || dstIdx < 0) return
+        const [moved] = allEntities.splice(srcIdx, 1)
+        allEntities.splice(dstIdx, 0, moved)
+        const newOrder = allEntities
+          .filter(en => (en.areaId ?? '') === areaId)
+          .map(en => en.entityId)
+        await api.accessories.setDeviceOrder(areaId, newOrder)
+        renderAccessoriesTab()
+      },
     })
 
     entityList.appendChild(row)

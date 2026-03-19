@@ -84,7 +84,6 @@ impl EntityMapper {
         entries: &[HaEntityEntry],
         ha_config: Option<&HaConfig>,
         notification_count: u32,
-        cameras_enabled: bool,
         favorites_order: &[String],
         hidden_entities: &[String],
         room_order: &[String],
@@ -122,7 +121,7 @@ impl EntityMapper {
         let mut update_count: u32 = 0;
         let mut all_entities: Vec<AppEntity> = Vec::new();
         let mut scenes: Vec<SceneEntity> = Vec::new();
-        let mut cameras: Vec<CameraEntity> = Vec::new();
+        let mut cameras: Vec<AppEntity> = Vec::new();
 
         for state in states {
             let domain = domain_of(&state.entity_id);
@@ -136,16 +135,20 @@ impl EntityMapper {
                 continue;
             }
 
-            // Skip disabled / hidden / config entities
-            if let Some(entry) = entry_map.get(state.entity_id.as_str()) {
-                if entry.disabled_by.is_some() {
-                    continue;
-                }
-                if entry.hidden_by.is_some() {
-                    continue;
-                }
-                if entry.entity_category.is_some() {
-                    continue;
+            // Skip disabled / hidden / config entities.
+            // Exception: cameras always pass — HA sometimes tags them with
+            // entity_category but they are explicitly user-facing.
+            if domain != "camera" {
+                if let Some(entry) = entry_map.get(state.entity_id.as_str()) {
+                    if entry.disabled_by.is_some() {
+                        continue;
+                    }
+                    if entry.hidden_by.is_some() {
+                        continue;
+                    }
+                    if entry.entity_category.is_some() {
+                        continue;
+                    }
                 }
             }
 
@@ -158,7 +161,7 @@ impl EntityMapper {
 
             match &entity {
                 AppEntity::Scene(s) => scenes.push(s.clone()),
-                AppEntity::Camera(c) => cameras.push(c.clone()),
+                AppEntity::Camera(_) => cameras.push(entity.clone()),
                 _ => all_entities.push(entity),
             }
         }
@@ -269,14 +272,9 @@ impl EntityMapper {
                 .into_iter()
                 .filter(|s| !hidden_set.contains(s.base.entity_id.as_str()))
                 .collect(),
-            cameras: if cameras_enabled {
-                cameras
-                    .into_iter()
-                    .filter(|c| !hidden_set.contains(c.base.entity_id.as_str()))
-                    .collect()
-            } else {
-                vec![]
-            },
+            // Cameras are always visible — ignore hidden_set and cameras_enabled.
+            // The user explicitly wants all HA cameras reachable from the popup.
+            cameras: cameras.into_iter().collect(),
             temp_unit: self.temp_unit.clone(),
             notification_count,
             update_count,

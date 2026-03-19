@@ -133,7 +133,7 @@ export interface MenuData {
   favorites:         AppEntity[]
   rooms:             Room[]
   scenes:            SceneEntity[]
-  cameras:           CameraEntity[]
+  cameras:           AppEntity[]
   tempUnit:          '°C' | '°F'
   notificationCount: number
   updateCount:       number

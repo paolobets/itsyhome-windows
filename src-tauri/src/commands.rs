@@ -415,54 +415,36 @@ pub async fn window_open_ha_url(state: AppStateArg<'_>, app: AppHandle) -> Resul
     Ok(())
 }
 
-/// Resize the popup window with right-edge anchoring logic, mirroring
-/// the TypeScript `ipcMain.on('window:resize', ...)` handler exactly.
+/// Resize the popup window height and reposition relative to the tray anchor.
 #[tauri::command]
 pub async fn window_resize(
     state: AppStateArg<'_>,
     app: AppHandle,
     h: u32,
-    w: Option<u32>,
+    _w: Option<u32>,
 ) -> Result<(), String> {
-    let w = w.unwrap_or(300);
     let popup = match app.get_webview_window("popup") {
         Some(win) => win,
         None => return Ok(()),
     };
 
-    let new_h = h.max(120).min(680);
-    let new_w = w.max(300).min(900);
-
-    // JS offsetHeight/offsetWidth are CSS (logical) pixels — use LogicalSize.
-    let scale = popup.scale_factor().unwrap_or(1.0);
-    let outer_pos  = popup.outer_position().map_err(|e| e.to_string())?;
-    let outer_size = popup.outer_size().map_err(|e| e.to_string())?;
-    // Convert current physical width to logical for comparison.
-    let current_w_logical = (outer_size.width as f64 / scale).round() as u32;
-
-    if new_w != current_w_logical {
-        // Width changing: keep RIGHT EDGE fixed (right edge stays in physical coords).
-        let right_edge = outer_pos.x + outer_size.width as i32;
-        let new_x = (right_edge - (new_w as f64 * scale) as i32).max(0);
-        popup
-            .set_position(tauri::PhysicalPosition::new(new_x, outer_pos.y))
-            .map_err(|e| e.to_string())?;
-        popup
-            .set_size(tauri::LogicalSize::new(new_w as f64, new_h as f64))
-            .map_err(|e| e.to_string())?;
-    } else if new_w > 300 {
-        // Height-only change with detail panel open: keep X, recalculate Y only.
-        popup
-            .set_size(tauri::LogicalSize::new(new_w as f64, new_h as f64))
-            .map_err(|e| e.to_string())?;
-        reposition_y_only(&state, &popup)?;
-    } else {
-        // Normal height change at 300 px: full reposition to tray anchor.
-        popup
-            .set_size(tauri::LogicalSize::new(300.0_f64, new_h as f64))
-            .map_err(|e| e.to_string())?;
-        reposition_popup(&state, &popup)?;
+    // Skip entirely while hidden — background JS (HA refresh every ~30 s) keeps
+    // calling resize(); mutating size/position while hidden lets DWM subtly
+    // adjust the window origin, accumulating rightward drift over time.
+    if !popup.is_visible().unwrap_or(true) {
+        return Ok(());
     }
+
+    let new_h = h.max(120).min(680);
+
+    // Detail panel is now an overlay — popup width is always 300 logical px.
+    popup
+        .set_size(tauri::LogicalSize::new(300.0_f64, new_h as f64))
+        .map_err(|e| e.to_string())?;
+
+    // Recalculate position from the stored tray anchor so the popup stays
+    // anchored above/below the taskbar correctly after every height change.
+    reposition_from_tray(&state, &popup)?;
 
     Ok(())
 }
@@ -514,43 +496,33 @@ async fn apply_autostart(app: &AppHandle, enabled: bool) {
     }
 }
 
-/// Full popup reposition to tray anchor (X + Y).
-fn reposition_popup(
-    state: &Arc<Mutex<AppState>>,
-    popup: &tauri::WebviewWindow,
-) -> Result<(), String> {
-    let tray_pos = state.lock().unwrap().last_tray_pos;
-    if let Some(tray) = tray_pos {
-        let size = popup.outer_size().map_err(|e| e.to_string())?;
-        let monitor = popup
-            .current_monitor()
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| "No monitor found".to_owned())?;
-        let new_pos = calc_popup_position(tray, size, &monitor);
-        popup.set_position(new_pos).map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
 
-/// Reposition Y only — keeps X (right-edge) fixed while detail panel is open.
-fn reposition_y_only(
+/// Recalculate and apply the popup's screen position from the stored tray
+/// anchor and the known 300 px logical width.  Reads the current physical
+/// height so Y stays correct after every height-only resize.
+/// Uses the deterministic tray-anchor formula for X — never reads outer_pos.x
+/// which can accumulate DWM micro-adjustment drift.
+fn reposition_from_tray(
     state: &Arc<Mutex<AppState>>,
     popup: &tauri::WebviewWindow,
 ) -> Result<(), String> {
-    let tray_pos = state.lock().unwrap().last_tray_pos;
-    if let Some(tray) = tray_pos {
-        let outer_pos = popup.outer_position().map_err(|e| e.to_string())?;
-        let size = popup.outer_size().map_err(|e| e.to_string())?;
-        let monitor = popup
-            .current_monitor()
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| "No monitor found".to_owned())?;
-        let new_pos = calc_popup_position(tray, size, &monitor);
-        popup
-            .set_position(tauri::PhysicalPosition::new(outer_pos.x, new_pos.y))
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
+    let tray_pos = match state.lock().unwrap().last_tray_pos {
+        Some(p) => p,
+        None => return Ok(()),
+    };
+    let monitor = popup
+        .current_monitor()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "No monitor found".to_owned())?;
+    let scale        = popup.scale_factor().unwrap_or(1.0);
+    let known_phys_w = (300.0_f64 * scale).round() as u32;
+    let phys_h       = popup.outer_size().map(|s| s.height).unwrap_or(120);
+    let pos = calc_popup_position(
+        tray_pos,
+        tauri::PhysicalSize::new(known_phys_w, phys_h),
+        &monitor,
+    );
+    popup.set_position(pos).map_err(|e| e.to_string())
 }
 
 /// Compute popup position centred horizontally on the tray icon, anchored

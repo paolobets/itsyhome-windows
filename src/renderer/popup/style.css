@@ -1,6 +1,7 @@
 /* ─── Design tokens ───────────────────────────────────────────────────────── */
 :root {
   --bg:           rgba(30, 30, 32, 0.92);
+  --bg-solid:     rgb(30, 30, 32);
   --surface:      rgba(50, 50, 54, 0.85);
   --surface-hi:   rgba(68, 68, 74, 1);
   --text:         rgba(255, 255, 255, 0.88);
@@ -25,6 +26,7 @@
 @media (prefers-color-scheme: light) {
   :root {
     --bg:         rgba(240, 240, 245, 0.92);
+    --bg-solid:   rgb(240, 240, 245);
     --surface:    rgba(255, 255, 255, 0.85);
     --surface-hi: rgba(220, 220, 228, 1);
     --text:       rgba(0, 0, 0, 0.85);
@@ -98,26 +100,24 @@ body.popup-enter { animation: popupIn 200ms cubic-bezier(0.16, 1, 0.3, 1) both; 
   position: absolute;
   inset: 0;
   z-index: 20;
-  background: var(--bg);
-  -webkit-backdrop-filter: blur(40px) saturate(180%);
-  backdrop-filter: blur(40px) saturate(180%);
+  background: var(--bg-solid);
   overflow: hidden;
 }
 #detail-panel.open {
   display: flex;
-  animation: detailIn 220ms var(--ease-out) both;
+  animation: detailIn 220ms var(--ease-spring) both;
 }
 #detail-panel.closing {
-  animation: detailOut 180ms ease-in both;
+  animation: detailOut 180ms var(--ease-in) both;
 }
 
 @keyframes detailIn {
-  from { opacity: 0; transform: translateX(100%); }
+  from { opacity: 0; transform: translateX(14px); }
   to   { opacity: 1; transform: translateX(0);    }
 }
 @keyframes detailOut {
   from { opacity: 1; transform: translateX(0);    }
-  to   { opacity: 0; transform: translateX(100%); }
+  to   { opacity: 0; transform: translateX(14px); }
 }
 
 @keyframes fadeIn  { from { opacity: 0; } to { opacity: 1; } }

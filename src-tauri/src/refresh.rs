@@ -17,16 +17,15 @@ pub async fn trigger_refresh(app: &AppHandle) {
     };
 
     // Snapshot all store values and the HA handle while holding the mutex briefly.
-    let (ha_handle, cameras_enabled, favorites, hidden, room_order, device_orders) = {
+    let (ha_handle, favorites, hidden, room_order, device_orders) = {
         let guard = state_arc.lock().unwrap();
         let ha_handle = guard.ha_handle.clone();
-        let cameras_enabled = guard.store.get_cameras_enabled();
         let favorites = guard.store.get_favorites();
         let hidden = guard.store.get_hidden_entities();
         let room_order = guard.store.get_room_order();
         let device_orders = guard.store.get_device_order_all();
         drop(guard);
-        (ha_handle, cameras_enabled, favorites, hidden, room_order, device_orders)
+        (ha_handle, favorites, hidden, room_order, device_orders)
     };
 
     let handle = match ha_handle {
@@ -67,7 +66,6 @@ pub async fn trigger_refresh(app: &AppHandle) {
             &entries,
             config.as_ref(),
             notification_count,
-            cameras_enabled,
             &favorites,
             &hidden,
             &room_order,
@@ -92,8 +90,8 @@ pub async fn trigger_refresh(app: &AppHandle) {
         }
     }
     for camera in &menu_data.cameras {
-        if seen.insert(camera.base.entity_id.clone()) {
-            all_entities.push(AppEntity::Camera(camera.clone()));
+        if seen.insert(camera.entity_id().to_owned()) {
+            all_entities.push(camera.clone());
         }
     }
 
