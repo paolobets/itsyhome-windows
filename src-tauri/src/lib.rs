@@ -43,14 +43,15 @@ pub fn run() {
 
             // Start notification webhook server if already registered
             {
-                let guard = app_state.lock().unwrap();
-                if let Some(reg) = guard.store.get_notif_registration() {
+                let reg = app_state.lock().unwrap().store.get_notif_registration();
+                if let Some(reg) = reg {
                     let push_secret = reg.push_secret.clone();
                     let port = reg.port;
                     let app2 = app.handle().clone();
-                    tokio::spawn(async move {
+                    let handle = tokio::spawn(async move {
                         crate::notification::start_webhook_server(port, push_secret, app2).await;
                     });
+                    app_state.lock().unwrap().webhook_handle = Some(handle);
                 }
             }
 

@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [2.1.2] - 2026-03-24
+
+### Fixed
+- **Webhook server non arrestabile** — il server HTTP per le notifiche push (Axum, porta 7421) veniva avviato con `tokio::spawn` senza conservare il `JoinHandle`. Chiamate successive a `notifications_register` (es. cambio porta o nuova registrazione) lasciavano il vecchio server attivo con il vecchio `push_secret`; il nuovo `bind()` falliva silenziosamente. Fix: aggiunto `webhook_handle: Option<JoinHandle<()>>` ad `AppState`; il vecchio server viene abortito prima di avviarne uno nuovo.
+- **`notifications_unregister` non arrestava il server** — la de-registrazione cancellava il record nello store JSON ma il server HTTP continuava ad ascoltare sulla porta. Fix: `notifications_unregister` chiama ora `handle.abort()` oltre a pulire lo store.
+
+---
+
 ## [2.1.1] - 2026-03-19
 
 ### Fixed

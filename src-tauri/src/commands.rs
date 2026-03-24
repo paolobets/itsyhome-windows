@@ -568,12 +568,21 @@ pub async fn notifications_register(
         guard.store.set_notif_port(port);
     }
 
+    // Stop any existing webhook server before starting a new one
+    {
+        let mut guard = state.lock().unwrap();
+        if let Some(handle) = guard.webhook_handle.take() {
+            handle.abort();
+        }
+    }
+
     // Start webhook server in background
     let push_secret_clone = push_secret.clone();
     let app_clone = app.clone();
-    tokio::spawn(async move {
+    let webhook_handle = tokio::spawn(async move {
         start_webhook_server(port, push_secret_clone, app_clone).await;
     });
+    state.lock().unwrap().webhook_handle = Some(webhook_handle);
 
     let service_name = format!(
         "notify.mobile_app_{}",
@@ -591,7 +600,11 @@ pub async fn notifications_register(
 
 #[tauri::command]
 pub async fn notifications_unregister(state: AppStateArg<'_>) -> Result<(), String> {
-    state.lock().unwrap().store.set_notif_registration(None);
+    let mut guard = state.lock().unwrap();
+    guard.store.set_notif_registration(None);
+    if let Some(handle) = guard.webhook_handle.take() {
+        handle.abort();
+    }
     Ok(())
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "itsyhome",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "scripts": {
     "dev":        "tauri dev",
     "build":      "tauri build",

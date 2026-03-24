@@ -19,6 +19,9 @@ pub struct AppState {
     /// Timestamp of the last popup show — used to suppress spurious blur
     /// events that fire immediately after the popup becomes visible.
     pub popup_shown_at: Option<Instant>,
+    /// Handle to the running webhook (push-notification) server task.
+    /// Abort this before starting a new server or on unregister.
+    pub webhook_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl AppState {
@@ -31,6 +34,7 @@ impl AppState {
             status: "disconnected".to_owned(),
             last_tray_pos: None,
             popup_shown_at: None,
+            webhook_handle: None,
         }
     }
 }

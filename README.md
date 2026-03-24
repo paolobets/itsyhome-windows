@@ -1,6 +1,6 @@
 # ItsyHome for Windows
 
-[![Version](https://img.shields.io/badge/version-2.1.1-blue.svg)](https://github.com/paolobets/itsyhome-windows/releases)
+[![Version](https://img.shields.io/badge/version-2.1.2-blue.svg)](https://github.com/paolobets/itsyhome-windows/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Client per **Home Assistant** nella system tray di Windows.
@@ -201,6 +201,7 @@ Miglioramenti significativi rispetto a Electron v1.x:
 
 | Versione | Note |
 |----------|------|
+| 2.1.2    | Fix: webhook server push notifiche non arrestabile su re-registrazione o unregister; unregister ora ferma correttamente il server HTTP |
 | 2.1.1    | Fix: mobile app registration schema validation — HA richiede `push_token` e `push_url` insieme nel gruppo `app_data` |
 | 2.1.0    | Notifiche push da Home Assistant: canale WebSocket persistente, registrazione mobile app con `notify.mobile_app_*`, webhook locale (Axum) configurabile |
 | 2.0.1    | Fix: custom-protocol Cargo feature per embedded frontend, versioning manifests, build script PATH |
