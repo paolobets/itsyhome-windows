@@ -579,7 +579,7 @@ pub async fn notifications_register(
     // Start webhook server in background
     let push_secret_clone = push_secret.clone();
     let app_clone = app.clone();
-    let webhook_handle = tokio::spawn(async move {
+    let webhook_handle = tauri::async_runtime::spawn(async move {
         start_webhook_server(port, push_secret_clone, app_clone).await;
     });
     state.lock().unwrap().webhook_handle = Some(webhook_handle);

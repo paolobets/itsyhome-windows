@@ -8,8 +8,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [2.1.2] - 2026-03-24
 
 ### Fixed
-- **Webhook server non arrestabile** — il server HTTP per le notifiche push (Axum, porta 7421) veniva avviato con `tokio::spawn` senza conservare il `JoinHandle`. Chiamate successive a `notifications_register` (es. cambio porta o nuova registrazione) lasciavano il vecchio server attivo con il vecchio `push_secret`; il nuovo `bind()` falliva silenziosamente. Fix: aggiunto `webhook_handle: Option<JoinHandle<()>>` ad `AppState`; il vecchio server viene abortito prima di avviarne uno nuovo.
-- **`notifications_unregister` non arrestava il server** — la de-registrazione cancellava il record nello store JSON ma il server HTTP continuava ad ascoltare sulla porta. Fix: `notifications_unregister` chiama ora `handle.abort()` oltre a pulire lo store.
+- **App non si avvia se le notifiche push erano registrate** — `tokio::spawn` nel callback `setup()` di Tauri causava panic "no reactor running" perché il main thread non è nel contesto del runtime Tokio. Sostituito con `tauri::async_runtime::spawn`. Il crash si verificava solo con una registrazione `notifRegistration` presente nello store.
+- **Webhook server non arrestabile** — il server HTTP per le notifiche push (Axum, porta 7421) veniva avviato senza conservare il `JoinHandle`. Chiamate successive a `notifications_register` lasciavano il vecchio server attivo; il nuovo `bind()` falliva silenziosamente. Fix: `webhook_handle` in `AppState`, vecchio server abortito prima di avviarne uno nuovo.
+- **`notifications_unregister` non arrestava il server** — la de-registrazione cancellava il record nello store JSON ma il server HTTP continuava ad ascoltare sulla porta. Fix: `handle.abort()` chiamato su unregister.
 
 ---
 

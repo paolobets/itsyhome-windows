@@ -48,7 +48,7 @@ pub fn run() {
                     let push_secret = reg.push_secret.clone();
                     let port = reg.port;
                     let app2 = app.handle().clone();
-                    let handle = tokio::spawn(async move {
+                    let handle = tauri::async_runtime::spawn(async move {
                         crate::notification::start_webhook_server(port, push_secret, app2).await;
                     });
                     app_state.lock().unwrap().webhook_handle = Some(handle);

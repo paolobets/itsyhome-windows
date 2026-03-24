@@ -21,7 +21,7 @@ pub struct AppState {
     pub popup_shown_at: Option<Instant>,
     /// Handle to the running webhook (push-notification) server task.
     /// Abort this before starting a new server or on unregister.
-    pub webhook_handle: Option<tokio::task::JoinHandle<()>>,
+    pub webhook_handle: Option<tauri::async_runtime::JoinHandle<()>>,
 }
 
 impl AppState {
