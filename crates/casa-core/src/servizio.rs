@@ -1,18 +1,19 @@
 //! `CasaService`: un thread con runtime tokio `current_thread` che tiene la
 //! connessione a Home Assistant, rilegge i dati (logica di `src-tauri/src/refresh.rs`)
 //! e consegna `CasaEvento` all'`Ascoltatore`, sempre da quel thread.
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tokio::time::{sleep_until, Instant};
 
 use crate::config::{Config, ConfigStore};
 use crate::eventi::{Ascoltatore, CasaEvento, StatoConnessione};
 use crate::ha::client::{self, Client, DalClient, NON_CONNESSO};
-use crate::ha::eventi::EventoWs;
+use crate::ha::eventi::{Aggiornamento, EventoWs};
 use crate::ha::mapper::EntityMapper;
 use crate::ha::models::{HaArea, HaConfig, HaDevice, HaEntityEntry, HaNotification, HaState};
 use crate::segreti::Segreti;
@@ -30,6 +31,7 @@ enum Comando {
     Connetti(String),
     Disconnetti,
     Servizio { entity_id: String, dominio: String, servizio: String },
+    Archivia(String),
     Prova { url: String, token: String, fatto: Fatto },
     Salva { config: Config, rimappa: bool },
     Ferma,
@@ -92,6 +94,12 @@ impl CasaService {
             dominio: dominio.to_owned(),
             servizio: servizio.to_owned(),
         });
+    }
+
+    /// Archivia in Home Assistant la notifica persistente `id` (`persistent_notification.dismiss`).
+    /// Se riesce arriva `NotificaRimossa` (da HA); se no `NotificaNonArchiviata`.
+    pub fn archivia_notifica(&self, id: &str) {
+        self.manda(Comando::Archivia(id.to_owned()));
     }
 
     /// `fatto` viene chiamata dal thread del servizio.
@@ -180,6 +188,8 @@ struct Motore {
     grezzi: Option<Grezzi>,
     /// (primo evento in attesa, scadenza della rilettura)
     debounce: Option<(Instant, Instant)>,
+    /// Notifiche persistenti dell'ambiente connesso già consegnate all'applicazione.
+    notifiche: BTreeSet<String>,
 }
 
 impl Motore {
@@ -203,6 +213,7 @@ impl Motore {
             generazione: 0,
             grezzi: None,
             debounce: None,
+            notifiche: BTreeSet::new(),
         }
     }
 
@@ -258,6 +269,20 @@ impl Motore {
                 tokio::spawn(async move {
                     let r = client.call_service(&dominio, &servizio, &entity_id).await;
                     ascolta(CasaEvento::Esito { entity_id, ok: r.is_ok(), errore: r.err() });
+                });
+            }
+            Comando::Archivia(id) => {
+                let Some((client, _)) = &self.client else {
+                    self.emetti(CasaEvento::NotificaNonArchiviata { id, errore: NON_CONNESSO.into() });
+                    return;
+                };
+                let client = client.clone();
+                let ascolta = self.ascolta.clone();
+                tokio::spawn(async move {
+                    let dati = json!({ "notification_id": id });
+                    if let Err(errore) = client.servizio_con_dati("persistent_notification", "dismiss", dati).await {
+                        ascolta(CasaEvento::NotificaNonArchiviata { id, errore });
+                    }
                 });
             }
             Comando::Prova { url, token, fatto } => {
@@ -323,7 +348,10 @@ impl Motore {
         self.client = Some(client::avvia(url, token, self.ritardi.clone(), uscita));
     }
 
-    /// Ferma la connessione corrente e invalida tutto ciò che ha ancora in volo.
+    /// Ferma la connessione corrente e invalida tutto ciò che ha ancora in volo. Le notifiche di
+    /// quell'ambiente non sono più raggiungibili: escono (alla prossima connessione l'elenco
+    /// "current" rimette quelle che ci sono). Una caduta della connessione invece non passa da qui:
+    /// le notifiche restano e alla riconnessione l'elenco "current" le riallinea.
     fn chiudi_client(&mut self) {
         if let Some((_, task)) = self.client.take() {
             task.abort();
@@ -331,6 +359,32 @@ impl Motore {
         self.generazione += 1;
         self.grezzi = None;
         self.debounce = None;
+        for id in std::mem::take(&mut self.notifiche) {
+            self.emetti(CasaEvento::NotificaRimossa { id });
+        }
+    }
+
+    fn notifiche(&mut self, tipo: Aggiornamento, notifiche: Vec<crate::ha::eventi::NotificaHa>) {
+        if tipo == Aggiornamento::Attuali {
+            // L'elenco completo: escono quelle sparite mentre non eravamo connessi.
+            let presenti: BTreeSet<&str> = notifiche.iter().map(|n| n.id.as_str()).collect();
+            let sparite: Vec<String> =
+                self.notifiche.iter().filter(|id| !presenti.contains(id.as_str())).cloned().collect();
+            for id in sparite {
+                self.notifiche.remove(&id);
+                self.emetti(CasaEvento::NotificaRimossa { id });
+            }
+        }
+        for n in notifiche {
+            if tipo == Aggiornamento::Rimosse {
+                if self.notifiche.remove(&n.id) {
+                    self.emetti(CasaEvento::NotificaRimossa { id: n.id });
+                }
+            } else {
+                self.notifiche.insert(n.id.clone());
+                self.emetti(CasaEvento::NotificaAggiunta { id: n.id, titolo: n.titolo, messaggio: n.messaggio });
+            }
+        }
     }
 
     fn interno(&mut self, i: Interno) {
@@ -351,8 +405,8 @@ impl Motore {
                 let primo = self.debounce.map_or(ora, |(p, _)| p);
                 self.debounce = Some((primo, (ora + DEBOUNCE).min(primo + ATTESA_MASSIMA)));
             }
-            Interno::Client(_, DalClient::Evento(EventoWs::Notifica { titolo, messaggio })) => {
-                self.emetti(CasaEvento::Notifica { titolo, messaggio });
+            Interno::Client(_, DalClient::Evento(EventoWs::Notifiche { tipo, notifiche })) => {
+                self.notifiche(tipo, notifiche);
             }
             Interno::Grezzi(_, g) => {
                 self.grezzi = Some(g);

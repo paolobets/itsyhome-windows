@@ -10,7 +10,6 @@ use crate::layout::{self, Layout};
 use crate::registro::app_disponibili;
 use crate::pc_stats::{formatta_byte, formatta_velocita, Campionatore, StatPc};
 use crate::ponte::Ponte;
-use crate::umore::Umore;
 use crate::{finestre, orologio, scelte, Pannello, Pillola, StatPcUi, VoceAppUi};
 use slint::winit_030::{winit, EventResult, WinitWindowAccessor};
 use slint::{ComponentHandle, Image, ModelRc, VecModel};
@@ -57,6 +56,8 @@ pub fn icona(nome: &str) -> Image {
         "casa" => include_bytes!("../assets/icone/casa.svg"),
         "pc" => include_bytes!("../assets/icone/pc.svg"),
         "impostazioni" => include_bytes!("../assets/icone/impostazioni.svg"),
+        // Fonte «prova» delle voci in attesa (un campanello).
+        "avviso" => include_bytes!("../assets/icone/avviso.svg"),
         _ => return Image::default(),
     };
     Image::load_from_svg_data(svg).unwrap_or_default()
@@ -257,10 +258,15 @@ impl Apertura {
             finestre::sposta(pannello.window(), finestre::posizione_pannello(area, scala));
         }
 
-        // Aprendo da "ti cerca" gli occhi del pannello partono da dove stanno quelli della
-        // pillola allargata e scivolano al centro durante l'apertura.
-        if pillola.get_umore() == Umore::TiCerca.come_stringa() {
+        // Aprendo dalla pillola allargata (che chiama) gli occhi del pannello partono da dove
+        // stanno i suoi e scivolano al centro durante l'apertura; e il pannello si apre su quella
+        // voce, espansa sul posto nella riga «In attesa».
+        if pillola.get_aspetto() == "allargata" {
             pannello.set_partenza_occhi(pillola.get_scarto_occhi_allerta());
+        }
+        if let Some((id, indice)) = self.ponte.voce_della_pillola() {
+            pannello.set_voce_aperta(id.into());
+            pannello.set_indice_aperta(indice);
         }
         // Parte con l'umore della pillola; il ponte glielo aggiorna appena la pillola è sparita.
         pannello.set_umore(pillola.get_umore());
@@ -321,7 +327,7 @@ impl Apertura {
         // Nascosta solo ora che il pannello è visibile (vedi `chiudi`).
         pillola.set_attiva(false);
         let _ = pillola.hide();
-        // Solo ora la notifica in attesa è vista: la pillola non si vede cambiare d'umore e il
+        // Solo ora le voci in attesa sono viste: la pillola non si vede cambiare aspetto e il
         // pannello segue l'umore finché resta aperto.
         self.ponte.pannello_aperto(&pannello);
         *self.pannello.borrow_mut() = Some(pannello);

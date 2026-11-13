@@ -1,6 +1,6 @@
 //! `CasaService` contro un Home Assistant finto (WebSocket locale su 127.0.0.1:0).
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use casa_core::config::{Config, ConfigStore};
@@ -24,6 +24,10 @@ const RITARDO_TEST: Duration = Duration::from_millis(50);
 struct Contatori {
     connessioni: AtomicUsize,
     get_states: AtomicUsize,
+    /// Id della richiesta `persistent_notification/subscribe` (0 = nessuna iscrizione).
+    iscrizione_notifiche: AtomicU64,
+    /// `notification_id` ricevuti con `persistent_notification.dismiss`.
+    archiviate: Mutex<Vec<String>>,
 }
 
 struct FintoHa {
@@ -51,6 +55,26 @@ impl FintoHa {
     fn manda_evento(&self, tipo: &str, data: Value) {
         let v = json!({ "id": 1, "type": "event", "event": { "event_type": tipo, "data": data } });
         let _ = self.eventi.send(v.to_string());
+    }
+
+    /// Evento della iscrizione `persistent_notification/subscribe`, come lo manda HA
+    /// (`websocket_api.event_message(msg_id, {"type": ..., "notifications": {...}})`).
+    fn manda_notifiche(&self, tipo: &str, notifiche: Value) {
+        let id = self.contatori.iscrizione_notifiche.load(Ordering::SeqCst);
+        let v = json!({ "id": id, "type": "event", "event": { "type": tipo, "notifications": notifiche } });
+        let _ = self.eventi.send(v.to_string());
+    }
+
+    async fn aspetta_iscrizione_notifiche(&self) {
+        let inizio = Instant::now();
+        while self.contatori.iscrizione_notifiche.load(Ordering::SeqCst) == 0 {
+            assert!(inizio.elapsed() < Duration::from_secs(5), "nessuna iscrizione alle notifiche");
+            sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    fn archiviate(&self) -> Vec<String> {
+        self.contatori.archiviate.lock().unwrap().clone()
     }
 
     fn get_states(&self) -> usize {
@@ -93,6 +117,11 @@ fn risposta(v: &Value, contatori: &Contatori) -> Value {
         "persistent_notification/get" => ok(json!([])),
         "subscribe_events" => ok(Value::Null),
         "ping" => json!({ "id": id, "type": "pong" }),
+        "call_service" if v["domain"] == "persistent_notification" && v["service"] == "dismiss" => {
+            let id = v["service_data"]["notification_id"].as_str().unwrap_or_default().to_owned();
+            contatori.archiviate.lock().unwrap().push(id);
+            ok(Value::Null)
+        }
         "call_service" => {
             if v["target"]["entity_id"] == "light.cucina" {
                 ok(json!({ "context": {} }))
@@ -133,6 +162,17 @@ async fn servi(tcp: tokio::net::TcpStream, contatori: Arc<Contatori>, mut eventi
                 let Some(Ok(m)) = m else { return };
                 let Message::Text(t) = m else { continue };
                 let v: Value = serde_json::from_str(&t).unwrap();
+                if v["type"] == "persistent_notification/subscribe" {
+                    // Come HA: prima il risultato, poi subito l'elenco "current" (qui vuoto).
+                    let id = v["id"].as_u64().unwrap();
+                    contatori.iscrizione_notifiche.store(id, Ordering::SeqCst);
+                    let risultato = json!({ "id": id, "type": "result", "success": true, "result": null });
+                    let attuali = json!({ "id": id, "type": "event", "event": { "type": "current", "notifications": {} } });
+                    if tx.send(testo(risultato)).await.is_err() || tx.send(testo(attuali)).await.is_err() {
+                        return;
+                    }
+                    continue;
+                }
                 if tx.send(testo(risposta(&v, &contatori))).await.is_err() { return; }
             }
             e = eventi.recv() => {
@@ -308,19 +348,51 @@ async fn flusso_continuo_rilegge_almeno_ogni_secondo() {
 }
 
 #[tokio::test]
-async fn notifica_arriva_come_evento() {
+async fn notifica_aggiunta_e_rimossa_come_eventi() {
+    let ha = FintoHa::avvia().await;
+    let mut p = prepara(&ha.url, Some(TOKEN));
+    p.servizio.connetti_attivo();
+    aspetta_dati(&mut p).await;
+    ha.aspetta_iscrizione_notifiche().await;
+
+    let notifica = json!({ "lavatrice": {
+        "notification_id": "lavatrice", "title": "Lavatrice", "message": "Ciclo finito",
+        "created_at": "2026-11-13T10:00:00+00:00" } });
+    ha.manda_notifiche("added", notifica.clone());
+    loop {
+        if let CasaEvento::NotificaAggiunta { id, titolo, messaggio } = prossimo(&mut p).await {
+            assert_eq!((id.as_str(), titolo.as_str(), messaggio.as_str()), ("lavatrice", "Lavatrice", "Ciclo finito"));
+            break;
+        }
+    }
+    ha.manda_notifiche("removed", notifica);
+    loop {
+        if let CasaEvento::NotificaRimossa { id } = prossimo(&mut p).await {
+            assert_eq!(id, "lavatrice");
+            break;
+        }
+    }
+}
+
+#[tokio::test]
+async fn archivia_chiama_il_servizio() {
     let ha = FintoHa::avvia().await;
     let mut p = prepara(&ha.url, Some(TOKEN));
     p.servizio.connetti_attivo();
     aspetta_dati(&mut p).await;
 
-    ha.manda_evento("persistent_notification_created", json!({ "title": "Lavatrice", "message": "Ciclo finito" }));
-    loop {
-        if let CasaEvento::Notifica { titolo, messaggio } = prossimo(&mut p).await {
-            assert_eq!((titolo.as_str(), messaggio.as_str()), ("Lavatrice", "Ciclo finito"));
-            break;
-        }
+    p.servizio.archivia_notifica("lavatrice");
+    let inizio = Instant::now();
+    while ha.archiviate().is_empty() {
+        assert!(inizio.elapsed() < Duration::from_secs(5), "nessun dismiss arrivato");
+        sleep(Duration::from_millis(10)).await;
     }
+    assert_eq!(ha.archiviate(), ["lavatrice"]);
+    sleep(Duration::from_millis(200)).await;
+    assert!(
+        !std::iter::from_fn(|| p.eventi.try_recv().ok()).any(|e| matches!(e, CasaEvento::NotificaNonArchiviata { .. })),
+        "archiviazione riuscita: nessun errore"
+    );
 }
 
 #[tokio::test]

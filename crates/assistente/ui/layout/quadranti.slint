@@ -13,42 +13,44 @@ component Quadrante inherits Vetro {
     in property <string> dettaglio;
     // Frazione 0..1 dell'arco acceso; negativa = nessun dato (solo la traccia).
     in property <float> frazione: -1;
+    // Lato dell'arco: 96 px, meno quando sopra c'è la riga «In attesa».
+    in property <length> arco: 96px;
 
     // Arco di 270° aperto in basso (raggio 44, centro 55,55 nel riquadro 110 × 110, disegnato a
-    // 96 px): parte da 135° e gira in senso orario.
+    // `arco` px): parte da 135° e gira in senso orario.
     property <angle> fine: 135deg + 270deg * min(frazione, 1);
     property <bool> acceso: frazione >= 0.01;
 
     VerticalLayout {
         alignment: center;
-        spacing: 8px;
+        spacing: arco < 90px ? 3px : 8px;
         padding-left: 8px;
         padding-right: 8px;
 
         Rectangle {
-            height: 96px;
+            height: arco;
 
             Path {
-                x: (parent.width - 96px) / 2;
-                width: 96px;
-                height: 96px;
+                x: (parent.width - arco) / 2;
+                width: arco;
+                height: arco;
                 viewbox-width: 110;
                 viewbox-height: 110;
                 commands: "M 23.89 86.11 A 44 44 0 1 1 86.11 86.11";
                 stroke: Tema.traccia;
-                stroke-width: 8px;
+                stroke-width: arco < 90px ? 7px : 8px;
                 stroke-line-cap: round;
             }
 
             if acceso: Path {
-                x: (parent.width - 96px) / 2;
-                width: 96px;
-                height: 96px;
+                x: (parent.width - arco) / 2;
+                width: arco;
+                height: arco;
                 viewbox-width: 110;
                 viewbox-height: 110;
                 commands: "M 23.89 86.11 A 44 44 0 " + (frazione > 0.6667 ? 1 : 0) + " 1 " + (55 + 44 * cos(fine)) + " " + (55 + 44 * sin(fine));
                 stroke: frazione > 0.85 ? Tema.caldo-2 : Tema.petalo-2;
-                stroke-width: 8px;
+                stroke-width: arco < 90px ? 7px : 8px;
                 stroke-line-cap: round;
             }
 
@@ -57,7 +59,7 @@ component Quadrante inherits Vetro {
                 horizontal-alignment: center;
                 vertical-alignment: center;
                 font-weight: 500;
-                font-size: 20px;
+                font-size: arco < 90px ? 17px : 20px;
                 color: Tema.testo;
             }
         }
@@ -106,6 +108,9 @@ export component LayoutQuadranti inherits Rectangle {
     property <length> spazio: 10px;
     // Card uguali, qualunque sia la lunghezza dei valori; con poche card non diventano enormi.
     property <length> lato: min(170px, (self.width - (quanti - 1) * spazio) / quanti);
+    // L'arco si adatta all'altezza (con la riga «In attesa» il centro è più basso): sotto ci
+    // stanno etichetta e dettaglio.
+    property <length> arco: max(56px, min(96px, self.height - 54px));
 
     HorizontalLayout {
         alignment: center;
@@ -113,6 +118,7 @@ export component LayoutQuadranti inherits Rectangle {
 
         Quadrante {
             width: root.lato;
+            arco: root.arco;
             etichetta: "CPU";
             icona: Icone.pc;
             valore: stat.pronta ? stat.cpu-testo : "—";
@@ -121,6 +127,7 @@ export component LayoutQuadranti inherits Rectangle {
 
         Quadrante {
             width: root.lato;
+            arco: root.arco;
             etichetta: "RAM";
             icona: Icone.pc;
             valore: stat.ram-testo != "" ? stat.ram-testo : "—";
@@ -129,6 +136,7 @@ export component LayoutQuadranti inherits Rectangle {
 
         Quadrante {
             width: root.lato;
+            arco: root.arco;
             etichetta: "DISCO";
             icona: Icone.pc;
             valore: stat.disco-testo != "" ? stat.disco-testo : "—";
@@ -137,6 +145,7 @@ export component LayoutQuadranti inherits Rectangle {
 
         for s in sensori: Quadrante {
             width: root.lato;
+            arco: root.arco;
             opacity: casa-pronta ? 1 : 0.55;
             etichetta: "CASA";
             icona: Icone.di-genere(s.voce.genere);
@@ -147,6 +156,7 @@ export component LayoutQuadranti inherits Rectangle {
 
         if sensori.length == 0: Quadrante {
             width: root.lato;
+            arco: root.arco;
             etichetta: "CASA";
             icona: Icone.casa;
             dettaglio: stato-casa;

@@ -1,11 +1,41 @@
 //! Statistiche del PC (CPU, RAM, dischi, rete, batteria) per i quadranti e la vista PC.
 //!
 //! Il campionatore nasce all'apertura del pannello e muore alla chiusura: fuori da lì non si
-//! misura nulla. Refresh sempre mirati (mai `refresh_all`, mai l'elenco dei processi).
+//! misura nulla, salvo la batteria (`sorveglia_batteria`, ogni 60 s). Refresh sempre mirati (mai
+//! `refresh_all`, mai l'elenco dei processi).
 
 use starship_battery::units::ratio::ratio;
 use starship_battery::{Manager, State};
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+/// Ogni quanto si legge la batteria a pannello chiuso.
+pub const PERIODO_BATTERIA: Duration = Duration::from_secs(60);
+
+/// Legge la batteria subito e poi ogni 60 s su un thread che per il resto dorme, e consegna
+/// (percentuale, scollegata) a `consegna`; si ferma quando `consegna` dà falso (interfaccia
+/// chiusa). Senza batteria (PC fisso) o senza accesso alle batterie il thread finisce subito.
+pub fn sorveglia_batteria(consegna: impl Fn(f32, bool) -> bool + Send + 'static) {
+    let avviato = std::thread::Builder::new().name("batteria".into()).spawn(move || {
+        let Ok(gestore) = Manager::new() else { return };
+        loop {
+            let Some((percentuale, scollegata)) = leggi_batteria(&gestore) else { return };
+            if !consegna(percentuale, scollegata) {
+                return;
+            }
+            std::thread::sleep(PERIODO_BATTERIA);
+        }
+    });
+    if let Err(e) = avviato {
+        eprintln!("controllo della batteria non avviato: {e}");
+    }
+}
+
+/// La prima batteria: percentuale e se si sta scaricando (scollegata). `None` senza batteria.
+fn leggi_batteria(gestore: &Manager) -> Option<(f32, bool)> {
+    let b = gestore.batteries().ok()?.next()?.ok()?;
+    let percentuale = (b.state_of_charge().get::<ratio>() * 100.0).clamp(0.0, 100.0);
+    Some((percentuale, b.state() == State::Discharging))
+}
 use sysinfo::{DiskRefreshKind, Disks, MemoryRefreshKind, Networks, System};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -157,7 +187,6 @@ pub fn formatta_velocita(bps: u64) -> String {
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::time::Duration;
 
     #[test]
     fn formatta_byte_casi() {

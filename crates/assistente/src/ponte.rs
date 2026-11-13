@@ -1,14 +1,20 @@
 //! Ponte casa → interfaccia: dai dati di `casa-core` ai preferiti del pannello, e dai tocchi
-//! sui preferiti ai comandi verso Home Assistant.
+//! sui preferiti ai comandi verso Home Assistant. Tiene anche le voci «In attesa» (notifiche di
+//! Home Assistant, casa irraggiungibile, batteria, prova) e decide umore e aspetto della pillola.
 
-use crate::pillola;
+use crate::attenzione::{
+    self, livello_massimo, merita_notifica_di_sistema, notifica_sistema, prossimo_cambio_aspetto, Attese, Fonte,
+    Livello, SorveglianzaCasa, Voce, ID_BATTERIA, ID_CASA_OFFLINE, PREFISSO_NOTIFICA, PULSANTE_ARCHIVIA,
+    PULSANTE_RIPROVA,
+};
+use crate::pillola::{self, VistaPillola};
 use crate::umore::{Cervello, Segnale, Umore};
-use crate::{Pannello, Pillola, PreferitoUi, SensoreUi};
+use crate::{Pannello, Pillola, PreferitoUi, SensoreUi, VoceAttesaUi};
 use casa_core::eventi::{Ascoltatore, CasaEvento, StatoConnessione};
 use casa_core::servizio::CasaService;
 use casa_core::types::{AppEntity, BaseEntity, MenuData, SensorEntity};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -193,7 +199,19 @@ pub fn riga_stato(stato: &StatoConnessione, menu: Option<&MenuData>) -> String {
         (StatoConnessione::Connesso, None) => "Casa connessa".into(),
         (StatoConnessione::InConnessione, _) => "Connessione alla casa…".into(),
         (StatoConnessione::Disconnesso, _) => "Casa non connessa".into(),
-        (StatoConnessione::Errore(e), _) => format!("Casa: {e}"),
+        (StatoConnessione::Errore(e), _) => frase_errore(e).into(),
+    }
+}
+
+/// Una frase semplice al posto dell'errore tecnico di casa-core (il dettaglio resta per le
+/// Impostazioni).
+pub fn frase_errore(e: &str) -> &'static str {
+    match e {
+        "token non valido" => "Token non valido",
+        "token mancante" => "Token della casa mancante",
+        "nessun ambiente configurato" | "ambiente non trovato" => "Casa non configurata",
+        e if e.starts_with("portachiavi") => "Portachiavi non leggibile",
+        _ => "Casa non raggiungibile",
     }
 }
 
@@ -259,8 +277,25 @@ pub fn ascoltatore() -> Ascoltatore {
     })
 }
 
-/// Aggancio delle notifiche di sistema: il toast arriva nel Task 10 (`notifiche::mostra`).
-fn mostra_notifica_di_sistema(_titolo: &str, _messaggio: &str) {}
+/// La batteria letta dal thread `batteria` (ogni 60 s, anche a pannello chiuso).
+pub fn batteria(percentuale: f32, scollegata: bool) {
+    if let Some(p) = ponte() {
+        p.batteria(percentuale, scollegata);
+    }
+}
+
+/// Una voce «In attesa» per la riga del pannello.
+fn voce_attesa_ui(v: &Voce) -> VoceAttesaUi {
+    VoceAttesaUi {
+        id: v.id.as_str().into(),
+        livello: v.livello.come_stringa().into(),
+        titolo: v.titolo.as_str().into(),
+        sotto: format!("{} · {}", v.livello.come_stringa(), v.fonte.come_stringa()).into(),
+        dettaglio: v.dettaglio.as_str().into(),
+        icona: pillola::icona_fonte(v.fonte),
+        pulsanti: pillola::pulsanti_ui(&v.pulsanti),
+    }
+}
 
 pub struct Ponte {
     casa: Rc<CasaService>,
@@ -269,7 +304,7 @@ pub struct Ponte {
     pannello: RefCell<slint::Weak<Pannello>>,
     cervello: Rc<RefCell<Cervello>>,
     /// `--umore`: umore fisso per prova, gli eventi non lo cambiano.
-    umore_fisso: bool,
+    umore_fisso: Option<Umore>,
     stato: RefCell<StatoConnessione>,
     menu: RefCell<Option<Arc<MenuData>>>,
     /// Comandi falliti, per entità: l'errore resta sulla voce fino al prossimo tocco o a un esito ok.
@@ -278,10 +313,19 @@ pub struct Ponte {
     /// riprende a ogni apertura.
     preferiti: Rc<VecModel<PreferitoUi>>,
     sensori: Rc<VecModel<SensoreUi>>,
-    /// Ultimo umore mostrato, per non riscrivere la pillola senza motivo.
-    mostrato: RefCell<Option<(Umore, String)>>,
-    /// Gira solo mentre un umore scade da solo (contento): nessun timer fisso.
+    /// Ultima vista della pillola mostrata, per non riscriverla senza motivo.
+    mostrato: RefCell<Option<VistaPillola>>,
+    /// Gira solo mentre qualcosa scade da solo (contento, i 20 s di un'attenzione): nessun timer fisso.
     sveglia: slint::Timer,
+    /// Le voci «In attesa» e il loro modello per il pannello (sopravvive al pannello).
+    attese: RefCell<Attese>,
+    modello_attese: Rc<VecModel<VoceAttesaUi>>,
+    /// Da quanto la casa non è connessa; la sua sveglia suona solo allo scadere dei 5 minuti.
+    sorveglianza: RefCell<SorveglianzaCasa>,
+    sveglia_casa: slint::Timer,
+    /// Vero da `Connesso` ai primi dati: le notifiche di HA che arrivano lì sono quelle già
+    /// presenti (elenco "current" dell'iscrizione) e non meritano una notifica di sistema.
+    appena_connesso: Cell<bool>,
     /// Errori da mostrare nelle Impostazioni (Task 11).
     #[allow(dead_code)]
     errore_import: Option<String>,
@@ -293,7 +337,7 @@ pub fn collega(
     casa: Rc<CasaService>,
     pillola: &Pillola,
     cervello: Rc<RefCell<Cervello>>,
-    umore_fisso: bool,
+    umore_fisso: Option<Umore>,
     errore_import: Option<String>,
 ) -> Rc<Ponte> {
     let ponte = Rc::new(Ponte {
@@ -309,10 +353,25 @@ pub fn collega(
         sensori: Rc::new(VecModel::default()),
         mostrato: RefCell::new(None),
         sveglia: slint::Timer::default(),
+        attese: RefCell::new(Attese::default()),
+        modello_attese: Rc::new(VecModel::default()),
+        sorveglianza: RefCell::new(SorveglianzaCasa::new(Instant::now())),
+        sveglia_casa: slint::Timer::default(),
+        appena_connesso: Cell::new(false),
         errore_import,
         errore_config: RefCell::new(None),
     });
     PONTE.with(|p| *p.borrow_mut() = Some(ponte.clone()));
+    // I pulsanti della pillola allargata agiscono sulla voce che sta chiamando.
+    pillola.on_azione(|pulsante| {
+        if let Some(p) = self::ponte() {
+            let voce = p.mostrato.borrow().as_ref().and_then(|v| v.voce_allargata().map(str::to_owned));
+            if let Some(voce) = voce {
+                p.azione(&voce, &pulsante);
+            }
+        }
+    });
+    ponte.aggiorna_casa_offline();
     ponte.aggiorna_umore();
     ponte
 }
@@ -354,19 +413,27 @@ impl Ponte {
         match evento {
             CasaEvento::Stato(s) => {
                 self.cervello.borrow_mut().ricevi(Segnale::Casa(s.clone()), ora);
+                self.sorveglianza.borrow_mut().ricevi(&s, ora);
+                self.appena_connesso.set(s == StatoConnessione::Connesso);
                 *self.stato.borrow_mut() = s;
                 // Con la connessione cambia anche se i preferiti si possono toccare.
                 self.ricostruisci_preferiti();
                 self.aggiorna_pannello();
+                self.aggiorna_casa_offline();
             }
             CasaEvento::Dati(menu) => {
+                self.appena_connesso.set(false);
                 *self.menu.borrow_mut() = Some(menu);
                 self.ricostruisci_preferiti();
                 self.aggiorna_pannello();
             }
-            CasaEvento::Notifica { titolo, messaggio } => {
-                mostra_notifica_di_sistema(&titolo, &messaggio);
-                self.cervello.borrow_mut().ricevi(Segnale::Notifica { titolo }, ora);
+            CasaEvento::NotificaAggiunta { id, titolo, messaggio } => {
+                let silenziosa = self.appena_connesso.get();
+                self.metti_voce(attenzione::voce_notifica(&id, &titolo, &messaggio, ora), !silenziosa);
+            }
+            CasaEvento::NotificaRimossa { id } => self.togli_voce(&format!("{PREFISSO_NOTIFICA}{id}")),
+            CasaEvento::NotificaNonArchiviata { id, errore } => {
+                eprintln!("notifica {id} non archiviata: {errore}");
             }
             CasaEvento::Esito { entity_id, ok, errore } => {
                 if ok {
@@ -388,28 +455,33 @@ impl Ponte {
         self.aggiorna_umore();
     }
 
-    /// Ricalcola l'umore e lo porta alla pillola e, se aperto, al pannello. Se l'umore scadrà da
-    /// solo (contento), una sveglia singola lo ricalcola allora; altrimenti nessun timer.
+    /// Ricalcola umore e aspetto della pillola e li porta alla pillola e, se aperto, al pannello.
+    /// Se qualcosa scadrà da solo (contento, i 20 s di un'attenzione), una sveglia singola li
+    /// ricalcola allora; altrimenti nessun timer.
     fn aggiorna_umore(&self) {
-        if self.umore_fisso {
-            return;
-        }
         let ora = Instant::now();
-        let (umore, messaggio, scadenza) = {
+        let (umore, scadenza_umore) = {
             let c = self.cervello.borrow();
-            (c.umore(ora), c.messaggio().unwrap_or_default().to_owned(), c.prossimo_cambio(ora))
+            (self.umore_fisso.unwrap_or_else(|| c.umore(ora)), c.prossimo_cambio(ora))
         };
-        let nuovo = (umore, messaggio);
-        if self.mostrato.borrow().as_ref() != Some(&nuovo) {
+        let (nuova, scadenza_aspetto) = {
+            let attese = self.attese.borrow();
+            (pillola::vista(umore, &attese, ora), prossimo_cambio_aspetto(&attese, ora))
+        };
+        let scadenza = match (scadenza_umore, scadenza_aspetto) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        if self.mostrato.borrow().as_ref() != Some(&nuova) {
             // La pillola nascosta (pannello aperto) non si tocca: ridisegnarla mentre Windows la
-            // dissolve la farebbe intravedere. Riprende l'umore appena prima di ricomparire.
+            // dissolve la farebbe intravedere. Riprende l'aspetto appena prima di ricomparire.
             if let Some(p) = self.pillola.upgrade().filter(|p| p.get_attiva()) {
-                pillola::imposta_umore(&p, nuovo.0, &nuovo.1);
+                pillola::imposta(&p, &nuova);
             }
             if let Some(p) = self.pannello.borrow().upgrade() {
-                p.set_umore(nuovo.0.come_stringa().into());
+                p.set_umore(nuova.umore.come_stringa().into());
             }
-            *self.mostrato.borrow_mut() = Some(nuovo);
+            *self.mostrato.borrow_mut() = Some(nuova);
         }
         match scadenza {
             Some(tra) => self.sveglia.start(slint::TimerMode::SingleShot, tra + MARGINE_SVEGLIA, || {
@@ -467,29 +539,38 @@ impl Ponte {
         p.set_casa_pronta(*stato == StatoConnessione::Connesso && menu.is_some());
     }
 
-    /// Il pannello appena creato: modelli dei preferiti e dei sensori, stato della casa, tocchi.
+    /// Il pannello appena creato: modelli dei preferiti, dei sensori e delle voci in attesa,
+    /// stato della casa, tocchi e pulsanti.
     pub fn riempi(&self, p: &Pannello) {
         p.set_preferiti(ModelRc::from(self.preferiti.clone()));
         p.set_sensori(ModelRc::from(self.sensori.clone()));
+        p.set_attese(ModelRc::from(self.modello_attese.clone()));
         self.riempi_stato(p);
         p.on_tocca(|id| {
             if let Some(ponte) = ponte() {
                 ponte.tocca(&id);
             }
         });
+        p.on_azione(|voce, pulsante| {
+            if let Some(ponte) = ponte() {
+                ponte.azione(&voce, &pulsante);
+            }
+        });
     }
 
-    /// Il pannello si è aperto: la notifica in attesa è vista, e il pannello prende l'umore.
+    /// La voce che la pillola allargata sta chiamando: il pannello aperto da lì la espande.
+    pub fn voce_della_pillola(&self) -> Option<(String, i32)> {
+        let id = self.mostrato.borrow().as_ref()?.voce_allargata()?.to_owned();
+        let indice = self.attese.borrow().ordinate().iter().position(|v| v.id == id)?;
+        Some((id, indice as i32))
+    }
+
+    /// Il pannello si è aperto: le voci in attesa sono viste (un'attenzione non allarga più la
+    /// pillola) e il pannello prende l'umore.
     pub fn pannello_aperto(&self, p: &Pannello) {
         *self.pannello.borrow_mut() = p.as_weak();
-        if self.umore_fisso {
-            if let Some(pillola) = self.pillola.upgrade() {
-                p.set_umore(pillola.get_umore());
-            }
-            return;
-        }
+        self.attese.borrow_mut().segna_viste();
         *self.mostrato.borrow_mut() = None; // il pannello nuovo non ha ancora l'umore
-        self.cervello.borrow_mut().ricevi(Segnale::PannelloAperto, Instant::now());
         self.aggiorna_umore();
     }
 
@@ -517,6 +598,99 @@ impl Ponte {
             self.ricostruisci_preferiti();
         }
         self.casa.comando(entity_id, dominio, servizio);
+    }
+
+    // ─── Voci «In attesa» ────────────────────────────────────────────────────
+
+    /// Mette (o aggiorna) una voce. Una voce nuova che lo merita manda la notifica di sistema,
+    /// salvo `avvisa` falso (notifiche di HA già presenti alla connessione).
+    pub fn metti_voce(&self, v: Voce, avvisa: bool) {
+        let nuova = !self.attese.borrow().contiene(&v.id);
+        if nuova && avvisa && merita_notifica_di_sistema(&v) {
+            notifica_sistema(&v);
+        }
+        self.attese.borrow_mut().metti(v);
+        self.attese_cambiate();
+    }
+
+    pub fn togli_voce(&self, id: &str) {
+        if !self.attese.borrow().contiene(id) {
+            return;
+        }
+        self.attese.borrow_mut().togli(id);
+        self.attese_cambiate();
+    }
+
+    /// Umore, pillola, riga del pannello (e voce espansa) dopo un cambio delle voci.
+    fn attese_cambiate(&self) {
+        let livello = livello_massimo(&self.attese.borrow());
+        self.cervello.borrow_mut().ricevi(Segnale::InAttesa(livello), Instant::now());
+        let voci: Vec<VoceAttesaUi> = self.attese.borrow().ordinate().into_iter().map(voce_attesa_ui).collect();
+        aggiorna_modello(&self.modello_attese, voci);
+        if let Some(p) = self.pannello.borrow().upgrade() {
+            // La voce espansa può aver cambiato posto o essere sparita.
+            let aperta = p.get_voce_aperta().to_string();
+            if !aperta.is_empty() {
+                match self.attese.borrow().ordinate().iter().position(|v| v.id == aperta) {
+                    Some(i) => p.set_indice_aperta(i as i32),
+                    None => {
+                        p.set_voce_aperta("".into());
+                        p.set_indice_aperta(-1);
+                    }
+                }
+            }
+        }
+        self.aggiorna_umore();
+    }
+
+    /// Un pulsante di una voce (nella pillola o nel pannello).
+    pub fn azione(&self, voce: &str, pulsante: &str) {
+        if voce == ID_CASA_OFFLINE && pulsante == PULSANTE_RIPROVA {
+            self.casa.connetti_attivo();
+        } else if let Some(id) = voce.strip_prefix(PREFISSO_NOTIFICA) {
+            // Sparisce quando HA la rimuove (arriva `NotificaRimossa`).
+            if pulsante == PULSANTE_ARCHIVIA {
+                self.casa.archivia_notifica(id);
+            }
+        } else if self.attese.borrow().voce(voce).is_some_and(|v| v.fonte == Fonte::Prova) {
+            eprintln!("avviso di prova: «{pulsante}»");
+            self.togli_voce(voce);
+        }
+    }
+
+    /// Casa non connessa da oltre 5 minuti → voce; connessione tornata → via. La sveglia suona
+    /// solo allo scadere dei 5 minuti (nessun controllo periodico).
+    fn aggiorna_casa_offline(&self) {
+        let ora = Instant::now();
+        let (voce, scadenza) = {
+            let s = self.sorveglianza.borrow();
+            (s.voce(ora), s.scadenza(ora))
+        };
+        match voce {
+            Some(v) if !self.attese.borrow().contiene(&v.id) => self.metti_voce(v, true),
+            Some(_) => {}
+            None => self.togli_voce(ID_CASA_OFFLINE),
+        }
+        match scadenza {
+            Some(tra) => self.sveglia_casa.start(slint::TimerMode::SingleShot, tra + MARGINE_SVEGLIA, || {
+                if let Some(p) = ponte() {
+                    p.aggiorna_casa_offline();
+                }
+            }),
+            None => self.sveglia_casa.stop(),
+        }
+    }
+
+    fn batteria(&self, percentuale: f32, scollegata: bool) {
+        match attenzione::voce_batteria(percentuale, scollegata, Instant::now()) {
+            Some(v) => self.metti_voce(v, true),
+            None => self.togli_voce(ID_BATTERIA),
+        }
+    }
+
+    /// `--prova-avviso <livello>`.
+    pub fn prova_avviso(&self, livello: Livello) {
+        self.metti_voce(attenzione::voce_di_prova(livello, Instant::now()), true);
     }
 }
 
@@ -740,7 +914,17 @@ pub(crate) mod test {
         assert_eq!(riga_stato(&StatoConnessione::Connesso, None), "Casa connessa");
         assert_eq!(riga_stato(&StatoConnessione::InConnessione, Some(&m)), "Connessione alla casa…");
         assert_eq!(riga_stato(&StatoConnessione::Disconnesso, Some(&m)), "Casa non connessa");
-        assert_eq!(riga_stato(&StatoConnessione::Errore("token mancante".into()), None), "Casa: token mancante");
+        assert_eq!(riga_stato(&StatoConnessione::Errore("token mancante".into()), None), "Token della casa mancante");
+    }
+
+    #[test]
+    fn errori_in_frasi_semplici() {
+        let riga = |e: &str| riga_stato(&StatoConnessione::Errore(e.into()), None);
+        assert_eq!(riga("connessione non riuscita: IO error: Impossibile stabilire la connessione"), "Casa non raggiungibile");
+        assert_eq!(riga("Home Assistant non risponde"), "Casa non raggiungibile");
+        assert_eq!(riga("token non valido"), "Token non valido");
+        assert_eq!(riga("nessun ambiente configurato"), "Casa non configurata");
+        assert_eq!(riga("portachiavi: accesso negato"), "Portachiavi non leggibile");
     }
 
     #[test]

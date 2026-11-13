@@ -47,3 +47,22 @@ export struct SensoreUi {
     voce: PreferitoUi,
     frazione: float,
 }
+
+// Un pulsante di una voce «In attesa» (al massimo 2 per voce, anche nella pillola).
+export struct PulsanteUi {
+    id: string,
+    testo: string,
+}
+
+// Una voce «In attesa» per la riga in cima alla Panoramica (vedi `attenzione.rs`).
+// `livello`: "bloccante" | "attenzione" | "informazione" (colore della barretta e parola);
+// `sotto`: la riga piccola sotto il titolo, «attenzione · pc»; `icona`: la fonte.
+export struct VoceAttesaUi {
+    id: string,
+    livello: string,
+    titolo: string,
+    sotto: string,
+    dettaglio: string,
+    icona: image,
+    pulsanti: [PulsanteUi],
+}

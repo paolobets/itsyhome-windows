@@ -4,8 +4,12 @@
 //! cargo run -p casa-core --example finto_ha -- prepara <cartella> <porta> [--preferiti]
 //!     scrive <cartella>/assistente.json con l'ambiente "prova-locale" su ws://127.0.0.1:<porta>
 //!     e mette un token FINTO nel portachiavi sotto "prova-locale"
-//! cargo run -p casa-core --example finto_ha -- <porta> [--notifica-dopo <secondi>]
-//!     avvia il server (Ctrl+C o chiusura del processo per fermarlo)
+//! cargo run -p casa-core --example finto_ha -- <porta> [--con-notifica] [--notifica-dopo <s>] [--rimuovi-dopo <s>]
+//!     avvia il server (Ctrl+C o chiusura del processo per fermarlo).
+//!     --con-notifica: una notifica persistente c'è già all'avvio ("aggiornamento");
+//!     --notifica-dopo: dopo <s> secondi compare la notifica "lavatrice";
+//!     --rimuovi-dopo: dopo <s> secondi HA stesso archivia la notifica "lavatrice".
+//!     `persistent_notification.dismiss` la toglie e manda "removed", come l'HA vero.
 //! cargo run -p casa-core --example finto_ha -- pulisci
 //!     cancella il token finto dal portachiavi
 //! ```
@@ -14,7 +18,9 @@
 //! Entità: 2 luci (una accesa), 1 interruttore, 1 scena, 1 sensore di temperatura, una luce non
 //! disponibile senza stanza (→ "Altro") e un interruttore che rifiuta ogni comando. `call_service`
 //! cambia lo stato finto e manda `state_changed`, come l'HA vero. Stessa logica del server finto
-//! dei test d'integrazione (`tests/finto_ha.rs`), con uno stato che cambia.
+//! dei test d'integrazione (`tests/finto_ha.rs`), con uno stato che cambia. Notifiche persistenti
+//! come `persistent_notification/subscribe` di HA: "current" all'iscrizione, poi "added" e
+//! "removed" con l'id della richiesta d'iscrizione.
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -40,6 +46,38 @@ struct Entita {
 }
 
 type Stati = Arc<Mutex<BTreeMap<&'static str, Entita>>>;
+/// Notifiche persistenti: id → (titolo, messaggio).
+type Notifiche = Arc<Mutex<BTreeMap<String, (String, String)>>>;
+
+/// Il corpo di un evento d'iscrizione alle notifiche (`{"type": ..., "notifications": {...}}`).
+fn corpo_notifiche(tipo: &str, n: &BTreeMap<String, (String, String)>) -> Value {
+    let notifiche: serde_json::Map<String, Value> = n
+        .iter()
+        .map(|(id, (titolo, messaggio))| {
+            let v = json!({ "notification_id": id, "title": titolo, "message": messaggio,
+                            "created_at": "2026-11-13T10:00:00+00:00" });
+            (id.clone(), v)
+        })
+        .collect();
+    json!({ "type": tipo, "notifications": notifiche })
+}
+
+fn aggiungi_notifica(n: &Notifiche, tx: &broadcast::Sender<Value>, id: &str, titolo: &str, messaggio: &str) {
+    let mut n = n.lock().unwrap();
+    let tipo = if n.contains_key(id) { "updated" } else { "added" };
+    n.insert(id.into(), (titolo.into(), messaggio.into()));
+    let una: BTreeMap<_, _> = [(id.to_owned(), (titolo.to_owned(), messaggio.to_owned()))].into();
+    let _ = tx.send(corpo_notifiche(tipo, &una));
+    println!("notifica {id} {tipo}");
+}
+
+fn togli_notifica(n: &Notifiche, tx: &broadcast::Sender<Value>, id: &str) -> bool {
+    let Some(v) = n.lock().unwrap().remove(id) else { return false };
+    let una: BTreeMap<_, _> = [(id.to_owned(), v)].into();
+    let _ = tx.send(corpo_notifiche("removed", &una));
+    println!("notifica {id} removed");
+    true
+}
 
 fn entita_iniziali() -> BTreeMap<&'static str, Entita> {
     let mut m = BTreeMap::new();
@@ -113,6 +151,15 @@ fn risposta(v: &Value, stati: &Stati) -> (Value, Option<Value>) {
     }
 }
 
+/// `persistent_notification.dismiss`: toglie la notifica (e manda "removed"), come HA.
+fn archivia(v: &Value, n: &Notifiche, tx: &broadcast::Sender<Value>) -> Value {
+    let nid = v["service_data"]["notification_id"].as_str().unwrap_or_default();
+    println!("call_service persistent_notification dismiss {nid}");
+    // Come HA: un id sconosciuto non è un errore.
+    togli_notifica(n, tx, nid);
+    json!({ "id": v["id"], "type": "result", "success": true, "result": { "context": {} } })
+}
+
 fn servizio(v: &Value, id: &Value, stati: &Stati) -> (Value, Option<Value>) {
     let entity_id = v["target"]["entity_id"].as_str().unwrap_or_default();
     let servizio = v["service"].as_str().unwrap_or_default();
@@ -147,9 +194,13 @@ async fn servi(
     tcp: tokio::net::TcpStream,
     stati: Stati,
     eventi_tx: broadcast::Sender<String>,
-    notifica_dopo: Option<Duration>,
+    notifiche: Notifiche,
+    notifiche_tx: broadcast::Sender<Value>,
 ) {
     let mut eventi = eventi_tx.subscribe();
+    let mut aggiornamenti = notifiche_tx.subscribe();
+    // Id della richiesta `persistent_notification/subscribe` di questo client.
+    let mut iscrizione: Option<Value> = None;
     let Ok(ws) = tokio_tungstenite::accept_async(tcp).await else { return };
     let (mut tx, mut rx) = ws.split();
     let testo = |v: Value| Message::Text(v.to_string().into());
@@ -171,23 +222,26 @@ async fn servi(
             return;
         }
     }
-    if let Some(d) = notifica_dopo {
-        let e = eventi_tx.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(d).await;
-            let v = json!({ "id": 1, "type": "event", "event": {
-                "event_type": "persistent_notification_created",
-                "data": { "notification_id": "prova", "title": "Lavatrice finita", "message": "Il ciclo è terminato" } } });
-            let _ = e.send(v.to_string());
-            println!("notifica mandata");
-        });
-    }
     loop {
         tokio::select! {
             m = rx.next() => {
                 let Some(Ok(m)) = m else { return };
                 let Message::Text(t) = m else { continue };
                 let Ok(v) = serde_json::from_str::<Value>(&t) else { continue };
+                if v["type"] == "persistent_notification/subscribe" {
+                    let id = v["id"].clone();
+                    let attuali = corpo_notifiche("current", &notifiche.lock().unwrap());
+                    let ok = json!({ "id": id, "type": "result", "success": true, "result": null });
+                    let evento = json!({ "id": id, "type": "event", "event": attuali });
+                    if tx.send(testo(ok)).await.is_err() || tx.send(testo(evento)).await.is_err() { return; }
+                    iscrizione = Some(id);
+                    continue;
+                }
+                if v["type"] == "call_service" && v["domain"] == "persistent_notification" && v["service"] == "dismiss" {
+                    let r = archivia(&v, &notifiche, &notifiche_tx);
+                    if tx.send(testo(r)).await.is_err() { return; }
+                    continue;
+                }
                 let (r, evento) = risposta(&v, &stati);
                 if tx.send(testo(r)).await.is_err() { return; }
                 if let Some(e) = evento {
@@ -197,6 +251,12 @@ async fn servi(
             e = eventi.recv() => {
                 let Ok(e) = e else { return };
                 if tx.send(Message::Text(e.into())).await.is_err() { return; }
+            }
+            n = aggiornamenti.recv() => {
+                let Ok(corpo) = n else { return };
+                let Some(id) = &iscrizione else { continue };
+                let evento = json!({ "id": id, "type": "event", "event": corpo });
+                if tx.send(testo(evento)).await.is_err() { return; }
             }
         }
     }
@@ -240,24 +300,48 @@ fn main() -> Result<(), String> {
         }
         Some(porta) => {
             let porta: u16 = porta.parse().map_err(|_| "porta non valida".to_owned())?;
-            let notifica_dopo = argomenti
-                .iter()
-                .position(|a| a == "--notifica-dopo")
-                .and_then(|i| argomenti.get(i + 1))
-                .and_then(|s| s.parse().ok())
-                .map(Duration::from_secs);
+            let secondi = |nome: &str| {
+                argomenti
+                    .iter()
+                    .position(|a| a == nome)
+                    .and_then(|i| argomenti.get(i + 1))
+                    .and_then(|s| s.parse().ok())
+                    .map(Duration::from_secs)
+            };
+            let (notifica_dopo, rimuovi_dopo) = (secondi("--notifica-dopo"), secondi("--rimuovi-dopo"));
+            let con_notifica = argomenti.iter().any(|a| a == "--con-notifica");
             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
             rt.block_on(async move {
                 let listener = TcpListener::bind(("127.0.0.1", porta)).await.map_err(|e| e.to_string())?;
                 println!("HA finto su ws://127.0.0.1:{porta}/api/websocket");
                 let stati: Stati = Arc::new(Mutex::new(entita_iniziali()));
                 let (eventi, _) = broadcast::channel(64);
+                let notifiche: Notifiche = Arc::default();
+                let (notifiche_tx, _) = broadcast::channel(64);
+                if con_notifica {
+                    let testo = "Disponibile Home Assistant 2026.11.1";
+                    notifiche.lock().unwrap().insert("aggiornamento".into(), ("Aggiornamento".into(), testo.into()));
+                }
+                if let Some(d) = notifica_dopo {
+                    let (n, tx) = (notifiche.clone(), notifiche_tx.clone());
+                    tokio::spawn(async move {
+                        tokio::time::sleep(d).await;
+                        aggiungi_notifica(&n, &tx, "lavatrice", "Lavatrice finita", "Il ciclo è terminato: puoi stendere.");
+                    });
+                }
+                if let Some(d) = rimuovi_dopo {
+                    let (n, tx) = (notifiche.clone(), notifiche_tx.clone());
+                    tokio::spawn(async move {
+                        tokio::time::sleep(d).await;
+                        togli_notifica(&n, &tx, "lavatrice");
+                    });
+                }
                 loop {
                     let (tcp, _) = listener.accept().await.map_err(|e| e.to_string())?;
-                    tokio::spawn(servi(tcp, stati.clone(), eventi.clone(), notifica_dopo));
+                    tokio::spawn(servi(tcp, stati.clone(), eventi.clone(), notifiche.clone(), notifiche_tx.clone()));
                 }
             })
         }
-        None => Err("uso: finto_ha <porta> [--notifica-dopo <s>] | prepara <cartella> <porta> [--preferiti] | pulisci".into()),
+        None => Err("uso: finto_ha <porta> [--con-notifica] [--notifica-dopo <s>] [--rimuovi-dopo <s>] | prepara <cartella> <porta> [--preferiti] | pulisci".into()),
     }
 }

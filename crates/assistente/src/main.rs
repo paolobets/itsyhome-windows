@@ -1,6 +1,7 @@
 // In release niente console: l'assistente vive solo nella pillola.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod attenzione;
 mod avvio;
 mod finestre;
 mod layout;
@@ -29,9 +30,6 @@ slint::include_modules!();
 /// Titolo della finestra della pillola: dice al gancio di winit quale finestra non deve
 /// prendersi il fuoco quando ricompare.
 const TITOLO_PILLOLA: &str = "ItsyHome";
-
-/// Messaggio finto mostrato con `--umore alert`, per vedere la pillola allargata.
-const MESSAGGIO_DI_PROVA: &str = "Lavatrice finita";
 
 /// `--umore <calm|think|alert|happy|sleep>`: forza un umore (solo per prova).
 fn umore_forzato(mut argomenti: impl Iterator<Item = String>) -> Option<Umore> {
@@ -87,12 +85,17 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let argomenti: Vec<String> = std::env::args().skip(1).collect();
     let forzato = umore_forzato(argomenti.iter().cloned());
-    if let Some(u) = forzato {
-        let messaggio = if u == Umore::TiCerca { MESSAGGIO_DI_PROVA } else { "" };
-        pillola::imposta_umore(&pillola, u, messaggio);
-    }
     let cervello = Rc::new(RefCell::new(Cervello::new(Instant::now())));
-    let ponte = ponte::collega(casa.clone(), &pillola, cervello, forzato.is_some(), errore_import);
+    let ponte = ponte::collega(casa.clone(), &pillola, cervello, forzato, errore_import);
+    // `--prova-avviso <bloccante|attenzione|informazione>`: una voce finta con 2 pulsanti finti.
+    if let Some(livello) = attenzione::avviso_di_prova(argomenti.iter().cloned()) {
+        ponte.prova_avviso(livello);
+    }
+    // La batteria si controlla ogni 60 s anche a pannello chiuso (unica eccezione al campionamento
+    // solo a pannello aperto): un thread che dorme, niente su senza batteria.
+    pc_stats::sorveglia_batteria(|percentuale, scollegata| {
+        slint::invoke_from_event_loop(move || ponte::batteria(percentuale, scollegata)).is_ok()
+    });
 
     let apertura = pannello::Apertura::collega(&pillola, ponte);
     finestre::segui_schermo(&pillola, pillola::al_cambio_schermo);

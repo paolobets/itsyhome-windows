@@ -34,12 +34,13 @@ pub fn posizione_pillola(
 
 /// Margine logico dell'aura attorno alla pillola (`margine-aura` in pillola.slint).
 pub const MARGINE_AURA: f32 = 10.0;
-/// Larghezza logica fissa della finestra della pillola (`larghezza-finestra` in pillola.slint).
-pub const LARGHEZZA_FINESTRA_PILLOLA: f32 = 380.0;
-/// Centro degli occhi della pillola in "ti cerca" rispetto al centro della sua finestra
-/// (`scarto-occhi-allerta` in pillola.slint): pillola larga 360, occhi a 20 dal bordo sinistro,
-/// ingombro 30. Il pannello aperto da "ti cerca" fa partire gli occhi da qui.
-pub const SCARTO_OCCHI_ALLERTA: f32 = -145.0;
+/// Larghezza logica fissa della finestra della pillola (`larghezza-finestra` in pillola.slint):
+/// la pillola allargata che chiama (460: icona, occhi, una riga, 2 pulsanti) più l'aura.
+pub const LARGHEZZA_FINESTRA_PILLOLA: f32 = 480.0;
+/// Centro degli occhi della pillola allargata rispetto al centro della sua finestra
+/// (`scarto-occhi-allerta` in pillola.slint): pillola larga 460, occhi a 44 dal bordo sinistro
+/// (dopo l'icona della fonte), ingombro 30. Il pannello aperto da lì fa partire gli occhi da qui.
+pub const SCARTO_OCCHI_ALLERTA: f32 = -171.0;
 /// Larghezza logica del pannello (`width` di pannello.slint).
 pub const LARGHEZZA_PANNELLO: f32 = 800.0;
 
@@ -293,11 +294,12 @@ mod test {
 
     #[test]
     fn da_ti_cerca_gli_occhi_del_pannello_partono_da_quelli_della_pillola() {
-        // In "ti cerca" gli occhi della pillola stanno a sinistra (pillola larga 360 al centro
-        // della finestra, occhi a 20 px dal bordo, ingombro 30): centro a 35 px dal bordo sinistro.
-        // Il pannello, aperto da lì, fa partire i suoi occhi da `partenza-occhi` =
-        // SCARTO_OCCHI_ALLERTA rispetto al proprio centro, poi li porta al centro.
-        let occhi_dal_bordo = 20.0 + (2.0 * 10.0 + 10.0) / 2.0;
+        // Nella pillola allargata (che chiama) gli occhi stanno a sinistra, dopo l'icona della
+        // fonte: pillola larga 460 al centro della finestra, occhi a 44 px dal bordo (18 + icona 16
+        // + 10), ingombro 30: centro a 59 px dal bordo sinistro. Il pannello, aperto da lì, fa
+        // partire i suoi occhi da `partenza-occhi` = SCARTO_OCCHI_ALLERTA rispetto al proprio
+        // centro, poi li porta al centro.
+        let occhi_dal_bordo = 44.0 + (2.0 * 10.0 + 10.0) / 2.0;
         for (a, scala) in [
             (area(0, 0, 1920, 1040), 1.0),
             (area(0, 0, 2560, 1528), 1.75),
@@ -306,7 +308,7 @@ mod test {
         ] {
             let (px, _) = posizione_pillola(a, scala, LARGHEZZA_FINESTRA_PILLOLA, MARGINE_LOGICO);
             let (qx, _) = posizione_pannello(a, scala);
-            let bordo_pillola = px as f32 + (LARGHEZZA_FINESTRA_PILLOLA - 360.0) / 2.0 * scala;
+            let bordo_pillola = px as f32 + (LARGHEZZA_FINESTRA_PILLOLA - 460.0) / 2.0 * scala;
             let occhi_pillola = bordo_pillola + occhi_dal_bordo * scala;
             let centro_pannello = qx as f32 + (LARGHEZZA_PANNELLO * scala).round() / 2.0;
             let partenza = centro_pannello + SCARTO_OCCHI_ALLERTA * scala;
@@ -334,10 +336,13 @@ mod test {
 
     #[test]
     fn regione_della_pillola_sotto_il_margine_dell_aura() {
-        // Finestra 380 × 68 logici; fascia calm 220 al centro. La regione parte dove inizia lo
+        // Finestra 480 × 68 logici; fascia calm 220 al centro. La regione parte dove inizia lo
         // schermo (sotto l'aura che sporge) e arriva in fondo alla finestra.
-        assert_eq!(regione_pillola(380, 68, 1.0, 220.0), (80, 10, 300, 68));
-        let (l, a) = ((380.0_f32 * 1.75).round() as i32, (68.0_f32 * 1.75).round() as i32);
+        assert_eq!(LARGHEZZA_FINESTRA_PILLOLA, 480.0);
+        assert_eq!(regione_pillola(480, 68, 1.0, 220.0), (130, 10, 350, 68));
+        // Allargata (460 + aura): la fascia è tutta la finestra, pulsanti a destra compresi.
+        assert_eq!(regione_pillola(480, 68, 1.0, 480.0), (0, 10, 480, 68));
+        let (l, a) = ((480.0_f32 * 1.75).round() as i32, (68.0_f32 * 1.75).round() as i32);
         let (sinistra, alto, destra, basso) = regione_pillola(l, a, 1.75, 220.0);
         assert_eq!(alto, 18, "margine dell'aura a 1,75: 17,5 arrotondato");
         assert_eq!(basso - alto, a - 18);

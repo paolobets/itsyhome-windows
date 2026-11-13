@@ -1,21 +1,24 @@
 // Il pannello unico dell'assistente (spec §3bis). Riga alta: «‹ Indietro» a sinistra solo dentro
 // un'app, occhi al centro (dove stavano quelli della pillola), l'ora a destra. Centro: la
-// Panoramica (layout Orologio o Quadranti, cambiabili con i puntini, le frecce e la rotella) o la
-// vista di un'app. In basso il dock di sole icone, una per app del registro.
+// Panoramica (riga «In attesa» se c'è qualcosa, poi il layout Orologio o Quadranti, cambiabili
+// con i puntini, le frecce e la rotella) o la vista di un'app. In basso il dock di sole icone.
 //
-// Tastiera: Tab / Maiusc+Tab fra «Indietro», contenuto e dock; frecce dentro la zona (nella
+// Tastiera: Tab / Maiusc+Tab fra «Indietro», «In attesa», contenuto e dock; frecce dentro la zona
+// (in «In attesa» ←/→ fra le voci e, a voce espansa, ↓ ai pulsanti e ↑ di nuovo alla voce; nella
 // Panoramica ←/→ cambiano layout, nel dock cambiano icona, in Casa si muovono fra le card);
-// Invio o Spazio attivano; Backspace o Alt+← = Indietro; Esc chiude. Un unico FocusScope tiene il
-// fuoco e l'anello (visibile solo da tastiera) segue la zona scelta.
+// Invio o Spazio attivano (su una voce: la espande o la riduce); Backspace o Alt+← = Indietro;
+// Esc chiude. Un unico FocusScope tiene il fuoco e l'anello (visibile solo da tastiera) segue la
+// zona scelta.
 import { Tema } from "tema.slint";
 import { Occhio } from "pillola.slint";
-import { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi } from "voci.slint";
+import { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi } from "voci.slint";
+import { RigaAttesa, VoceEspansa } from "attesa.slint";
 import { VistaPc } from "viste/pc.slint";
 import { VistaCasa } from "viste/casa.slint";
 import { LayoutOrologio } from "layout/orologio.slint";
 import { LayoutQuadranti } from "layout/quadranti.slint";
 
-export { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi }
+export { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi }
 
 // Una scheda del dock: solo l'icona (bersaglio 36 × 32, icona 20); quella attiva sta in una
 // capsula "vetro" e diventa bianca. Il nome compare in un suggerimento dopo una breve sosta del
@@ -111,7 +114,16 @@ export component Pannello inherits Window {
     // Da dove partono gli occhi all'apertura, rispetto al centro: aprendo da "ti cerca" sono
     // dove stavano quelli della pillola allargata e, appena il pannello è comparso, scivolano al centro.
     in property <length> partenza-occhi: 0px;
+    // Le voci «In attesa», già in ordine (bloccante, attenzione, informazione; poi le più recenti).
+    in property <[VoceAttesaUi]> attese;
+    // Id della voce espansa sul posto ("" = nessuna). Rust la azzera se la voce sparisce e la
+    // imposta quando il pannello si apre dalla pillola che chiama.
+    in-out property <string> voce-aperta;
+    // Posizione della voce espansa in `attese` (-1 = nessuna): va sempre insieme a `voce-aperta`.
+    in-out property <int> indice-aperta: -1;
     callback tocca(string);
+    // Un pulsante di una voce in attesa: (id della voce, id del pulsante).
+    callback azione(string, string);
     // Clic su un puntino: quel layout.
     callback scegli-layout(int);
     // Frecce, rotella e Invio sui puntini: +1 il successivo, -1 il precedente (lo decide Rust).
@@ -133,6 +145,11 @@ export component Pannello inherits Window {
     out property <length> centro-y: altezza-riga + 4px;
     out property <length> centro-l: root.width - 2 * margine;
     out property <length> centro-a: puntini-y - 2px - centro-y;
+    // Riga «In attesa» (solo nella Panoramica e solo se c'è qualcosa): il layout sta sotto.
+    property <bool> con-attese: vista == "panoramica" && attese.length > 0;
+    property <length> altezza-attese: 42px;
+    property <length> sotto-attese: con-attese ? altezza-attese + 6px : 0px;
+    property <bool> espansa: con-attese && indice-aperta >= 0 && indice-aperta < attese.length;
 
     property <bool> palpebra: false;
     // Diventa vero poco dopo l'apertura, quando i primi fotogrammi hanno già disegnato gli occhi
@@ -149,6 +166,10 @@ export component Pannello inherits Window {
     property <int> fuoco-casa: 0;
     property <int> colonne-casa: 4;
     property <int> fuoco-casa-valido: min(fuoco-casa, preferiti.length - 1);
+    // «In attesa»: voce col fuoco (da chiusa 0..2, 3 = «+N») e pulsante della voce espansa
+    // (-1 = la voce stessa).
+    property <int> fuoco-attesa: 0;
+    property <int> fuoco-pulsante: -1;
     // Rotella: spostamento accumulato e pausa dopo un cambio (un touchpad manda molti piccoli passi).
     property <length> rotella: 0px;
     property <bool> rotella-ferma: false;
@@ -166,6 +187,9 @@ export component Pannello inherits Window {
         if (z == "indietro") {
             return vista != "panoramica";
         }
+        if (z == "attesa") {
+            return con-attese;
+        }
         if (z == "contenuto") {
             return vista == "panoramica" || (vista == "casa" && preferiti.length > 0);
         }
@@ -174,9 +198,9 @@ export component Pannello inherits Window {
 
     pure function zona-dopo(z: string, avanti: bool) -> string {
         if (avanti) {
-            return z == "indietro" ? "contenuto" : z == "contenuto" ? "dock" : "indietro";
+            return z == "indietro" ? "attesa" : z == "attesa" ? "contenuto" : z == "contenuto" ? "dock" : "indietro";
         }
-        return z == "dock" ? "contenuto" : z == "contenuto" ? "indietro" : "dock";
+        return z == "dock" ? "contenuto" : z == "contenuto" ? "attesa" : z == "attesa" ? "indietro" : "dock";
     }
 
     // Tab: la zona seguente che esiste in questa vista (il dock c'è sempre).
@@ -188,6 +212,25 @@ export component Pannello inherits Window {
         if (!ha-zona(zona)) {
             zona = zona-dopo(zona, avanti);
         }
+        if (!ha-zona(zona)) {
+            zona = zona-dopo(zona, avanti);
+        }
+        fuoco-pulsante = -1;
+    }
+
+    function apri-voce(i: int) {
+        if (i >= 0 && i < attese.length) {
+            voce-aperta = attese[i].id;
+            indice-aperta = i;
+            fuoco-attesa = min(i, 3);
+            fuoco-pulsante = -1;
+        }
+    }
+
+    function riduci-voce() {
+        voce-aperta = "";
+        indice-aperta = -1;
+        fuoco-pulsante = -1;
     }
 
     function vai(v: string) {
@@ -223,6 +266,28 @@ export component Pannello inherits Window {
             } else if (k == Key.RightArrow) {
                 fuoco-dock = min(app.length - 1, fuoco-dock + 1);
             }
+        } else if (zona == "attesa" && espansa) {
+            if (fuoco-pulsante >= 0) {
+                if (k == Key.LeftArrow) {
+                    fuoco-pulsante = max(0, fuoco-pulsante - 1);
+                } else if (k == Key.RightArrow) {
+                    fuoco-pulsante = min(attese[indice-aperta].pulsanti.length - 1, fuoco-pulsante + 1);
+                } else if (k == Key.UpArrow) {
+                    fuoco-pulsante = -1;
+                }
+            } else if (k == Key.LeftArrow && indice-aperta > 0) {
+                apri-voce(indice-aperta - 1);
+            } else if (k == Key.RightArrow && indice-aperta < attese.length - 1) {
+                apri-voce(indice-aperta + 1);
+            } else if (k == Key.DownArrow && indice-aperta >= 0 && attese[indice-aperta].pulsanti.length > 0) {
+                fuoco-pulsante = 0;
+            }
+        } else if (zona == "attesa") {
+            if (k == Key.LeftArrow) {
+                fuoco-attesa = max(0, min(fuoco-attesa, 3) - 1);
+            } else if (k == Key.RightArrow) {
+                fuoco-attesa = min(min(attese.length, 4) - 1, fuoco-attesa + 1);
+            }
         } else if (zona == "contenuto" && vista == "panoramica") {
             if (k == Key.LeftArrow) {
                 root.scorri-layout(-1);
@@ -246,6 +311,14 @@ export component Pannello inherits Window {
     function attiva() {
         if (zona == "indietro") {
             indietro();
+        } else if (zona == "attesa" && espansa) {
+            if (fuoco-pulsante >= 0 && indice-aperta >= 0) {
+                root.azione(voce-aperta, attese[indice-aperta].pulsanti[fuoco-pulsante].id);
+            } else {
+                riduci-voce();
+            }
+        } else if (zona == "attesa") {
+            apri-voce(min(fuoco-attesa, attese.length - 1));
         } else if (zona == "dock") {
             apri(fuoco-dock, app[fuoco-dock].id);
         } else if (vista == "panoramica") {
@@ -297,6 +370,17 @@ export component Pannello inherits Window {
         triggered => {
             rotella-ferma = false;
             rotella = 0px;
+        }
+    }
+
+    // Dopo un breve silenzio della rotella l'accumulo riparte da zero: piccoli passi di gesti
+    // diversi del touchpad non si sommano fino a cambiare layout. Gira solo durante lo scorrimento.
+    silenzio-rotella := Timer {
+        interval: 250ms;
+        running: false;
+        triggered => {
+            rotella = 0px;
+            self.running = false;
         }
     }
 
@@ -456,12 +540,55 @@ export component Pannello inherits Window {
             }
         }
 
-        // Centro: la Panoramica (solo sintesi, nessun comando) o la vista dell'app.
-        Rectangle {
+        // «In attesa»: in cima alla Panoramica, solo se c'è qualcosa.
+        if con-attese && !espansa: RigaAttesa {
+            x: centro-x;
+            y: centro-y;
+            width: centro-l;
+            height: altezza-attese;
+            voci: root.attese;
+            fuoco: da-tastiera && zona == "attesa" ? fuoco-attesa : -1;
+            scelta(i) => {
+                da-tastiera = false;
+                apri-voce(i);
+            }
+        }
+
+        // Una voce espansa sul posto: copre la riga e il layout (nessuna vista nuova).
+        if espansa: VoceEspansa {
             x: centro-x;
             y: centro-y;
             width: centro-l;
             height: centro-a;
+            voce: root.attese[indice-aperta];
+            posizione: indice-aperta;
+            totale: root.attese.length;
+            fuoco: !(da-tastiera && zona == "attesa") ? -1 : fuoco-pulsante >= 0 ? fuoco-pulsante : -2;
+            riduci => {
+                da-tastiera = false;
+                riduci-voce();
+            }
+            precedente => {
+                da-tastiera = false;
+                apri-voce(indice-aperta > 0 ? indice-aperta - 1 : root.attese.length - 1);
+            }
+            successiva => {
+                da-tastiera = false;
+                apri-voce(indice-aperta < root.attese.length - 1 ? indice-aperta + 1 : 0);
+            }
+            azione(p) => {
+                da-tastiera = false;
+                root.azione(voce-aperta, p);
+            }
+        }
+
+        // Centro: la Panoramica (solo sintesi, nessun comando) o la vista dell'app.
+        Rectangle {
+            x: centro-x;
+            y: centro-y + sotto-attese;
+            width: centro-l;
+            height: centro-a - sotto-attese;
+            visible: !espansa;
 
             if vista == "panoramica" && layout == 0: LayoutOrologio {
                 width: parent.width;
@@ -490,6 +617,8 @@ export component Pannello inherits Window {
                         return accept;
                     }
                     rotella += abs(evento.delta-x) > abs(evento.delta-y) ? evento.delta-x : evento.delta-y;
+                    silenzio-rotella.running = true;
+                    silenzio-rotella.restart();
                     if (abs(rotella) >= 24px) {
                         root.scorri-layout(rotella < 0 ? 1 : -1);
                         rotella = 0px;

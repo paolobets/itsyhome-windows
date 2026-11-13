@@ -1,7 +1,8 @@
 // La pillola: la faccia dell'assistente, sempre in alto al centro.
 // Pillola nera, due occhi di luce, aura con i colori dei petali lungo il bordo.
-// Umori: "calm" | "think" | "alert" | "happy" | "sleep".
+// Umori: "calm" | "think" | "alert" | "happy" | "sleep". Aspetti: "riposo" | "puntino" | "allargata".
 import { Tema } from "tema.slint";
+import { PulsanteUi } from "voci.slint";
 
 // Un occhio: rettangolo di luce, arco quando è contento, trattino quando dorme.
 export component Occhio inherits Rectangle {
@@ -48,56 +49,112 @@ component Velo inherits Rectangle {
     border-radius: self.height / 2;
 }
 
+// Un pulsante della pillola che chiama (bersaglio alto 28): risolve la voce senza aprire il pannello.
+component PulsantePillola inherits Rectangle {
+    in property <string> testo;
+    in property <bool> primo;
+    callback scelto();
+
+    height: 28px;
+    width: max(64px, etichetta.preferred-width + 20px);
+    border-radius: 9px;
+    // Il secondo pulsante (es. «Consenti») ha la tinta verde acqua della bozza.
+    background: primo
+        ? (area.has-hover ? rgba(255, 255, 255, 0.16) : rgba(255, 255, 255, 0.09))
+        : (area.has-hover ? rgba(45, 212, 191, 0.30) : rgba(45, 212, 191, 0.20));
+    accessible-role: button;
+    accessible-label: testo;
+    accessible-action-default => { root.scelto(); }
+
+    etichetta := Text {
+        text: testo;
+        font-family: Tema.carattere;
+        font-weight: 500;
+        font-size: 12px;
+        color: Tema.testo;
+    }
+
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.scelto(); }
+    }
+}
+
 export component Pillola inherits Window {
     in property <string> umore: "calm";
     in property <string> messaggio;
     // Falso mentre la pillola è nascosta (pannello aperto): fermi anche i timer.
     in property <bool> attiva: true;
+    // Come mostra le voci «In attesa» (vedi `attenzione::aspetto_pillola`):
+    // "riposo" | "puntino" (piccola, con un puntino del colore del livello sotto gli occhi) |
+    // "allargata" (icona della fonte + una riga + fino a 2 pulsanti).
+    in property <string> aspetto: "riposo";
+    // Allargata per un bloccante: ferma (nessuna pulsazione) e con il bordo più spesso.
+    in property <bool> ferma;
+    // Livello della voce mostrata (colore del puntino e del bordo del bloccante).
+    in property <string> livello: "informazione";
+    in property <image> icona-fonte;
+    in property <[PulsanteUi]> pulsanti;
     callback cliccata();
+    // Clic su un pulsante della pillola allargata: l'id del pulsante.
+    callback azione(string);
 
-    // Geometria: la finestra ha sempre la larghezza della pillola più larga (ti cerca) più il
-    // margine dell'aura, e la pillola sta al centro: cambiando umore la finestra non si sposta
+    // Geometria: la finestra ha sempre la larghezza della pillola più larga (allargata) più il
+    // margine dell'aura, e la pillola sta al centro: cambiando aspetto la finestra non si sposta
     // né si ridimensiona, la pillola si allarga o si stringe attorno al centro. Da Rust la
     // finestra viene ritagliata alla `larghezza-visibile` (una fascia trasparente larga
-    // ruberebbe i clic alle schede e alle barre sotto).
+    // ruberebbe i clic alle schede e alle barre sotto); i pulsanti stanno dentro la fascia.
     out property <length> margine-aura: 10px;
-    out property <length> larghezza-pillola: allerta ? larghezza-allerta : 200px;
+    out property <length> larghezza-pillola: allargata ? larghezza-allerta : 200px;
     out property <length> larghezza-visibile: larghezza-pillola + 2 * margine-aura;
     out property <length> larghezza-finestra: larghezza-allerta + 2 * margine-aura;
     property <length> altezza-pillola: 48px;
 
-    // Geometria degli occhi in "ti cerca" (larghezza-allerta, occhi a 20 px dal bordo sinistro,
-    // larghi 10 e distanti 10). `scarto-occhi-allerta`: centro degli occhi rispetto al centro
-    // della finestra; il pannello ci fa partire i suoi quando si apre da "ti cerca".
-    out property <length> larghezza-allerta: 360px;
-    property <length> occhi-allerta-dal-bordo: 20px;
+    // Geometria della pillola allargata (larghezza-allerta): icona della fonte a 18 px dal bordo
+    // sinistro (16 px), occhi a 44 px (larghi 10 e distanti 10), poi la riga e i pulsanti.
+    // `scarto-occhi-allerta`: centro degli occhi rispetto al centro della finestra; il pannello ci
+    // fa partire i suoi quando si apre dalla pillola allargata.
+    out property <length> larghezza-allerta: 460px;
+    property <length> icona-dal-bordo: 18px;
+    property <length> lato-icona: 16px;
+    property <length> occhi-allerta-dal-bordo: icona-dal-bordo + lato-icona + 10px;
     property <length> occhio-allerta: 10px;
     property <length> spazio-allerta: 10px;
     out property <length> scarto-occhi-allerta: -larghezza-allerta / 2 + occhi-allerta-dal-bordo + (2 * occhio-allerta + spazio-allerta) / 2;
 
+    property <bool> allargata: aspetto == "allargata";
+    property <bool> blocca: allargata && ferma;
+    property <bool> tranquillo: umore == "calm";
     property <bool> pensa: umore == "think";
     property <bool> allerta: umore == "alert";
     property <bool> contento: umore == "happy";
     property <bool> dorme: umore == "sleep";
 
-    // L'aura si muove solo quando pensa o ti cerca: allora un timer a 25 fotogrammi al secondo
-    // campiona animation-tick() in `tempo` (dentro un callback non crea dipendenze). Da
-    // tranquillo, contento o addormentato nulla si ridisegna tra un battito di ciglia e l'altro.
-    property <bool> in-moto: pensa || allerta;
+    // L'aura si muove solo quando pensa o quando un'attenzione allarga la pillola (20 s): allora
+    // un timer a 25 fotogrammi al secondo campiona animation-tick() in `tempo` (dentro un callback
+    // non crea dipendenze). Il bloccante sta fermo; puntino, tranquillo, contento e addormentato
+    // non ridisegnano nulla tra un battito di ciglia e l'altro.
+    property <bool> in-moto: pensa || (allargata && !ferma);
     property <duration> tempo: 0ms;
     property <duration> giro: allerta ? 1200ms : 1600ms;
     property <angle> rotazione: in-moto ? 90deg + (tempo / giro) * 360deg : 90deg;
-    // Pulsazione di "ti cerca" (0..1, periodo 0,8 s).
-    property <float> battito: allerta ? (1 - cos((tempo / 800ms) * 360deg)) / 2 : 0;
+    // Pulsazione dell'attenzione allargata (0..1, periodo 0,8 s).
+    property <float> battito: in-moto && allerta ? (1 - cos((tempo / 800ms) * 360deg)) / 2 : 0;
     // Quando pensa, lo sguardo va da un lato all'altro (2,2 s).
     property <length> sguardo-x: pensa ? 4px * sin((tempo / 2200ms) * 360deg) : 0px;
     property <length> sguardo-y: pensa ? -3px : 0px;
 
-    property <brush> iride: allerta
-        ? @linear-gradient(rotazione, Tema.caldo-1 0%, Tema.caldo-2 35%, Tema.caldo-3 70%, Tema.caldo-4 100%)
-        : @linear-gradient(rotazione, Tema.petalo-1 0%, Tema.petalo-2 20%, Tema.petalo-3 40%, Tema.petalo-4 60%, Tema.petalo-5 80%, Tema.petalo-6 100%);
-    property <float> intensita-aura: dorme ? 0.12 : contento ? 1.0 : allerta ? 0.7 + 0.3 * battito : 0.75;
-    property <color> bagliore-occhi: allerta ? #fb923c : Tema.bagliore-occhio;
+    property <brush> iride: blocca
+        ? Tema.bloccante
+        : allerta
+            ? @linear-gradient(rotazione, Tema.caldo-1 0%, Tema.caldo-2 35%, Tema.caldo-3 70%, Tema.caldo-4 100%)
+            : @linear-gradient(rotazione, Tema.petalo-1 0%, Tema.petalo-2 20%, Tema.petalo-3 40%, Tema.petalo-4 60%, Tema.petalo-5 80%, Tema.petalo-6 100%);
+    // Aura quasi spenta a riposo (tranquillo: solo un anello sottile al 30%, nessun velo né
+    // bagliore), accesa negli altri umori; quasi nulla mentre dorme.
+    property <float> intensita-aura: dorme ? 0.12 : tranquillo ? 0 : contento ? 1.0 : allerta ? 0.7 + 0.3 * battito : 0.75;
+    property <float> opacita-anello: dorme ? 0.25 : tranquillo ? 0.3 : 1.0;
+    property <length> spessore-anello: blocca ? 3px : 2px;
+    property <color> bagliore-occhi: blocca ? Tema.bloccante : allerta ? #fb923c : Tema.bagliore-occhio;
 
     property <bool> palpebra: false;
 
@@ -108,8 +165,10 @@ export component Pillola inherits Window {
     width: larghezza-finestra;
     height: altezza-pillola + 2 * margine-aura;
 
+    // 25 fotogrammi al secondo quando pensa (pillola piccola); 12,5 per la pulsazione della pillola
+    // allargata, che è più del doppio più larga (il costo cresce con l'area ridisegnata).
     Timer {
-        interval: 40ms;
+        interval: allargata ? 80ms : 40ms;
         running: attiva && in-moto;
         triggered => {
             tempo = animation-tick();
@@ -143,37 +202,57 @@ export component Pillola inherits Window {
         animate width { duration: 220ms; easing: ease-out; }
 
         // Aura: due veli più larghi e tenui con gli stessi colori del bordo (trasparenza nel
-        // colore invece di `opacity`, per non comporre livelli a parte).
-        Velo {
+        // colore invece di `opacity`, per non comporre livelli a parte). Spenti a riposo.
+        if intensita-aura > 0: Velo {
             sagoma-larghezza: parent.width;
             sagoma-altezza: parent.height;
             espansione: 6px + 2px * battito;
             background: iride.with-alpha(0.18 * intensita-aura);
         }
-        Velo {
+        if intensita-aura > 0: Velo {
             sagoma-larghezza: parent.width;
             sagoma-altezza: parent.height;
             espansione: 3px;
             background: iride.with-alpha(0.42 * intensita-aura);
         }
 
-        // Anello: il bordo colorato di 2 px.
+        // Anello: il bordo colorato (2 px, 3 px fermo per il bloccante).
         Rectangle {
             border-radius: self.height / 2;
             background: iride;
-            opacity: dorme ? 0.25 : 1.0;
-            // Bagliore sfumato sotto i veli, come il blur della bozza.
-            drop-shadow-blur: dorme ? 0px : 8px;
-            drop-shadow-color: (allerta ? #fb923c : #c084fc).with-alpha(0.55 * intensita-aura);
+            opacity: opacita-anello;
+            // Bagliore sfumato sotto i veli, come il blur della bozza (niente a riposo, e niente
+            // mentre la pillola allargata pulsa: rifarlo a ogni fotogramma costa troppo, bastano i veli).
+            drop-shadow-blur: intensita-aura > 0.2 && !(allargata && in-moto) ? 8px : 0px;
+            drop-shadow-color: (blocca ? Tema.bloccante : allerta ? #fb923c : #c084fc).with-alpha(0.55 * intensita-aura);
         }
 
         corpo := Rectangle {
-            x: 2px;
-            y: 2px;
-            width: parent.width - 4px;
-            height: parent.height - 4px;
+            x: spessore-anello;
+            y: spessore-anello;
+            width: parent.width - 2 * spessore-anello;
+            height: parent.height - 2 * spessore-anello;
             border-radius: self.height / 2;
             background: Tema.corpo;
+        }
+
+        // Clic sulla pillola (fuori dai pulsanti): apre il pannello, sulla voce se è allargata.
+        TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                root.cliccata();
+            }
+        }
+
+        // Chi chiama: l'icona della fonte a sinistra degli occhi.
+        if allargata: Image {
+            x: icona-dal-bordo;
+            y: (parent.height - self.height) / 2;
+            width: lato-icona;
+            height: lato-icona;
+            source: icona-fonte;
+            colorize: Tema.icona;
+            image-rendering: smooth;
         }
 
         occhi := Rectangle {
@@ -181,8 +260,8 @@ export component Pillola inherits Window {
             property <length> larghezza-occhio: allerta ? occhio-allerta : 9px;
             property <length> ingombro: 2 * (contento ? 13px : larghezza-occhio) + spazio;
             // Distanza dal bordo sinistro della pillola a fine animazione, animata anch'essa:
-            // passando a "ti cerca" gli occhi scivolano a sinistra insieme al bordo, senza salti.
-            property <length> dal-bordo: allerta ? occhi-allerta-dal-bordo : (larghezza-pillola - ingombro) / 2;
+            // allargandosi gli occhi scivolano a sinistra insieme al bordo, senza salti.
+            property <length> dal-bordo: allargata ? occhi-allerta-dal-bordo : (larghezza-pillola - ingombro) / 2;
             animate dal-bordo { duration: 220ms; easing: ease-out; }
             x: dal-bordo + sguardo-x;
             y: sguardo-y;
@@ -208,12 +287,21 @@ export component Pillola inherits Window {
                 altezza-occhio: allerta ? 18px : 15px;
                 bagliore: bagliore-occhi;
             }
+
+            // Il puntino: qualcosa è in attesa (colore del livello). Fermo, sotto gli occhi.
+            if aspetto == "puntino": Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: parent.height - 11px;
+                width: 5px;
+                height: 5px;
+                border-radius: 2.5px;
+                background: Tema.colore-livello(livello);
+            }
         }
 
-        Text {
-            visible: allerta;
-            x: occhi.x + occhi.width + 14px;
-            width: parent.width - self.x - 22px;
+        if allargata: Text {
+            x: occhi-allerta-dal-bordo + 2 * occhio-allerta + spazio-allerta + 12px;
+            width: bottoni.x - self.x - 10px;
             height: parent.height;
             text: messaggio;
             overflow: elide;
@@ -224,10 +312,19 @@ export component Pillola inherits Window {
             color: Tema.testo;
         }
 
-        TouchArea {
-            mouse-cursor: pointer;
-            clicked => {
-                root.cliccata();
+        // Fino a 2 pulsanti a destra (dentro la fascia ritagliata, quindi cliccabili).
+        bottoni := HorizontalLayout {
+            width: self.preferred-width;
+            x: parent.width - self.width - 12px;
+            y: (parent.height - 28px) / 2;
+            height: 28px;
+            spacing: 6px;
+            visible: allargata;
+
+            for p[i] in pulsanti: PulsantePillola {
+                testo: p.testo;
+                primo: i == 0 && pulsanti.length > 1;
+                scelto => { root.azione(p.id); }
             }
         }
     }

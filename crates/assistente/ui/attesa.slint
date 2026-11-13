@@ -1,0 +1,288 @@
+// La riga «In attesa» in cima alla Panoramica (bozza bozza-in-attesa.html, spec §3bis): le voci di
+// tutte le fonti con i 3 livelli. Barretta colorata per livello e, sotto il titolo, sempre la
+// parola del livello (il colore non basta da solo). Fino a 3 voci visibili più «+N».
+// Clic su una voce = si espande sul posto (testo completo e pulsanti), senza viste nuove.
+import { Tema } from "tema.slint";
+import { VoceAttesaUi, PulsanteUi } from "voci.slint";
+
+// Anello del fuoco da tastiera (2 px, a 2 px dall'elemento): chi lo usa gli dà posto e misure.
+component Anello inherits Rectangle {
+    border-width: 2px;
+    border-color: Tema.anello;
+}
+
+// Una voce chiusa: barretta, titolo, «livello · fonte».
+component VoceChiusa inherits Rectangle {
+    in property <VoceAttesaUi> voce;
+    in property <bool> anello;
+    callback scelta();
+
+    border-radius: 12px;
+    background: area.has-hover ? Tema.scheda-sopra : rgba(255, 255, 255, 0.04);
+    accessible-role: button;
+    accessible-label: voce.titolo + ", " + voce.sotto;
+    accessible-action-default => { root.scelta(); }
+
+    Rectangle {
+        x: 10px;
+        y: 8px;
+        width: 3px;
+        height: parent.height - 16px;
+        border-radius: 1.5px;
+        background: Tema.colore-livello(voce.livello);
+    }
+
+    Text {
+        x: 21px;
+        y: 5px;
+        width: parent.width - self.x - 10px;
+        text: voce.titolo;
+        overflow: elide;
+        font-size: 13px;
+        color: Tema.testo;
+    }
+
+    Text {
+        x: 21px;
+        y: parent.height - self.height - 5px;
+        width: parent.width - self.x - 10px;
+        text: voce.sotto;
+        overflow: elide;
+        font-size: 12px;
+        color: Tema.testo-tenue;
+    }
+
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.scelta(); }
+    }
+
+    if anello: Anello { x: -4px; y: -4px; width: parent.width + 8px; height: parent.height + 8px; border-radius: parent.border-radius + 4px; }
+}
+
+export component RigaAttesa inherits Rectangle {
+    in property <[VoceAttesaUi]> voci;
+    // Voce col fuoco da tastiera (-1 = nessuna; 3 = «+N»).
+    in property <int> fuoco: -1;
+    // Clic su una voce (o su «+N»: la prima nascosta, indice 3): la si espande.
+    callback scelta(int);
+
+    property <int> visibili: min(3, voci.length);
+    property <int> altre: voci.length - visibili;
+    property <length> spazio: 8px;
+    property <length> largo-altre: altre > 0 ? 48px : 0px;
+    property <length> largo-voce: (self.width - largo-altre - (altre > 0 ? spazio : 0px) - (visibili - 1) * spazio) / max(1, visibili);
+
+    for v[i] in voci: VoceChiusa {
+        visible: i < 3;
+        x: i * (largo-voce + spazio);
+        width: largo-voce;
+        height: root.height;
+        voce: v;
+        anello: i == root.fuoco;
+        scelta => { root.scelta(i); }
+    }
+
+    if altre > 0: Rectangle {
+        x: root.width - largo-altre;
+        width: largo-altre;
+        height: root.height;
+        border-radius: 12px;
+        background: area-altre.has-hover ? Tema.scheda-sopra : rgba(255, 255, 255, 0.04);
+        accessible-role: button;
+        accessible-label: "Altre " + altre + " voci in attesa";
+        accessible-action-default => { root.scelta(3); }
+
+        Text {
+            text: "+" + altre;
+            font-size: 13px;
+            font-weight: 500;
+            color: Tema.testo-ora;
+        }
+
+        area-altre := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.scelta(3); }
+        }
+
+        if root.fuoco == 3: Anello { x: -4px; y: -4px; width: parent.width + 8px; height: parent.height + 8px; border-radius: parent.border-radius + 4px; }
+    }
+}
+
+// Pulsante di una voce espansa (bersaglio 30 di altezza).
+component PulsanteVoce inherits Rectangle {
+    in property <string> testo;
+    in property <bool> tinta;
+    in property <bool> anello;
+    callback scelto();
+
+    height: 30px;
+    width: max(84px, etichetta.preferred-width + 24px);
+    border-radius: 10px;
+    background: tinta
+        ? (area.has-hover ? rgba(45, 212, 191, 0.30) : rgba(45, 212, 191, 0.20))
+        : (area.has-hover ? rgba(255, 255, 255, 0.16) : rgba(255, 255, 255, 0.09));
+    accessible-role: button;
+    accessible-label: testo;
+    accessible-action-default => { root.scelto(); }
+
+    etichetta := Text {
+        text: testo;
+        font-weight: 500;
+        font-size: 13px;
+        color: Tema.testo;
+    }
+
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.scelto(); }
+    }
+
+    if anello: Anello { x: -4px; y: -4px; width: parent.width + 8px; height: parent.height + 8px; border-radius: parent.border-radius + 4px; }
+}
+
+// Una voce espansa sul posto: copre la riga e il centro della Panoramica. Titolo, livello e
+// fonte, testo completo, pulsanti; ‹ › per passare alle altre voci; clic sulla testata o su
+// «Riduci» la richiude.
+export component VoceEspansa inherits Rectangle {
+    in property <VoceAttesaUi> voce;
+    in property <int> posizione;
+    in property <int> totale;
+    // Pulsante col fuoco da tastiera (-1 = nessuno; -2 = la voce stessa).
+    in property <int> fuoco: -1;
+    callback riduci();
+    callback precedente();
+    callback successiva();
+    callback azione(string);
+
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.05);
+    border-width: 1px;
+    border-color: Tema.vetro-bordo;
+
+    // Testata cliccabile: richiude la voce.
+    TouchArea {
+        y: 0;
+        height: 52px;
+        mouse-cursor: pointer;
+        clicked => { root.riduci(); }
+    }
+
+    Rectangle {
+        x: 14px;
+        y: 14px;
+        width: 4px;
+        height: parent.height - 28px;
+        border-radius: 2px;
+        background: Tema.colore-livello(voce.livello);
+    }
+
+    Image {
+        x: 28px;
+        y: 14px;
+        width: 18px;
+        height: 18px;
+        source: voce.icona;
+        colorize: Tema.icona;
+        image-rendering: smooth;
+    }
+
+    Text {
+        x: 54px;
+        y: 12px;
+        width: naviga.x - self.x - 12px;
+        text: voce.titolo;
+        overflow: elide;
+        font-weight: 500;
+        font-size: 15px;
+        color: Tema.testo;
+    }
+
+    Text {
+        x: 54px;
+        y: 33px;
+        width: naviga.x - self.x - 12px;
+        text: voce.sotto;
+        overflow: elide;
+        font-size: 12px;
+        color: Tema.testo-tenue;
+    }
+
+    // In alto a destra: ‹ 1 di 4 › (se ci sono altre voci) e «Riduci».
+    naviga := HorizontalLayout {
+        width: self.preferred-width;
+        x: parent.width - self.width - 12px;
+        y: 10px;
+        height: 30px;
+        spacing: 4px;
+
+        if totale > 1: Rectangle {
+            width: 30px;
+            border-radius: 10px;
+            background: area-prec.has-hover ? Tema.scheda-sopra : transparent;
+            accessible-role: button;
+            accessible-label: "Voce precedente";
+            accessible-action-default => { root.precedente(); }
+            Text { text: "‹"; font-size: 16px; color: Tema.testo-ora; }
+            area-prec := TouchArea { mouse-cursor: pointer; clicked => { root.precedente(); } }
+        }
+
+        if totale > 1: Text {
+            text: (posizione + 1) + " di " + totale;
+            vertical-alignment: center;
+            font-size: 12px;
+            color: Tema.testo-tenue;
+        }
+
+        if totale > 1: Rectangle {
+            width: 30px;
+            border-radius: 10px;
+            background: area-succ.has-hover ? Tema.scheda-sopra : transparent;
+            accessible-role: button;
+            accessible-label: "Voce successiva";
+            accessible-action-default => { root.successiva(); }
+            Text { text: "›"; font-size: 16px; color: Tema.testo-ora; }
+            area-succ := TouchArea { mouse-cursor: pointer; clicked => { root.successiva(); } }
+        }
+
+        Rectangle {
+            width: riduci-testo.preferred-width + 20px;
+            border-radius: 10px;
+            background: area-riduci.has-hover ? Tema.scheda-sopra : transparent;
+            accessible-role: button;
+            accessible-label: "Riduci";
+            accessible-action-default => { root.riduci(); }
+            riduci-testo := Text { text: "Riduci"; font-size: 12px; color: Tema.testo-ora; }
+            area-riduci := TouchArea { mouse-cursor: pointer; clicked => { root.riduci(); } }
+            if root.fuoco == -2: Anello { x: -4px; y: -4px; width: parent.width + 8px; height: parent.height + 8px; border-radius: parent.border-radius + 4px; }
+        }
+    }
+
+    // Il testo completo (va a capo; se è lunghissimo si accorcia).
+    Text {
+        x: 54px;
+        y: 58px;
+        width: parent.width - self.x - 18px;
+        height: parent.height - self.y - (voce.pulsanti.length > 0 ? 52px : 14px);
+        text: voce.dettaglio;
+        wrap: word-wrap;
+        overflow: elide;
+        font-size: 13px;
+        color: Tema.testo-ora;
+    }
+
+    HorizontalLayout {
+        width: self.preferred-width;
+        x: parent.width - self.width - 16px;
+        y: parent.height - 30px - 14px;
+        height: 30px;
+        spacing: 8px;
+
+        for p[i] in voce.pulsanti: PulsanteVoce {
+            testo: p.testo;
+            tinta: i == voce.pulsanti.length - 1;
+            anello: i == root.fuoco;
+            scelto => { root.azione(p.id); }
+        }
+    }
+}

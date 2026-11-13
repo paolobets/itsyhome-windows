@@ -1,8 +1,8 @@
 //! Connessione WebSocket a Home Assistant (port di `src-tauri/src/ha/client.rs`).
 //!
-//! Un attore tokio per ambiente: si autentica, si iscrive a `state_changed` e
-//! `persistent_notification_created`, risponde alle richieste e si riconnette con
-//! i ritardi di v2. Gli eventi escono da una callback (`DalClient`), mai dal token.
+//! Un attore tokio per ambiente: si autentica, si iscrive a `state_changed` e alle notifiche
+//! persistenti (`persistent_notification/subscribe`), risponde alle richieste e si riconnette
+//! con i ritardi di v2. Gli eventi escono da una callback (`DalClient`), mai dal token.
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -13,7 +13,7 @@ use tokio::task::JoinHandle;
 use tokio::time::{sleep_until, timeout, timeout_at, Instant, MissedTickBehavior};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
-use super::eventi::{interpreta, EventoWs};
+use super::eventi::{interpreta, interpreta_notifiche, EventoWs};
 use crate::eventi::StatoConnessione;
 use crate::types::TestConnectionResult;
 
@@ -72,6 +72,12 @@ impl Client {
             "target": { "entity_id": entity_id },
             "service_data": {}
         });
+        self.richiesta("call_service", extra).await.map(|_| ())
+    }
+
+    /// Servizio senza entità, con i suoi dati (es. `persistent_notification.dismiss`).
+    pub(crate) async fn servizio_con_dati(&self, dominio: &str, servizio: &str, dati: Value) -> Result<(), String> {
+        let extra = json!({ "domain": dominio, "service": servizio, "service_data": dati });
         self.richiesta("call_service", extra).await.map(|_| ())
     }
 }
@@ -144,6 +150,8 @@ async fn sessione(
     let mut pendenti: HashMap<u64, oneshot::Sender<Result<Value, String>>> = HashMap::new();
     let mut prossimo_id: u64 = 1;
     let mut autenticato = false;
+    // Id della richiesta `persistent_notification/subscribe`: i suoi eventi portano quell'id.
+    let mut iscrizione_notifiche: Option<u64> = None;
     let mut ping = tokio::time::interval_at(Instant::now() + PING_OGNI, PING_OGNI);
     ping.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut attesa_pong: Option<Instant> = None;
@@ -167,10 +175,11 @@ async fn sessione(
                     Some("auth_ok") => {
                         *tentativo = 0;
                         autenticato = true;
-                        for tipo in ["state_changed", "persistent_notification_created"] {
-                            uscenti.push(json!({ "type": "subscribe_events", "event_type": tipo, "id": prossimo_id }));
-                            prossimo_id += 1;
-                        }
+                        uscenti.push(json!({ "type": "subscribe_events", "event_type": "state_changed", "id": prossimo_id }));
+                        prossimo_id += 1;
+                        uscenti.push(json!({ "type": "persistent_notification/subscribe", "id": prossimo_id }));
+                        iscrizione_notifiche = Some(prossimo_id);
+                        prossimo_id += 1;
                         uscita(DalClient::Stato(StatoConnessione::Connesso));
                     }
                     Some("auth_invalid") => break 'sessione Fine::TokenNonValido,
@@ -182,7 +191,12 @@ async fn sessione(
                     }
                     Some("pong") => attesa_pong = None,
                     Some("event") if autenticato => {
-                        if let Some(e) = interpreta(&v) {
+                        let e = if v["id"].as_u64().is_some() && v["id"].as_u64() == iscrizione_notifiche {
+                            interpreta_notifiche(&v)
+                        } else {
+                            interpreta(&v)
+                        };
+                        if let Some(e) = e {
                             uscita(DalClient::Evento(e));
                         }
                     }

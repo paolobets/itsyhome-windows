@@ -49,6 +49,18 @@ export global Tema {
     // Suggerimento (tooltip) delle icone del dock.
     out property <color> suggerimento: #1b1428;
 
+    // Livelli dell'attenzione (riga «In attesa», puntino e bordo della pillola). Il colore è
+    // sempre accompagnato dalla parola del livello o dalla forma (bloccante: pillola ferma).
+    out property <color> bloccante: #f87171;
+    out property <color> attenzione: #fbbf24;
+    out property <color> informazione: #60a5fa;
+
+    public pure function colore-livello(livello: string) -> color {
+        if (livello == "bloccante") { return bloccante; }
+        if (livello == "attenzione") { return attenzione; }
+        return informazione;
+    }
+
     out property <string> carattere: "Inter Tight";
     out property <string> carattere-mono: "JetBrains Mono";
 }
