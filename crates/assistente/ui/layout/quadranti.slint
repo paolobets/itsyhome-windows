@@ -2,11 +2,18 @@
 // l'arco è solo la traccia spenta e il valore è "—": nessun numero inventato.
 import { Tema } from "../tema.slint";
 import { Icone, Icona, Vetro } from "../icone.slint";
+import { StatPcUi } from "../voci.slint";
 
 component Quadrante inherits Vetro {
     in property <string> etichetta;
     in property <image> icona;
     in property <string> valore: "—";
+    // Frazione 0..1 dell'arco acceso; negativa = nessun dato (solo la traccia).
+    in property <float> frazione: -1;
+
+    // Arco di 270° aperto in basso (raggio 44, centro 55,55): parte da 135° e gira in senso orario.
+    property <angle> fine: 135deg + 270deg * min(frazione, 1);
+    property <bool> acceso: frazione >= 0.01;
 
     VerticalLayout {
         alignment: center;
@@ -24,6 +31,18 @@ component Quadrante inherits Vetro {
                 viewbox-height: 110;
                 commands: "M 23.89 86.11 A 44 44 0 1 1 86.11 86.11";
                 stroke: Tema.traccia;
+                stroke-width: 9px;
+                stroke-line-cap: round;
+            }
+
+            if acceso: Path {
+                x: (parent.width - 110px) / 2;
+                width: 110px;
+                height: 110px;
+                viewbox-width: 110;
+                viewbox-height: 110;
+                commands: "M 23.89 86.11 A 44 44 0 " + (frazione > 0.6667 ? 1 : 0) + " 1 " + (55 + 44 * cos(fine)) + " " + (55 + 44 * sin(fine));
+                stroke: frazione > 0.85 ? Tema.caldo-2 : Tema.petalo-2;
                 stroke-width: 9px;
                 stroke-line-cap: round;
             }
@@ -62,22 +81,30 @@ component Quadrante inherits Vetro {
 }
 
 export component LayoutQuadranti inherits Rectangle {
+    in property <StatPcUi> stat;
+
     HorizontalLayout {
         spacing: 10px;
 
         Quadrante {
             etichetta: "CPU";
             icona: Icone.pc;
+            valore: stat.pronta ? stat.cpu-testo : "—";
+            frazione: stat.pronta ? stat.cpu : -1;
         }
 
         Quadrante {
             etichetta: "RAM";
             icona: Icone.pc;
+            valore: stat.ram-testo;
+            frazione: stat.ram-testo != "" ? stat.ram : -1;
         }
 
         Quadrante {
             etichetta: "DISCO";
             icona: Icone.pc;
+            valore: stat.disco-testo;
+            frazione: stat.disco-testo != "" ? stat.disco : -1;
         }
 
         Quadrante {

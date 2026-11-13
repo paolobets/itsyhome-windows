@@ -1,0 +1,107 @@
+// Vista PC: l'elenco dettagliato delle statistiche (CPU, RAM, disco, rete, batteria se c'è).
+import { Tema } from "../tema.slint";
+import { Icone, Icona, Vetro } from "../icone.slint";
+import { StatPcUi } from "../voci.slint";
+
+// Una riga: etichetta, valore e (se serve) una barra sottile con la frazione usata.
+component Riga inherits Rectangle {
+    in property <string> etichetta;
+    in property <string> valore;
+    in property <string> dettaglio;
+    in property <float> frazione: -1;
+    in property <color> colore: Tema.petalo-2;
+    // Batteria: l'avviso scatta quando è quasi scarica, non quando è piena.
+    in property <bool> invertita: false;
+    height: 44px;
+
+    Text {
+        x: 14px;
+        y: 7px;
+        text: etichetta;
+        font-family: Tema.carattere-mono;
+        font-size: 11px;
+        letter-spacing: 0.6px;
+        color: Tema.testo-etichetta;
+    }
+
+    Text {
+        x: 14px;
+        y: 24px;
+        text: dettaglio;
+        font-size: 11px;
+        color: Tema.testo-tenue;
+    }
+
+    Text {
+        x: parent.width - 14px - self.width;
+        y: 7px;
+        width: 150px;
+        text: valore;
+        horizontal-alignment: right;
+        font-weight: 500;
+        font-size: 15px;
+        color: Tema.testo;
+    }
+
+    if frazione >= 0: Rectangle {
+        x: parent.width - 14px - 150px;
+        y: 29px;
+        width: 150px;
+        height: 4px;
+        border-radius: 2px;
+        background: Tema.traccia;
+
+        Rectangle {
+            x: 0;
+            width: parent.width * min(max(frazione, 0), 1);
+            border-radius: 2px;
+            background: (invertita ? frazione < 0.15 : frazione > 0.85) ? Tema.caldo-2 : colore;
+        }
+    }
+}
+
+export component VistaPc inherits Rectangle {
+    in property <StatPcUi> stat;
+
+    Vetro {
+        VerticalLayout {
+            padding-top: 8px;
+            padding-bottom: 8px;
+            alignment: center;
+
+            Riga {
+                etichetta: "CPU";
+                valore: stat.cpu-testo;
+                frazione: stat.pronta ? stat.cpu : 0;
+            }
+
+            Riga {
+                etichetta: "RAM";
+                valore: stat.ram-testo;
+                dettaglio: stat.ram-dettaglio;
+                frazione: stat.ram;
+            }
+
+            Riga {
+                etichetta: "DISCO";
+                valore: stat.disco-testo;
+                dettaglio: stat.disco-dettaglio;
+                frazione: stat.disco;
+            }
+
+            Riga {
+                etichetta: "RETE";
+                valore: "↓ " + stat.rete-giu;
+                dettaglio: "↑ " + stat.rete-su;
+            }
+
+            if stat.ha-batteria: Riga {
+                etichetta: "BATTERIA";
+                valore: stat.batteria-testo;
+                dettaglio: stat.in-carica ? "In carica" : "A batteria";
+                frazione: stat.batteria-frazione;
+                invertita: true;
+            }
+        }
+    }
+}

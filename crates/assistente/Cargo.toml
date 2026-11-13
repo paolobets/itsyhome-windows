@@ -8,6 +8,8 @@ casa-core = { path = "../casa-core" }
 slint = { version = "=1.18.1", features = ["renderer-skia", "unstable-winit-030", "raw-window-handle-06"] }
 # Solo l'ora locale per l'orologio del pannello.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+sysinfo = { version = "0.38", default-features = false, features = ["system", "disk", "network"] }
+starship-battery = "0.12"
 
 [target.'cfg(windows)'.dependencies]
 # Stessa versione usata da winit 0.30 (HMONITOR = isize): serve solo per l'area di lavoro del monitor.

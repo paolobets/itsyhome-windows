@@ -4,3 +4,23 @@ export struct VoceAppUi {
     nome: string,
     icona: image,
 }
+
+// Le statistiche del PC già formattate (italiano) per quadranti e vista PC; `cpu`, `ram` e
+// `disco` sono frazioni 0..1 per gli archi. `pronta`: dal secondo campione la CPU ha un valore.
+export struct StatPcUi {
+    pronta: bool,
+    cpu: float,
+    ram: float,
+    disco: float,
+    cpu-testo: string,
+    ram-testo: string,
+    ram-dettaglio: string,
+    disco-testo: string,
+    disco-dettaglio: string,
+    rete-giu: string,
+    rete-su: string,
+    ha-batteria: bool,
+    batteria-testo: string,
+    batteria-frazione: float,
+    in-carica: bool,
+}

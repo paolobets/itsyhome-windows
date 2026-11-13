@@ -5,6 +5,7 @@ mod finestre;
 mod layout;
 mod orologio;
 mod pannello;
+mod pc_stats;
 mod pillola;
 mod registro;
 mod scelte;

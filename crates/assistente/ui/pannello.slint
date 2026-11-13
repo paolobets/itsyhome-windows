@@ -3,13 +3,14 @@
 import { Tema } from "tema.slint";
 import { Occhio } from "pillola.slint";
 import { Icone } from "icone.slint";
-import { VoceAppUi } from "voci.slint";
+import { VoceAppUi, StatPcUi } from "voci.slint";
+import { VistaPc } from "viste/pc.slint";
 import { LayoutOrologio } from "layout/orologio.slint";
 import { LayoutQuadranti } from "layout/quadranti.slint";
 import { LayoutColori } from "layout/colori.slint";
 import { LayoutTutte } from "layout/tutte.slint";
 
-export { VoceAppUi }
+export { VoceAppUi, StatPcUi }
 
 // Una scheda del dock: icona leggera; quella attiva sta in una capsula "vetro" e diventa bianca.
 component Scheda inherits Rectangle {
@@ -52,6 +53,8 @@ export component Pannello inherits Window {
     // "" = il layout scelto, altrimenti l'id dell'app mostrata al centro.
     in-out property <string> vista;
     in property <[VoceAppUi]> app;
+    // Statistiche del PC, aggiornate ogni 2 s solo a pannello aperto.
+    in property <StatPcUi> pc;
     // Vero mentre il pannello è aperto: guida l'animazione di apertura e il battito degli occhi.
     in-out property <bool> aperto;
     callback scegli-layout(int);
@@ -212,6 +215,7 @@ export component Pannello inherits Window {
             if vista == "" && layout == 1: LayoutQuadranti {
                 width: parent.width;
                 height: parent.height;
+                stat: root.pc;
             }
             if vista == "" && layout == 2: LayoutColori {
                 width: parent.width;
@@ -227,11 +231,17 @@ export component Pannello inherits Window {
                 }
             }
 
-            // Vista di un'app: per ora solo il titolo (i contenuti arrivano dai Task 7–9).
+            if vista == "pc": VistaPc {
+                width: parent.width;
+                height: parent.height;
+                stat: root.pc;
+            }
+
+            // Vista di un'app senza contenuti propri: per ora solo il titolo (Task 8–9).
             for voce in app: VerticalLayout {
                 width: parent.width;
                 height: parent.height;
-                visible: vista == voce.id;
+                visible: vista == voce.id && voce.id != "pc";
                 alignment: center;
                 spacing: 10px;
 
