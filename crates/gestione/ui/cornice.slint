@@ -1,0 +1,166 @@
+// Cornice fidata della finestra di gestione (spec §3bis): la disegna l'assistente, non il
+// contenuto. Fondo scuro, bordo coi colori dei petali, titolo e pulsante chiudi; sotto la testata
+// l'area del contenuto ostile, coperta dal riquadro web (wry, figlio di questa finestra) o, se il
+// motore web manca, dal testo semplice del piano B.
+//
+// Tastiera: Esc chiude (quando il fuoco è sulla cornice: il riquadro web nasce senza fuoco);
+// Tab raggiunge il pulsante chiudi, Invio o Spazio lo premono.
+//
+// I token del tema sono quelli dell'assistente (un solo file: stessi colori e caratteri).
+import { Tema } from "../../assistente/ui/tema.slint";
+
+component Anello inherits Rectangle {
+    border-width: 2px;
+    border-color: Tema.anello;
+}
+
+// Pulsante chiudi della testata: icona a croce nel colore delle icone, rosso tenue al passaggio.
+component Chiudi inherits FocusScope {
+    callback premuto();
+
+    width: 40px;
+    height: 30px;
+    focus-on-click: false;
+    accessible-role: button;
+    accessible-label: "Chiudi";
+    accessible-action-default => { root.premuto(); }
+    key-pressed(evento) => {
+        if (evento.text == Key.Return || evento.text == Key.Space) {
+            root.premuto();
+            return accept;
+        }
+        return reject;
+    }
+
+    Rectangle {
+        border-radius: 8px;
+        background: area.pressed ? rgba(248, 113, 113, 0.40)
+            : area.has-hover ? rgba(248, 113, 113, 0.26) : transparent;
+    }
+
+    Path {
+        width: 11px;
+        height: 11px;
+        viewbox-width: 11;
+        viewbox-height: 11;
+        commands: "M 0.8 0.8 L 10.2 10.2 M 10.2 0.8 L 0.8 10.2";
+        stroke: area.has-hover ? Tema.icona-attiva : Tema.icona;
+        stroke-width: 1.55px;
+    }
+
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.premuto(); }
+    }
+
+    if root.has-focus: Anello { x: -3px; y: -3px; width: root.width + 6px; height: root.height + 6px; border-radius: 11px; }
+}
+
+export component Cornice inherits Window {
+    // Titolo fidato (lo manda l'assistente, mai il contenuto).
+    in property <string> titolo;
+    // Piano B: il contenuto come testo semplice, mostrato al posto del riquadro web.
+    in property <bool> piano-b;
+    in property <string> testo-semplice;
+
+    // Geometria dell'area del contenuto: Rust ci appoggia il riquadro web.
+    out property <length> bordo: 2px;
+    out property <length> alto-testata: 46px;
+
+    callback chiudi();
+    // Pressione sulla testata: Rust avvia lo spostamento della finestra.
+    callback trascina();
+
+    title: titolo == "" ? "ItsyHome" : "ItsyHome — " + titolo;
+    no-frame: true;
+    width: 780px;
+    height: 680px;
+    default-font-family: Tema.carattere;
+    background: Tema.fondo-basso;
+    forward-focus: radice;
+
+    // Bordo: i sei petali in fila, sotto il fondo.
+    Rectangle {
+        background: @linear-gradient(120deg, Tema.petalo-1 0%, Tema.petalo-2 20%, Tema.petalo-3 40%,
+            Tema.petalo-4 60%, Tema.petalo-5 80%, Tema.petalo-6 100%);
+    }
+
+    Rectangle {
+        x: bordo;
+        y: bordo;
+        width: root.width - 2 * bordo;
+        height: root.height - 2 * bordo;
+        background: @linear-gradient(160deg, Tema.fondo-alto 0%, Tema.fondo-basso 55%);
+    }
+
+    radice := FocusScope {
+        key-pressed(evento) => {
+            if (evento.text == Key.Escape) {
+                root.chiudi();
+                return accept;
+            }
+            return reject;
+        }
+
+        // Testata: si trascina per spostare la finestra.
+        TouchArea {
+            x: bordo;
+            y: bordo;
+            width: root.width - 2 * bordo;
+            height: alto-testata - bordo;
+            pointer-event(evento) => {
+                if (evento.kind == PointerEventKind.down && evento.button == PointerEventButton.left) {
+                    root.trascina();
+                }
+            }
+        }
+
+        // Segno dell'assistente: un puntino coi colori dei petali.
+        Rectangle {
+            x: 18px;
+            y: (alto-testata - self.height) / 2 + bordo / 2;
+            width: 10px;
+            height: 10px;
+            border-radius: 5px;
+            background: @linear-gradient(135deg, Tema.petalo-1 0%, Tema.petalo-3 50%, Tema.petalo-5 100%);
+        }
+
+        Text {
+            x: 38px;
+            y: bordo;
+            width: root.width - 38px - pulsante-chiudi.width - 24px;
+            height: alto-testata - bordo;
+            text: titolo;
+            overflow: elide;
+            vertical-alignment: center;
+            font-size: 14px;
+            font-weight: 500;
+            color: Tema.testo;
+        }
+
+        pulsante-chiudi := Chiudi {
+            x: root.width - self.width - 10px;
+            y: bordo + (alto-testata - bordo - self.height) / 2;
+            premuto => { root.chiudi(); }
+        }
+
+        // Piano B: testo semplice, solo se il motore web manca.
+        if piano-b: Flickable {
+            x: bordo;
+            y: alto-testata;
+            width: root.width - 2 * bordo;
+            height: root.height - alto-testata - bordo;
+            content-height: max(self.height, corpo.preferred-height + 40px);
+
+            corpo := Text {
+                x: 24px;
+                y: 20px;
+                width: parent.width - 48px;
+                text: testo-semplice;
+                wrap: word-wrap;
+                font-size: 14px;
+                color: Tema.testo;
+            }
+        }
+    }
+}

@@ -5,6 +5,7 @@ mod attenzione;
 mod avvio;
 mod finestra_impostazioni;
 mod finestre;
+mod gestione;
 mod impostazioni;
 mod layout;
 mod orologio;
@@ -157,14 +158,20 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
+    // `--prova-gestione`: la finestra di gestione con una mail di prova (aperta, chiusa, riaperta).
+    if argomenti.iter().any(|a| a == "--prova-gestione") {
+        gestione::prova(&cartella);
+    }
+
     casa.connetti_attivo();
     // Il ciclo eventi vive anche senza finestre visibili (pillola nascosta da uno schermo intero
     // a pannello chiuso): finisce solo con «Esci» della tray.
     let esito = pillola.show().and_then(|_| slint::run_event_loop_until_quit());
     // Sempre, anche se mostrare la pillola o il ciclo eventi non sono riusciti. In ordine:
-    // servizi (tray, scorciatoie), ponte, pannello; il `CasaService` si chiude qui, con il suo
+    // servizi (tray, scorciatoie), finestra di gestione (processo raccolto), ponte, pannello; il `CasaService` si chiude qui, con il suo
     // thread ancora vivo, quando `casa` esce di scena.
     sistema::servizi::spegni();
+    gestione::spegni();
     ponte::spegni();
     drop(apertura);
     let _ = pillola.hide();

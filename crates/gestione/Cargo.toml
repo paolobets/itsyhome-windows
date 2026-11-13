@@ -1,0 +1,17 @@
+[package]
+name = "gestione"
+version = "0.1.0"
+edition = "2021"
+
+# Finestra di gestione: processo separato avviato dall'assistente (cornice Slint + area web wry).
+[[bin]]
+name = "itsyhome-gestione"
+path = "src/main.rs"
+
+[dependencies]
+gestione-protocollo = { path = "../gestione-protocollo" }
+slint = { version = "=1.18.1", features = ["renderer-skia", "unstable-winit-030", "raw-window-handle-06"] }
+wry = "=0.57.2"
+
+[build-dependencies]
+slint-build = "=1.18.1"

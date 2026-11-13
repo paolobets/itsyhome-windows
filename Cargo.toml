@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/casa-core", "crates/assistente"]
+members = ["crates/casa-core", "crates/assistente", "crates/gestione-protocollo", "crates/gestione"]
 exclude = ["src-tauri"]
 
 [profile.release]
