@@ -28,6 +28,8 @@ struct Contatori {
     iscrizione_notifiche: AtomicU64,
     /// `notification_id` ricevuti con `persistent_notification.dismiss`.
     archiviate: Mutex<Vec<String>>,
+    /// Le notifiche presenti, mandate come "current" a ogni iscrizione.
+    presenti: Mutex<Value>,
 }
 
 struct FintoHa {
@@ -71,6 +73,14 @@ impl FintoHa {
             assert!(inizio.elapsed() < Duration::from_secs(5), "nessuna iscrizione alle notifiche");
             sleep(Duration::from_millis(10)).await;
         }
+    }
+
+    fn metti_presenti(&self, notifiche: Value) {
+        *self.contatori.presenti.lock().unwrap() = notifiche;
+    }
+
+    fn azzera_iscrizione(&self) {
+        self.contatori.iscrizione_notifiche.store(0, Ordering::SeqCst);
     }
 
     fn archiviate(&self) -> Vec<String> {
@@ -167,7 +177,9 @@ async fn servi(tcp: tokio::net::TcpStream, contatori: Arc<Contatori>, mut eventi
                     let id = v["id"].as_u64().unwrap();
                     contatori.iscrizione_notifiche.store(id, Ordering::SeqCst);
                     let risultato = json!({ "id": id, "type": "result", "success": true, "result": null });
-                    let attuali = json!({ "id": id, "type": "event", "event": { "type": "current", "notifications": {} } });
+                    let presenti = contatori.presenti.lock().unwrap().clone();
+                    let presenti = if presenti.is_object() { presenti } else { json!({}) };
+                    let attuali = json!({ "id": id, "type": "event", "event": { "type": "current", "notifications": presenti } });
                     if tx.send(testo(risultato)).await.is_err() || tx.send(testo(attuali)).await.is_err() {
                         return;
                     }
@@ -372,6 +384,44 @@ async fn notifica_aggiunta_e_rimossa_come_eventi() {
             break;
         }
     }
+}
+
+#[tokio::test]
+async fn riconnessione_allo_stesso_ambiente_non_toglie_le_notifiche() {
+    // «Riprova» = connetti_attivo() sullo stesso ambiente: una notifica ancora presente in HA
+    // non deve uscire (al più torna come aggiornamento dall'elenco "current").
+    let ha = FintoHa::avvia().await;
+    let mut p = prepara(&ha.url, Some(TOKEN));
+    p.servizio.connetti_attivo();
+    aspetta_dati(&mut p).await;
+    ha.aspetta_iscrizione_notifiche().await;
+    let notifica = json!({ "lav": { "notification_id": "lav", "title": "Lavatrice", "message": "Fatto" } });
+    ha.metti_presenti(notifica.clone());
+    ha.manda_notifiche("added", notifica);
+    loop {
+        if let CasaEvento::NotificaAggiunta { .. } = prossimo(&mut p).await {
+            break;
+        }
+    }
+
+    ha.azzera_iscrizione();
+    p.servizio.connetti_attivo();
+    let mut eventi = Vec::new();
+    loop {
+        let e = prossimo(&mut p).await;
+        let dati = matches!(e, CasaEvento::Dati(_));
+        eventi.push(e);
+        if dati {
+            break;
+        }
+    }
+    ha.aspetta_iscrizione_notifiche().await;
+    sleep(Duration::from_millis(300)).await;
+    eventi.extend(std::iter::from_fn(|| p.eventi.try_recv().ok()));
+    assert!(
+        !eventi.iter().any(|e| matches!(e, CasaEvento::NotificaRimossa { .. })),
+        "nessuna rimozione per una notifica ancora presente: {eventi:?}"
+    );
 }
 
 #[tokio::test]

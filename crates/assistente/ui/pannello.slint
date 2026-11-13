@@ -191,6 +191,10 @@ export component Pannello inherits Window {
             return con-attese;
         }
         if (z == "contenuto") {
+            // Con una voce espansa il layout è coperto: niente fuoco lì.
+            if (espansa) {
+                return false;
+            }
             return vista == "panoramica" || (vista == "casa" && preferiti.length > 0);
         }
         return true;
@@ -218,13 +222,20 @@ export component Pannello inherits Window {
         fuoco-pulsante = -1;
     }
 
+    // Espande la voce `i`: il fuoco da tastiera va su «In attesa» (il layout sotto è coperto).
     function apri-voce(i: int) {
         if (i >= 0 && i < attese.length) {
             voce-aperta = attese[i].id;
             indice-aperta = i;
+            zona = "attesa";
             fuoco-attesa = min(i, 3);
             fuoco-pulsante = -1;
         }
+    }
+
+    // Da Rust: il pannello si apre dalla pillola che chiama, sulla voce `i` già espansa.
+    public function espandi(i: int) {
+        apri-voce(i);
     }
 
     function riduci-voce() {

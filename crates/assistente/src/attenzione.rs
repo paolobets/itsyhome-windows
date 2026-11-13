@@ -210,6 +210,8 @@ pub const ID_PROVA: &str = "prova.avviso";
 pub const CASA_OFFLINE_DOPO: Duration = Duration::from_secs(5 * 60);
 /// Batteria sotto questa percentuale e scollegata = attenzione.
 pub const SOGLIA_BATTERIA: f32 = 10.0;
+/// Una voce della batteria già presente sparisce solo sopra questa percentuale.
+pub const SOGLIA_BATTERIA_FINE: f32 = 12.0;
 
 /// Tiene il conto di da quanto Home Assistant non è connesso (dall'avvio, se non lo è mai stato).
 /// Senza un ambiente configurato non c'è nulla di irraggiungibile: nessuna voce.
@@ -259,7 +261,14 @@ impl SorveglianzaCasa {
 
 /// La batteria del PC sotto il 10% e scollegata: un'attenzione. In carica o sopra soglia: nulla.
 pub fn voce_batteria(percentuale: f32, scollegata: bool, ora: Instant) -> Option<Voce> {
-    (scollegata && percentuale < SOGLIA_BATTERIA).then(|| Voce {
+    voce_batteria_con_isteresi(percentuale, scollegata, false, ora)
+}
+
+/// Come `voce_batteria`, ma una voce già presente resta fino al 12% (o finché non è in carica):
+/// una batteria che oscilla attorno al 10% non fa comparire e sparire la voce ogni minuto.
+pub fn voce_batteria_con_isteresi(percentuale: f32, scollegata: bool, gia_presente: bool, ora: Instant) -> Option<Voce> {
+    let soglia = if gia_presente { SOGLIA_BATTERIA_FINE } else { SOGLIA_BATTERIA };
+    (scollegata && percentuale < soglia).then(|| Voce {
         id: ID_BATTERIA.into(),
         livello: Livello::Attenzione,
         fonte: Fonte::Pc,
@@ -445,5 +454,16 @@ pub(crate) mod test {
         assert!(v.titolo.contains("9%"), "{}", v.titolo);
         assert_eq!(voce_batteria(9.0, false, t), None);
         assert_eq!(voce_batteria(11.0, true, t), None);
+    }
+
+    #[test]
+    fn batteria_con_isteresi() {
+        let t = Instant::now();
+        // Già presente: resta all'11% scollegata, sparisce sopra il 12% o in carica.
+        assert!(voce_batteria_con_isteresi(11.0, true, true, t).is_some());
+        assert_eq!(voce_batteria_con_isteresi(12.5, true, true, t), None);
+        assert_eq!(voce_batteria_con_isteresi(5.0, false, true, t), None);
+        // Non presente: compare solo sotto il 10%.
+        assert_eq!(voce_batteria_con_isteresi(11.0, true, false, t), None);
     }
 }

@@ -285,12 +285,17 @@ pub fn batteria(percentuale: f32, scollegata: bool) {
 }
 
 /// Una voce «In attesa» per la riga del pannello.
-fn voce_attesa_ui(v: &Voce) -> VoceAttesaUi {
+/// `non_archiviata`: l'ultimo «Archivia» non è riuscito (lo dice la riga sotto il titolo).
+fn voce_attesa_ui(v: &Voce, non_archiviata: bool) -> VoceAttesaUi {
+    let mut sotto = format!("{} · {}", v.livello.come_stringa(), v.fonte.come_stringa());
+    if non_archiviata {
+        sotto.push_str(" · archiviazione non riuscita");
+    }
     VoceAttesaUi {
         id: v.id.as_str().into(),
         livello: v.livello.come_stringa().into(),
         titolo: v.titolo.as_str().into(),
-        sotto: format!("{} · {}", v.livello.come_stringa(), v.fonte.come_stringa()).into(),
+        sotto: sotto.into(),
         dettaglio: v.dettaglio.as_str().into(),
         icona: pillola::icona_fonte(v.fonte),
         pulsanti: pillola::pulsanti_ui(&v.pulsanti),
@@ -326,6 +331,8 @@ pub struct Ponte {
     /// Vero da `Connesso` ai primi dati: le notifiche di HA che arrivano lì sono quelle già
     /// presenti (elenco "current" dell'iscrizione) e non meritano una notifica di sistema.
     appena_connesso: Cell<bool>,
+    /// Voci di notifiche HA il cui ultimo «Archivia» non è riuscito.
+    non_archiviate: RefCell<std::collections::HashSet<String>>,
     /// Errori da mostrare nelle Impostazioni (Task 11).
     #[allow(dead_code)]
     errore_import: Option<String>,
@@ -358,6 +365,7 @@ pub fn collega(
         sorveglianza: RefCell::new(SorveglianzaCasa::new(Instant::now())),
         sveglia_casa: slint::Timer::default(),
         appena_connesso: Cell::new(false),
+        non_archiviate: RefCell::new(std::collections::HashSet::new()),
         errore_import,
         errore_config: RefCell::new(None),
     });
@@ -434,6 +442,8 @@ impl Ponte {
             CasaEvento::NotificaRimossa { id } => self.togli_voce(&format!("{PREFISSO_NOTIFICA}{id}")),
             CasaEvento::NotificaNonArchiviata { id, errore } => {
                 eprintln!("notifica {id} non archiviata: {errore}");
+                self.non_archiviate.borrow_mut().insert(format!("{PREFISSO_NOTIFICA}{id}"));
+                self.attese_cambiate();
             }
             CasaEvento::Esito { entity_id, ok, errore } => {
                 if ok {
@@ -558,11 +568,12 @@ impl Ponte {
         });
     }
 
-    /// La voce che la pillola allargata sta chiamando: il pannello aperto da lì la espande.
-    pub fn voce_della_pillola(&self) -> Option<(String, i32)> {
+    /// Posizione nella riga della voce che la pillola allargata sta chiamando: il pannello aperto
+    /// da lì la espande.
+    pub fn voce_della_pillola(&self) -> Option<i32> {
         let id = self.mostrato.borrow().as_ref()?.voce_allargata()?.to_owned();
         let indice = self.attese.borrow().ordinate().iter().position(|v| v.id == id)?;
-        Some((id, indice as i32))
+        Some(indice as i32)
     }
 
     /// Il pannello si è aperto: le voci in attesa sono viste (un'attenzione non allarga più la
@@ -618,6 +629,7 @@ impl Ponte {
             return;
         }
         self.attese.borrow_mut().togli(id);
+        self.non_archiviate.borrow_mut().remove(id);
         self.attese_cambiate();
     }
 
@@ -625,7 +637,15 @@ impl Ponte {
     fn attese_cambiate(&self) {
         let livello = livello_massimo(&self.attese.borrow());
         self.cervello.borrow_mut().ricevi(Segnale::InAttesa(livello), Instant::now());
-        let voci: Vec<VoceAttesaUi> = self.attese.borrow().ordinate().into_iter().map(voce_attesa_ui).collect();
+        let voci: Vec<VoceAttesaUi> = {
+            let non_archiviate = self.non_archiviate.borrow();
+            self.attese
+                .borrow()
+                .ordinate()
+                .into_iter()
+                .map(|v| voce_attesa_ui(v, non_archiviate.contains(&v.id)))
+                .collect()
+        };
         aggiorna_modello(&self.modello_attese, voci);
         if let Some(p) = self.pannello.borrow().upgrade() {
             // La voce espansa può aver cambiato posto o essere sparita.
@@ -648,8 +668,11 @@ impl Ponte {
         if voce == ID_CASA_OFFLINE && pulsante == PULSANTE_RIPROVA {
             self.casa.connetti_attivo();
         } else if let Some(id) = voce.strip_prefix(PREFISSO_NOTIFICA) {
-            // Sparisce quando HA la rimuove (arriva `NotificaRimossa`).
+            // Sparisce quando HA la rimuove (arriva `NotificaRimossa`); se non riesce, la voce lo dice.
             if pulsante == PULSANTE_ARCHIVIA {
+                if self.non_archiviate.borrow_mut().remove(voce) {
+                    self.attese_cambiate();
+                }
                 self.casa.archivia_notifica(id);
             }
         } else if self.attese.borrow().voce(voce).is_some_and(|v| v.fonte == Fonte::Prova) {
@@ -682,7 +705,8 @@ impl Ponte {
     }
 
     fn batteria(&self, percentuale: f32, scollegata: bool) {
-        match attenzione::voce_batteria(percentuale, scollegata, Instant::now()) {
+        let presente = self.attese.borrow().contiene(ID_BATTERIA);
+        match attenzione::voce_batteria_con_isteresi(percentuale, scollegata, presente, Instant::now()) {
             Some(v) => self.metti_voce(v, true),
             None => self.togli_voce(ID_BATTERIA),
         }

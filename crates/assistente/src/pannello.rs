@@ -264,9 +264,9 @@ impl Apertura {
         if pillola.get_aspetto() == "allargata" {
             pannello.set_partenza_occhi(pillola.get_scarto_occhi_allerta());
         }
-        if let Some((id, indice)) = self.ponte.voce_della_pillola() {
-            pannello.set_voce_aperta(id.into());
-            pannello.set_indice_aperta(indice);
+        if let Some(indice) = self.ponte.voce_della_pillola() {
+            // Espande la voce e porta lì il fuoco da tastiera (frecce e Invio agiscono su di lei).
+            pannello.invoke_espandi(indice);
         }
         // Parte con l'umore della pillola; il ponte glielo aggiorna appena la pillola è sparita.
         pannello.set_umore(pillola.get_umore());

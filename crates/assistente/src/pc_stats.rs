@@ -13,14 +13,21 @@ pub const PERIODO_BATTERIA: Duration = Duration::from_secs(60);
 
 /// Legge la batteria subito e poi ogni 60 s su un thread che per il resto dorme, e consegna
 /// (percentuale, scollegata) a `consegna`; si ferma quando `consegna` dà falso (interfaccia
-/// chiusa). Senza batteria (PC fisso) o senza accesso alle batterie il thread finisce subito.
+/// chiusa). Senza batteria alla prima lettura (PC fisso) o senza accesso alle batterie il thread
+/// finisce subito; più avanti una lettura mancata si riprova al minuto dopo.
 pub fn sorveglia_batteria(consegna: impl Fn(f32, bool) -> bool + Send + 'static) {
     let avviato = std::thread::Builder::new().name("batteria".into()).spawn(move || {
         let Ok(gestore) = Manager::new() else { return };
+        // Nessuna batteria alla prima lettura = PC fisso: il thread finisce. Dopo, una lettura
+        // mancata non lo ferma: si riprova al giro successivo.
+        if leggi_batteria(&gestore).is_none() {
+            return;
+        }
         loop {
-            let Some((percentuale, scollegata)) = leggi_batteria(&gestore) else { return };
-            if !consegna(percentuale, scollegata) {
-                return;
+            if let Some((percentuale, scollegata)) = leggi_batteria(&gestore) {
+                if !consegna(percentuale, scollegata) {
+                    return;
+                }
             }
             std::thread::sleep(PERIODO_BATTERIA);
         }

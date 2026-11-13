@@ -190,6 +190,8 @@ struct Motore {
     debounce: Option<(Instant, Instant)>,
     /// Notifiche persistenti dell'ambiente connesso già consegnate all'applicazione.
     notifiche: BTreeSet<String>,
+    /// L'ambiente a cui appartengono quelle notifiche.
+    ambiente_notifiche: Option<String>,
 }
 
 impl Motore {
@@ -214,6 +216,7 @@ impl Motore {
             grezzi: None,
             debounce: None,
             notifiche: BTreeSet::new(),
+            ambiente_notifiche: None,
         }
     }
 
@@ -234,6 +237,7 @@ impl Motore {
             }
         }
         self.chiudi_client();
+        self.dimentica_notifiche();
     }
 
     fn emetti(&self, e: CasaEvento) {
@@ -248,6 +252,7 @@ impl Motore {
                     Some(id) => self.connetti(&id),
                     None => {
                         self.chiudi_client();
+                        self.dimentica_notifiche();
                         self.emetti(CasaEvento::Stato(StatoConnessione::Errore(
                             "nessun ambiente configurato".into(),
                         )));
@@ -257,6 +262,7 @@ impl Motore {
             Comando::Connetti(id) => self.connetti(&id),
             Comando::Disconnetti => {
                 self.chiudi_client();
+                self.dimentica_notifiche();
                 self.emetti(CasaEvento::Stato(StatoConnessione::Disconnesso));
             }
             Comando::Servizio { entity_id, dominio, servizio } => {
@@ -309,6 +315,12 @@ impl Motore {
 
     fn connetti(&mut self, env_id: &str) {
         self.chiudi_client();
+        // Riconnettersi allo stesso ambiente (es. «Riprova») non toglie le sue notifiche: le
+        // riallinea l'elenco "current" alla connessione. Un altro ambiente invece le fa uscire.
+        if self.ambiente_notifiche.as_deref() != Some(env_id) {
+            self.dimentica_notifiche();
+            self.ambiente_notifiche = Some(env_id.to_owned());
+        }
         let url = blocca(&self.config)
             .environments
             .iter()
@@ -348,10 +360,9 @@ impl Motore {
         self.client = Some(client::avvia(url, token, self.ritardi.clone(), uscita));
     }
 
-    /// Ferma la connessione corrente e invalida tutto ciò che ha ancora in volo. Le notifiche di
-    /// quell'ambiente non sono più raggiungibili: escono (alla prossima connessione l'elenco
-    /// "current" rimette quelle che ci sono). Una caduta della connessione invece non passa da qui:
-    /// le notifiche restano e alla riconnessione l'elenco "current" le riallinea.
+    /// Ferma la connessione corrente e invalida tutto ciò che ha ancora in volo. Le notifiche
+    /// consegnate restano: alla prossima connessione allo stesso ambiente l'elenco "current" le
+    /// riallinea (`dimentica_notifiche` solo per disconnessione o cambio d'ambiente).
     fn chiudi_client(&mut self) {
         if let Some((_, task)) = self.client.take() {
             task.abort();
@@ -359,6 +370,11 @@ impl Motore {
         self.generazione += 1;
         self.grezzi = None;
         self.debounce = None;
+    }
+
+    /// Le notifiche dell'ambiente lasciato non sono più raggiungibili: escono.
+    fn dimentica_notifiche(&mut self) {
+        self.ambiente_notifiche = None;
         for id in std::mem::take(&mut self.notifiche) {
             self.emetti(CasaEvento::NotificaRimossa { id });
         }
