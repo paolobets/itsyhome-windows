@@ -85,6 +85,7 @@ fn mappa<T>(v: &Value, chiave: &str, f: impl Fn(&Value) -> Option<T>) -> HashMap
 
 /// Importa la configurazione v2 senza mai scriverla. I token finiscono in `segreti`.
 /// Non salva il risultato: lo fa il chiamante.
+/// Se il portachiavi fallisce, i token già salvati vengono cancellati (rollback sugli env_id coinvolti).
 pub fn importa_v2(v2: &Path, segreti: &dyn Segreti) -> Result<Option<Config>, String> {
     if !v2.exists() {
         return Ok(None);

@@ -73,6 +73,9 @@ fn salva_e_rileggi_uguale() {
     c.ultimo_layout = "isola".into();
     st.salva(&c).unwrap();
     assert_eq!(st.leggi(), c);
+    c.favorites = vec!["b".into(), "c".into()];
+    st.salva(&c).unwrap();
+    assert_eq!(st.leggi(), c);
 }
 
 #[test]
@@ -86,4 +89,33 @@ fn config_illeggibile_da_default() {
 fn portachiavi_guasto_non_scrive_token_in_chiaro() {
     let e = importa_v2(&fx("v2-completa.json"), &Guasto).unwrap_err();
     assert!(e.contains("portachiavi"));
+}
+
+/// Riesce al primo `salva`, fallisce al secondo: forza il rollback.
+struct FallisceAlSecondo {
+    dentro: MemoriaSegreti,
+    chiamate: std::sync::atomic::AtomicUsize,
+}
+impl Segreti for FallisceAlSecondo {
+    fn salva(&self, id: &str, t: &str) -> Result<(), String> {
+        if self.chiamate.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= 1 {
+            return Err("rotto al secondo".into());
+        }
+        self.dentro.salva(id, t)
+    }
+    fn leggi(&self, id: &str) -> Result<Option<String>, String> { self.dentro.leggi(id) }
+    fn cancella(&self, id: &str) -> Result<(), String> { self.dentro.cancella(id) }
+}
+
+#[test]
+fn portachiavi_guasto_a_meta_annulla_e_non_scrive_nulla() {
+    let s = FallisceAlSecondo { dentro: MemoriaSegreti::new(), chiamate: Default::default() };
+    let e = importa_v2(&fx("v2-completa.json"), &s).unwrap_err();
+    assert!(e.contains("portachiavi"));
+    assert_eq!(s.leggi("env1").unwrap(), None, "rollback non eseguito");
+    assert_eq!(s.leggi("env2").unwrap(), None);
+    // importa_v2 non scrive file: una cartella di config vuota resta vuota.
+    let d = tempfile::tempdir().unwrap();
+    assert_eq!(std::fs::read_dir(d.path()).unwrap().count(), 0);
+    assert!(ConfigStore::apri(d.path()).leggi() == Config::default());
 }
