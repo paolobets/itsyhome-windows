@@ -253,9 +253,7 @@ impl Motore {
                     None => {
                         self.chiudi_client();
                         self.dimentica_notifiche();
-                        self.emetti(CasaEvento::Stato(StatoConnessione::Errore(
-                            "nessun ambiente configurato".into(),
-                        )));
+                        self.emetti(CasaEvento::Stato(StatoConnessione::NonConfigurato));
                     }
                 }
             }
@@ -327,7 +325,8 @@ impl Motore {
             .find(|e| e.id == env_id)
             .map(|e| e.ha_url.clone());
         let Some(url) = url else {
-            self.emetti(CasaEvento::Stato(StatoConnessione::Errore("ambiente non trovato".into())));
+            // L'ambiente non esiste (più): come non averne nessuno.
+            self.emetti(CasaEvento::Stato(StatoConnessione::NonConfigurato));
             return;
         };
         // L'ambiente scelto diventa quello attivo e sopravvive al riavvio.
@@ -344,7 +343,7 @@ impl Motore {
         let token = match self.segreti.leggi(env_id) {
             Ok(Some(t)) if !t.is_empty() => t,
             Ok(_) => {
-                self.emetti(CasaEvento::Stato(StatoConnessione::Errore("token mancante".into())));
+                self.emetti(CasaEvento::Stato(StatoConnessione::TokenMancante));
                 return;
             }
             Err(e) => {

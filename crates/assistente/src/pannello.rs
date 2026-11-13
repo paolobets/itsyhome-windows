@@ -10,7 +10,7 @@ use crate::layout::{self, Layout};
 use crate::registro::app_disponibili;
 use crate::pc_stats::{formatta_byte, formatta_velocita, Campionatore, StatPc};
 use crate::ponte::Ponte;
-use crate::{finestre, orologio, scelte, Pannello, Pillola, StatPcUi, VoceAppUi};
+use crate::{finestra_impostazioni, finestre, orologio, scelte, Pannello, Pillola, StatPcUi, VoceAppUi};
 use slint::winit_030::{winit, EventResult, WinitWindowAccessor};
 use slint::{ComponentHandle, Image, ModelRc, VecModel};
 use std::cell::{Cell, RefCell};
@@ -147,7 +147,16 @@ impl Apertura {
         });
         let a = Rc::downgrade(&apertura);
         pillola.on_cliccata(move || dopo(&a, Apertura::apri));
+        let a = Rc::downgrade(&apertura);
+        apertura.ponte.su_apri_impostazioni(move || dopo(&a, Apertura::apri_impostazioni));
         apertura
+    }
+
+    /// Le Impostazioni hanno una finestra loro: il pannello si chiude e lei si apre (o, se c'è
+    /// già, torna davanti).
+    fn apri_impostazioni(&self) {
+        self.chiudi();
+        finestra_impostazioni::apri_impostazioni();
     }
 
     /// Un campione subito e poi uno ogni 2 s, finché il pannello è aperto, su un thread a parte:
@@ -216,9 +225,14 @@ impl Apertura {
             p.set_layout(nuovo.indice());
             a.scegli_layout(nuovo);
         });
-        // La vista la cambia già l'interfaccia; Casa e PC hanno già i loro dati, le Impostazioni
-        // arrivano col Task 11.
-        pannello.on_apri_app(|_| {});
+        // La vista la cambia già l'interfaccia (Casa e PC hanno già i loro dati); «Impostazioni»
+        // apre la sua finestra e chiude il pannello, fuori da questo callback.
+        let a = self.io.clone();
+        pannello.on_apri_app(move |id| {
+            if id == "impostazioni" {
+                dopo(&a, Apertura::apri_impostazioni);
+            }
+        });
 
         let a = self.io.clone();
         pannello.window().on_winit_window_event(move |_, evento| {

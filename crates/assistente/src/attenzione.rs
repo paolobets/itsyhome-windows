@@ -9,7 +9,8 @@
 //!
 //! Fonti di M1: notifiche persistenti di Home Assistant (informazione, «Archivia»), batteria del PC
 //! sotto il 10% e scollegata (attenzione), Home Assistant irraggiungibile da oltre 5 minuti
-//! (attenzione, «Riprova»), e `--prova-avviso <livello>`.
+//! (attenzione, «Riprova»), token di Home Assistant rifiutato o mancante (attenzione, subito,
+//! «Impostazioni»), e `--prova-avviso <livello>`.
 
 use casa_core::eventi::StatoConnessione;
 use std::collections::HashSet;
@@ -200,6 +201,9 @@ pub fn livello_massimo(attese: &Attese) -> Option<Livello> {
 
 pub const ID_CASA_OFFLINE: &str = "casa.connessione";
 pub const PULSANTE_RIPROVA: &str = "riprova";
+/// Token rifiutato da Home Assistant o assente: si sistema solo nelle Impostazioni.
+pub const ID_CASA_TOKEN: &str = "casa.token";
+pub const PULSANTE_IMPOSTAZIONI: &str = "impostazioni";
 pub const ID_BATTERIA: &str = "pc.batteria";
 pub const PULSANTE_ARCHIVIA: &str = "archivia";
 /// Prefisso delle voci delle notifiche persistenti di HA: `casa.notifica.<notification_id>`.
@@ -213,33 +217,76 @@ pub const SOGLIA_BATTERIA: f32 = 10.0;
 /// Una voce della batteria già presente sparisce solo sopra questa percentuale.
 pub const SOGLIA_BATTERIA_FINE: f32 = 12.0;
 
-/// Tiene il conto di da quanto Home Assistant non è connesso (dall'avvio, se non lo è mai stato).
-/// Senza un ambiente configurato non c'è nulla di irraggiungibile: nessuna voce.
+/// Tiene il conto di da quanto Home Assistant non è connesso (dall'avvio, se non lo è mai stato)
+/// e decide la voce della casa:
+/// - irraggiungibile da oltre 5 minuti (errori, tentativi): «Home Assistant non raggiungibile»;
+/// - token rifiutato o mancante: subito una voce sua (aspettare non serve, si sistema solo nelle
+///   Impostazioni);
+/// - «Disconnetti» voluto o nessun ambiente configurato: nessuna voce.
 #[derive(Debug)]
 pub struct SorveglianzaCasa {
     non_connessa_da: Option<Instant>,
-    configurata: bool,
+    /// Falso dopo un «Disconnetti» voluto o senza ambiente: non c'è nulla da sorvegliare.
+    sorvegliata: bool,
+    token: Option<ProblemaToken>,
 }
 
-/// Errore di casa-core quando non c'è un ambiente da cui connettersi.
-const NESSUN_AMBIENTE: &str = "nessun ambiente configurato";
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProblemaToken {
+    NonValido,
+    Mancante,
+}
 
 impl SorveglianzaCasa {
     pub fn new(ora: Instant) -> Self {
-        SorveglianzaCasa { non_connessa_da: Some(ora), configurata: true }
+        SorveglianzaCasa { non_connessa_da: Some(ora), sorvegliata: true, token: None }
     }
 
     pub fn ricevi(&mut self, s: &StatoConnessione, ora: Instant) {
-        self.configurata = !matches!(s, StatoConnessione::Errore(e) if e == NESSUN_AMBIENTE);
-        if *s == StatoConnessione::Connesso {
-            self.non_connessa_da = None;
-        } else if self.non_connessa_da.is_none() {
-            self.non_connessa_da = Some(ora);
+        self.token = match s {
+            StatoConnessione::TokenNonValido => Some(ProblemaToken::NonValido),
+            StatoConnessione::TokenMancante => Some(ProblemaToken::Mancante),
+            _ => None,
+        };
+        match s {
+            StatoConnessione::Connesso => self.non_connessa_da = None,
+            StatoConnessione::Disconnesso | StatoConnessione::NonConfigurato => {
+                self.sorvegliata = false;
+                self.non_connessa_da = None;
+            }
+            StatoConnessione::InConnessione
+            | StatoConnessione::Errore(_)
+            | StatoConnessione::TokenNonValido
+            | StatoConnessione::TokenMancante => {
+                self.sorvegliata = true;
+                self.non_connessa_da.get_or_insert(ora);
+            }
         }
     }
 
     pub fn voce(&self, ora: Instant) -> Option<Voce> {
-        let da = self.non_connessa_da.filter(|_| self.configurata)?;
+        if let Some(problema) = self.token {
+            let (titolo, dettaglio) = match problema {
+                ProblemaToken::NonValido => (
+                    "Token non valido — aggiornalo nelle Impostazioni",
+                    "Home Assistant ha rifiutato il token di accesso. Creane uno nuovo nel tuo profilo di Home Assistant e scrivilo in Impostazioni › Home Assistant.",
+                ),
+                ProblemaToken::Mancante => (
+                    "Token mancante — aggiornalo nelle Impostazioni",
+                    "Per questo ambiente non c'è un token di accesso salvato. Scrivilo in Impostazioni › Home Assistant.",
+                ),
+            };
+            return Some(Voce {
+                id: ID_CASA_TOKEN.into(),
+                livello: Livello::Attenzione,
+                fonte: Fonte::Casa,
+                titolo: titolo.into(),
+                dettaglio: dettaglio.into(),
+                pulsanti: vec![Pulsante::new(PULSANTE_IMPOSTAZIONI, "Impostazioni")],
+                creata: self.non_connessa_da.unwrap_or(ora),
+            });
+        }
+        let da = self.non_connessa_da.filter(|_| self.sorvegliata)?;
         (ora.saturating_duration_since(da) >= CASA_OFFLINE_DOPO).then(|| Voce {
             id: ID_CASA_OFFLINE.into(),
             livello: Livello::Attenzione,
@@ -251,15 +298,19 @@ impl SorveglianzaCasa {
         })
     }
 
-    /// Fra quanto la voce comparirà; `None` se è già comparsa o non comparirà.
+    /// Fra quanto comparirà la voce «non raggiungibile»; `None` se è già comparsa o non comparirà.
     pub fn scadenza(&self, ora: Instant) -> Option<Duration> {
-        let da = self.non_connessa_da.filter(|_| self.configurata)?;
+        if self.token.is_some() {
+            return None;
+        }
+        let da = self.non_connessa_da.filter(|_| self.sorvegliata)?;
         let fine = da + CASA_OFFLINE_DOPO;
         (fine > ora).then(|| fine - ora)
     }
 }
 
 /// La batteria del PC sotto il 10% e scollegata: un'attenzione. In carica o sopra soglia: nulla.
+#[cfg(test)]
 pub fn voce_batteria(percentuale: f32, scollegata: bool, ora: Instant) -> Option<Voce> {
     voce_batteria_con_isteresi(percentuale, scollegata, false, ora)
 }
@@ -443,6 +494,61 @@ pub(crate) mod test {
         // Connessione tornata: la voce sparisce.
         s.ricevi(&StatoConnessione::Connesso, t + S(6 * 60));
         assert_eq!(s.voce(t + S(20 * 60)), None);
+    }
+
+    #[test]
+    fn disconnetti_voluto_nessuna_voce() {
+        let t = Instant::now();
+        let mut s = SorveglianzaCasa::new(t);
+        s.ricevi(&StatoConnessione::Connesso, t);
+        s.ricevi(&StatoConnessione::Disconnesso, t + S(1));
+        assert_eq!(s.voce(t + S(30 * 60)), None);
+        assert_eq!(s.scadenza(t + S(2)), None);
+        // Riconnettendosi la sorveglianza riparte da lì.
+        s.ricevi(&StatoConnessione::InConnessione, t + S(60));
+        s.ricevi(&StatoConnessione::Errore("Home Assistant non risponde".into()), t + S(61));
+        assert_eq!(s.voce(t + S(60 + 4 * 60)), None);
+        assert!(s.voce(t + S(60 + 5 * 60 + 1)).is_some());
+    }
+
+    #[test]
+    fn senza_ambiente_nessuna_voce() {
+        let t = Instant::now();
+        let mut s = SorveglianzaCasa::new(t);
+        s.ricevi(&StatoConnessione::NonConfigurato, t);
+        assert_eq!(s.voce(t + S(30 * 60)), None);
+        assert_eq!(s.scadenza(t), None);
+    }
+
+    #[test]
+    fn token_non_valido_voce_subito_con_parole_sue() {
+        let t = Instant::now();
+        let mut s = SorveglianzaCasa::new(t);
+        s.ricevi(&StatoConnessione::InConnessione, t);
+        s.ricevi(&StatoConnessione::TokenNonValido, t + S(1));
+        let v = s.voce(t + S(1)).expect("voce subito, senza aspettare 5 minuti");
+        assert_eq!(v.id, ID_CASA_TOKEN);
+        assert_eq!(v.titolo, "Token non valido — aggiornalo nelle Impostazioni");
+        assert_eq!(v.livello, Livello::Attenzione);
+        assert_eq!(v.pulsanti.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), [PULSANTE_IMPOSTAZIONI]);
+        // Mai «non raggiungibile» per un token, nemmeno dopo 5 minuti.
+        assert_eq!(s.voce(t + S(10 * 60)).map(|v| v.id), Some(ID_CASA_TOKEN.to_owned()));
+        assert_eq!(s.scadenza(t + S(2)), None);
+        s.ricevi(&StatoConnessione::Connesso, t + S(20));
+        assert_eq!(s.voce(t + S(20)), None);
+    }
+
+    #[test]
+    fn token_mancante_voce_subito() {
+        let t = Instant::now();
+        let mut s = SorveglianzaCasa::new(t);
+        s.ricevi(&StatoConnessione::TokenMancante, t);
+        let v = s.voce(t).expect("voce subito");
+        assert_eq!(v.id, ID_CASA_TOKEN);
+        assert!(v.titolo.starts_with("Token mancante"), "{}", v.titolo);
+        // Disconnesso apposta: niente voce.
+        s.ricevi(&StatoConnessione::Disconnesso, t + S(1));
+        assert_eq!(s.voce(t + S(1)), None);
     }
 
     #[test]

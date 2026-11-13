@@ -1,0 +1,795 @@
+// Finestra delle Impostazioni (decisione di Paolo del 13/11: finestra dedicata, non dentro il
+// pannello). Nasce quando la si apre e viene distrutta alla chiusura; si sposta e si ridimensiona,
+// non si chiude perdendo il fuoco.
+// - Home Assistant: elenco degli ambienti (nome, indirizzo, stato) con Connetti/Disconnetti,
+//   Modifica e Rimuovi (conferma sul pulsante stesso per 4 s, che nomina l'ambiente); il modulo
+//   aggiungi/modifica (nome, indirizzo, token in un campo password) prende il posto dell'elenco.
+// - Sistema: «Avvia con il sistema».
+// - Informazioni: versione, licenza MIT, «Made with Slint» e il dettaglio tecnico degli errori.
+//
+// Tastiera: Tab / Maiusc+Tab nell'ordine naturale (sezioni, pulsanti, campi), Invio o Spazio
+// premono il pulsante col fuoco. In un campo si scrive come in ogni casella (frecce, Backspace,
+// selezione); Esc esce dal campo, Esc fuori da un campo chiude la finestra; Invio in un campo salva.
+import { Tema } from "tema.slint";
+import { AmbienteUi } from "voci.slint";
+
+export { AmbienteUi }
+
+component Anello inherits Rectangle {
+    border-width: 2px;
+    border-color: Tema.anello;
+}
+
+// Pulsante di testo alto 30, raggiungibile con Tab. `tipo`: "normale", "primario" (verde acqua)
+// o "pericolo" (rosso). Il clic non gli dà il fuoco: l'anello si vede solo arrivandoci da tastiera.
+component Bottone inherits FocusScope {
+    in property <string> testo;
+    in property <string> tipo: "normale";
+    callback premuto();
+
+    height: 30px;
+    width: max(72px, etichetta.preferred-width + 28px);
+    focus-on-click: false;
+    accessible-role: button;
+    accessible-label: testo;
+    accessible-action-default => { root.premuto(); }
+    key-pressed(evento) => {
+        if (evento.text == Key.Return || evento.text == Key.Space) {
+            root.premuto();
+            return accept;
+        }
+        return reject;
+    }
+
+    fondo := Rectangle {
+        border-radius: 15px;
+        border-width: 1px;
+        border-color: tipo == "primario" ? rgba(94, 234, 212, 0.40)
+            : tipo == "pericolo" ? rgba(248, 113, 113, 0.55)
+            : Tema.vetro-bordo;
+        background: tipo == "primario"
+            ? (area.has-hover ? rgba(45, 212, 191, 0.30) : rgba(45, 212, 191, 0.18))
+            : tipo == "pericolo"
+                ? (area.has-hover ? rgba(248, 113, 113, 0.34) : rgba(248, 113, 113, 0.22))
+                : (area.has-hover ? rgba(255, 255, 255, 0.13) : rgba(255, 255, 255, 0.07));
+
+        etichetta := Text {
+            text: testo;
+            font-weight: 500;
+            font-size: 13px;
+            color: Tema.testo;
+        }
+    }
+
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.premuto(); }
+    }
+
+    if root.has-focus: Anello { x: -4px; y: -4px; width: root.width + 8px; height: root.height + 8px; border-radius: 19px; }
+}
+
+// Un campo del modulo: etichetta sempre visibile a sinistra, casella a destra. Il suggerimento
+// (formato atteso) compare solo a casella vuota.
+component Campo inherits Rectangle {
+    in property <string> etichetta;
+    in property <string> suggerimento;
+    in property <bool> password;
+    in-out property <string> testo <=> input.text;
+    // Esc nel campo (il fuoco torna alla finestra) e Invio (salva).
+    callback esci();
+    callback invio();
+
+    public function prendi() {
+        input.focus();
+    }
+
+    height: 34px;
+
+    Text {
+        x: 0;
+        width: 92px;
+        height: parent.height;
+        text: etichetta;
+        vertical-alignment: center;
+        font-size: 13px;
+        color: Tema.testo-etichetta;
+    }
+
+    casella := Rectangle {
+        x: 100px;
+        width: parent.width - self.x;
+        height: parent.height;
+        border-radius: 9px;
+        border-width: input.has-focus ? 2px : 1px;
+        border-color: input.has-focus ? Tema.petalo-4 : Tema.vetro-bordo;
+        background: rgba(255, 255, 255, 0.05);
+
+        Text {
+            x: 12px;
+            width: parent.width - 24px;
+            height: parent.height;
+            text: input.text == "" ? suggerimento : "";
+            vertical-alignment: center;
+            overflow: elide;
+            font-size: 13px;
+            color: Tema.testo-tenue;
+        }
+
+        input := TextInput {
+            x: 12px;
+            width: parent.width - 24px;
+            height: parent.height;
+            single-line: true;
+            vertical-alignment: center;
+            input-type: password ? InputType.password : InputType.text;
+            font-size: 14px;
+            color: Tema.testo;
+            selection-background-color: rgba(129, 140, 248, 0.45);
+            selection-foreground-color: Tema.testo;
+            accessible-role: text-input;
+            accessible-label: etichetta;
+            key-pressed(evento) => {
+                if (evento.text == Key.Escape) {
+                    root.esci();
+                    return accept;
+                }
+                if (evento.text == Key.Return) {
+                    root.invio();
+                    return accept;
+                }
+                return reject;
+            }
+        }
+    }
+}
+
+// Una sezione nella colonna di sinistra.
+component Sezione inherits FocusScope {
+    in property <string> nome;
+    in property <bool> attiva;
+    callback scelta();
+
+    height: 36px;
+    focus-on-click: false;
+    accessible-role: tab;
+    accessible-label: nome;
+    accessible-action-default => { root.scelta(); }
+    key-pressed(evento) => {
+        if (evento.text == Key.Return || evento.text == Key.Space) {
+            root.scelta();
+            return accept;
+        }
+        return reject;
+    }
+
+    Rectangle {
+        border-radius: 18px;
+        background: attiva ? Tema.scheda-attiva : area.has-hover ? Tema.scheda-sopra : transparent;
+
+        Text {
+            x: 16px;
+            width: parent.width - 24px;
+            text: nome;
+            vertical-alignment: center;
+            height: parent.height;
+            overflow: elide;
+            font-size: 14px;
+            font-weight: attiva ? 500 : 400;
+            color: attiva ? Tema.testo : Tema.testo-ora;
+        }
+    }
+
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.scelta(); }
+    }
+
+    if root.has-focus: Anello { x: -4px; y: -4px; width: root.width + 8px; height: root.height + 8px; border-radius: 22px; }
+}
+
+// Pallino + parola dello stato (il colore non basta mai da solo).
+component Stato inherits Rectangle {
+    in property <string> testo;
+    in property <string> tono;
+
+    Rectangle {
+        x: 0;
+        width: 8px;
+        height: 8px;
+        border-radius: 4px;
+        background: tono == "ok" ? Tema.presa-accesa
+            : tono == "attesa" ? Tema.attenzione
+            : tono == "errore" ? Tema.bloccante
+            : Tema.icona-spenta;
+    }
+
+    Text {
+        x: 15px;
+        width: parent.width - 15px;
+        text: testo;
+        vertical-alignment: center;
+        overflow: elide;
+        font-size: 13px;
+        color: Tema.testo-ora;
+    }
+}
+
+// Interruttore raggiungibile con Tab (Invio o Spazio lo commutano).
+component Interruttore inherits FocusScope {
+    in property <bool> acceso;
+    in property <string> nome;
+    callback commutato();
+
+    width: 44px;
+    height: 24px;
+    focus-on-click: false;
+    accessible-role: switch;
+    accessible-label: nome;
+    accessible-checked: acceso;
+    accessible-action-default => { root.commutato(); }
+    key-pressed(evento) => {
+        if (evento.text == Key.Return || evento.text == Key.Space) {
+            root.commutato();
+            return accept;
+        }
+        return reject;
+    }
+
+    Rectangle {
+        border-radius: 12px;
+        background: acceso ? rgba(45, 212, 191, 0.55) : rgba(255, 255, 255, 0.14);
+
+        Rectangle {
+            x: acceso ? parent.width - self.width - 3px : 3px;
+            y: 3px;
+            width: 18px;
+            height: 18px;
+            border-radius: 9px;
+            background: acceso ? #ffffff : Tema.testo-ora;
+            animate x { duration: 120ms; easing: ease-out; }
+        }
+    }
+
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.commutato(); }
+    }
+
+    if root.has-focus: Anello { x: -4px; y: -4px; width: root.width + 8px; height: root.height + 8px; border-radius: 16px; }
+}
+
+// Etichetta di sezione in maiuscoletto mono.
+component Titoletto inherits Text {
+    font-family: Tema.carattere-mono;
+    font-size: 12px;
+    letter-spacing: 0.6px;
+    color: Tema.testo-etichetta;
+    vertical-alignment: center;
+}
+
+export component FinestraImpostazioni inherits Window {
+    in property <[AmbienteUi]> ambienti;
+    in-out property <bool> avvio-con-sistema;
+    in property <bool> config-non-salvata;
+    in property <string> versione;
+    in property <string> dettagli-tecnici;
+    // Esito di «Prova connessione» e suo tono ("ok", "attesa", "errore"): lo scrive Rust.
+    in-out property <string> esito-prova;
+    in-out property <string> tono-prova;
+
+    callback prova-connessione(string, string, string);
+    // (id, nome, url, token) → errore da mostrare, "" se salvato.
+    callback salva-ambiente(string, string, string, string) -> string;
+    // id → errore da mostrare, "" se rimosso.
+    callback rimuovi-ambiente(string) -> string;
+    callback connetti-ambiente(string);
+    callback disconnetti-casa();
+    callback cambia-avvio(bool);
+    callback annulla-prova();
+    // Esc fuori da un campo: Rust chiude (e distrugge) la finestra.
+    callback chiudi();
+
+    // 0 Home Assistant, 1 Sistema, 2 Informazioni.
+    in-out property <int> sezione: 0;
+    // "elenco" o "modulo" (aggiungi/modifica).
+    out property <string> modo: "elenco";
+
+    // Modulo: id dell'ambiente in modifica ("" = nuovo), campi e messaggio d'errore.
+    property <string> modulo-id;
+    property <string> modulo-titolo;
+    property <string> campo-nome;
+    property <string> campo-url;
+    property <string> campo-token;
+    property <string> errore-modulo;
+    // Ambiente in attesa di conferma per la rimozione e conferma armata (dopo 400 ms: un doppio
+    // clic non conferma per sbaglio).
+    property <string> conferma-id;
+    property <bool> conferma-pronta;
+    property <string> errore-elenco;
+
+    property <length> margine: 28px;
+    property <length> largo-sezioni: 180px;
+    property <length> alto-testata: 64px;
+    property <length> contenuto-x: margine + largo-sezioni + 28px;
+    property <length> alto-riga: 100px;
+    property <length> passo-riga: alto-riga + 8px;
+
+    title: "ItsyHome — Impostazioni";
+    preferred-width: 720px;
+    preferred-height: 520px;
+    min-width: 600px;
+    min-height: 420px;
+    default-font-family: Tema.carattere;
+    background: @linear-gradient(160deg, Tema.fondo-alto 0%, Tema.fondo-basso 55%);
+    forward-focus: radice;
+
+    // ─── Azioni ───
+
+    function apri-modulo(i: int) {
+        conferma-id = "";
+        errore-elenco = "";
+        errore-modulo = "";
+        esito-prova = "";
+        root.annulla-prova();
+        if (i >= 0 && i < ambienti.length) {
+            modulo-id = ambienti[i].id;
+            modulo-titolo = "MODIFICA «" + ambienti[i].nome + "»";
+            campo-nome = ambienti[i].nome;
+            campo-url = ambienti[i].url;
+        } else {
+            modulo-id = "";
+            modulo-titolo = "NUOVO AMBIENTE";
+            campo-nome = "";
+            campo-url = "";
+        }
+        campo-token = "";
+        modo = "modulo";
+    }
+
+    // Chiude il modulo e svuota i campi: il token scritto non resta in memoria.
+    function chiudi-modulo() {
+        root.annulla-prova();
+        campo-nome = "";
+        campo-url = "";
+        campo-token = "";
+        errore-modulo = "";
+        esito-prova = "";
+        modo = "elenco";
+        radice.focus();
+    }
+
+    function prova() {
+        errore-modulo = "";
+        root.prova-connessione(modulo-id, campo-url, campo-token);
+    }
+
+    function salva() {
+        errore-modulo = root.salva-ambiente(modulo-id, campo-nome, campo-url, campo-token);
+        if (errore-modulo == "") {
+            chiudi-modulo();
+        }
+    }
+
+    // Primo tocco: «Conferma» per 4 s sul pulsante stesso; secondo tocco (dopo 400 ms): via.
+    function rimuovi(id: string) {
+        errore-elenco = "";
+        if (conferma-id == id && conferma-pronta) {
+            conferma-id = "";
+            errore-elenco = root.rimuovi-ambiente(id);
+            radice.focus();
+        } else if (conferma-id != id) {
+            conferma-pronta = false;
+            conferma-id = id;
+        }
+    }
+
+    function cambia-avvio-ora() {
+        avvio-con-sistema = !avvio-con-sistema;
+        root.cambia-avvio(avvio-con-sistema);
+    }
+
+    // Conferma della rimozione: si arma dopo 400 ms e scade dopo 4 s (timer solo in quei momenti).
+    Timer {
+        interval: 400ms;
+        running: conferma-id != "" && !conferma-pronta;
+        triggered => { conferma-pronta = true; }
+    }
+
+    Timer {
+        interval: 4s;
+        running: conferma-id != "";
+        triggered => { conferma-id = ""; }
+    }
+
+    // Tiene il fuoco quando nessun campo o pulsante lo ha: Esc chiude la finestra. I tasti non
+    // presi da un pulsante o da un campo arrivano qui.
+    radice := FocusScope {
+        focus-on-click: false;
+        key-pressed(evento) => {
+            if (evento.text == Key.Escape) {
+                root.chiudi();
+                return accept;
+            }
+            return reject;
+        }
+
+        // Filo dei petali in cima, come il bordo dell'isola.
+        Rectangle {
+            y: 0;
+            height: 2px;
+            background: @linear-gradient(90deg, Tema.petalo-1 0%, Tema.petalo-2 20%, Tema.petalo-3 40%, Tema.petalo-4 60%, Tema.petalo-5 80%, Tema.petalo-6 100%);
+        }
+
+        Text {
+            x: margine;
+            y: 18px;
+            height: 30px;
+            text: "Impostazioni";
+            vertical-alignment: center;
+            font-weight: 500;
+            font-size: 20px;
+            color: Tema.testo;
+        }
+
+        // ─── Sezioni ───
+        for nome[i] in ["Home Assistant", "Sistema", "Informazioni"]: Sezione {
+            x: margine - 8px;
+            y: alto-testata + i * 42px;
+            width: largo-sezioni;
+            nome: nome;
+            attiva: sezione == i;
+            scelta => { sezione = i; }
+        }
+
+        Rectangle {
+            x: margine + largo-sezioni + 10px;
+            y: alto-testata;
+            width: 1px;
+            height: parent.height - alto-testata - 24px;
+            background: Tema.vetro-bordo;
+        }
+
+        // ─── Home Assistant: elenco ───
+        if sezione == 0 && modo == "elenco": Rectangle {
+            x: contenuto-x;
+            y: alto-testata;
+            width: parent.width - self.x - margine;
+            height: parent.height - self.y - 24px;
+
+            Titoletto {
+                x: 0;
+                y: 0;
+                height: 30px;
+                text: "AMBIENTI";
+            }
+
+            Text {
+                x: 90px;
+                y: 0;
+                width: parent.width - self.x - aggiungi.width - 12px;
+                height: 30px;
+                text: errore-elenco;
+                vertical-alignment: center;
+                overflow: elide;
+                font-size: 13px;
+                color: Tema.caldo-2;
+            }
+
+            aggiungi := Bottone {
+                x: parent.width - self.width;
+                y: 0;
+                testo: "Aggiungi ambiente";
+                tipo: ambienti.length == 0 ? "primario" : "normale";
+                premuto => { apri-modulo(-1); }
+            }
+
+            if ambienti.length == 0: VerticalLayout {
+                y: 44px;
+                height: parent.height - 44px;
+                alignment: center;
+                spacing: 8px;
+
+                Text {
+                    text: "Nessun ambiente configurato";
+                    horizontal-alignment: center;
+                    font-weight: 500;
+                    font-size: 16px;
+                    color: Tema.testo;
+                }
+
+                Text {
+                    text: "Aggiungi l'indirizzo e il token di accesso del tuo Home Assistant.";
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                    font-size: 13px;
+                    color: Tema.testo-tenue;
+                }
+            }
+
+            Flickable {
+                y: 44px;
+                height: parent.height - 44px;
+                content-height: max(self.height, ambienti.length * passo-riga);
+
+                for amb[i] in ambienti: Rectangle {
+                    property <bool> conferma: conferma-id == amb.id;
+                    y: i * passo-riga;
+                    height: alto-riga;
+                    border-radius: 14px;
+                    background: conferma ? rgba(248, 113, 113, 0.08) : rgba(255, 255, 255, 0.04);
+                    border-width: 1px;
+                    border-color: conferma ? rgba(248, 113, 113, 0.35) : Tema.vetro-bordo;
+
+                    // Riga 1: nome e stato (oppure la domanda che nomina l'ambiente); riga 2:
+                    // indirizzo (o cosa succede); riga 3: i pulsanti. Così ci sta anche stretta.
+                    Text {
+                        x: 16px;
+                        y: 10px;
+                        width: parent.width - self.x - (conferma ? 16px : 176px);
+                        text: conferma ? "Rimuovere «" + amb.nome + "»?" : amb.nome;
+                        overflow: elide;
+                        font-weight: 500;
+                        font-size: 14px;
+                        color: conferma ? Tema.caldo-1 : Tema.testo;
+                    }
+
+                    if !conferma: Stato {
+                        x: parent.width - self.width - 16px;
+                        y: 10px;
+                        width: 150px;
+                        height: 20px;
+                        testo: amb.stato;
+                        tono: amb.tono;
+                    }
+
+                    Text {
+                        x: 16px;
+                        y: 34px;
+                        width: parent.width - 32px;
+                        text: conferma ? "Si cancella anche il token. Conferma entro 4 s." : amb.url;
+                        overflow: elide;
+                        font-size: 12px;
+                        color: Tema.testo-tenue;
+                    }
+
+                    HorizontalLayout {
+                        x: 16px;
+                        y: 58px;
+                        height: 30px;
+                        spacing: 8px;
+
+                        if !conferma: Bottone {
+                            testo: amb.collegato ? "Disconnetti" : "Connetti";
+                            tipo: amb.collegato ? "normale" : "primario";
+                            premuto => {
+                                if (amb.collegato) {
+                                    root.disconnetti-casa();
+                                } else {
+                                    root.connetti-ambiente(amb.id);
+                                }
+                            }
+                        }
+
+                        Bottone {
+                            testo: conferma ? "Annulla" : "Modifica";
+                            premuto => {
+                                if (conferma) {
+                                    conferma-id = "";
+                                } else {
+                                    apri-modulo(i);
+                                }
+                            }
+                        }
+
+                        Bottone {
+                            testo: conferma ? "Conferma" : "Rimuovi";
+                            tipo: conferma ? "pericolo" : "normale";
+                            accessible-label: conferma ? "Conferma la rimozione di " + amb.nome : "Rimuovi " + amb.nome;
+                            premuto => { rimuovi(amb.id); }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ─── Home Assistant: modulo aggiungi/modifica ───
+        if sezione == 0 && modo == "modulo": Rectangle {
+            x: contenuto-x;
+            y: alto-testata;
+            width: min(560px, parent.width - self.x - margine);
+            height: parent.height - self.y - 24px;
+            // Il modulo nasce col fuoco nel primo campo.
+            init => { nome.prendi(); }
+
+            Titoletto {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: 30px;
+                text: modulo-titolo;
+                overflow: elide;
+            }
+
+            nome := Campo {
+                y: 44px;
+                width: parent.width;
+                etichetta: "Nome";
+                suggerimento: "Casa";
+                testo <=> campo-nome;
+                esci => { radice.focus(); }
+                invio => { salva(); }
+            }
+
+            Campo {
+                y: 88px;
+                width: parent.width;
+                etichetta: "Indirizzo";
+                suggerimento: "192.168.1.95:8123";
+                testo <=> campo-url;
+                esci => { radice.focus(); }
+                invio => { salva(); }
+            }
+
+            Campo {
+                y: 132px;
+                width: parent.width;
+                etichetta: "Token";
+                suggerimento: modulo-id == "" ? "Token di accesso a lunga durata" : "Lascia vuoto per non cambiarlo";
+                password: true;
+                testo <=> campo-token;
+                esci => { radice.focus(); }
+                invio => { salva(); }
+            }
+
+            HorizontalLayout {
+                x: 100px;
+                y: 184px;
+                height: 30px;
+                spacing: 10px;
+                alignment: start;
+
+                Bottone {
+                    testo: "Prova connessione";
+                    premuto => { prova(); }
+                }
+
+                Bottone {
+                    testo: "Salva";
+                    tipo: "primario";
+                    premuto => { salva(); }
+                }
+
+                Bottone {
+                    testo: "Annulla";
+                    premuto => { chiudi-modulo(); }
+                }
+            }
+
+            // Un messaggio alla volta: l'errore del modulo, altrimenti l'esito della prova.
+            Text {
+                x: 100px;
+                y: 226px;
+                width: parent.width - self.x;
+                text: errore-modulo != "" ? errore-modulo : esito-prova;
+                wrap: word-wrap;
+                font-size: 13px;
+                color: errore-modulo != "" || tono-prova == "errore" ? Tema.caldo-2
+                    : tono-prova == "ok" ? Tema.presa-accesa
+                    : Tema.testo-tenue;
+                accessible-role: text;
+            }
+        }
+
+        // ─── Sistema ───
+        if sezione == 1: Rectangle {
+            x: contenuto-x;
+            y: alto-testata;
+            width: parent.width - self.x - margine;
+            height: parent.height - self.y - 24px;
+
+            Titoletto {
+                x: 0;
+                y: 0;
+                height: 30px;
+                text: "SISTEMA";
+            }
+
+            Rectangle {
+                y: 44px;
+                height: 64px;
+                border-radius: 14px;
+                background: rgba(255, 255, 255, 0.04);
+                border-width: 1px;
+                border-color: Tema.vetro-bordo;
+
+                Text {
+                    x: 16px;
+                    y: 12px;
+                    text: "Avvia con il sistema";
+                    font-weight: 500;
+                    font-size: 14px;
+                    color: Tema.testo;
+                }
+
+                Text {
+                    x: 16px;
+                    y: 35px;
+                    width: interruttore.x - self.x - 12px;
+                    text: "Apre l'assistente quando accedi al computer.";
+                    overflow: elide;
+                    font-size: 12px;
+                    color: Tema.testo-tenue;
+                }
+
+                interruttore := Interruttore {
+                    x: parent.width - self.width - 18px;
+                    y: (parent.height - self.height) / 2;
+                    nome: "Avvia con il sistema";
+                    acceso: avvio-con-sistema;
+                    commutato => { cambia-avvio-ora(); }
+                }
+            }
+
+            if config-non-salvata: Text {
+                y: 120px;
+                width: parent.width;
+                text: "Le impostazioni non sono state salvate su disco: il dettaglio è in Informazioni.";
+                wrap: word-wrap;
+                font-size: 13px;
+                color: Tema.caldo-1;
+            }
+        }
+
+        // ─── Informazioni ───
+        if sezione == 2: Rectangle {
+            x: contenuto-x;
+            y: alto-testata;
+            width: parent.width - self.x - margine;
+            height: parent.height - self.y - 24px;
+
+            Text {
+                x: 0;
+                y: 0;
+                height: 30px;
+                text: "ItsyHome assistente · versione " + versione;
+                vertical-alignment: center;
+                font-weight: 500;
+                font-size: 15px;
+                color: Tema.testo;
+            }
+
+            Text {
+                x: 0;
+                y: 30px;
+                height: 22px;
+                text: "Licenza MIT · Made with Slint";
+                vertical-alignment: center;
+                font-size: 13px;
+                color: Tema.testo-ora;
+            }
+
+            Titoletto {
+                x: 0;
+                y: 70px;
+                height: 24px;
+                text: "DETTAGLI TECNICI";
+            }
+
+            Flickable {
+                y: 100px;
+                height: parent.height - self.y;
+                content-height: max(self.height, dettagli.preferred-height);
+
+                dettagli := Text {
+                    width: parent.width;
+                    text: dettagli-tecnici;
+                    wrap: word-wrap;
+                    font-family: Tema.carattere-mono;
+                    font-size: 12px;
+                    color: Tema.testo-tenue;
+                }
+            }
+        }
+    }
+}

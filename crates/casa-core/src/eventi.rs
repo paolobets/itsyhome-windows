@@ -5,9 +5,18 @@ use crate::types::MenuData;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StatoConnessione {
+    /// Nessuna connessione perché non la si vuole: «Disconnetti» (o prima del primo tentativo).
+    /// Una connessione caduta non è `Disconnesso`: è un `Errore` seguito da nuovi tentativi.
     Disconnesso,
     InConnessione,
     Connesso,
+    /// Nessun ambiente da cui connettersi (nessuno attivo, o l'attivo non esiste più).
+    NonConfigurato,
+    /// Home Assistant ha rifiutato il token (`auth_invalid`): definitivo, nessun nuovo tentativo.
+    TokenNonValido,
+    /// L'ambiente attivo non ha un token nel portachiavi: nessun tentativo.
+    TokenMancante,
+    /// Connessione non riuscita o caduta (si riprova da soli); il testo è il dettaglio tecnico.
     Errore(String),
 }
 

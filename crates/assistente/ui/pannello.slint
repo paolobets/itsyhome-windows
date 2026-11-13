@@ -261,7 +261,10 @@ export component Pannello inherits Window {
 
     function apri(i: int, id: string) {
         fuoco-dock = i;
-        vai(id);
+        // «Impostazioni» non è una vista: apre la sua finestra (e il pannello si chiude).
+        if (id != "impostazioni") {
+            vai(id);
+        }
         root.apri-app(id);
     }
 
@@ -659,7 +662,8 @@ export component Pannello inherits Window {
                 stat: root.pc;
             }
 
-            // Vista di un'app senza contenuti propri: per ora solo il titolo (Impostazioni, Task 11).
+            // Vista di un'app senza contenuti propri: solo il titolo (oggi nessuna; le Impostazioni
+            // hanno una finestra loro).
             for voce in app: VerticalLayout {
                 width: parent.width;
                 height: parent.height;

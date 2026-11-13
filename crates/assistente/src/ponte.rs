@@ -4,15 +4,17 @@
 
 use crate::attenzione::{
     self, livello_massimo, merita_notifica_di_sistema, notifica_sistema, prossimo_cambio_aspetto, Attese, Fonte,
-    Livello, SorveglianzaCasa, Voce, ID_BATTERIA, ID_CASA_OFFLINE, PREFISSO_NOTIFICA, PULSANTE_ARCHIVIA,
-    PULSANTE_RIPROVA,
+    Livello, SorveglianzaCasa, Voce, ID_BATTERIA, ID_CASA_OFFLINE, ID_CASA_TOKEN, PREFISSO_NOTIFICA,
+    PULSANTE_ARCHIVIA, PULSANTE_IMPOSTAZIONI, PULSANTE_RIPROVA,
 };
+use crate::impostazioni::{self, Modulo, Tono};
 use crate::pillola::{self, VistaPillola};
 use crate::umore::{Cervello, Segnale, Umore};
-use crate::{Pannello, Pillola, PreferitoUi, SensoreUi, VoceAttesaUi};
+use crate::{AmbienteUi, FinestraImpostazioni, Pannello, Pillola, PreferitoUi, SensoreUi, VoceAttesaUi};
 use casa_core::eventi::{Ascoltatore, CasaEvento, StatoConnessione};
+use casa_core::segreti::Segreti;
 use casa_core::servizio::CasaService;
-use casa_core::types::{AppEntity, BaseEntity, MenuData, SensorEntity};
+use casa_core::types::{AppEntity, BaseEntity, MenuData, SensorEntity, TestConnectionResult};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -199,19 +201,20 @@ pub fn riga_stato(stato: &StatoConnessione, menu: Option<&MenuData>) -> String {
         (StatoConnessione::Connesso, None) => "Casa connessa".into(),
         (StatoConnessione::InConnessione, _) => "Connessione alla casa…".into(),
         (StatoConnessione::Disconnesso, _) => "Casa non connessa".into(),
+        (StatoConnessione::NonConfigurato, _) => "Casa non configurata".into(),
+        (StatoConnessione::TokenNonValido, _) => "Token non valido".into(),
+        (StatoConnessione::TokenMancante, _) => "Token della casa mancante".into(),
         (StatoConnessione::Errore(e), _) => frase_errore(e).into(),
     }
 }
 
 /// Una frase semplice al posto dell'errore tecnico di casa-core (il dettaglio resta per le
-/// Impostazioni).
+/// Impostazioni, sezione Informazioni).
 pub fn frase_errore(e: &str) -> &'static str {
-    match e {
-        "token non valido" => "Token non valido",
-        "token mancante" => "Token della casa mancante",
-        "nessun ambiente configurato" | "ambiente non trovato" => "Casa non configurata",
-        e if e.starts_with("portachiavi") => "Portachiavi non leggibile",
-        _ => "Casa non raggiungibile",
+    if e.starts_with("portachiavi") {
+        "Portachiavi non leggibile"
+    } else {
+        "Casa non raggiungibile"
     }
 }
 
@@ -261,7 +264,7 @@ thread_local! {
     static PONTE: RefCell<Option<Rc<Ponte>>> = const { RefCell::new(None) };
 }
 
-fn ponte() -> Option<Rc<Ponte>> {
+pub(crate) fn ponte() -> Option<Rc<Ponte>> {
     PONTE.with(|p| p.borrow().clone())
 }
 
@@ -333,15 +336,27 @@ pub struct Ponte {
     appena_connesso: Cell<bool>,
     /// Voci di notifiche HA il cui ultimo «Archivia» non è riuscito.
     non_archiviate: RefCell<std::collections::HashSet<String>>,
-    /// Errori da mostrare nelle Impostazioni (Task 11).
-    #[allow(dead_code)]
+    /// Il portachiavi dei token: le Impostazioni ci scrivono e ci cancellano, mai altro.
+    segreti: Arc<dyn Segreti>,
+    /// Gli ambienti per le Impostazioni (sopravvive al pannello come gli altri modelli).
+    modello_ambienti: Rc<VecModel<AmbienteUi>>,
+    /// Ultimi errori, col dettaglio tecnico, per Impostazioni › Informazioni.
+    errore_connessione: RefCell<Option<String>>,
     errore_import: Option<String>,
-    #[allow(dead_code)]
     errore_config: RefCell<Option<String>>,
+    /// Conta le «Prova connessione»: vale solo l'esito dell'ultima (un modulo chiuso o una prova
+    /// rifatta scartano quelle ancora in volo).
+    prova: Cell<u64>,
+    /// La finestra delle Impostazioni, se aperta (la possiede `finestra_impostazioni`).
+    finestra: RefCell<slint::Weak<FinestraImpostazioni>>,
+    /// Apre la finestra delle Impostazioni chiudendo il pannello (lo collega `Apertura`): icona
+    /// del dock e pulsante «Impostazioni» della voce del token.
+    apri_impostazioni: RefCell<Option<Box<dyn Fn()>>>,
 }
 
 pub fn collega(
     casa: Rc<CasaService>,
+    segreti: Arc<dyn Segreti>,
     pillola: &Pillola,
     cervello: Rc<RefCell<Cervello>>,
     umore_fisso: Option<Umore>,
@@ -366,8 +381,14 @@ pub fn collega(
         sveglia_casa: slint::Timer::default(),
         appena_connesso: Cell::new(false),
         non_archiviate: RefCell::new(std::collections::HashSet::new()),
+        segreti,
+        modello_ambienti: Rc::new(VecModel::default()),
+        errore_connessione: RefCell::new(None),
         errore_import,
         errore_config: RefCell::new(None),
+        prova: Cell::new(0),
+        finestra: RefCell::new(slint::Weak::default()),
+        apri_impostazioni: RefCell::new(None),
     });
     PONTE.with(|p| *p.borrow_mut() = Some(ponte.clone()));
     // I pulsanti della pillola allargata agiscono sulla voce che sta chiamando.
@@ -380,8 +401,25 @@ pub fn collega(
         }
     });
     ponte.aggiorna_casa_offline();
+    ponte.aggiorna_ambienti();
     ponte.aggiorna_umore();
     ponte
+}
+
+/// L'ora per i dettagli tecnici («14:02 · …»).
+fn adesso_hh_mm() -> String {
+    chrono::Local::now().format("%H:%M").to_string()
+}
+
+/// Il dettaglio tecnico di uno stato di connessione andato male (`None` se è andato bene).
+fn dettaglio_stato(s: &StatoConnessione) -> Option<String> {
+    let testo = match s {
+        StatoConnessione::Errore(e) => e.clone(),
+        StatoConnessione::TokenNonValido => "token rifiutato da Home Assistant (auth_invalid)".into(),
+        StatoConnessione::TokenMancante => "nessun token nel portachiavi per l'ambiente attivo".into(),
+        _ => return None,
+    };
+    Some(format!("{} · {testo}", adesso_hh_mm()))
 }
 
 fn voce_ui(p: &Preferito, connesso: bool) -> PreferitoUi {
@@ -423,9 +461,13 @@ impl Ponte {
                 self.cervello.borrow_mut().ricevi(Segnale::Casa(s.clone()), ora);
                 self.sorveglianza.borrow_mut().ricevi(&s, ora);
                 self.appena_connesso.set(s == StatoConnessione::Connesso);
+                if let Some(d) = dettaglio_stato(&s) {
+                    *self.errore_connessione.borrow_mut() = Some(d);
+                }
                 *self.stato.borrow_mut() = s;
                 // Con la connessione cambia anche se i preferiti si possono toccare.
                 self.ricostruisci_preferiti();
+                self.aggiorna_ambienti();
                 self.aggiorna_pannello();
                 self.aggiorna_casa_offline();
             }
@@ -459,7 +501,8 @@ impl Ponte {
             }
             CasaEvento::ConfigNonSalvata(e) => {
                 eprintln!("{e}");
-                *self.errore_config.borrow_mut() = Some(e);
+                *self.errore_config.borrow_mut() = Some(format!("{} · {e}", adesso_hh_mm()));
+                self.aggiorna_pannello();
             }
         }
         self.aggiorna_umore();
@@ -532,10 +575,203 @@ impl Ponte {
         aggiorna_modello(&self.sensori, sensori);
     }
 
-    /// Riga di stato della casa sul pannello aperto.
+    /// Riga di stato della casa sul pannello aperto e dettagli della finestra delle Impostazioni.
     fn aggiorna_pannello(&self) {
         if let Some(p) = self.pannello.borrow().upgrade() {
             self.riempi_stato(&p);
+        }
+        if let Some(f) = self.finestra.borrow().upgrade() {
+            self.riempi_impostazioni(&f);
+        }
+    }
+
+    /// Gli ambienti della configurazione con lo stato della connessione (solo l'attivo ne ha una).
+    fn aggiorna_ambienti(&self) {
+        let config = self.casa.config();
+        let stato = self.stato.borrow();
+        let voci: Vec<AmbienteUi> = config
+            .environments
+            .iter()
+            .map(|e| {
+                let attivo = config.active_env_id.as_deref() == Some(e.id.as_str());
+                let (testo, tono) = impostazioni::stato_ambiente(attivo, &stato);
+                AmbienteUi {
+                    id: e.id.as_str().into(),
+                    nome: e.name.as_str().into(),
+                    url: e.ha_url.as_str().into(),
+                    stato: testo.into(),
+                    tono: tono.come_stringa().into(),
+                    attivo,
+                    collegato: impostazioni::collegato(attivo, &stato),
+                }
+            })
+            .collect();
+        aggiorna_modello(&self.modello_ambienti, voci);
+    }
+
+    /// Ciò che le Impostazioni leggono dalla configurazione e dagli errori.
+    fn riempi_impostazioni(&self, p: &FinestraImpostazioni) {
+        let config = self.casa.config();
+        if p.get_avvio_con_sistema() != config.launch_at_login {
+            p.set_avvio_con_sistema(config.launch_at_login);
+        }
+        p.set_config_non_salvata(self.errore_config.borrow().is_some());
+        let dettagli = impostazioni::dettagli_tecnici(
+            self.errore_connessione.borrow().as_deref(),
+            self.errore_import.as_deref(),
+            self.errore_config.borrow().as_deref(),
+        );
+        if p.get_dettagli_tecnici() != dettagli.as_str() {
+            p.set_dettagli_tecnici(dettagli.into());
+        }
+    }
+
+    /// `Apertura` dice come aprire la finestra delle Impostazioni (chiudendo il pannello).
+    pub fn su_apri_impostazioni(&self, f: impl Fn() + 'static) {
+        *self.apri_impostazioni.borrow_mut() = Some(Box::new(f));
+    }
+
+    /// Icona del dock o pulsante di una voce: la finestra delle Impostazioni.
+    pub fn chiedi_impostazioni(&self) {
+        if let Some(apri) = self.apri_impostazioni.borrow().as_ref() {
+            apri();
+        }
+    }
+
+    /// La finestra delle Impostazioni appena creata: modelli, dati di adesso e azioni.
+    pub fn collega_finestra(&self, f: &FinestraImpostazioni) {
+        *self.finestra.borrow_mut() = f.as_weak();
+        self.aggiorna_ambienti();
+        f.set_ambienti(ModelRc::from(self.modello_ambienti.clone()));
+        f.set_versione(env!("CARGO_PKG_VERSION").into());
+        self.riempi_impostazioni(f);
+        f.on_salva_ambiente(|id, nome, url, token| {
+            let Some(ponte) = ponte() else { return "".into() };
+            let m = Modulo { id: id.into(), nome: nome.into(), url: url.into(), token: token.into() };
+            ponte.salva_ambiente(m).into()
+        });
+        f.on_rimuovi_ambiente(|id| ponte().map(|p| p.rimuovi_ambiente(&id)).unwrap_or_default().into());
+        f.on_prova_connessione(|id, url, token| {
+            if let Some(p) = ponte() {
+                p.prova_connessione(&id, &url, &token);
+            }
+        });
+        f.on_annulla_prova(|| {
+            if let Some(p) = ponte() {
+                p.prova.set(p.prova.get() + 1);
+            }
+        });
+        f.on_connetti_ambiente(|id| {
+            if let Some(p) = ponte() {
+                p.casa.connetti(&id);
+            }
+        });
+        f.on_disconnetti_casa(|| {
+            if let Some(p) = ponte() {
+                p.casa.disconnetti();
+            }
+        });
+        f.on_cambia_avvio(|attivo| {
+            // Per ora si salva soltanto: l'avvio automatico vero lo collega il Task 12.
+            if let Some(p) = ponte() {
+                p.casa.aggiorna_config(|c| c.launch_at_login = attivo);
+            }
+        });
+    }
+
+    /// La finestra delle Impostazioni si è chiusa: nessuna prova in volo vale più.
+    pub fn finestra_chiusa(&self) {
+        *self.finestra.borrow_mut() = slint::Weak::default();
+        self.prova.set(self.prova.get() + 1);
+    }
+
+    // ─── Impostazioni: ambienti di Home Assistant ────────────────────────────
+
+    /// Salva il modulo (nuovo ambiente o modifica). Il token, se scritto, va solo nel
+    /// portachiavi; se il portachiavi non lo accetta non si salva nulla (mai token in chiaro).
+    /// Restituisce l'errore da mostrare sotto il modulo, vuoto se è andato tutto bene.
+    fn salva_ambiente(&self, m: Modulo) -> String {
+        let config = self.casa.config();
+        let a = match impostazioni::prepara(&config, &m) {
+            Ok(a) => a,
+            Err(e) => return e,
+        };
+        if let Some(t) = &a.token {
+            if let Err(e) = self.segreti.salva(&a.id, t) {
+                *self.errore_connessione.borrow_mut() = Some(format!("{} · salvataggio del token: {e}", adesso_hh_mm()));
+                self.aggiorna_pannello();
+                return "Portachiavi non disponibile: il token non è stato salvato".into();
+            }
+        }
+        let mut url_cambiato = false;
+        self.casa.aggiorna_config(|c| url_cambiato = impostazioni::applica(c, &a));
+        // Il primo ambiente si connette da solo; quello attivo si riconnette se cambiano URL o token.
+        let attivo = config.active_env_id.as_deref();
+        if attivo.is_none() || (attivo == Some(a.id.as_str()) && (url_cambiato || a.token.is_some())) {
+            self.casa.connetti(&a.id);
+        }
+        self.aggiorna_ambienti();
+        String::new()
+    }
+
+    /// Toglie l'ambiente e il suo token dal portachiavi; se era l'attivo la casa resta senza
+    /// ambiente (nessuna voce «non raggiungibile»). Restituisce l'errore, vuoto se tutto bene.
+    fn rimuovi_ambiente(&self, id: &str) -> String {
+        let mut era_attivo = false;
+        self.casa.aggiorna_config(|c| era_attivo = impostazioni::togli(c, id));
+        if era_attivo {
+            self.casa.connetti_attivo();
+        }
+        self.aggiorna_ambienti();
+        match self.segreti.cancella(id) {
+            Ok(()) => String::new(),
+            Err(e) => {
+                *self.errore_connessione.borrow_mut() = Some(format!("{} · cancellazione del token: {e}", adesso_hh_mm()));
+                self.aggiorna_pannello();
+                "Ambiente rimosso, ma il token è rimasto nel portachiavi".into()
+            }
+        }
+    }
+
+    /// «Prova connessione» col modulo: in modifica, senza un token nuovo, si prova quello salvato.
+    fn prova_connessione(&self, id: &str, url: &str, token: &str) {
+        let numero = self.prova.get() + 1;
+        self.prova.set(numero);
+        let url = match impostazioni::valida_url(url) {
+            Ok(u) => u,
+            Err(e) => return self.esito_prova(numero, e, Tono::Errore),
+        };
+        let token = match token.trim() {
+            "" if id.is_empty() => return self.esito_prova(numero, "Scrivi il token per provarlo".into(), Tono::Errore),
+            "" => match self.segreti.leggi(id) {
+                Ok(Some(t)) if !t.is_empty() => t,
+                Ok(_) => return self.esito_prova(numero, "Nessun token salvato: scrivilo".into(), Tono::Errore),
+                Err(_) => return self.esito_prova(numero, "Portachiavi non leggibile".into(), Tono::Errore),
+            },
+            t => t.to_owned(),
+        };
+        self.esito_prova(numero, "Prova in corso…".into(), Tono::Attesa);
+        self.casa.prova_connessione(url, token, move |r: TestConnectionResult| {
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(p) = ponte() else { return };
+                if !r.ok {
+                    let e = r.error.as_deref().unwrap_or("errore sconosciuto");
+                    *p.errore_connessione.borrow_mut() = Some(format!("{} · prova connessione: {e}", adesso_hh_mm()));
+                    p.aggiorna_pannello();
+                }
+                let (testo, tono) = impostazioni::esito_prova(&r);
+                p.esito_prova(numero, testo, tono);
+            });
+        });
+    }
+
+    fn esito_prova(&self, numero: u64, testo: String, tono: Tono) {
+        if numero != self.prova.get() {
+            return;
+        }
+        if let Some(f) = self.finestra.borrow().upgrade() {
+            f.set_esito_prova(testo.into());
+            f.set_tono_prova(tono.come_stringa().into());
         }
     }
 
@@ -667,6 +903,8 @@ impl Ponte {
     pub fn azione(&self, voce: &str, pulsante: &str) {
         if voce == ID_CASA_OFFLINE && pulsante == PULSANTE_RIPROVA {
             self.casa.connetti_attivo();
+        } else if voce == ID_CASA_TOKEN && pulsante == PULSANTE_IMPOSTAZIONI {
+            self.chiedi_impostazioni();
         } else if let Some(id) = voce.strip_prefix(PREFISSO_NOTIFICA) {
             // Sparisce quando HA la rimuove (arriva `NotificaRimossa`); se non riesce, la voce lo dice.
             if pulsante == PULSANTE_ARCHIVIA {
@@ -681,18 +919,29 @@ impl Ponte {
         }
     }
 
-    /// Casa non connessa da oltre 5 minuti → voce; connessione tornata → via. La sveglia suona
-    /// solo allo scadere dei 5 minuti (nessun controllo periodico).
+    /// La voce della casa: non raggiungibile da oltre 5 minuti, o token da sistemare; connessione
+    /// tornata, «Disconnetti» o nessun ambiente → via. La sveglia suona solo allo scadere dei 5
+    /// minuti (nessun controllo periodico).
     fn aggiorna_casa_offline(&self) {
         let ora = Instant::now();
         let (voce, scadenza) = {
             let s = self.sorveglianza.borrow();
             (s.voce(ora), s.scadenza(ora))
         };
-        match voce {
-            Some(v) if !self.attese.borrow().contiene(&v.id) => self.metti_voce(v, true),
-            Some(_) => {}
-            None => self.togli_voce(ID_CASA_OFFLINE),
+        let tenuta = voce.as_ref().map(|v| v.id.clone());
+        for id in [ID_CASA_OFFLINE, ID_CASA_TOKEN] {
+            if tenuta.as_deref() != Some(id) {
+                self.togli_voce(id);
+            }
+        }
+        if let Some(v) = voce {
+            // Nuova: con notifica di sistema; cambiata (token mancante → non valido): aggiornata.
+            let prima = self.attese.borrow().voce(&v.id).map(|x| x.titolo.clone());
+            match prima {
+                None => self.metti_voce(v, true),
+                Some(t) if t != v.titolo => self.metti_voce(v, false),
+                Some(_) => {}
+            }
         }
         match scadenza {
             Some(tra) => self.sveglia_casa.start(slint::TimerMode::SingleShot, tra + MARGINE_SVEGLIA, || {
@@ -938,7 +1187,9 @@ pub(crate) mod test {
         assert_eq!(riga_stato(&StatoConnessione::Connesso, None), "Casa connessa");
         assert_eq!(riga_stato(&StatoConnessione::InConnessione, Some(&m)), "Connessione alla casa…");
         assert_eq!(riga_stato(&StatoConnessione::Disconnesso, Some(&m)), "Casa non connessa");
-        assert_eq!(riga_stato(&StatoConnessione::Errore("token mancante".into()), None), "Token della casa mancante");
+        assert_eq!(riga_stato(&StatoConnessione::TokenMancante, None), "Token della casa mancante");
+        assert_eq!(riga_stato(&StatoConnessione::TokenNonValido, None), "Token non valido");
+        assert_eq!(riga_stato(&StatoConnessione::NonConfigurato, Some(&m)), "Casa non configurata");
     }
 
     #[test]
@@ -946,8 +1197,7 @@ pub(crate) mod test {
         let riga = |e: &str| riga_stato(&StatoConnessione::Errore(e.into()), None);
         assert_eq!(riga("connessione non riuscita: IO error: Impossibile stabilire la connessione"), "Casa non raggiungibile");
         assert_eq!(riga("Home Assistant non risponde"), "Casa non raggiungibile");
-        assert_eq!(riga("token non valido"), "Token non valido");
-        assert_eq!(riga("nessun ambiente configurato"), "Casa non configurata");
+        assert_eq!(riga("connessione chiusa da Home Assistant"), "Casa non raggiungibile");
         assert_eq!(riga("portachiavi: accesso negato"), "Portachiavi non leggibile");
     }
 

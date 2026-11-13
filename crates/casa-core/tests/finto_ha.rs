@@ -284,10 +284,7 @@ async fn token_sbagliato_da_errore_senza_riprovare() {
     p.servizio.connetti_attivo();
 
     assert_eq!(stato_di(&prossimo(&mut p).await), Some(&StatoConnessione::InConnessione));
-    assert_eq!(
-        stato_di(&prossimo(&mut p).await),
-        Some(&StatoConnessione::Errore("token non valido".into()))
-    );
+    assert_eq!(stato_di(&prossimo(&mut p).await), Some(&StatoConnessione::TokenNonValido));
     sleep(Duration::from_secs(5)).await;
     assert_eq!(ha.connessioni(), 1);
     assert!(p.eventi.try_recv().is_err(), "nessun altro evento dopo l'errore");
@@ -299,13 +296,53 @@ async fn token_mancante_da_errore_senza_connettersi() {
     let mut p = prepara(&ha.url, None);
     p.servizio.connetti_attivo();
 
-    assert_eq!(
-        stato_di(&prossimo(&mut p).await),
-        Some(&StatoConnessione::Errore("token mancante".into()))
-    );
+    assert_eq!(stato_di(&prossimo(&mut p).await), Some(&StatoConnessione::TokenMancante));
     sleep(Duration::from_millis(500)).await;
     assert_eq!(ha.connessioni(), 0);
     assert!(p.eventi.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn senza_ambiente_attivo_non_configurato() {
+    let mut p = prepara_con(tempfile::tempdir().unwrap(), Some(Config::default()), &[]);
+    p.servizio.connetti_attivo();
+    assert_eq!(stato_di(&prossimo(&mut p).await), Some(&StatoConnessione::NonConfigurato));
+    // Un ambiente che non esiste (rimosso) è lo stesso caso.
+    p.servizio.connetti("sparito");
+    assert_eq!(stato_di(&prossimo(&mut p).await), Some(&StatoConnessione::NonConfigurato));
+}
+
+#[tokio::test]
+async fn connessione_caduta_non_e_disconnesso() {
+    // Un server che autentica e poi chiude: la caduta è un errore con nuovi tentativi, mai il
+    // `Disconnesso` voluto di «Disconnetti».
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        while let Ok((tcp, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let Ok(ws) = tokio_tungstenite::accept_async(tcp).await else { return };
+                let (mut tx, mut rx) = ws.split();
+                let testo = |v: Value| Message::Text(v.to_string().into());
+                let _ = tx.send(testo(json!({ "type": "auth_required" }))).await;
+                let _ = rx.next().await;
+                let _ = tx.send(testo(json!({ "type": "auth_ok" }))).await;
+                let _ = tx.close().await;
+            });
+        }
+    });
+    let mut p = prepara(&url, Some(TOKEN));
+    p.servizio.connetti_attivo();
+    let mut stati = Vec::new();
+    while stati.len() < 4 {
+        if let CasaEvento::Stato(s) = prossimo(&mut p).await {
+            stati.push(s);
+        }
+    }
+    assert_eq!(stati[0], StatoConnessione::InConnessione);
+    assert_eq!(stati[1], StatoConnessione::Connesso);
+    assert!(matches!(stati[2], StatoConnessione::Errore(_)), "{:?}", stati[2]);
+    assert_eq!(stati[3], StatoConnessione::InConnessione);
 }
 
 #[tokio::test]

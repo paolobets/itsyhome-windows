@@ -112,10 +112,13 @@ async fn attore(
         uscita(DalClient::Stato(StatoConnessione::InConnessione));
         match sessione(&url, &token, &mut rx, &uscita, &mut tentativo).await {
             Fine::TokenNonValido => {
-                uscita(DalClient::Stato(StatoConnessione::Errore("token non valido".into())));
+                uscita(DalClient::Stato(StatoConnessione::TokenNonValido));
                 return; // definitivo, come in v2
             }
-            Fine::Chiusa => uscita(DalClient::Stato(StatoConnessione::Disconnesso)),
+            // Una caduta non è il `Disconnesso` voluto: è un errore, e si riprova.
+            Fine::Chiusa => uscita(DalClient::Stato(StatoConnessione::Errore(
+                "connessione chiusa da Home Assistant".into(),
+            ))),
             Fine::Errore(e) => uscita(DalClient::Stato(StatoConnessione::Errore(e))),
         }
         let attesa = Instant::now() + ritardo(&ritardi, tentativo);

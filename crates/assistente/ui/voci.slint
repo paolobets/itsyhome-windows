@@ -66,3 +66,16 @@ export struct VoceAttesaUi {
     icona: image,
     pulsanti: [PulsanteUi],
 }
+
+// Un ambiente di Home Assistant nelle Impostazioni (vedi `ponte::aggiorna_ambienti`).
+// `stato`: la parola dello stato («Connesso», «Non attivo»…); `tono`: "ok" | "attesa" | "errore" |
+// "spento" (colore del pallino); `collegato`: connesso o che ci prova (pulsante «Disconnetti»).
+export struct AmbienteUi {
+    id: string,
+    nome: string,
+    url: string,
+    stato: string,
+    tono: string,
+    attivo: bool,
+    collegato: bool,
+}
