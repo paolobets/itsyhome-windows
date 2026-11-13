@@ -209,6 +209,9 @@ pub const PULSANTE_ARCHIVIA: &str = "archivia";
 /// Prefisso delle voci delle notifiche persistenti di HA: `casa.notifica.<notification_id>`.
 pub const PREFISSO_NOTIFICA: &str = "casa.notifica.";
 pub const ID_PROVA: &str = "prova.avviso";
+/// Voci dei servizi di sistema (scorciatoia occupata): «Ho capito» le toglie.
+pub const PREFISSO_SISTEMA: &str = "sistema.";
+pub const PULSANTE_HO_CAPITO: &str = "ho-capito";
 
 /// Dopo quanto tempo senza Home Assistant la cosa diventa un'attenzione.
 pub const CASA_OFFLINE_DOPO: Duration = Duration::from_secs(5 * 60);
@@ -374,10 +377,20 @@ pub fn avviso_di_prova(mut argomenti: impl Iterator<Item = String>) -> Option<Li
     None
 }
 
-/// Aggancio della notifica di sistema (toast): il Task 12 lo collega a `notify-rust`. Si chiama
-/// per bloccante, attenzione e notifiche di Home Assistant, una volta per voce nuova.
+/// `--dopo <s>`: l'avviso di prova arriva dopo `s` secondi.
+pub fn secondi_dopo(mut argomenti: impl Iterator<Item = String>) -> Option<u64> {
+    while let Some(a) = argomenti.next() {
+        if a == "--dopo" {
+            return argomenti.next()?.parse().ok();
+        }
+    }
+    None
+}
+
+/// La notifica di sistema (toast, `notify-rust`): per bloccante, attenzione e notifiche di Home
+/// Assistant, una volta per voce nuova e solo a pannello chiuso (vedi `toast`).
 pub fn notifica_sistema(v: &Voce) {
-    let _ = v;
+    crate::sistema::notifiche::mostra(&v.titolo, &v.dettaglio);
 }
 
 /// La notifica di sistema spetta a bloccante e attenzione, e alle notifiche di Home Assistant
@@ -386,9 +399,27 @@ pub fn merita_notifica_di_sistema(v: &Voce) -> bool {
     v.livello != Livello::Informazione || v.id.starts_with(PREFISSO_NOTIFICA)
 }
 
+/// Una voce nuova fa il toast se lo merita e se il pannello è chiuso: a pannello aperto la voce
+/// compare subito nella riga «In attesa», che si sta già guardando.
+pub fn toast(v: &Voce, pannello_aperto: bool) -> bool {
+    !pannello_aperto && merita_notifica_di_sistema(v)
+}
+
 #[cfg(test)]
 pub(crate) mod test {
     use super::*;
+
+    #[test]
+    fn a_pannello_aperto_niente_toast() {
+        let t = Instant::now();
+        let b = voce("b", Livello::Bloccante, t);
+        assert!(toast(&b, false));
+        assert!(!toast(&b, true));
+        let ha = voce_notifica("lav", "Lavatrice", "Finita", t);
+        assert!(toast(&ha, false));
+        assert!(!toast(&ha, true));
+        assert!(!toast(&voce("i", Livello::Informazione, t), false));
+    }
 
     pub fn voce(id: &str, livello: Livello, creata: Instant) -> Voce {
         Voce {

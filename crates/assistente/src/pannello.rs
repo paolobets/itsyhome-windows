@@ -10,6 +10,7 @@ use crate::layout::{self, Layout};
 use crate::registro::app_disponibili;
 use crate::pc_stats::{formatta_byte, formatta_velocita, Campionatore, StatPc};
 use crate::ponte::Ponte;
+use crate::sistema::servizi;
 use crate::{finestra_impostazioni, finestre, orologio, scelte, Pannello, Pillola, StatPcUi, VoceAppUi};
 use slint::winit_030::{winit, EventResult, WinitWindowAccessor};
 use slint::{ComponentHandle, Image, ModelRc, VecModel};
@@ -252,9 +253,16 @@ impl Apertura {
         scelte::salva_layout(self.ponte.casa(), l);
     }
 
+    /// Il pannello è aperto (la pillola, intanto, è nascosta).
+    pub fn aperto(&self) -> bool {
+        self.pannello.borrow().is_some()
+    }
+
     pub fn apri(&self) {
         let Some(pillola) = self.pillola.upgrade() else { return };
-        if self.pannello.borrow().is_some() {
+        if let Some(p) = self.pannello.borrow().as_ref() {
+            // Già aperto (scorciatoia, tray, seconda istanza): solo davanti, col fuoco.
+            p.window().with_winit_window(|w| w.focus_window());
             return;
         }
         let pannello = match self.crea() {
@@ -345,6 +353,7 @@ impl Apertura {
         // pannello segue l'umore finché resta aperto.
         self.ponte.pannello_aperto(&pannello);
         *self.pannello.borrow_mut() = Some(pannello);
+        servizi::pannello_aperto();
     }
 
     /// Apertura per prova (`--apri`): resta aperto anche se il fuoco va altrove (il PC intanto
@@ -360,12 +369,11 @@ impl Apertura {
         self.fisso.set(false);
         self.orologio.stop();
         self.ferma_campionamento();
-        // Prima la pillola, poi via il pannello: con zero finestre visibili il ciclo eventi
-        // di Slint terminerebbe.
+        // Prima la pillola (o la linea, o nulla se c'è uno schermo intero: lo decidono i servizi
+        // di sistema), poi via il pannello, così tra i due non si vede il vuoto.
+        self.ponte.pannello_chiuso();
         if let Some(pillola) = self.pillola.upgrade() {
-            pillola.set_attiva(true);
-            self.ponte.pannello_chiuso();
-            let _ = pillola.show();
+            servizi::pannello_chiuso(&pillola, &self.ponte);
         }
         let _ = pannello.hide();
         drop(pannello);

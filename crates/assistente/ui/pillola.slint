@@ -95,7 +95,14 @@ export component Pillola inherits Window {
     in property <string> livello: "informazione";
     in property <image> icona-fonte;
     in property <[PulsanteUi]> pulsanti;
+    // Ritirata: al posto della pillola una linea 300 × 4 al bordo alto (la finestra è ritagliata
+    // alla linea e lascia passare i clic), del colore del livello più urgente in attesa
+    // (`livello-linea`, vuoto = nessuno: colore neutro). Opaca: la finestra ritirata è layered.
+    in property <bool> ritirata;
+    in property <string> livello-linea;
     callback cliccata();
+    // Clic destro sulla pillola: ritirata.
+    callback ritira();
     // Clic su un pulsante della pillola allargata: l'id del pulsante.
     callback azione(string);
 
@@ -169,7 +176,7 @@ export component Pillola inherits Window {
     // allargata, che è più del doppio più larga (il costo cresce con l'area ridisegnata).
     Timer {
         interval: allargata ? 80ms : 40ms;
-        running: attiva && in-moto;
+        running: attiva && !ritirata && in-moto;
         triggered => {
             tempo = animation-tick();
         }
@@ -177,7 +184,7 @@ export component Pillola inherits Window {
 
     Timer {
         interval: 4600ms;
-        running: attiva && !dorme && !contento;
+        running: attiva && !ritirata && !dorme && !contento;
         triggered => {
             palpebra = true;
             riapri.running = true;
@@ -193,7 +200,16 @@ export component Pillola inherits Window {
         }
     }
 
+    if ritirata: Rectangle {
+        x: (root.width - self.width) / 2;
+        y: margine-aura;
+        width: 300px;
+        height: 4px;
+        background: livello-linea == "" ? Tema.testo-tenue : Tema.colore-livello(livello-linea);
+    }
+
     pillola := Rectangle {
+        visible: !ritirata;
         // Centrata: mentre la larghezza si anima resta ferma attorno al centro della finestra.
         x: (root.width - self.width) / 2;
         y: margine-aura;
@@ -241,6 +257,11 @@ export component Pillola inherits Window {
             mouse-cursor: pointer;
             clicked => {
                 root.cliccata();
+            }
+            pointer-event(e) => {
+                if (e.button == PointerEventButton.right && e.kind == PointerEventKind.up) {
+                    root.ritira();
+                }
             }
         }
 

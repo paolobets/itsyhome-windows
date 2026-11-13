@@ -37,8 +37,7 @@ pub enum Segnale {
     InAttesa(Option<Livello>),
     ComandoRiuscito,
     ComandoFallito,
-    /// Da quanto tempo l'utente è inattivo (lo manderà il controllo dell'inattività, Task 10).
-    #[allow(dead_code)]
+    /// Da quanto tempo l'utente è inattivo (il controllo da 5 s dei servizi di sistema).
     Inattivo(Duration),
 }
 

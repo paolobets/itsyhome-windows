@@ -21,6 +21,8 @@ thread_local! {
     /// Conta i cambi d'aspetto: un restringimento rimandato vale solo se nel frattempo non ne è
     /// arrivato un altro.
     static GIRO: Cell<u64> = const { Cell::new(0) };
+    /// Vero mentre la pillola è ritirata (linea): ogni ritaglio va alla linea.
+    static LINEA: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Tutto ciò che la pillola mostra: si riscrive solo quando cambia.
@@ -94,7 +96,50 @@ pub fn pulsanti_ui(p: &[Pulsante]) -> ModelRc<PulsanteUi> {
 
 fn ritaglia(ui: &Pillola, larghezza: f32) {
     RITAGLIO.with(|r| r.set(larghezza));
-    finestre::ritaglia_al_centro(ui.window(), larghezza);
+    applica_ritaglio(ui);
+}
+
+/// Il ritaglio in vigore: la linea se ritirata, altrimenti la fascia della pillola.
+fn applica_ritaglio(ui: &Pillola) {
+    if LINEA.with(Cell::get) {
+        finestre::ritaglia_a_linea(ui.window());
+    } else {
+        finestre::ritaglia_al_centro(ui.window(), RITAGLIO.with(Cell::get));
+    }
+}
+
+/// Ritirata: la pillola diventa la linea, con clic passanti. `livello`: il più urgente in
+/// attesa (colore della linea), `None` = neutra. Prima di mostrarla, così nasce già linea.
+pub fn mostra_linea(ui: &Pillola, livello: Option<Livello>) {
+    colora_linea(ui, livello);
+    if LINEA.with(|l| l.replace(true)) {
+        return;
+    }
+    ui.set_ritirata(true);
+    applica_ritaglio(ui);
+    finestre::clic_passanti(ui.window(), true);
+}
+
+pub fn colora_linea(ui: &Pillola, livello: Option<Livello>) {
+    let colore = livello.map(Livello::come_stringa).unwrap_or("");
+    if ui.get_livello_linea() != colore {
+        ui.set_livello_linea(colore.into());
+    }
+}
+
+/// Fine della ritirata: di nuovo la pillola, che prende i clic.
+pub fn togli_linea(ui: &Pillola) {
+    if !LINEA.with(|l| l.replace(false)) {
+        return;
+    }
+    // Togliendo `WS_EX_LAYERED` Windows butta la superficie della finestra, ma Slint ridisegna
+    // solo le zone cambiate (linea e pillola): ai lati della pillola, nell'aura trasparente,
+    // restavano due rettangoli chiari. Nascosta e rimostrata, la finestra si ridisegna tutta.
+    let _ = ui.hide();
+    finestre::clic_passanti(ui.window(), false);
+    ui.set_ritirata(false);
+    applica_ritaglio(ui);
+    let _ = ui.show();
 }
 
 pub fn imposta(ui: &Pillola, v: &VistaPillola) {
@@ -137,7 +182,7 @@ pub fn imposta(ui: &Pillola, v: &VistaPillola) {
 /// Finestra appena nata, spostata, DPI o monitor cambiati: posizione e ritaglio di nuovo.
 pub fn al_cambio_schermo(ui: &Pillola) {
     finestre::posiziona_pillola(ui.window());
-    finestre::ritaglia_al_centro(ui.window(), RITAGLIO.with(Cell::get));
+    applica_ritaglio(ui);
 }
 
 #[cfg(test)]

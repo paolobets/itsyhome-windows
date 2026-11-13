@@ -14,6 +14,7 @@ mod pillola;
 mod ponte;
 mod registro;
 mod scelte;
+mod sistema;
 mod umore;
 
 use casa_core::config::ConfigStore;
@@ -51,6 +52,12 @@ fn umore_forzato(mut argomenti: impl Iterator<Item = String>) -> Option<Umore> {
 }
 
 fn main() -> Result<(), slint::PlatformError> {
+    // Istanza unica: se ce n'è già una, la si avvisa (apre il pannello) e si esce subito.
+    let nome_istanza = sistema::istanza::nome(std::env::var_os(avvio::VAR_CARTELLA).as_deref());
+    let Some(istanza) = sistema::istanza::prendi(&nome_istanza) else {
+        return Ok(());
+    };
+
     slint::BackendSelector::new()
         .backend_name("winit".into())
         .renderer_name("skia-software".into())
@@ -86,6 +93,13 @@ fn main() -> Result<(), slint::PlatformError> {
         segreti.clone(),
         ponte::ascoltatore(),
     ));
+    // Avvio con il sistema scelto (anche importato dalla v2) ma assente dal registro: lo si
+    // rimette. Spento non si tocca nulla (mai togliere una voce che non abbiamo messo noi).
+    if casa.config().launch_at_login && !sistema::autoavvio::attivo().unwrap_or(true) {
+        if let Err(e) = sistema::autoavvio::imposta(true) {
+            eprintln!("{e}");
+        }
+    }
 
     let pillola = Pillola::new()?;
     debug_assert_eq!(pillola.get_larghezza_finestra(), finestre::LARGHEZZA_FINESTRA_PILLOLA);
@@ -96,9 +110,18 @@ fn main() -> Result<(), slint::PlatformError> {
     let forzato = umore_forzato(argomenti.iter().cloned());
     let cervello = Rc::new(RefCell::new(Cervello::new(Instant::now())));
     let ponte = ponte::collega(casa.clone(), segreti, &pillola, cervello, forzato, errore_import);
-    // `--prova-avviso <bloccante|attenzione|informazione>`: una voce finta con 2 pulsanti finti.
+    let ponte_servizi = ponte.clone();
+    // `--prova-avviso <bloccante|attenzione|informazione> [--dopo <s>]`: una voce finta con 2
+    // pulsanti finti, subito o dopo `s` secondi (per provarla mentre la pillola è ritirata).
     if let Some(livello) = attenzione::avviso_di_prova(argomenti.iter().cloned()) {
-        ponte.prova_avviso(livello);
+        match attenzione::secondi_dopo(argomenti.iter().cloned()) {
+            Some(s) => slint::Timer::single_shot(std::time::Duration::from_secs(s), move || {
+                if let Some(p) = ponte::ponte() {
+                    p.prova_avviso(livello);
+                }
+            }),
+            None => ponte.prova_avviso(livello),
+        }
     }
     // La batteria si controlla ogni 60 s anche a pannello chiuso (unica eccezione al campionamento
     // solo a pannello aperto): un thread che dorme, niente su senza batteria.
@@ -108,6 +131,11 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let apertura = pannello::Apertura::collega(&pillola, ponte);
     finestre::segui_schermo(&pillola, pillola::al_cambio_schermo);
+    sistema::servizi::avvia(&pillola, apertura.clone(), ponte_servizi);
+    // Un secondo avvio suona il campanello: qui si apre il pannello.
+    istanza.su_richiamo(|| {
+        let _ = slint::invoke_from_event_loop(sistema::servizi::apri);
+    });
 
     // `--apri`: pannello aperto all'avvio e fisso, cioè non si chiude perdendo il fuoco
     // (misure e foto mentre il PC si usa); Esc e gli occhi lo chiudono.
@@ -123,5 +151,15 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     casa.connetti_attivo();
-    pillola.run()
+    // Il ciclo eventi vive anche senza finestre visibili (pillola nascosta da uno schermo intero
+    // a pannello chiuso): finisce solo con «Esci» della tray.
+    pillola.show()?;
+    slint::run_event_loop_until_quit()?;
+    // In ordine: servizi (tray, scorciatoie), ponte, pannello; il `CasaService` si chiude qui,
+    // con il suo thread ancora vivo, quando `casa` esce di scena.
+    sistema::servizi::spegni();
+    ponte::spegni();
+    drop(apertura);
+    let _ = pillola.hide();
+    Ok(())
 }

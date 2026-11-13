@@ -3,10 +3,11 @@
 //! Home Assistant, casa irraggiungibile, batteria, prova) e decide umore e aspetto della pillola.
 
 use crate::attenzione::{
-    self, livello_massimo, merita_notifica_di_sistema, notifica_sistema, prossimo_cambio_aspetto, Attese, Fonte,
-    Livello, SorveglianzaCasa, Voce, ID_BATTERIA, ID_CASA_OFFLINE, ID_CASA_TOKEN, PREFISSO_NOTIFICA,
-    PULSANTE_ARCHIVIA, PULSANTE_IMPOSTAZIONI, PULSANTE_RIPROVA,
+    self, livello_massimo, notifica_sistema, prossimo_cambio_aspetto, Attese, Fonte, Livello, SorveglianzaCasa,
+    Voce, ID_BATTERIA, ID_CASA_OFFLINE, ID_CASA_TOKEN, PREFISSO_NOTIFICA, PREFISSO_SISTEMA, PULSANTE_ARCHIVIA,
+    PULSANTE_IMPOSTAZIONI, PULSANTE_RIPROVA,
 };
+use crate::sistema::{autoavvio, servizi};
 use crate::impostazioni::{self, Modulo, Tono};
 use crate::pillola::{self, VistaPillola};
 use crate::umore::{Cervello, Segnale, Umore};
@@ -266,6 +267,14 @@ thread_local! {
 
 pub(crate) fn ponte() -> Option<Rc<Ponte>> {
     PONTE.with(|p| p.borrow().clone())
+}
+
+/// A fine programma, prima che `main` ritorni: il ponte (e con lui il `CasaService`) va lasciato
+/// qui. Lasciato al thread_local verrebbe distrutto dentro `ExitProcess`, quando il thread del
+/// servizio è già stato ucciso, e la sua `join` andrebbe in panico.
+pub fn spegni() {
+    let ponte = PONTE.with(|p| p.borrow_mut().take());
+    drop(ponte);
 }
 
 /// L'`Ascoltatore` da dare a `CasaService::avvia`: inoltra ogni evento al ponte.
@@ -672,9 +681,19 @@ impl Ponte {
             }
         });
         f.on_cambia_avvio(|attivo| {
-            // Per ora si salva soltanto: l'avvio automatico vero lo collega il Task 12.
-            if let Some(p) = ponte() {
-                p.casa.aggiorna_config(|c| c.launch_at_login = attivo);
+            let Some(p) = ponte() else { return };
+            // Prima il registro, poi la configurazione: se il sistema rifiuta, l'interruttore
+            // torna com'era e la configurazione non mente.
+            match autoavvio::imposta(attivo) {
+                Ok(()) => p.casa.aggiorna_config(|c| c.launch_at_login = attivo),
+                Err(e) => {
+                    eprintln!("{e}");
+                    *p.errore_config.borrow_mut() = Some(format!("{} · {e}", adesso_hh_mm()));
+                    if let Some(f) = p.finestra.borrow().upgrade() {
+                        f.set_avvio_con_sistema(!attivo);
+                        p.riempi_impostazioni(&f);
+                    }
+                }
             }
         });
     }
@@ -825,7 +844,24 @@ impl Ponte {
     /// l'umore di adesso.
     pub fn pannello_chiuso(&self) {
         *self.pannello.borrow_mut() = slint::Weak::default();
+        self.ridisegna_pillola();
+    }
+
+    /// La pillola (di nuovo attiva) sta per ricomparire: riprende l'aspetto di adesso anche se
+    /// non è cambiato da quando si era nascosta.
+    pub fn ridisegna_pillola(&self) {
         *self.mostrato.borrow_mut() = None;
+        self.aggiorna_umore();
+    }
+
+    /// Il livello più urgente in attesa (colore della linea della ritirata).
+    pub fn livello_massimo(&self) -> Option<Livello> {
+        livello_massimo(&self.attese.borrow())
+    }
+
+    /// Da quanto l'utente non tocca tastiera e mouse (controllo da 5 s dei servizi).
+    pub fn inattivo(&self, durata: Duration) {
+        self.cervello.borrow_mut().ricevi(Segnale::Inattivo(durata), Instant::now());
         self.aggiorna_umore();
     }
 
@@ -850,14 +886,20 @@ impl Ponte {
     // ─── Voci «In attesa» ────────────────────────────────────────────────────
 
     /// Mette (o aggiorna) una voce. Una voce nuova che lo merita manda la notifica di sistema,
-    /// salvo `avvisa` falso (notifiche di HA già presenti alla connessione).
+    /// salvo `avvisa` falso (notifiche di HA già presenti alla connessione) o pannello aperto (la
+    /// voce compare subito nella riga «In attesa»). Un bloccante nuovo fa uscire dalla ritirata.
     pub fn metti_voce(&self, v: Voce, avvisa: bool) {
         let nuova = !self.attese.borrow().contiene(&v.id);
-        if nuova && avvisa && merita_notifica_di_sistema(&v) {
+        let pannello_aperto = self.pannello.borrow().upgrade().is_some();
+        if nuova && avvisa && attenzione::toast(&v, pannello_aperto) {
             notifica_sistema(&v);
         }
+        let livello = v.livello;
         self.attese.borrow_mut().metti(v);
         self.attese_cambiate();
+        if nuova {
+            servizi::voce_arrivata(livello);
+        }
     }
 
     pub fn togli_voce(&self, id: &str) {
@@ -883,6 +925,7 @@ impl Ponte {
                 .collect()
         };
         aggiorna_modello(&self.modello_attese, voci);
+        servizi::colora_linea();
         if let Some(p) = self.pannello.borrow().upgrade() {
             // La voce espansa può aver cambiato posto o essere sparita.
             let aperta = p.get_voce_aperta().to_string();
@@ -913,6 +956,8 @@ impl Ponte {
                 }
                 self.casa.archivia_notifica(id);
             }
+        } else if voce.starts_with(PREFISSO_SISTEMA) {
+            self.togli_voce(voce);
         } else if self.attese.borrow().voce(voce).is_some_and(|v| v.fonte == Fonte::Prova) {
             eprintln!("avviso di prova: «{pulsante}»");
             self.togli_voce(voce);

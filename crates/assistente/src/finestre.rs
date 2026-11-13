@@ -132,14 +132,23 @@ pub fn regione_pillola(larghezza: i32, altezza: i32, scala: f32, larghezza_logic
     (sinistra, alto, sinistra + fascia, altezza)
 }
 
+/// Regione della finestra della pillola ritirata: la linea `LARGHEZZA_LINEA` × `ALTEZZA_LINEA`
+/// al centro, attaccata al bordo alto dello schermo (sotto il margine dell'aura che sporge).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn regione_linea(larghezza: i32, altezza: i32, scala: f32) -> (i32, i32, i32, i32) {
+    use crate::sistema::ritirata::{ALTEZZA_LINEA, LARGHEZZA_LINEA};
+    let fascia = ((LARGHEZZA_LINEA * scala).round() as i32).min(larghezza);
+    let sinistra = (larghezza - fascia) / 2;
+    let alto = ((MARGINE_AURA * scala).round() as i32).min(altezza);
+    let basso = (alto + ((ALTEZZA_LINEA * scala).round() as i32).max(1)).min(altezza);
+    (sinistra, alto, sinistra + fascia, basso)
+}
+
 /// Limita disegno e clic della finestra alla regione di `regione_pillola`: fuori dalla fascia
 /// la finestra non esiste per il mouse. Così la finestra della pillola può restare sempre larga
 /// quanto la pillola più larga senza rubare clic.
 #[cfg(windows)]
 pub fn ritaglia_al_centro(finestra: &slint::Window, larghezza_logica: f32) {
-    use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    use windows_sys::Win32::Graphics::Gdi::{CreateRectRgn, DeleteObject, SetWindowRgn};
-
     let dimensioni = finestra.size();
     let rettangolo = regione_pillola(
         dimensioni.width as i32,
@@ -147,28 +156,121 @@ pub fn ritaglia_al_centro(finestra: &slint::Window, larghezza_logica: f32) {
         finestra.scale_factor(),
         larghezza_logica,
     );
+    applica_regione(finestra, rettangolo);
+}
+
+/// Ritaglia la finestra della pillola alla linea della ritirata.
+#[cfg(windows)]
+pub fn ritaglia_a_linea(finestra: &slint::Window) {
+    let dimensioni = finestra.size();
+    let rettangolo = regione_linea(dimensioni.width as i32, dimensioni.height as i32, finestra.scale_factor());
+    applica_regione(finestra, rettangolo);
+}
+
+#[cfg(windows)]
+fn applica_regione(finestra: &slint::Window, rettangolo: (i32, i32, i32, i32)) {
+    use windows_sys::Win32::Graphics::Gdi::{CreateRectRgn, DeleteObject, SetWindowRgn};
+
     thread_local! {
         // Ultimo ritaglio applicato (hwnd, rettangolo): rifarlo uguale ridisegnerebbe per niente.
         static ULTIMO: std::cell::Cell<(isize, (i32, i32, i32, i32))> = const { std::cell::Cell::new((0, (0, 0, 0, 0))) };
     }
-    finestra.with_winit_window(|w| {
-        let Ok(maniglia) = w.window_handle() else { return };
-        let RawWindowHandle::Win32(h) = maniglia.as_raw() else { return };
-        let chiave = (h.hwnd.get(), rettangolo);
-        if ULTIMO.with(|u| u.replace(chiave)) == chiave {
-            return;
+    let Some(hwnd) = maniglia(finestra) else { return };
+    let chiave = (hwnd, rettangolo);
+    if ULTIMO.with(|u| u.replace(chiave)) == chiave {
+        return;
+    }
+    senza_barra_del_titolo(hwnd);
+    let (sinistra, alto, destra, basso) = rettangolo;
+    // SAFETY: hwnd valido finché esiste la finestra winit; dopo SetWindowRgn riuscita la
+    // regione appartiene al sistema, se fallisce va liberata qui.
+    unsafe {
+        let regione = CreateRectRgn(sinistra, alto, destra, basso);
+        if regione != 0 && SetWindowRgn(hwnd, regione, 1) == 0 {
+            DeleteObject(regione);
         }
-        senza_barra_del_titolo(h.hwnd.get());
-        let (sinistra, alto, destra, basso) = rettangolo;
-        // SAFETY: hwnd valido finché esiste la finestra winit; dopo SetWindowRgn riuscita la
-        // regione appartiene al sistema, se fallisce va liberata qui.
-        unsafe {
-            let regione = CreateRectRgn(sinistra, alto, destra, basso);
-            if regione != 0 && SetWindowRgn(h.hwnd.get(), regione, 1) == 0 {
-                DeleteObject(regione);
+    }
+}
+
+/// L'HWND della finestra winit di `finestra` (`None` finché non esiste).
+#[cfg(windows)]
+pub fn maniglia(finestra: &slint::Window) -> Option<isize> {
+    use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    finestra
+        .with_winit_window(|w| {
+            let maniglia = w.window_handle().ok()?;
+            match maniglia.as_raw() {
+                RawWindowHandle::Win32(h) => Some(h.hwnd.get()),
+                _ => None,
             }
+        })
+        .flatten()
+}
+
+/// Rimette la finestra in cima a quelle «sempre in primo piano» senza attivarla né spostarla
+/// (un'altra finestra sempre in primo piano può esserle passata sopra).
+#[cfg(windows)]
+pub fn metti_sopra(finestra: &slint::Window) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE,
+    };
+    let Some(hwnd) = maniglia(finestra) else { return };
+    // SAFETY: hwnd di una finestra viva di questo thread; nessun puntatore passato.
+    unsafe {
+        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+    }
+}
+
+#[cfg(not(windows))]
+pub fn metti_sopra(_finestra: &slint::Window) {}
+
+/// Il monitor (HMONITOR) su cui sta la finestra; 0 se non si sa.
+#[cfg(windows)]
+pub fn monitor_di(finestra: &slint::Window) -> isize {
+    use windows_sys::Win32::Graphics::Gdi::{MonitorFromWindow, MONITOR_DEFAULTTONEAREST};
+    // SAFETY: MonitorFromWindow accetta qualunque hwnd (anche nascosta) e non scrive nulla.
+    maniglia(finestra).map(|h| unsafe { MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST) }).unwrap_or(0)
+}
+
+#[cfg(not(windows))]
+pub fn monitor_di(_finestra: &slint::Window) -> isize {
+    0
+}
+
+/// Dov'è il mouse (pixel fisici dello schermo virtuale).
+#[cfg(windows)]
+pub fn cursore() -> Option<(i32, i32)> {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    let mut p = POINT { x: 0, y: 0 };
+    // SAFETY: `p` è un POINT valido da riempire.
+    (unsafe { GetCursorPos(&mut p) } != 0).then_some((p.x, p.y))
+}
+
+#[cfg(not(windows))]
+pub fn cursore() -> Option<(i32, i32)> {
+    None
+}
+
+/// Clic passanti: con `si` il mouse attraversa la finestra e arriva a quella sotto (Windows:
+/// `WS_EX_TRANSPARENT | WS_EX_LAYERED`, impostati da winit). Un layered senza attributi può non
+/// essere disegnato: si fissa l'opacità piena (la linea è opaca e la regione la ritaglia esatta).
+pub fn clic_passanti(finestra: &slint::Window, si: bool) {
+    finestra.with_winit_window(|w| {
+        if let Err(e) = w.set_cursor_hittest(!si) {
+            eprintln!("clic passanti non impostati: {e}");
         }
     });
+    #[cfg(windows)]
+    if si {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{SetLayeredWindowAttributes, LWA_ALPHA};
+        if let Some(hwnd) = maniglia(finestra) {
+            // SAFETY: hwnd di una finestra viva di questo thread, ora layered.
+            unsafe {
+                SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+            }
+        }
+    }
 }
 
 /// Procedura che la pillola aveva prima della nostra. NON è la procedura di classe di winit:
@@ -220,6 +322,9 @@ fn senza_barra_del_titolo(hwnd: isize) {
 /// Altrove la finestra resta intera (fascia trasparente cliccabile ai lati).
 #[cfg(not(windows))]
 pub fn ritaglia_al_centro(_finestra: &slint::Window, _larghezza_logica: f32) {}
+
+#[cfg(not(windows))]
+pub fn ritaglia_a_linea(_finestra: &slint::Window) {}
 
 #[cfg(windows)]
 fn area_di_lavoro(monitor: &winit::monitor::MonitorHandle) -> RettangoloFisico {
@@ -351,6 +456,17 @@ mod test {
         // L'alto della regione coincide col bordo alto dell'area di lavoro.
         let (_, py) = posizione_pillola(area(0, 0, 2560, 1528), 1.75, LARGHEZZA_FINESTRA_PILLOLA, MARGINE_LOGICO);
         assert_eq!(py + alto, 0);
+    }
+
+    #[test]
+    fn regione_della_linea_al_bordo_alto() {
+        // Finestra 480 × 68: linea 300 × 4 al centro, dal bordo alto dello schermo (y = 10).
+        assert_eq!(regione_linea(480, 68, 1.0), (90, 10, 390, 14));
+        // A 1,75: 525 × 7, sotto i 18 px di aura che sporgono.
+        let (l, a) = ((480.0_f32 * 1.75).round() as i32, (68.0_f32 * 1.75).round() as i32);
+        let (sinistra, alto, destra, basso) = regione_linea(l, a, 1.75);
+        assert_eq!((alto, basso - alto, destra - sinistra), (18, 7, 525));
+        assert_eq!(sinistra, (l - 525) / 2);
     }
 
     #[test]
