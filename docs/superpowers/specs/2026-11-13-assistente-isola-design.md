@@ -120,7 +120,7 @@ Regole che ne derivano:
 
 **Modalità mista: pannello Slint + finestra di gestione separata.**
 - Interfaccia in **Slint 1.x** con renderer **Skia in modalità software** (`renderer-skia`, backend `winit-skia-software`). Scelto dopo aver confrontato Tauri (122 MB, 7 processi), Slint femtovg, Slint software, Slint Skia GPU.
-- Contenuti "da web" (mail HTML, anteprima documenti) mostrati nella **finestra di gestione**: un **processo separato** (wry + tao, come lo spike «lettore»: 0,6 MB di eseguibile, apertura 0,64–0,78 s, ~140 MB solo mentre è aperta, memoria liberata alla chiusura, nessun processo orfano). Funziona anche su Linux Wayland. Il riquadro web *dentro* il pannello (provato il 13/11) non si usa più.
+- Contenuti "da web" (mail HTML, anteprima documenti) mostrati nella **finestra di gestione**: un **processo separato** (wry + tao, come lo spike «lettore»: 0,6 MB di eseguibile, apertura 0,64–0,78 s, ~140 MB solo mentre è aperta, memoria liberata alla chiusura, nessun processo orfano). Su Linux Wayland il riquadro web non è disponibile: la finestra di gestione usa il piano B (testo formattato). Il riquadro web *dentro* il pannello (provato il 13/11) non si usa più.
 - JavaScript disattivato e navigazione bloccata per i contenuti delle mail (contenuto ostile); il processo separato non ha accesso a casa, Claude Code o token.
 
 Vincoli noti:

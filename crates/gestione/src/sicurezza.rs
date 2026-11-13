@@ -3,7 +3,8 @@
 //! Le difese stanno a più livelli: JavaScript spento e devtools spenti nel motore web,
 //! navigazione bloccata (`consenti_navigazione`), nuove finestre e scaricamenti negati, e in più
 //! una Content-Security-Policy messa in testa al documento (`con_csp`) che chiude anche ciò che il
-//! gestore della navigazione non vede: riquadri (`<iframe>`), moduli, file locali.
+//! gestore della navigazione non vede: riquadri (`<iframe>`), moduli, file locali e ogni risorsa
+//! remota (immagini, stili, caratteri).
 
 /// La sola navigazione permessa è il caricamento iniziale del contenuto passato con `apri`
 /// (WebView2 lo annuncia come `about:blank` o `data:text/html`); dopo, ogni navigazione è
@@ -12,10 +13,14 @@ pub fn consenti_navigazione(url: &str, gia_caricato: bool) -> bool {
     !gia_caricato && (url == "about:blank" || url.starts_with("data:text/html"))
 }
 
-/// Politica del contenuto: niente script, riquadri, moduli, oggetti e file locali; restano gli
-/// stili in linea e le immagini (incorporate o via https).
-pub const CSP: &str = "default-src 'none'; img-src data: https:; style-src 'unsafe-inline' https:; \
-font-src data: https:; form-action 'none'; frame-src 'none'; base-uri 'none'";
+/// Politica del contenuto: niente script, riquadri, moduli, oggetti e file locali, e **nessuna
+/// risorsa remota** (immagini, fogli di stile, `@import`, caratteri): un pixel tracciante in una
+/// mail direbbe al mittente che l'hai aperta e quando. Restano gli stili in linea e le immagini
+/// incorporate (`data:`) o allegate (`cid:`). WebView2 non risolve `cid:` da sé: la milestone Mail
+/// dovrà riscrivere quegli indirizzi in `data:` (o servirli con un protocollo proprio).
+/// Fuori dalla portata della CSP resta `<link rel="dns-prefetch">`: al più una risoluzione DNS.
+pub const CSP: &str = "default-src 'none'; img-src data: cid:; style-src 'unsafe-inline'; font-src data:; \
+form-action 'none'; frame-src 'none'; base-uri 'none'";
 
 /// Mette la politica come primo elemento del documento: subito dopo un eventuale `<!doctype>`
 /// iniziale (così la pagina resta in modalità standard), altrimenti in cima. Un `<head>` cercato
@@ -48,6 +53,15 @@ mod test {
         assert!(!consenti_navigazione("file:///C:/Windows/win.ini", false));
         // Dopo il caricamento nemmeno about:blank.
         assert!(!consenti_navigazione("about:blank", true));
+    }
+
+    #[test]
+    fn la_politica_non_lascia_uscire_nulla() {
+        assert!(CSP.starts_with("default-src 'none';"));
+        assert!(!CSP.contains("http"), "nessuna risorsa remota: {CSP}");
+        assert!(CSP.contains("img-src data: cid:;"));
+        assert!(CSP.contains("style-src 'unsafe-inline';"));
+        assert!(CSP.contains("font-src data:;"));
     }
 
     #[test]

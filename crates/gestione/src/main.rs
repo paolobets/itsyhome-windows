@@ -5,11 +5,18 @@
 //! si chiude (l'assistente è uscito o è morto) esce da sola. Non riceve token né configurazione:
 //! solo la cartella dei dati del motore web (`--dati <cartella>`).
 //!
-//! Cornice fidata disegnata in Slint (stesso stile dell'assistente); il contenuto (HTML ostile)
+//! Cornice disegnata in Slint (stesso stile dell'assistente); il contenuto (HTML ostile)
 //! sta in un riquadro wry figlio della finestra Slint: JavaScript spento, devtools spenti,
 //! navigazione bloccata, nuove finestre, scaricamenti e permessi negati, menu contestuale e
-//! scorciatoie del browser spenti. Se il motore web manca (o con `--senza-web`, per prova), piano
-//! B: il contenuto come testo semplice.
+//! scorciatoie del browser spenti. Esc chiude anche col fuoco nel riquadro web. Se il motore web
+//! manca (o con `--senza-web`, per prova), piano B: il contenuto come testo semplice.
+//!
+//! Il titolo della cornice è testo NON fidato (con la Mail, l'oggetto): va solo in un `Text`.
+//!
+//! Legami tra i crate: la cornice importa `../../assistente/ui/tema.slint` (una sola fonte per
+//! colori e caratteri) e l'assistente include `assets/prova-mail.html` di questo crate; un
+//! `cargo build -p assistente` non costruisce questo eseguibile (serve `-p gestione`), e chi
+//! distribuisce l'assistente deve mettere `itsyhome-gestione(.exe)` accanto al suo eseguibile.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod sicurezza;
@@ -179,26 +186,55 @@ fn mostra_piano_b(stato: &mut Stato, html: &str) {
 }
 
 /// Il riquadro web si appoggia alla finestra di winit, che esiste solo dopo il primo `show`.
+///
+/// `build_as_child` gira un ciclo di messaggi annidato (WebView2 si crea in modo asincrono):
+/// lo si chiama SENZA tenere `STATO` in prestito, così una `apri` smistata in quel ciclo non trova
+/// il prestito occupato. Fino alla fine `in_costruzione` resta vero e una `apri` nel frattempo
+/// lascia solo il suo contenuto in `in_attesa` (vince l'ultimo).
 fn costruisci_web(debole: slint::Weak<Cornice>) {
     let _ = slint::spawn_local(async move {
         let Some(cornice) = debole.upgrade() else { return };
         let pronta = cornice.window().winit_window().await.is_ok();
-        STATO.with_borrow_mut(|s| {
-            let Some(stato) = s.as_mut() else { return };
-            stato.in_costruzione = false;
-            let html = stato.in_attesa.take().unwrap_or_default();
+        let preso = STATO.with_borrow_mut(|s| {
+            let stato = s.as_mut()?;
             if !pronta {
                 eprintln!("gestione: finestra di winit assente, piano B");
+                stato.in_costruzione = false;
                 stato.senza_web = true;
+                let html = stato.in_attesa.take().unwrap_or_default();
                 mostra_piano_b(stato, &html);
-                return;
+                return None;
             }
-            match crea_web(stato, &html) {
-                Ok(web) => stato.web = Some(web),
+            let html = stato.in_attesa.take().unwrap_or_default();
+            let contesto = stato.contesto.take().unwrap_or_else(|| WebContext::new(Some(stato.dati.clone())));
+            stato.caricato.set(false);
+            Some((html, contesto, stato.caricato.clone()))
+        });
+        let Some((html, mut contesto, caricato)) = preso else { return };
+
+        let esito = crea_web(&cornice, &mut contesto, caricato, &html);
+
+        STATO.with_borrow_mut(|s| {
+            // Finestra già in chiusura: il riquadro appena nato si smonta qui.
+            let Some(stato) = s.as_mut() else { return };
+            stato.in_costruzione = false;
+            stato.contesto = Some(contesto);
+            match esito {
+                Ok(web) => {
+                    // Contenuto arrivato durante la costruzione: sostituisce il primo.
+                    if let Some(nuovo) = stato.in_attesa.take() {
+                        stato.caricato.set(false);
+                        if let Err(e) = web.load_html(&sicurezza::con_csp(&nuovo)) {
+                            eprintln!("gestione: contenuto non caricato: {e}");
+                        }
+                    }
+                    stato.web = Some(web);
+                }
                 Err(e) => {
                     // Motore web assente o guasto: da qui in poi solo testo.
                     eprintln!("gestione: motore web non disponibile ({e}), piano B");
                     stato.senza_web = true;
+                    let html = stato.in_attesa.take().unwrap_or(html);
                     mostra_piano_b(stato, &html);
                 }
             }
@@ -206,8 +242,7 @@ fn costruisci_web(debole: slint::Weak<Cornice>) {
     });
 }
 
-fn crea_web(stato: &mut Stato, html: &str) -> Result<WebView, String> {
-    let cornice = &stato.cornice;
+fn crea_web(cornice: &Cornice, contesto: &mut WebContext, caricato: Rc<Cell<bool>>, html: &str) -> Result<WebView, String> {
     let bordo = cornice.get_bordo();
     let alto = cornice.get_alto_testata();
     let dimensione = cornice.window().size().to_logical(cornice.window().scale_factor());
@@ -216,10 +251,8 @@ fn crea_web(stato: &mut Stato, html: &str) -> Result<WebView, String> {
         size: LogicalSize::new(dimensione.width - 2.0 * bordo, dimensione.height - alto - bordo).into(),
     };
 
-    stato.caricato.set(false);
-    let caricato_nav = stato.caricato.clone();
-    let caricato_fine = stato.caricato.clone();
-    let contesto = stato.contesto.get_or_insert_with(|| WebContext::new(Some(stato.dati.clone())));
+    let caricato_nav = caricato.clone();
+    let caricato_fine = caricato;
     let costruttore = WebViewBuilder::new_with_web_context(contesto)
         .with_bounds(area)
         // Le mail si leggono su fondo bianco, come in ogni client di posta (il fondo predefinito
@@ -262,5 +295,66 @@ fn crea_web(stato: &mut Stato, html: &str) -> Result<WebView, String> {
             .with_default_context_menus(false)
             .with_theme(wry::Theme::Light)
     };
-    costruttore.build_as_child(&cornice.window().window_handle()).map_err(|e| e.to_string())
+    let web = costruttore.build_as_child(&cornice.window().window_handle()).map_err(|e| e.to_string())?;
+    #[cfg(windows)]
+    if let Err(e) = esc_chiude(&web) {
+        // Senza il gestore Esc funziona solo col fuoco sulla cornice: si continua lo stesso.
+        eprintln!("gestione: Esc nel riquadro web non disponibile: {e}");
+    }
+    Ok(web)
+}
+
+/// Codice del tasto Esc (VK_ESCAPE).
+const TASTO_ESC: u32 = 0x1B;
+
+/// Esc premuto (non rilasciato) chiude la finestra, ovunque sia il fuoco.
+fn tasto_chiude(tasto: u32, premuto: bool) -> bool {
+    premuto && tasto == TASTO_ESC
+}
+
+/// Col fuoco nel riquadro web i tasti vanno a WebView2, non alla cornice: Esc (che non produce un
+/// carattere) arriva come «tasto acceleratore» anche con le scorciatoie del browser spente.
+#[cfg(windows)]
+fn esc_chiude(web: &WebView) -> Result<(), String> {
+    use webview2_com::AcceleratorKeyPressedEventHandler;
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        COREWEBVIEW2_KEY_EVENT_KIND, COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
+    };
+    use wry::WebViewExtWindows;
+
+    let gestore = AcceleratorKeyPressedEventHandler::create(Box::new(|_, argomenti| {
+        let Some(argomenti) = argomenti else { return Ok(()) };
+        let mut tipo = COREWEBVIEW2_KEY_EVENT_KIND::default();
+        let mut tasto = 0u32;
+        // SAFETY: puntatori a variabili locali valide per tutta la chiamata.
+        unsafe {
+            argomenti.KeyEventKind(&mut tipo)?;
+            argomenti.VirtualKey(&mut tasto)?;
+        }
+        let premuto = tipo == COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN || tipo == COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN;
+        if tasto_chiude(tasto, premuto) {
+            // SAFETY: chiamata COM su argomenti validi durante l'evento.
+            unsafe { argomenti.SetHandled(true)? };
+            eprintln!("gestione: Esc nel riquadro web, chiusura");
+            // Stesso thread dell'interfaccia; non tocca `STATO`.
+            let _ = slint::quit_event_loop();
+        }
+        Ok(())
+    }));
+    let mut gettone = 0i64;
+    // SAFETY: controller vivo quanto il riquadro; il gestore resta registrato fino alla sua fine.
+    unsafe { web.controller().add_AcceleratorKeyPressed(&gestore, &mut gettone) }.map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn solo_esc_premuto_chiude() {
+        assert!(tasto_chiude(TASTO_ESC, true));
+        assert!(!tasto_chiude(TASTO_ESC, false), "il rilascio non chiude (niente doppio colpo)");
+        assert!(!tasto_chiude(0x0D, true), "Invio no");
+        assert!(!tasto_chiude(0x7B, true), "F12 no");
+    }
 }

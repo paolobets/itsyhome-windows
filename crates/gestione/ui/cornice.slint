@@ -57,7 +57,10 @@ component Chiudi inherits FocusScope {
 }
 
 export component Cornice inherits Window {
-    // Titolo fidato (lo manda l'assistente, mai il contenuto).
+    // Titolo NON fidato: con la Mail sarà l'oggetto della mail, cioè testo ostile. Si mostra solo
+    // in un `Text` e nel titolo della finestra di sistema (mai in HTML), quindi niente iniezione;
+    // resta il rischio di imitare la cornice (un oggetto «Reinserisci il token»): la milestone Mail
+    // separerà un'etichetta fidata fissa («Mail · ») dall'oggetto in uno stile diverso.
     in property <string> titolo;
     // Piano B: il contenuto come testo semplice, mostrato al posto del riquadro web.
     in property <bool> piano-b;

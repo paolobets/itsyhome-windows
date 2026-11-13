@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 # Finestra di gestione: processo separato avviato dall'assistente (cornice Slint + area web wry).
+# Legami: `ui/cornice.slint` importa il tema da `../assistente/ui/tema.slint`; l'assistente include
+# `assets/prova-mail.html`. `cargo build -p assistente` non costruisce questo binario.
 [[bin]]
 name = "itsyhome-gestione"
 path = "src/main.rs"
@@ -15,3 +17,7 @@ wry = "=0.57.2"
 
 [build-dependencies]
 slint-build = "=1.18.1"
+
+[target.'cfg(windows)'.dependencies]
+# Solo per Esc nel riquadro web (evento AcceleratorKeyPressed del controller): stessa versione di wry.
+webview2-com = "0.39"

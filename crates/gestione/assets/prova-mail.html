@@ -17,6 +17,9 @@
   a.bottone { display: inline-block; background: #818cf8; color: #fff; padding: 10px 18px; border-radius: 8px;
               text-decoration: none; }
 </style>
+<!-- Risorse remote (fogli di stile, @import, caratteri): la CSP le blocca tutte. -->
+<link rel="stylesheet" href="https://example.com/traccia.css">
+<style>@import url("https://example.com/import.css"); @font-face { font-family: Remoto; src: url("https://example.com/f.woff2"); }</style>
 </head>
 <body>
 <div class="testa">
@@ -42,6 +45,8 @@
     <script>document.getElementById("js").textContent = "JavaScript ATTIVO"; document.getElementById("js").className = "ko";</script>
     <noscript><p class="ok">JavaScript spento nel motore web</p></noscript>
     <p>File locale (non deve comparire alcuna immagine): <img src="file:///C:/Windows/Web/Wallpaper/Windows/img0.jpg" width="80" height="40" alt="[bloccato]"></p>
+    <p>Immagine remota (pixel tracciante: non deve comparire alcun logo):
+      <img src="https://www.rust-lang.org/static/images/rust-logo-blk.svg" width="40" height="40" alt="[remota bloccata]"></p>
     <p>Riquadro esterno (non deve caricarsi):</p>
     <iframe src="https://example.com/" width="300" height="40" title="riquadro"></iframe>
     <form action="https://example.com/raccolta" method="post"><button type="submit">Invia modulo</button></form>

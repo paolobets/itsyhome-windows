@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "tipo", rename_all = "lowercase")]
 pub enum Messaggio {
-    /// Mostra (o sostituisce) il contenuto: titolo fidato nella cornice, HTML ostile nell'area web.
+    /// Mostra (o sostituisce) il contenuto. Entrambi i campi sono NON fidati: il titolo (con la
+    /// Mail, l'oggetto) va solo in testo semplice nella cornice; l'HTML nell'area web isolata.
     Apri { titolo: String, html: String },
     /// Chiude la finestra: il processo esce.
     Chiudi,
