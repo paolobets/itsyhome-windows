@@ -1,0 +1,321 @@
+// Il pannello unico dell'assistente: in alto gli occhi (dove stavano quelli della pillola) e
+// solo l'ora a destra; al centro uno dei 4 layout o la vista di un'app; in basso il dock.
+import { Tema } from "tema.slint";
+import { Occhio } from "pillola.slint";
+import { Icone } from "icone.slint";
+import { VoceAppUi } from "voci.slint";
+import { LayoutOrologio } from "layout/orologio.slint";
+import { LayoutQuadranti } from "layout/quadranti.slint";
+import { LayoutColori } from "layout/colori.slint";
+import { LayoutTutte } from "layout/tutte.slint";
+
+export { VoceAppUi }
+
+// Una scheda del dock: icona leggera; quella attiva sta in una capsula "vetro" e diventa bianca.
+component Scheda inherits Rectangle {
+    in property <image> icona;
+    in property <string> nome;
+    in property <bool> attiva;
+    callback scelta();
+
+    width: 30px;
+    height: 28px;
+    border-radius: self.height / 2;
+    background: attiva
+        ? @linear-gradient(180deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.07) 100%)
+        : area.has-hover ? Tema.scheda-sopra : transparent;
+    border-width: attiva ? 1px : 0px;
+    border-color: rgba(255, 255, 255, 0.14);
+    accessible-role: button;
+    accessible-label: nome;
+    accessible-action-default => { root.scelta(); }
+
+    Image {
+        source: icona;
+        width: 17px;
+        height: 17px;
+        colorize: attiva ? Tema.icona-attiva : Tema.icona;
+        image-rendering: smooth;
+    }
+
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.scelta(); }
+    }
+}
+
+export component Pannello inherits Window {
+    in property <string> umore: "calm";
+    in property <string> ora;
+    in property <string> data;
+    in-out property <int> layout: 0;
+    // "" = il layout scelto, altrimenti l'id dell'app mostrata al centro.
+    in-out property <string> vista;
+    in property <[VoceAppUi]> app;
+    // Vero mentre il pannello è aperto: guida l'animazione di apertura e il battito degli occhi.
+    in-out property <bool> aperto;
+    callback scegli-layout(int);
+    callback apri-app(string);
+    callback chiudi();
+
+    // Geometria (logica). La riga alta è alta quanto la pillola, così gli occhi cadono dove
+    // stavano i suoi (vedi `posizione_pannello` in finestre.rs).
+    property <length> margine: 18px;
+    property <length> altezza-riga: 48px;
+    property <length> altezza-dock: 36px;
+    out property <length> centro-x: margine;
+    out property <length> centro-y: altezza-riga + 8px;
+    out property <length> centro-l: root.width - 2 * margine;
+    out property <length> centro-a: root.height - centro-y - altezza-dock - 16px - 12px;
+
+    property <bool> palpebra: false;
+
+    no-frame: true;
+    always-on-top: true;
+    background: transparent;
+    title: "ItsyHome — pannello";
+    default-font-family: Tema.carattere;
+    width: 560px;
+    height: 440px;
+    forward-focus: tasti;
+
+    tasti := FocusScope {
+        key-pressed(evento) => {
+            if (evento.text == Key.Escape) {
+                root.chiudi();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    // Battito di ciglia come la pillola, solo a pannello aperto.
+    Timer {
+        interval: 4600ms;
+        running: aperto && umore != "sleep" && umore != "happy";
+        triggered => {
+            palpebra = true;
+            riapri.running = true;
+        }
+    }
+
+    riapri := Timer {
+        interval: 110ms;
+        running: false;
+        triggered => {
+            palpebra = false;
+            self.running = false;
+        }
+    }
+
+    // Apertura: il pannello scende dalla riga degli occhi e compare (opacità + altezza, 200 ms).
+    corpo := Rectangle {
+        y: 0;
+        height: aperto ? root.height : altezza-riga;
+        opacity: aperto ? 1 : 0;
+        animate height, opacity { duration: 200ms; easing: ease-out; }
+        border-radius: 22px;
+        clip: true;
+        // Anello sottile con i colori dei petali, come il bordo dell'isola nella bozza (fermo).
+        background: @linear-gradient(90deg, Tema.petalo-1 0%, Tema.petalo-2 20%, Tema.petalo-3 40%, Tema.petalo-4 60%, Tema.petalo-5 80%, Tema.petalo-6 100%);
+
+        Rectangle {
+            x: 1.5px;
+            y: 1.5px;
+            width: parent.width - 3px;
+            height: parent.height - 3px;
+            border-radius: parent.border-radius - 1.5px;
+            clip: true;
+            background: Tema.corpo;
+
+            // Due bagliori appena percettibili (indaco in alto a sinistra, verde acqua in basso a destra).
+            // Quadrati con la sfumatura che svanisce prima dei lati: nessun bordo visibile.
+            Rectangle {
+                x: -100px;
+                y: -220px;
+                width: 440px;
+                height: 440px;
+                background: @radial-gradient(circle, rgba(129, 140, 248, 0.10) 0%, transparent 60%);
+            }
+
+            Rectangle {
+                x: parent.width - 230px;
+                y: parent.height - 190px;
+                width: 400px;
+                height: 400px;
+                background: @radial-gradient(circle, rgba(45, 212, 191, 0.07) 0%, transparent 60%);
+            }
+        }
+
+        // Riga alta: niente a sinistra, occhi al centro, ora a destra.
+        occhi := Rectangle {
+            property <bool> contento: umore == "happy";
+            property <bool> dorme: umore == "sleep";
+            property <length> ingombro: 2 * (contento ? 13px : 9px) + 18px;
+            x: (parent.width - self.ingombro) / 2;
+            y: 0;
+            width: self.ingombro;
+            height: altezza-riga;
+            accessible-role: button;
+            accessible-label: "Chiudi il pannello";
+            accessible-action-default => { root.chiudi(); }
+
+            Occhio {
+                x: 0;
+                y: (parent.height - self.height) / 2;
+                forma: parent.contento ? "arco" : parent.dorme ? "trattino" : "aperto";
+                chiuso: palpebra;
+            }
+
+            Occhio {
+                x: parent.width - self.width;
+                y: (parent.height - self.height) / 2;
+                forma: parent.contento ? "arco" : parent.dorme ? "trattino" : "aperto";
+                chiuso: palpebra;
+            }
+
+            TouchArea {
+                // Un po' più larga degli occhi, per non doverli centrare al pixel.
+                x: -12px;
+                width: parent.width + 24px;
+                mouse-cursor: pointer;
+                clicked => { root.chiudi(); }
+            }
+        }
+
+        Text {
+            x: 0;
+            y: 0;
+            width: parent.width - margine;
+            height: altezza-riga;
+            text: ora;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+            font-family: Tema.carattere-mono;
+            font-size: 13px;
+            color: Tema.testo-ora;
+        }
+
+        // Centro: il layout scelto oppure la vista dell'app.
+        Rectangle {
+            x: centro-x;
+            y: centro-y;
+            width: centro-l;
+            height: centro-a;
+
+            if vista == "" && layout == 0: LayoutOrologio {
+                width: parent.width;
+                height: parent.height;
+                ora: root.ora;
+                data: root.data;
+            }
+            if vista == "" && layout == 1: LayoutQuadranti {
+                width: parent.width;
+                height: parent.height;
+            }
+            if vista == "" && layout == 2: LayoutColori {
+                width: parent.width;
+                height: parent.height;
+            }
+            if vista == "" && layout == 3: LayoutTutte {
+                width: parent.width;
+                height: parent.height;
+                app: root.app;
+                apri-app(id) => {
+                    root.vista = id;
+                    root.apri-app(id);
+                }
+            }
+
+            // Vista di un'app: per ora solo il titolo (i contenuti arrivano dai Task 7–9).
+            for voce in app: VerticalLayout {
+                width: parent.width;
+                height: parent.height;
+                visible: vista == voce.id;
+                alignment: center;
+                spacing: 10px;
+
+                HorizontalLayout {
+                    alignment: center;
+
+                    Image {
+                        source: voce.icona;
+                        width: 38px;
+                        height: 38px;
+                        colorize: Tema.icona;
+                        image-rendering: smooth;
+                    }
+                }
+
+                Text {
+                    text: voce.nome;
+                    horizontal-alignment: center;
+                    font-weight: 500;
+                    font-size: 17px;
+                    color: Tema.testo;
+                }
+            }
+        }
+
+        // Dock centrato: i 4 layout (scelta del layout e ritorno alla schermata principale),
+        // un divisorio, poi le app del registro.
+        HorizontalLayout {
+            x: 0;
+            width: parent.width;
+            y: root.height - altezza-dock - 16px;
+            height: altezza-dock;
+            alignment: center;
+
+            Rectangle {
+                border-radius: altezza-dock / 2;
+                background: Tema.capsula;
+                border-width: 0.5px;
+                border-color: Tema.vetro-bordo;
+
+                HorizontalLayout {
+                    padding-left: 6px;
+                    padding-right: 6px;
+                    padding-top: 4px;
+                    padding-bottom: 4px;
+                    spacing: 4px;
+
+                    for scheda[i] in [
+                        { icona: Icone.orologio, nome: "Orologio" },
+                        { icona: Icone.quadranti, nome: "Quadranti" },
+                        { icona: Icone.colori, nome: "Colori" },
+                        { icona: Icone.tutte, nome: "Tutte le app" },
+                    ]: Scheda {
+                        icona: scheda.icona;
+                        nome: scheda.nome;
+                        attiva: vista == "" && layout == i;
+                        scelta => {
+                            root.layout = i;
+                            root.vista = "";
+                            root.scegli-layout(i);
+                        }
+                    }
+
+                    Rectangle {
+                        width: 9px;
+
+                        Rectangle {
+                            width: 1px;
+                            height: 16px;
+                            background: rgba(255, 255, 255, 0.10);
+                        }
+                    }
+
+                    for voce in app: Scheda {
+                        icona: voce.icona;
+                        nome: voce.nome;
+                        attiva: vista == voce.id;
+                        scelta => {
+                            root.vista = voce.id;
+                            root.apri-app(voce.id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

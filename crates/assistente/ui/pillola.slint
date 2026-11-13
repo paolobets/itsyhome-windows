@@ -4,7 +4,7 @@
 import { Tema } from "tema.slint";
 
 // Un occhio: rettangolo di luce, arco quando è contento, trattino quando dorme.
-component Occhio inherits Rectangle {
+export component Occhio inherits Rectangle {
     in property <string> forma: "aperto"; // "aperto" | "arco" | "trattino"
     in property <bool> chiuso;            // battito di ciglia
     in property <length> larghezza-occhio: 9px;
@@ -51,13 +51,19 @@ component Velo inherits Rectangle {
 export component Pillola inherits Window {
     in property <string> umore: "calm";
     in property <string> messaggio;
+    // Falso mentre la pillola è nascosta (pannello aperto): fermi anche i timer.
+    in property <bool> attiva: true;
     callback cliccata();
 
-    // Geometria: la finestra è la pillola più il margine dell'aura, niente di più
-    // (un'area trasparente grande ruberebbe i clic alle schede e alle barre sotto).
+    // Geometria: la finestra ha sempre la larghezza della pillola più larga (ti cerca) più il
+    // margine dell'aura, e la pillola sta al centro: cambiando umore la finestra non si sposta
+    // né si ridimensiona, la pillola si allarga o si stringe attorno al centro. Da Rust la
+    // finestra viene ritagliata alla `larghezza-visibile` (una fascia trasparente larga
+    // ruberebbe i clic alle schede e alle barre sotto).
     out property <length> margine-aura: 10px;
     out property <length> larghezza-pillola: allerta ? 360px : 200px;
-    out property <length> larghezza-finestra: larghezza-pillola + 2 * margine-aura;
+    out property <length> larghezza-visibile: larghezza-pillola + 2 * margine-aura;
+    out property <length> larghezza-finestra: 360px + 2 * margine-aura;
     property <length> altezza-pillola: 48px;
 
     property <bool> pensa: umore == "think";
@@ -95,7 +101,7 @@ export component Pillola inherits Window {
 
     Timer {
         interval: 40ms;
-        running: in-moto;
+        running: attiva && in-moto;
         triggered => {
             tempo = animation-tick();
         }
@@ -103,7 +109,7 @@ export component Pillola inherits Window {
 
     Timer {
         interval: 4600ms;
-        running: !dorme && !contento;
+        running: attiva && !dorme && !contento;
         triggered => {
             palpebra = true;
             riapri.running = true;
@@ -120,7 +126,8 @@ export component Pillola inherits Window {
     }
 
     pillola := Rectangle {
-        x: margine-aura;
+        // Centrata: mentre la larghezza si anima resta ferma attorno al centro della finestra.
+        x: (root.width - self.width) / 2;
         y: margine-aura;
         width: larghezza-pillola;
         height: altezza-pillola;
@@ -164,7 +171,11 @@ export component Pillola inherits Window {
             property <length> spazio: allerta ? 10px : 18px;
             property <length> larghezza-occhio: allerta ? 10px : 9px;
             property <length> ingombro: 2 * (contento ? 13px : larghezza-occhio) + spazio;
-            x: (allerta ? 20px : (parent.width - ingombro) / 2) + sguardo-x;
+            // Distanza dal bordo sinistro della pillola a fine animazione, animata anch'essa:
+            // passando a "ti cerca" gli occhi scivolano a sinistra insieme al bordo, senza salti.
+            property <length> dal-bordo: allerta ? 20px : (larghezza-pillola - ingombro) / 2;
+            animate dal-bordo { duration: 220ms; easing: ease-out; }
+            x: dal-bordo + sguardo-x;
             y: sguardo-y;
             width: ingombro;
             height: parent.height;

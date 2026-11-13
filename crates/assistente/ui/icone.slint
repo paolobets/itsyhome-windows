@@ -1,0 +1,29 @@
+// Icone leggere in stile SF Symbols: contorni a tratto sottile (1,55 su 24), un solo colore.
+// I file SVG sono bianchi: il colore lo decide chi le usa (`colorize`), il colore solo per lo stato.
+import { Tema } from "tema.slint";
+
+export global Icone {
+    out property <image> casa: @image-url("../assets/icone/casa.svg");
+    out property <image> pc: @image-url("../assets/icone/pc.svg");
+    out property <image> impostazioni: @image-url("../assets/icone/impostazioni.svg");
+    out property <image> orologio: @image-url("../assets/icone/orologio.svg");
+    out property <image> quadranti: @image-url("../assets/icone/quadranti.svg");
+    out property <image> colori: @image-url("../assets/icone/colori.svg");
+    out property <image> tutte: @image-url("../assets/icone/tutte.svg");
+}
+
+// Un'icona del set, nel colore neutro delle icone.
+export component Icona inherits Image {
+    width: 20px;
+    height: 20px;
+    colorize: Tema.icona;
+    image-rendering: smooth;
+}
+
+// Card "vetro" leggera dei layout (bordo sottile, riflesso appena accennato).
+export component Vetro inherits Rectangle {
+    border-radius: 16px;
+    border-width: 1px;
+    border-color: Tema.vetro-bordo;
+    background: @linear-gradient(160deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.02) 100%);
+}

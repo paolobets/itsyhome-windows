@@ -2,17 +2,24 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod finestre;
-// Registro delle app e layout servono al pannello (task 6+): fino ad allora non hanno chiamanti.
-#[allow(dead_code)]
 mod layout;
-#[allow(dead_code)]
+mod orologio;
+mod pannello;
+mod pillola;
 mod registro;
+mod scelte;
 mod umore;
 
+use slint::winit_030::WinitWindowAccessor;
+use slint::ComponentHandle;
 use std::time::Instant;
 use umore::{Cervello, Umore};
 
 slint::include_modules!();
+
+/// Titolo della finestra della pillola: dice al gancio di winit quale finestra non deve
+/// prendersi il fuoco quando ricompare.
+const TITOLO_PILLOLA: &str = "ItsyHome";
 
 /// Messaggio finto mostrato con `--umore alert`, per vedere la pillola allargata.
 const MESSAGGIO_DI_PROVA: &str = "Lavatrice finita";
@@ -44,13 +51,22 @@ fn main() -> Result<(), slint::PlatformError> {
                 use slint::winit_030::winit::platform::windows::WindowAttributesExtWindows;
                 attributi.with_skip_taskbar(true)
             };
-            attributi
+            // La pillola ricompare quando il pannello si chiude (spesso per un clic su un'altra
+            // finestra): non deve rubare il fuoco a quella finestra.
+            if attributi.title == TITOLO_PILLOLA {
+                attributi.with_active(false)
+            } else {
+                attributi
+            }
         })
         .select()?;
 
-    let ui = Pillola::new()?;
+    let pillola = Pillola::new()?;
+    debug_assert_eq!(pillola.get_larghezza_finestra(), finestre::LARGHEZZA_FINESTRA_PILLOLA);
+    debug_assert_eq!(pillola.get_margine_aura(), finestre::MARGINE_AURA);
 
-    let (umore, messaggio) = match umore_forzato(std::env::args().skip(1)) {
+    let argomenti: Vec<String> = std::env::args().skip(1).collect();
+    let (umore, messaggio) = match umore_forzato(argomenti.iter().cloned()) {
         Some(u) => (u, if u == Umore::TiCerca { MESSAGGIO_DI_PROVA } else { "" }.to_owned()),
         None => {
             // Nessuno alimenta ancora il cervello (arriverà con casa e notifiche): resta tranquillo.
@@ -59,12 +75,22 @@ fn main() -> Result<(), slint::PlatformError> {
             (cervello.umore(ora), cervello.messaggio().unwrap_or_default().to_owned())
         }
     };
-    ui.set_umore(umore.come_stringa().into());
-    ui.set_messaggio(messaggio.into());
+    pillola::imposta_umore(&pillola, umore, &messaggio);
 
-    // Il clic aprirà il pannello (task 6).
-    ui.on_cliccata(|| {});
+    let apertura = pannello::Apertura::collega(&pillola);
+    finestre::segui_schermo(&pillola, pillola::al_cambio_schermo);
 
-    finestre::segui_schermo(&ui, |ui| ui.get_larghezza_finestra());
-    ui.run()
+    // `--apri`: pannello aperto all'avvio (misure e foto senza mouse).
+    if argomenti.iter().any(|a| a == "--apri") {
+        let debole = pillola.as_weak();
+        let apertura = apertura.clone();
+        let _ = slint::spawn_local(async move {
+            let Some(p) = debole.upgrade() else { return };
+            if p.window().winit_window().await.is_ok() {
+                apertura.apri();
+            }
+        });
+    }
+
+    pillola.run()
 }

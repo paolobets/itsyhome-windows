@@ -1,0 +1,30 @@
+// Layout Orologio: l'ora grande e la data. La riga di stato della casa arriva col Task 8.
+import { Tema } from "../tema.slint";
+
+export component LayoutOrologio inherits Rectangle {
+    in property <string> ora;
+    in property <string> data;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 6px;
+        padding-bottom: 24px;
+
+        Text {
+            text: ora;
+            horizontal-alignment: center;
+            font-family: Tema.carattere;
+            font-weight: 500;
+            font-size: 88px;
+            letter-spacing: -2.5px;
+            color: @linear-gradient(90deg, #e9d5ff 0%, #a5b4fc 50%, #67e8f9 100%);
+        }
+
+        Text {
+            text: data;
+            horizontal-alignment: center;
+            font-size: 13px;
+            color: Tema.testo-tenue;
+        }
+    }
+}

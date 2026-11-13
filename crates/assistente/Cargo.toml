@@ -6,10 +6,15 @@ edition = "2021"
 [dependencies]
 casa-core = { path = "../casa-core" }
 slint = { version = "=1.18.1", features = ["renderer-skia", "unstable-winit-030", "raw-window-handle-06"] }
+# Solo l'ora locale per l'orologio del pannello.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 [target.'cfg(windows)'.dependencies]
 # Stessa versione usata da winit 0.30 (HMONITOR = isize): serve solo per l'area di lavoro del monitor.
 windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Graphics_Gdi"] }
+
+[dev-dependencies]
+tempfile = "3"
 
 [build-dependencies]
 slint-build = "=1.18.1"

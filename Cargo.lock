@@ -281,8 +281,10 @@ name = "assistente"
 version = "0.1.0"
 dependencies = [
  "casa-core",
+ "chrono",
  "slint",
  "slint-build",
+ "tempfile",
  "windows-sys 0.52.0",
 ]
 

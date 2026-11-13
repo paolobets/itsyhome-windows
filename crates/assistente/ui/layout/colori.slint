@@ -1,0 +1,57 @@
+// Layout Colori: tessere grandi (una doppia a sinistra, quattro a destra). Il colore arriva solo
+// con lo stato (dispositivo acceso, Task 8): senza dati le tessere restano vetro neutro con "—".
+import { Tema } from "../tema.slint";
+import { Icone, Icona, Vetro } from "../icone.slint";
+
+component Tessera inherits Vetro {
+    in property <image> icona: Icone.casa;
+    in property <string> valore: "—";
+    in property <length> lato-icona: 28px;
+    border-radius: 20px;
+
+    Icona {
+        x: 14px;
+        y: 14px;
+        source: icona;
+        width: lato-icona;
+        height: lato-icona;
+    }
+
+    Text {
+        x: 14px;
+        y: parent.height - self.height - 14px;
+        text: valore;
+        font-weight: 500;
+        font-size: 26px;
+        color: Tema.testo;
+    }
+}
+
+export component LayoutColori inherits Rectangle {
+    HorizontalLayout {
+        spacing: 10px;
+
+        Tessera {
+            horizontal-stretch: 2;
+            lato-icona: 34px;
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 10px;
+
+            Tessera { }
+
+            Tessera { }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 10px;
+
+            Tessera { }
+
+            Tessera { }
+        }
+    }
+}

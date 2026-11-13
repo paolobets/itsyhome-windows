@@ -1,3 +1,3 @@
 fn main() {
-    slint_build::compile("ui/pillola.slint").expect("compilazione dell'interfaccia Slint");
+    slint_build::compile("ui/interfaccia.slint").expect("compilazione dell'interfaccia Slint");
 }

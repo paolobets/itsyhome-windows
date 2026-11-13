@@ -15,6 +15,11 @@ pub fn da_str(s: &str) -> Layout {
 }
 
 impl Layout {
+    /// Dall'indice del dock (0..3); fuori intervallo: Orologio.
+    pub fn da_indice(i: i32) -> Layout {
+        usize::try_from(i).ok().and_then(|i| TUTTI.get(i).copied()).unwrap_or(Layout::Orologio)
+    }
+
     pub fn come_str(self) -> &'static str {
         match self {
             Layout::Orologio => "orologio",
@@ -43,7 +48,10 @@ mod test {
         for (i, l) in TUTTI.into_iter().enumerate() {
             assert_eq!(da_str(l.come_str()), l);
             assert_eq!(l.indice(), i as i32);
+            assert_eq!(Layout::da_indice(i as i32), l);
         }
+        assert_eq!(Layout::da_indice(-1), Layout::Orologio);
+        assert_eq!(Layout::da_indice(4), Layout::Orologio);
         assert_eq!(da_str("boh"), Layout::Orologio);
     }
 }

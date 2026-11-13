@@ -1,0 +1,88 @@
+// Layout Quadranti: quattro quadranti in card vetro. Senza dati (PC al Task 7, casa al Task 8)
+// l'arco è solo la traccia spenta e il valore è "—": nessun numero inventato.
+import { Tema } from "../tema.slint";
+import { Icone, Icona, Vetro } from "../icone.slint";
+
+component Quadrante inherits Vetro {
+    in property <string> etichetta;
+    in property <image> icona;
+    in property <string> valore: "—";
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 8px;
+
+        Rectangle {
+            height: 110px;
+
+            // Arco di 270° aperto in basso (raggio 44, tratto 9), come nella bozza.
+            Path {
+                x: (parent.width - 110px) / 2;
+                width: 110px;
+                height: 110px;
+                viewbox-width: 110;
+                viewbox-height: 110;
+                commands: "M 23.89 86.11 A 44 44 0 1 1 86.11 86.11";
+                stroke: Tema.traccia;
+                stroke-width: 9px;
+                stroke-line-cap: round;
+            }
+
+            Text {
+                text: valore;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                font-weight: 500;
+                font-size: 22px;
+                color: Tema.testo;
+            }
+        }
+
+        HorizontalLayout {
+            alignment: center;
+            spacing: 6px;
+
+            Icona {
+                source: icona;
+                width: 16px;
+                height: 16px;
+                y: (parent.height - self.height) / 2;
+            }
+
+            Text {
+                text: etichetta;
+                vertical-alignment: center;
+                font-family: Tema.carattere-mono;
+                font-size: 11px;
+                letter-spacing: 0.6px;
+                color: Tema.testo-etichetta;
+            }
+        }
+    }
+}
+
+export component LayoutQuadranti inherits Rectangle {
+    HorizontalLayout {
+        spacing: 10px;
+
+        Quadrante {
+            etichetta: "CPU";
+            icona: Icone.pc;
+        }
+
+        Quadrante {
+            etichetta: "RAM";
+            icona: Icone.pc;
+        }
+
+        Quadrante {
+            etichetta: "DISCO";
+            icona: Icone.pc;
+        }
+
+        Quadrante {
+            etichetta: "CASA";
+            icona: Icone.casa;
+        }
+    }
+}
