@@ -231,7 +231,7 @@ pub struct MenuData {
 
 // ─── Config / environment ─────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HaEnvironment {
     pub id: String,
