@@ -39,6 +39,54 @@ pub fn pillola_visibile(schermo_intero: bool, pannello_aperto: bool, ritirata: b
     }
 }
 
+/// Cosa fare alla finestra della pillola passando da come si vedeva (`prima`) a come deve
+/// vedersi (`nuova`). Con il pannello aperto la pillola la gestisce il pannello: solo il
+/// sondaggio del mouse si ferma.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Passi {
+    pub ferma_sondaggio: bool,
+    /// `Some(true)`: linea (anche solo per ricolorarla); `Some(false)`: via la linea.
+    pub linea: Option<bool>,
+    /// Timer e aggiornamenti della pillola accesi o spenti.
+    pub attiva: Option<bool>,
+    /// La pillola riprende l'aspetto di adesso.
+    pub ridisegna: bool,
+    pub nascondi: bool,
+    pub mostra: bool,
+    pub sopra: bool,
+    pub avvia_sondaggio: bool,
+}
+
+pub fn passi(prima: Visibilita, nuova: Visibilita, pannello_aperto: bool) -> Passi {
+    let cambia = prima != nuova;
+    match (pannello_aperto, nuova) {
+        (true, _) => Passi { ferma_sondaggio: true, ..Passi::default() },
+        (false, Visibilita::Nascosta) => Passi {
+            ferma_sondaggio: true,
+            attiva: cambia.then_some(false),
+            nascondi: cambia,
+            ..Passi::default()
+        },
+        (false, Visibilita::Pillola) => Passi {
+            ferma_sondaggio: true,
+            linea: Some(false),
+            attiva: cambia.then_some(true),
+            ridisegna: cambia,
+            mostra: cambia,
+            sopra: cambia,
+            ..Passi::default()
+        },
+        (false, Visibilita::Linea) => Passi {
+            linea: Some(true),
+            attiva: cambia.then_some(false),
+            mostra: prima == Visibilita::Nascosta,
+            sopra: cambia,
+            avvia_sondaggio: cambia,
+            ..Passi::default()
+        },
+    }
+}
+
 /// Dopo quanto schermo intero continuo la pillola sparisce (TwoCode: niente sfarfallio per un
 /// video che passa un attimo a tutto schermo).
 pub const NASCONDI_DOPO: Duration = Duration::from_secs(3);
@@ -106,6 +154,55 @@ mod test {
     #[test]
     fn ritirata_mostra_la_linea() {
         assert_eq!(pillola_visibile(false, false, true), Visibilita::Linea);
+    }
+
+    use Visibilita::{Linea, Nascosta, Pillola};
+
+    #[test]
+    fn pannello_aperto_tocca_solo_il_sondaggio() {
+        for prima in [Pillola, Linea, Nascosta] {
+            assert_eq!(passi(prima, Nascosta, true), Passi { ferma_sondaggio: true, ..Passi::default() });
+        }
+    }
+
+    #[test]
+    fn dalla_pillola_alla_linea_e_ritorno() {
+        let p = passi(Pillola, Linea, false);
+        assert_eq!(p.linea, Some(true));
+        assert_eq!(p.attiva, Some(false), "timer della pillola fermi sotto la linea");
+        assert!(!p.mostra, "era già visibile");
+        assert!(p.sopra && p.avvia_sondaggio && !p.ferma_sondaggio && !p.nascondi);
+        let p = passi(Linea, Pillola, false);
+        assert_eq!(p.linea, Some(false));
+        assert_eq!(p.attiva, Some(true));
+        assert!(p.ridisegna && p.mostra && p.sopra && p.ferma_sondaggio && !p.avvia_sondaggio);
+    }
+
+    #[test]
+    fn linea_dopo_schermo_intero_o_pannello_si_rimostra() {
+        let p = passi(Nascosta, Linea, false);
+        assert!(p.mostra && p.avvia_sondaggio);
+        assert_eq!(p.linea, Some(true));
+    }
+
+    #[test]
+    fn verso_nascosta_ferma_tutto() {
+        for prima in [Pillola, Linea] {
+            let p = passi(prima, Nascosta, false);
+            assert!(p.nascondi && p.ferma_sondaggio && !p.mostra && !p.avvia_sondaggio);
+            assert_eq!(p.attiva, Some(false));
+            assert_eq!(p.linea, None, "la linea resta pronta per quando si torna");
+        }
+    }
+
+    #[test]
+    fn stesso_stato_non_rifa_nulla_salvo_il_colore_della_linea() {
+        let p = passi(Pillola, Pillola, false);
+        assert!(!p.mostra && !p.ridisegna && !p.sopra && p.attiva.is_none());
+        let p = passi(Linea, Linea, false);
+        assert_eq!(p.linea, Some(true), "ricolora");
+        assert!(!p.mostra && !p.sopra && !p.avvia_sondaggio && p.attiva.is_none());
+        assert_eq!(passi(Nascosta, Nascosta, false), Passi { ferma_sondaggio: true, ..Passi::default() });
     }
 
     #[test]

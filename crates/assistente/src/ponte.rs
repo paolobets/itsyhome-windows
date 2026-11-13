@@ -650,6 +650,15 @@ impl Ponte {
     /// La finestra delle Impostazioni appena creata: modelli, dati di adesso e azioni.
     pub fn collega_finestra(&self, f: &FinestraImpostazioni) {
         *self.finestra.borrow_mut() = f.as_weak();
+        // L'avvio con il sistema può essere stato spento da Gestione attività mentre l'app
+        // girava: l'interruttore mostra lo stato vero del registro.
+        match autoavvio::leggi() {
+            Ok(stato) if self.casa.config().launch_at_login != stato.attivo() => {
+                self.casa.aggiorna_config(|c| c.launch_at_login = stato.attivo())
+            }
+            Ok(_) => {}
+            Err(e) => eprintln!("{e}"),
+        }
         self.aggiorna_ambienti();
         f.set_ambienti(ModelRc::from(self.modello_ambienti.clone()));
         f.set_versione(env!("CARGO_PKG_VERSION").into());

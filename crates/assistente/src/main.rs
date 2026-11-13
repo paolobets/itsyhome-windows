@@ -93,13 +93,20 @@ fn main() -> Result<(), slint::PlatformError> {
         segreti.clone(),
         ponte::ascoltatore(),
     ));
-    // Avvio con il sistema scelto (anche importato dalla v2) ma assente dal registro: lo si
-    // rimette. Spento non si tocca nulla (mai togliere una voce che non abbiamo messo noi).
-    if casa.config().launch_at_login && !sistema::autoavvio::attivo().unwrap_or(true) {
-        if let Err(e) = sistema::autoavvio::imposta(true) {
+    // Prove locali: avvio con il sistema in una chiave di prova; identificativo dei toast solo se
+    // la prova lo chiede (`ITSYHOME_PROVA_NOTIFICHE=1`).
+    let in_prova = std::env::var_os(avvio::VAR_CARTELLA).is_some_and(|v| !v.is_empty());
+    if in_prova {
+        sistema::autoavvio::usa_chiavi_di_prova();
+    }
+    if !in_prova || std::env::var_os("ITSYHOME_PROVA_NOTIFICHE").is_some_and(|v| v == "1") {
+        if let Err(e) = sistema::notifiche::registra(&cartella) {
             eprintln!("{e}");
         }
     }
+    // Avvio con il sistema: si legge com'è davvero (anche spento da Gestione attività) e la
+    // configurazione lo segue; non si riaccende mai da solo (al più si aggiorna il percorso).
+    sincronizza_avvio(&casa);
 
     let pillola = Pillola::new()?;
     debug_assert_eq!(pillola.get_larghezza_finestra(), finestre::LARGHEZZA_FINESTRA_PILLOLA);
@@ -153,13 +160,22 @@ fn main() -> Result<(), slint::PlatformError> {
     casa.connetti_attivo();
     // Il ciclo eventi vive anche senza finestre visibili (pillola nascosta da uno schermo intero
     // a pannello chiuso): finisce solo con «Esci» della tray.
-    pillola.show()?;
-    slint::run_event_loop_until_quit()?;
-    // In ordine: servizi (tray, scorciatoie), ponte, pannello; il `CasaService` si chiude qui,
-    // con il suo thread ancora vivo, quando `casa` esce di scena.
+    let esito = pillola.show().and_then(|_| slint::run_event_loop_until_quit());
+    // Sempre, anche se mostrare la pillola o il ciclo eventi non sono riusciti. In ordine:
+    // servizi (tray, scorciatoie), ponte, pannello; il `CasaService` si chiude qui, con il suo
+    // thread ancora vivo, quando `casa` esce di scena.
     sistema::servizi::spegni();
     ponte::spegni();
     drop(apertura);
     let _ = pillola.hide();
-    Ok(())
+    esito
+}
+
+/// L'interruttore «Avvia con il sistema» segue il registro (vedi `sistema::autoavvio`).
+fn sincronizza_avvio(casa: &CasaService) {
+    match sistema::autoavvio::all_avvio() {
+        Ok(attivo) if casa.config().launch_at_login != attivo => casa.aggiorna_config(|c| c.launch_at_login = attivo),
+        Ok(_) => {}
+        Err(e) => eprintln!("{e}"),
+    }
 }

@@ -10,7 +10,7 @@
 use super::ritirata::{self, Ritirata, SONDAGGIO_MOUSE};
 use super::scorciatoie::{self, Scorciatoia, Scorciatoie};
 use super::tray::{self, Comando, Tray};
-use super::{inattivita, pillola_visibile, schermo_intero, IsteresiSchermoIntero, Visibilita};
+use super::{inattivita, passi, pillola_visibile, schermo_intero, IsteresiSchermoIntero, Visibilita};
 use crate::attenzione::Livello;
 use crate::finestre::{self, RettangoloFisico};
 use crate::pannello::Apertura;
@@ -68,6 +68,9 @@ pub fn avvia(pillola: &Pillola, apertura: Rc<Apertura>, ponte: Rc<Ponte>) {
     });
     SERVIZI.with(|x| *x.borrow_mut() = Some(s.clone()));
 
+    // Clic destro → ritirata solo dove si può anche tornare indietro (tray, scorciatoia, mouse
+    // sulla linea): fuori da Windows la linea resterebbe una trappola.
+    #[cfg(windows)]
     pillola.on_ritira(commuta_ritirata);
     s.controllo.start(slint::TimerMode::Repeated, PERIODO_CONTROLLO, || {
         if let Some(s) = servizi() {
@@ -224,45 +227,38 @@ impl Servizi {
         if let Some(t) = self.tray.borrow().as_ref() {
             t.ritirata(self.ritirata.borrow().attiva());
         }
-        if aperto {
+        let passi = passi(prima, nuova, aperto);
+        if passi.ferma_sondaggio {
             self.mouse.stop();
-            return;
         }
-        match nuova {
-            Visibilita::Nascosta => {
-                self.mouse.stop();
-                if prima != Visibilita::Nascosta {
-                    p.set_attiva(false);
-                    let _ = p.hide();
+        match passi.linea {
+            Some(true) => pillola::mostra_linea(&p, self.ponte.livello_massimo()),
+            Some(false) => pillola::togli_linea(&p),
+            None => {}
+        }
+        if let Some(a) = passi.attiva {
+            p.set_attiva(a);
+        }
+        if passi.ridisegna {
+            self.ponte.ridisegna_pillola();
+        }
+        if passi.nascondi {
+            let _ = p.hide();
+        }
+        if passi.mostra {
+            let _ = p.show();
+        }
+        if passi.sopra {
+            finestre::metti_sopra(p.window());
+        }
+        if passi.avvia_sondaggio {
+            self.zona.set(zona_della_linea(&p));
+            self.ritirata.borrow_mut().mouse(false, Instant::now());
+            self.mouse.start(slint::TimerMode::Repeated, SONDAGGIO_MOUSE, || {
+                if let Some(s) = servizi() {
+                    s.sonda_mouse();
                 }
-            }
-            Visibilita::Pillola => {
-                self.mouse.stop();
-                pillola::togli_linea(&p);
-                if prima != Visibilita::Pillola {
-                    p.set_attiva(true);
-                    self.ponte.ridisegna_pillola();
-                    let _ = p.show();
-                    finestre::metti_sopra(p.window());
-                }
-            }
-            Visibilita::Linea => {
-                pillola::mostra_linea(&p, self.ponte.livello_massimo());
-                if prima != Visibilita::Linea {
-                    p.set_attiva(false);
-                    if prima == Visibilita::Nascosta {
-                        let _ = p.show();
-                    }
-                    finestre::metti_sopra(p.window());
-                    self.zona.set(zona_della_linea(&p));
-                    self.ritirata.borrow_mut().mouse(false, Instant::now());
-                    self.mouse.start(slint::TimerMode::Repeated, SONDAGGIO_MOUSE, || {
-                        if let Some(s) = servizi() {
-                            s.sonda_mouse();
-                        }
-                    });
-                }
-            }
+            });
         }
     }
 

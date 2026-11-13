@@ -12,8 +12,6 @@ sysinfo = { version = "0.38", default-features = false, features = ["system", "d
 starship-battery = "0.12"
 # Notifiche di sistema (toast su Windows): errori solo nel log.
 notify-rust = "4"
-# Avvio con il sistema (Windows: chiave HKCU\...\Run).
-auto-launch = "0.6"
 
 [target.'cfg(windows)'.dependencies]
 # Stessa versione usata da winit 0.30 (HMONITOR = isize): area di lavoro del monitor, ritaglio e procedura della pillola.
@@ -27,12 +25,18 @@ windows-sys = { version = "0.52", features = [
     "Win32_System_Threading",
     "Win32_Security",
 ] }
+# Registro (solo HKCU): avvio con il sistema e identificativo dei toast.
+windows-registry = "0.6"
 # Icona nella tray con il suo menu (stessa famiglia di muda, già usata da Slint).
 tray-icon = { version = "0.26", default-features = false }
-# Scorciatoie globali (Ctrl+Alt+Spazio, Ctrl+Alt+Maiusc+I).
+# Scorciatoie globali (Ctrl+Alt+Maiusc+Spazio, Ctrl+Alt+Maiusc+I).
 global-hotkey = "0.10"
 # L'icona della tray (PNG): `image` c'è già per Slint, qui solo il decodificatore PNG.
 image = { version = "0.25", default-features = false, features = ["png"] }
+
+[target.'cfg(not(windows))'.dependencies]
+# Avvio con il sistema fuori da Windows (su Windows lo scrive l'app nel registro, solo HKCU).
+auto-launch = "0.6"
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,6 +1,7 @@
-//! Scorciatoie globali (`global-hotkey`): Ctrl+Alt+Spazio apre il pannello (e rimette la pillola
-//! visibile e sopra: la «via di salvataggio»), Ctrl+Alt+Maiusc+I ritira o rimette la pillola.
-//! Mai Ctrl+Alt+<lettera>: sulla tastiera italiana Ctrl+Alt è AltGr (è, @, #, [, ]…).
+//! Scorciatoie globali (`global-hotkey`): Ctrl+Alt+Maiusc+Spazio apre il pannello (e rimette la
+//! pillola visibile e sopra: la «via di salvataggio»), Ctrl+Alt+Maiusc+I ritira o rimette la
+//! pillola. Sempre con Maiusc: sulla tastiera italiana Ctrl+Alt è AltGr (è, @, #, [, ]…), e
+//! Ctrl+Alt+Spazio la usa già TwoCode.
 //! Una scorciatoia già presa da un'altra app diventa una voce «informazione» in «In attesa».
 //! Gli eventi arrivano dalla finestra nascosta di `global-hotkey` e si inoltrano al ciclo eventi.
 
@@ -19,7 +20,7 @@ impl Scorciatoia {
     /// Come la si scrive all'utente.
     pub fn tasti(self) -> &'static str {
         match self {
-            Scorciatoia::Apri => "Ctrl+Alt+Spazio",
+            Scorciatoia::Apri => "Ctrl+Alt+Maiusc+Spazio",
             Scorciatoia::Ritirata => "Ctrl+Alt+Maiusc+I",
         }
     }
@@ -66,13 +67,29 @@ mod windows {
     use global_hotkey::hotkey::{Code, HotKey, Modifiers};
     use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 
-    fn tasto(s: Scorciatoia) -> HotKey {
+    /// I tasti davvero registrati.
+    pub(super) fn tasto(s: Scorciatoia) -> HotKey {
+        let tutti = Modifiers::CONTROL | Modifiers::ALT | Modifiers::SHIFT;
         match s {
-            Scorciatoia::Apri => HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::Space),
-            Scorciatoia::Ritirata => {
-                HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SHIFT), Code::KeyI)
+            Scorciatoia::Apri => HotKey::new(Some(tutti), Code::Space),
+            Scorciatoia::Ritirata => HotKey::new(Some(tutti), Code::KeyI),
+        }
+    }
+
+    /// Come si scrive all'utente una scorciatoia registrata (per confrontarla con `tasti()`).
+    #[cfg(test)]
+    pub(super) fn descrivi(h: &HotKey) -> String {
+        let mut parti = vec![];
+        for (m, nome) in [(Modifiers::CONTROL, "Ctrl"), (Modifiers::ALT, "Alt"), (Modifiers::SHIFT, "Maiusc")] {
+            if h.mods.contains(m) {
+                parti.push(nome.to_owned());
             }
         }
+        parti.push(match h.key {
+            Code::Space => "Spazio".to_owned(),
+            k => k.to_string().trim_start_matches("Key").to_owned(),
+        });
+        parti.join("+")
     }
 
     /// Tiene registrate le scorciatoie finché vive.
@@ -124,18 +141,28 @@ pub fn registra(_al_tasto: fn(Scorciatoia)) -> (Option<Scorciatoie>, Vec<(Scorci
 mod test {
     use super::*;
 
+    #[cfg(windows)]
     #[test]
-    fn mai_ctrl_alt_lettera() {
-        // Ctrl+Alt+<lettera> è AltGr+<lettera> sulla tastiera italiana: la ritirata ha anche Maiusc.
-        assert_eq!(Scorciatoia::Apri.tasti(), "Ctrl+Alt+Spazio");
-        assert_eq!(Scorciatoia::Ritirata.tasti(), "Ctrl+Alt+Maiusc+I");
+    fn i_tasti_registrati_hanno_sempre_maiusc_e_sono_quelli_scritti() {
+        use global_hotkey::hotkey::Modifiers;
+        let mut ids = vec![];
+        for s in Scorciatoia::TUTTE {
+            let h = windows::tasto(s);
+            // Ctrl+Alt senza Maiusc è AltGr sulla tastiera italiana.
+            assert!(h.mods.contains(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SHIFT), "{:?}: {:?}", s, h.mods);
+            assert_eq!(windows::descrivi(&h), s.tasti(), "il testo mostrato all'utente è quello registrato");
+            ids.push(h.id());
+        }
+        ids.dedup();
+        assert_eq!(ids.len(), Scorciatoia::TUTTE.len(), "due scorciatoie con gli stessi tasti");
+        assert_eq!(Scorciatoia::Apri.tasti(), "Ctrl+Alt+Maiusc+Spazio");
     }
 
     #[test]
     fn scorciatoia_occupata_diventa_un_informazione() {
         let v = voce_non_attiva(Scorciatoia::Apri, true, Instant::now());
         assert_eq!(v.livello, Livello::Informazione);
-        assert_eq!(v.titolo, "Ctrl+Alt+Spazio è già usata da un'altra app");
+        assert_eq!(v.titolo, "Ctrl+Alt+Maiusc+Spazio è già usata da un'altra app");
         assert!(v.id.starts_with(PREFISSO_SISTEMA));
         assert_eq!(v.pulsanti, vec![Pulsante::new(PULSANTE_HO_CAPITO, "Ho capito")]);
         assert!(!crate::attenzione::merita_notifica_di_sistema(&v), "niente toast per questo");
