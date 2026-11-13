@@ -117,35 +117,52 @@ pub fn segui_schermo<C: ComponentHandle + 'static>(ui: &C, al_cambio: fn(&C)) {
     });
 }
 
-/// Limita disegno e clic della finestra a una fascia centrale larga `larghezza_logica`
-/// (a tutta altezza): fuori dalla fascia la finestra non esiste per il mouse. Così la finestra
-/// della pillola può restare sempre larga quanto la pillola più larga senza rubare clic.
+/// Regione della finestra della pillola, `(sinistra, alto, destra, basso)` in pixel fisici della
+/// finestra larga `larghezza` e alta `altezza`: una fascia centrale larga `larghezza_logica`
+/// che parte sotto il margine dell'aura. La finestra sporge di quel margine sopra l'area di
+/// lavoro (`MARGINE_LOGICO`): quella striscia è fuori dallo schermo su un monitor solo, ma
+/// con un monitor sopra o con la barra delle applicazioni in alto disegnerebbe e prenderebbe
+/// clic lì. L'aura di sopra non si vede comunque, quindi non si perde nulla.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn regione_pillola(larghezza: i32, altezza: i32, scala: f32, larghezza_logica: f32) -> (i32, i32, i32, i32) {
+    let fascia = ((larghezza_logica * scala).round() as i32).min(larghezza);
+    let sinistra = (larghezza - fascia) / 2;
+    let alto = ((MARGINE_AURA * scala).round() as i32).min(altezza);
+    (sinistra, alto, sinistra + fascia, altezza)
+}
+
+/// Limita disegno e clic della finestra alla regione di `regione_pillola`: fuori dalla fascia
+/// la finestra non esiste per il mouse. Così la finestra della pillola può restare sempre larga
+/// quanto la pillola più larga senza rubare clic.
 #[cfg(windows)]
 pub fn ritaglia_al_centro(finestra: &slint::Window, larghezza_logica: f32) {
     use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use windows_sys::Win32::Graphics::Gdi::{CreateRectRgn, DeleteObject, SetWindowRgn};
 
-    let scala = finestra.scale_factor();
     let dimensioni = finestra.size();
-    let (l, a) = (dimensioni.width as i32, dimensioni.height as i32);
-    let fascia = ((larghezza_logica * scala).round() as i32).min(l);
-    let sinistra = (l - fascia) / 2;
+    let rettangolo = regione_pillola(
+        dimensioni.width as i32,
+        dimensioni.height as i32,
+        finestra.scale_factor(),
+        larghezza_logica,
+    );
     thread_local! {
         // Ultimo ritaglio applicato (hwnd, rettangolo): rifarlo uguale ridisegnerebbe per niente.
-        static ULTIMO: std::cell::Cell<(isize, i32, i32, i32)> = const { std::cell::Cell::new((0, 0, 0, 0)) };
+        static ULTIMO: std::cell::Cell<(isize, (i32, i32, i32, i32))> = const { std::cell::Cell::new((0, (0, 0, 0, 0))) };
     }
     finestra.with_winit_window(|w| {
         let Ok(maniglia) = w.window_handle() else { return };
         let RawWindowHandle::Win32(h) = maniglia.as_raw() else { return };
-        let chiave = (h.hwnd.get(), sinistra, fascia, a);
+        let chiave = (h.hwnd.get(), rettangolo);
         if ULTIMO.with(|u| u.replace(chiave)) == chiave {
             return;
         }
         senza_barra_del_titolo(h.hwnd.get());
+        let (sinistra, alto, destra, basso) = rettangolo;
         // SAFETY: hwnd valido finché esiste la finestra winit; dopo SetWindowRgn riuscita la
         // regione appartiene al sistema, se fallisce va liberata qui.
         unsafe {
-            let regione = CreateRectRgn(sinistra, 0, sinistra + fascia, a);
+            let regione = CreateRectRgn(sinistra, alto, destra, basso);
             if regione != 0 && SetWindowRgn(h.hwnd.get(), regione, 1) == 0 {
                 DeleteObject(regione);
             }
@@ -153,9 +170,12 @@ pub fn ritaglia_al_centro(finestra: &slint::Window, larghezza_logica: f32) {
     });
 }
 
-/// Procedura originale delle finestre winit (la stessa per tutte: è quella della classe).
+/// Procedura che la pillola aveva prima della nostra. NON è la procedura di classe di winit:
+/// prima di mostrare la finestra Slint vi installa AccessKit (`SubclassingAdapter` di
+/// accesskit_windows), che a sua volta inoltra a winit. Va quindi inoltrato sempre a questa
+/// (mai a `GetClassLongPtrW`, che salterebbe AccessKit). Solo la pillola la usa.
 #[cfg(windows)]
-static PROCEDURA_WINIT: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+static PROCEDURA_PRECEDENTE: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 
 /// Toglie la barra del titolo "classica" che Windows disegnerebbe sopra la pillola.
 ///
@@ -166,7 +186,7 @@ static PROCEDURA_WINIT: std::sync::atomic::AtomicIsize = std::sync::atomic::Atom
 /// `DefWindowProc` dipinge con GDI la barra del titolo classica (una striscia chiara a gradiente)
 /// sopra la pillola, che resta lì finché Slint non ridisegna quella zona. Con `lParam = -1`
 /// `DefWindowProc` aggiorna lo stato di attivazione senza ridisegnare l'area non client (vedi la
-/// documentazione di WM_NCACTIVATE); winit riceve il messaggio come prima.
+/// documentazione di WM_NCACTIVATE); AccessKit e winit ricevono il messaggio come prima.
 #[cfg(windows)]
 fn senza_barra_del_titolo(hwnd: isize) {
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
@@ -176,9 +196,9 @@ fn senza_barra_del_titolo(hwnd: isize) {
     use std::sync::atomic::Ordering;
 
     unsafe extern "system" fn procedura(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        // SAFETY: il valore è la procedura di winit letta da GetWindowLongPtrW prima di
+        // SAFETY: il valore è la procedura precedente letta da GetWindowLongPtrW prima di
         // sostituirla (mai zero quando questa procedura è installata).
-        let originale: WNDPROC = unsafe { std::mem::transmute(PROCEDURA_WINIT.load(Ordering::Relaxed)) };
+        let originale: WNDPROC = unsafe { std::mem::transmute(PROCEDURA_PRECEDENTE.load(Ordering::Relaxed)) };
         let lparam = if msg == WM_NCACTIVATE { -1 } else { lparam };
         unsafe { CallWindowProcW(originale, hwnd, msg, wparam, lparam) }
     }
@@ -191,7 +211,7 @@ fn senza_barra_del_titolo(hwnd: isize) {
         if attuale == 0 || attuale == nostra {
             return;
         }
-        PROCEDURA_WINIT.store(attuale, Ordering::Relaxed);
+        PROCEDURA_PRECEDENTE.store(attuale, Ordering::Relaxed);
         SetWindowLongPtrW(hwnd, GWLP_WNDPROC, nostra);
     }
 }
@@ -310,6 +330,22 @@ mod test {
             let (_, qy) = posizione_pannello(a, scala);
             assert_eq!(qy, a.y, "pannello a scala {scala}");
         }
+    }
+
+    #[test]
+    fn regione_della_pillola_sotto_il_margine_dell_aura() {
+        // Finestra 380 × 68 logici; fascia calm 220 al centro. La regione parte dove inizia lo
+        // schermo (sotto l'aura che sporge) e arriva in fondo alla finestra.
+        assert_eq!(regione_pillola(380, 68, 1.0, 220.0), (80, 10, 300, 68));
+        let (l, a) = ((380.0_f32 * 1.75).round() as i32, (68.0_f32 * 1.75).round() as i32);
+        let (sinistra, alto, destra, basso) = regione_pillola(l, a, 1.75, 220.0);
+        assert_eq!(alto, 18, "margine dell'aura a 1,75: 17,5 arrotondato");
+        assert_eq!(basso - alto, a - 18);
+        assert_eq!(destra - sinistra, 385);
+        assert_eq!(sinistra, (l - 385) / 2);
+        // L'alto della regione coincide col bordo alto dell'area di lavoro.
+        let (_, py) = posizione_pillola(area(0, 0, 2560, 1528), 1.75, LARGHEZZA_FINESTRA_PILLOLA, MARGINE_LOGICO);
+        assert_eq!(py + alto, 0);
     }
 
     #[test]
