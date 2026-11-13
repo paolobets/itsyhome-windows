@@ -71,6 +71,7 @@ Decisa con Paolo il 13/11 sera, partendo dall'analisi di uno specialista UI/UX (
 - **Riga alta**: occhi al centro, ora a destra; a sinistra **«‹ Indietro»** solo dentro un'app.
 - **Chat HIRIS dentro il pannello** per domande e comandi veloci.
 - Pannello **fisso a 800 × 300**: niente allungamento.
+- **Impostazioni in una finestra dedicata** (decisa da Paolo il 13/11): finestra Slint nello stesso processo, senza motore web, creata all'apertura e distrutta alla chiusura; non si chiude perdendo il fuoco (serve per incollare il token preso dal browser). Si apre dall'icona del dock (il pannello si chiude) e dalla tray.
 
 **Agire senza errori**
 - Permessi di Claude: mai con Invio da solo; da tastiera **Ctrl+Invio**, fuoco iniziale su «Nega».
@@ -150,7 +151,7 @@ Incluso:
 3. **Pannello** come da §3 e §3bis: 800 × 300 al bordo alto, occhi, ora a destra, «‹ Indietro» dentro le app, Panoramica con riga «In attesa» e layout Orologio/Quadranti con i puntini, dock di sole icone.
 4. **Dati reali nei layout** per le due fonti disponibili in M1: **Casa** (da `casa-core`) e **PC** (CPU, RAM, disco, rete, batteria se c'è).
 5. **Umori collegati a eventi reali**: pensa = in connessione/caricamento; ti cerca = notifica HA; contento = azione riuscita; dorme = inattività prolungata; tranquillo = default.
-6. **Impostazioni dentro il pannello** (non finestra separata): ambienti Home Assistant (aggiungi/modifica/rimuovi/prova connessione), avvio con il sistema.
+6. **Impostazioni in una finestra dedicata** (vedi §3bis): ambienti Home Assistant (aggiungi/modifica/rimuovi/prova connessione), avvio con il sistema.
 7. **Tray**: menu con Apri, Impostazioni, Esci; **istanza unica**; **avvio automatico**.
 8. **Finestra di gestione** come componente pronto e misurato (processo separato, apri/chiudi, stile dell'assistente), provata con una mail di esempio, anche se nessuna app la usa ancora.
 9. **Misure** nel budget di §4 su Windows; build verificata anche per Linux/macOS dove possibile.
