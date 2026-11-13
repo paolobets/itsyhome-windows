@@ -3,10 +3,10 @@
 
 use crate::pillola;
 use crate::umore::{Cervello, Segnale, Umore};
-use crate::{Pannello, Pillola, PreferitoUi};
+use crate::{Pannello, Pillola, PreferitoUi, SensoreUi};
 use casa_core::eventi::{Ascoltatore, CasaEvento, StatoConnessione};
 use casa_core::servizio::CasaService;
-use casa_core::types::{AppEntity, BaseEntity, MenuData};
+use casa_core::types::{AppEntity, BaseEntity, MenuData, SensorEntity};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -19,6 +19,9 @@ const MARGINE_SVEGLIA: Duration = Duration::from_millis(20);
 
 /// Quanti preferiti mostra il pannello.
 pub const MASSIMO_PREFERITI: usize = 8;
+
+/// Quanti sensori preferiti stanno nei Quadranti, accanto a CPU, RAM e disco.
+pub const MASSIMO_SENSORI: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tipo {
@@ -118,6 +121,12 @@ pub fn comando_per(e: &AppEntity) -> Option<(&'static str, &'static str)> {
     }
 }
 
+/// Un tocco sul preferito può mandare un comando: luci, interruttori e scene disponibili, e solo
+/// con la casa connessa (senza connessione i preferiti restano tenui e non rispondono).
+pub fn voce_toccabile(p: &Preferito, connesso: bool) -> bool {
+    connesso && p.disponibile && p.tipo != Tipo::Lettura
+}
+
 /// Il testo sotto il nome di un preferito.
 pub fn testo_stato(p: &Preferito) -> String {
     if p.errore.is_some() {
@@ -188,22 +197,30 @@ pub fn riga_stato(stato: &StatoConnessione, menu: Option<&MenuData>) -> String {
     }
 }
 
-/// Il sensore del quadrante CASA: il primo sensore disponibile fra i preferiti mostrati, con la
-/// frazione dell'arco (umidità 0–100%, temperatura 10–30 °C / 50–86 °F; altrimenti -1 = niente arco).
-pub fn sensore_quadrante(menu: &MenuData, max: usize) -> Option<(Preferito, f32)> {
-    let e = entita_mostrate(menu)
+/// I sensori dei Quadranti: i primi `quanti` sensori disponibili fra i preferiti mostrati (i primi
+/// `max`), ognuno con la frazione dell'arco (umidità 0–100%, temperatura 10–30 °C / 50–86 °F;
+/// altrimenti -1 = niente arco).
+pub fn sensori_quadranti(menu: &MenuData, max: usize, quanti: usize) -> Vec<(Preferito, f32)> {
+    entita_mostrate(menu)
         .take(max)
-        .find(|e| matches!(e, AppEntity::Sensor(s) if s.base.is_available))?;
-    let AppEntity::Sensor(s) = &e else { return None };
+        .filter_map(|e| match &e {
+            AppEntity::Sensor(s) if s.base.is_available => Some((preferito(&e), frazione_arco(s))),
+            _ => None,
+        })
+        .take(quanti)
+        .collect()
+}
+
+fn frazione_arco(s: &SensorEntity) -> f32 {
     let numero = s.value.trim().replace(',', ".").parse::<f32>().ok();
     let unita = s.unit.as_deref().unwrap_or_default();
     let frazione = match numero {
         Some(v) if unita.ends_with('%') => v / 100.0,
         Some(v) if unita.ends_with('F') => (v - 50.0) / 36.0,
         Some(v) if unita.contains('°') => (v - 10.0) / 20.0,
-        _ => return Some((preferito(&e), -1.0)),
+        _ => return -1.0,
     };
-    Some((preferito(&e), frazione.clamp(0.0, 1.0)))
+    frazione.clamp(0.0, 1.0)
 }
 
 /// L'entità con questo id fra preferiti, stanze e scene (per il comando di un tocco).
@@ -257,13 +274,15 @@ pub struct Ponte {
     menu: RefCell<Option<Arc<MenuData>>>,
     /// Comandi falliti, per entità: l'errore resta sulla voce fino al prossimo tocco o a un esito ok.
     errori: RefCell<HashMap<String, String>>,
-    /// Il modello dei preferiti: sopravvive al pannello, che lo riprende a ogni apertura.
+    /// I modelli dei preferiti e dei sensori dei Quadranti: sopravvivono al pannello, che li
+    /// riprende a ogni apertura.
     preferiti: Rc<VecModel<PreferitoUi>>,
+    sensori: Rc<VecModel<SensoreUi>>,
     /// Ultimo umore mostrato, per non riscrivere la pillola senza motivo.
     mostrato: RefCell<Option<(Umore, String)>>,
     /// Gira solo mentre un umore scade da solo (contento): nessun timer fisso.
     sveglia: slint::Timer,
-    /// Errori da mostrare nelle Impostazioni (Task 9).
+    /// Errori da mostrare nelle Impostazioni (Task 11).
     #[allow(dead_code)]
     errore_import: Option<String>,
     #[allow(dead_code)]
@@ -287,6 +306,7 @@ pub fn collega(
         menu: RefCell::new(None),
         errori: RefCell::new(HashMap::new()),
         preferiti: Rc::new(VecModel::default()),
+        sensori: Rc::new(VecModel::default()),
         mostrato: RefCell::new(None),
         sveglia: slint::Timer::default(),
         errore_import,
@@ -297,7 +317,7 @@ pub fn collega(
     ponte
 }
 
-fn voce_ui(p: &Preferito) -> PreferitoUi {
+fn voce_ui(p: &Preferito, connesso: bool) -> PreferitoUi {
     PreferitoUi {
         entity_id: p.entity_id.as_str().into(),
         nome: p.nome.as_str().into(),
@@ -306,7 +326,21 @@ fn voce_ui(p: &Preferito) -> PreferitoUi {
         stato: testo_stato(p).into(),
         disponibile: p.disponibile,
         errore: p.errore.as_deref().unwrap_or_default().into(),
-        toccabile: p.disponibile && p.tipo != Tipo::Lettura,
+        toccabile: voce_toccabile(p, connesso),
+        tenue: !p.disponibile || !connesso,
+    }
+}
+
+/// Riscrive solo le righe cambiate (una riga uguale non ridisegna nulla).
+fn aggiorna_modello<T: Clone + PartialEq + 'static>(modello: &VecModel<T>, voci: Vec<T>) {
+    if modello.row_count() != voci.len() {
+        modello.set_vec(voci);
+        return;
+    }
+    for (i, v) in voci.into_iter().enumerate() {
+        if modello.row_data(i).as_ref() != Some(&v) {
+            modello.set_row_data(i, v);
+        }
     }
 }
 
@@ -321,6 +355,8 @@ impl Ponte {
             CasaEvento::Stato(s) => {
                 self.cervello.borrow_mut().ricevi(Segnale::Casa(s.clone()), ora);
                 *self.stato.borrow_mut() = s;
+                // Con la connessione cambia anche se i preferiti si possono toccare.
+                self.ricostruisci_preferiti();
                 self.aggiorna_pannello();
             }
             CasaEvento::Dati(menu) => {
@@ -385,34 +421,36 @@ impl Ponte {
         }
     }
 
-    /// Preferiti dai dati più recenti con gli errori ancora aperti; si riscrivono solo le righe
-    /// cambiate (una riga uguale non ridisegna nulla).
+    fn connesso(&self) -> bool {
+        *self.stato.borrow() == StatoConnessione::Connesso
+    }
+
+    /// Preferiti e sensori dei Quadranti dai dati più recenti, con gli errori ancora aperti e
+    /// lo stato della connessione.
     fn ricostruisci_preferiti(&self) {
-        let voci: Vec<PreferitoUi> = {
+        let connesso = self.connesso();
+        let (voci, sensori) = {
             let menu = self.menu.borrow();
             let Some(menu) = menu.as_ref() else { return };
             let errori = self.errori.borrow();
-            preferiti_ui(menu, MASSIMO_PREFERITI)
+            let voci: Vec<PreferitoUi> = preferiti_ui(menu, MASSIMO_PREFERITI)
                 .into_iter()
                 .map(|mut p| {
                     p.errore = errori.get(&p.entity_id).cloned();
-                    voce_ui(&p)
+                    voce_ui(&p, connesso)
                 })
-                .collect()
+                .collect();
+            let sensori: Vec<SensoreUi> = sensori_quadranti(menu, MASSIMO_PREFERITI, MASSIMO_SENSORI)
+                .into_iter()
+                .map(|(p, frazione)| SensoreUi { voce: voce_ui(&p, connesso), frazione })
+                .collect();
+            (voci, sensori)
         };
-        let modello = &self.preferiti;
-        if modello.row_count() != voci.len() {
-            modello.set_vec(voci);
-            return;
-        }
-        for (i, v) in voci.into_iter().enumerate() {
-            if modello.row_data(i).as_ref() != Some(&v) {
-                modello.set_row_data(i, v);
-            }
-        }
+        aggiorna_modello(&self.preferiti, voci);
+        aggiorna_modello(&self.sensori, sensori);
     }
 
-    /// Riga di stato e quadrante CASA sul pannello aperto.
+    /// Riga di stato della casa sul pannello aperto.
     fn aggiorna_pannello(&self) {
         if let Some(p) = self.pannello.borrow().upgrade() {
             self.riempi_stato(&p);
@@ -427,19 +465,12 @@ impl Ponte {
             p.set_stato_casa(riga.into());
         }
         p.set_casa_pronta(*stato == StatoConnessione::Connesso && menu.is_some());
-        match menu.as_deref().and_then(|m| sensore_quadrante(m, MASSIMO_PREFERITI)) {
-            Some((s, f)) => {
-                p.set_sensore(voce_ui(&s));
-                p.set_sensore_frazione(f);
-                p.set_ha_sensore(true);
-            }
-            None => p.set_ha_sensore(false),
-        }
     }
 
-    /// Il pannello appena creato: modello dei preferiti, stato della casa, tocchi.
+    /// Il pannello appena creato: modelli dei preferiti e dei sensori, stato della casa, tocchi.
     pub fn riempi(&self, p: &Pannello) {
         p.set_preferiti(ModelRc::from(self.preferiti.clone()));
+        p.set_sensori(ModelRc::from(self.sensori.clone()));
         self.riempi_stato(p);
         p.on_tocca(|id| {
             if let Some(ponte) = ponte() {
@@ -470,8 +501,12 @@ impl Ponte {
         self.aggiorna_umore();
     }
 
-    /// Un tocco su un preferito: il comando se ce n'è uno (mai su entità non disponibili).
+    /// Un tocco su un preferito: il comando se ce n'è uno (mai su entità non disponibili né con la
+    /// casa non connessa: l'interfaccia già non lo permette, qui lo si garantisce).
     pub fn tocca(&self, entity_id: &str) {
+        if !self.connesso() {
+            return;
+        }
         let comando = {
             let menu = self.menu.borrow();
             let Some(menu) = menu.as_ref() else { return };
@@ -659,6 +694,14 @@ pub(crate) mod test {
     }
 
     #[test]
+    fn preferiti_non_toccabili_se_disconnesso() {
+        let luce = p("light.a", Tipo::Interruttore, true, "on");
+        assert!(!voce_toccabile(&luce, false));
+        assert!(voce_toccabile(&luce, true));
+        assert!(!voce_toccabile(&p("sensor.t", Tipo::Lettura, false, "21.5 °C"), true));
+    }
+
+    #[test]
     fn testo_dello_stato() {
         assert_eq!(testo_stato(&p("light.a", Tipo::Interruttore, true, "on")), "Acceso");
         assert_eq!(testo_stato(&p("switch.a", Tipo::Interruttore, false, "off")), "Spento");
@@ -701,18 +744,26 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn sensore_del_quadrante_con_arco() {
+    fn sensori_dei_quadranti_con_arco() {
         let m = menu(vec![luce("light.a", true), sensore("sensor.t", "20", Some("°C"))], vec![]);
-        let (s, f) = sensore_quadrante(&m, MASSIMO_PREFERITI).unwrap();
-        assert_eq!(s.entity_id, "sensor.t");
-        assert!((f - 0.5).abs() < 1e-6);
-        let u = menu(vec![sensore("sensor.u", "48", Some("%"))], vec![]);
-        assert!((sensore_quadrante(&u, 8).unwrap().1 - 0.48).abs() < 1e-6);
-        let caldo = menu(vec![sensore("sensor.t", "45", Some("°C"))], vec![]);
-        assert_eq!(sensore_quadrante(&caldo, 8).unwrap().1, 1.0);
-        let strano = menu(vec![sensore("sensor.x", "abc", Some("°C"))], vec![]);
-        assert_eq!(sensore_quadrante(&strano, 8).unwrap().1, -1.0);
+        let v = sensori_quadranti(&m, MASSIMO_PREFERITI, MASSIMO_SENSORI);
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].0.entity_id, "sensor.t");
+        assert!((v[0].1 - 0.5).abs() < 1e-6);
+        let primo = |m: &MenuData| sensori_quadranti(m, 8, 3)[0].1;
+        assert!((primo(&menu(vec![sensore("sensor.u", "48", Some("%"))], vec![])) - 0.48).abs() < 1e-6);
+        assert_eq!(primo(&menu(vec![sensore("sensor.t", "45", Some("°C"))], vec![])), 1.0);
+        assert_eq!(primo(&menu(vec![sensore("sensor.x", "abc", Some("°C"))], vec![])), -1.0);
         // Fuori dai preferiti mostrati non conta.
-        assert!(sensore_quadrante(&m, 1).is_none());
+        assert!(sensori_quadranti(&m, 1, 3).is_empty());
+    }
+
+    #[test]
+    fn al_massimo_tre_sensori_nell_ordine() {
+        let s = |i: usize| sensore(&format!("sensor.s{i}"), "20", Some("°C"));
+        let m = menu(vec![s(0), luce("light.a", true), s(1), s(2), s(3)], vec![]);
+        let v = sensori_quadranti(&m, MASSIMO_PREFERITI, MASSIMO_SENSORI);
+        let ids: Vec<&str> = v.iter().map(|(p, _)| p.entity_id.as_str()).collect();
+        assert_eq!(ids, ["sensor.s0", "sensor.s1", "sensor.s2"]);
     }
 }

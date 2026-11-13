@@ -176,7 +176,16 @@ impl EntityMapper {
             .filter(|e| !hidden_set.contains(e.entity_id()))
             .collect();
 
-        let fav_map: HashMap<&str, &AppEntity> = visible
+        // Le scene possono stare fra i preferiti (v3); per il resto restano solo in `scenes`,
+        // mai nelle stanze, come nella v2.
+        let scene_preferite: Vec<AppEntity> = scenes
+            .iter()
+            .filter(|s| fav_set.contains(s.base.entity_id.as_str()) && !hidden_set.contains(s.base.entity_id.as_str()))
+            .map(|s| AppEntity::Scene(s.clone()))
+            .collect();
+        let candidati: Vec<&AppEntity> = visible.into_iter().chain(scene_preferite.iter()).collect();
+
+        let fav_map: HashMap<&str, &AppEntity> = candidati
             .iter()
             .filter(|e| fav_set.contains(e.entity_id()))
             .map(|e| (e.entity_id(), *e))
@@ -189,7 +198,7 @@ impl EntityMapper {
             .collect();
         {
             let fav_id_set: HashSet<&str> = favorites_order.iter().map(|s| s.as_str()).collect();
-            let mut extra: Vec<AppEntity> = visible
+            let mut extra: Vec<AppEntity> = candidati
                 .iter()
                 .filter(|e| fav_set.contains(e.entity_id()) && !fav_id_set.contains(e.entity_id()))
                 .map(|e| (*e).clone())
@@ -673,6 +682,26 @@ mod tests {
         assert_eq!(ultima.area_id, "");
         assert_eq!(ultima.name, "Altro");
         assert_eq!(ids(&ultima.entities), vec!["light.b"]);
+    }
+
+    #[test]
+    fn scena_preferita_nei_preferiti() {
+        let stati = [stato("light.a"), stato("scene.sera"), stato("scene.notte")];
+        let menu = mappa(&stati, &[], &[], None, &["scene.sera", "light.a"], &[], &[]);
+        assert_eq!(ids(&menu.favorites), vec!["scene.sera", "light.a"]);
+        assert!(matches!(menu.favorites[0], AppEntity::Scene(_)));
+        // Per il resto come prima: le scene restano in `scenes` e mai nelle stanze.
+        let scene: Vec<&str> = menu.scenes.iter().map(|s| s.base.entity_id.as_str()).collect();
+        assert_eq!(scene, vec!["scene.sera", "scene.notte"]);
+        assert!(menu.rooms.iter().all(|r| r.entities.iter().all(|e| !matches!(e, AppEntity::Scene(_)))));
+    }
+
+    #[test]
+    fn scena_nascosta_mai_nei_preferiti() {
+        let stati = [stato("scene.sera")];
+        let menu = mappa(&stati, &[], &[], None, &["scene.sera"], &["scene.sera"], &[]);
+        assert!(menu.favorites.is_empty());
+        assert!(menu.scenes.is_empty());
     }
 
     #[test]

@@ -1,41 +1,45 @@
-// Il pannello unico dell'assistente: in alto gli occhi (dove stavano quelli della pillola) e
-// solo l'ora a destra; al centro uno dei 4 layout o la vista di un'app; in basso il dock.
+// Il pannello unico dell'assistente (spec §3bis). Riga alta: «‹ Indietro» a sinistra solo dentro
+// un'app, occhi al centro (dove stavano quelli della pillola), l'ora a destra. Centro: la
+// Panoramica (layout Orologio o Quadranti, cambiabili con i puntini, le frecce e la rotella) o la
+// vista di un'app. In basso il dock di sole icone, una per app del registro.
+//
+// Tastiera: Tab / Maiusc+Tab fra «Indietro», contenuto e dock; frecce dentro la zona (nella
+// Panoramica ←/→ cambiano layout, nel dock cambiano icona, in Casa si muovono fra le card);
+// Invio o Spazio attivano; Backspace o Alt+← = Indietro; Esc chiude. Un unico FocusScope tiene il
+// fuoco e l'anello (visibile solo da tastiera) segue la zona scelta.
 import { Tema } from "tema.slint";
 import { Occhio } from "pillola.slint";
-import { Icone } from "icone.slint";
-import { VoceAppUi, StatPcUi, PreferitoUi } from "voci.slint";
+import { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi } from "voci.slint";
 import { VistaPc } from "viste/pc.slint";
 import { VistaCasa } from "viste/casa.slint";
 import { LayoutOrologio } from "layout/orologio.slint";
 import { LayoutQuadranti } from "layout/quadranti.slint";
-import { LayoutColori } from "layout/colori.slint";
-import { LayoutTutte } from "layout/tutte.slint";
 
-export { VoceAppUi, StatPcUi, PreferitoUi }
+export { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi }
 
-// Una scheda del dock: icona leggera; quella attiva sta in una capsula "vetro" e diventa bianca.
+// Una scheda del dock: solo l'icona (bersaglio 36 × 32, icona 20); quella attiva sta in una
+// capsula "vetro" e diventa bianca. Il nome compare in un suggerimento dopo una breve sosta del
+// mouse, o subito quando la scheda ha il fuoco da tastiera.
 component Scheda inherits Rectangle {
     in property <image> icona;
     in property <string> nome;
     in property <bool> attiva;
+    in property <bool> anello;
     callback scelta();
+    property <bool> sosta: false;
 
-    width: 30px;
-    height: 28px;
+    width: 36px;
+    height: 32px;
     border-radius: self.height / 2;
-    background: attiva
-        ? @linear-gradient(180deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.07) 100%)
-        : area.has-hover ? Tema.scheda-sopra : transparent;
-    border-width: attiva ? 1px : 0px;
-    border-color: rgba(255, 255, 255, 0.14);
+    background: attiva ? Tema.scheda-attiva : area.has-hover ? Tema.scheda-sopra : transparent;
     accessible-role: button;
     accessible-label: nome;
     accessible-action-default => { root.scelta(); }
 
     Image {
         source: icona;
-        width: 17px;
-        height: 17px;
+        width: 20px;
+        height: 20px;
         colorize: attiva ? Tema.icona-attiva : Tema.icona;
         image-rendering: smooth;
     }
@@ -43,6 +47,45 @@ component Scheda inherits Rectangle {
     area := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.scelta(); }
+        changed has-hover => {
+            if (!self.has-hover) {
+                root.sosta = false;
+            }
+        }
+    }
+
+    // Gira solo mentre il mouse è fermo sopra la scheda e il suggerimento non c'è ancora.
+    Timer {
+        interval: 600ms;
+        running: area.has-hover && !root.sosta;
+        triggered => { root.sosta = true; }
+    }
+
+    if anello: Rectangle {
+        x: -4px;
+        y: -4px;
+        width: parent.width + 8px;
+        height: parent.height + 8px;
+        border-radius: parent.border-radius + 4px;
+        border-width: 2px;
+        border-color: Tema.anello;
+    }
+
+    if (sosta && area.has-hover) || anello: Rectangle {
+        y: -32px;
+        height: 24px;
+        width: suggerimento.preferred-width + 18px;
+        x: (parent.width - self.width) / 2;
+        border-radius: 8px;
+        background: Tema.suggerimento;
+        border-width: 1px;
+        border-color: Tema.vetro-bordo;
+
+        suggerimento := Text {
+            text: root.nome;
+            font-size: 12px;
+            color: Tema.testo;
+        }
     }
 }
 
@@ -50,46 +93,65 @@ export component Pannello inherits Window {
     in property <string> umore: "calm";
     in property <string> ora;
     in property <string> data;
+    // Layout della Panoramica (indice del puntino: 0 Orologio, 1 Quadranti, come `layout.rs`).
     in-out property <int> layout: 0;
-    // "" = il layout scelto, altrimenti l'id dell'app mostrata al centro.
-    in-out property <string> vista;
+    out property <int> numero-layout: 2;
+    // L'app mostrata al centro; "panoramica" è la schermata principale.
+    in-out property <string> vista: "panoramica";
     in property <[VoceAppUi]> app;
     // Statistiche del PC, aggiornate ogni 2 s solo a pannello aperto.
     in property <StatPcUi> pc;
     // Vero mentre il pannello è aperto: guida l'animazione di apertura e il battito degli occhi.
     in-out property <bool> aperto;
-    // Casa: i preferiti (al massimo 8), la riga di stato, il sensore del quadrante CASA.
+    // Casa: i preferiti (al massimo 8), la riga di stato, i sensori dei Quadranti (al massimo 3).
     in property <[PreferitoUi]> preferiti;
+    in property <[SensoreUi]> sensori;
     in property <string> stato-casa;
     in property <bool> casa-pronta;
-    in property <bool> ha-sensore;
-    in property <PreferitoUi> sensore;
-    in property <float> sensore-frazione: -1;
     // Da dove partono gli occhi all'apertura, rispetto al centro: aprendo da "ti cerca" sono
     // dove stavano quelli della pillola allargata e, appena il pannello è comparso, scivolano al centro.
     in property <length> partenza-occhi: 0px;
     callback tocca(string);
+    // Clic su un puntino: quel layout.
     callback scegli-layout(int);
+    // Frecce, rotella e Invio sui puntini: +1 il successivo, -1 il precedente (lo decide Rust).
+    callback scorri-layout(int);
     callback apri-app(string);
     callback chiudi();
 
     // Geometria (logica). La riga alta è alta quanto la pillola, così gli occhi cadono dove
     // stavano i suoi (vedi `posizione_pannello` in finestre.rs). Pannello 800 × 300: zona
-    // centrale larga e bassa (764 × 180).
+    // centrale 764 × 172, poi la riga dei puntini (solo nella Panoramica) e il dock.
     out property <length> larghezza-pannello: 800px;
     property <length> margine: 18px;
     property <length> altezza-riga: 48px;
-    property <length> altezza-dock: 36px;
+    property <length> altezza-dock: 38px;
+    property <length> dock-y: root.height - altezza-dock - 12px;
+    property <length> altezza-puntini: 20px;
+    property <length> puntini-y: dock-y - altezza-puntini - 4px;
     out property <length> centro-x: margine;
-    out property <length> centro-y: altezza-riga + 8px;
+    out property <length> centro-y: altezza-riga + 4px;
     out property <length> centro-l: root.width - 2 * margine;
-    out property <length> centro-a: root.height - centro-y - altezza-dock - 16px - 12px;
+    out property <length> centro-a: puntini-y - 2px - centro-y;
 
     property <bool> palpebra: false;
     // Diventa vero poco dopo l'apertura, quando i primi fotogrammi hanno già disegnato gli occhi
     // al punto di partenza: solo allora lo scarto si anima (le proprietà si calcolano solo
     // quando servono, quindi un cambio nello stesso istante dell'apertura non si vedrebbe).
     property <bool> occhi-al-centro: partenza-occhi == 0px;
+
+    // ─── Tastiera ───
+    // Zona col fuoco: "indietro", "contenuto" o "dock". All'apertura il fuoco va sul contenuto.
+    property <string> zona: "contenuto";
+    // L'anello si vede solo dopo un tasto; un clic lo spegne.
+    property <bool> da-tastiera: false;
+    property <int> fuoco-dock: 0;
+    property <int> fuoco-casa: 0;
+    property <int> colonne-casa: 4;
+    property <int> fuoco-casa-valido: min(fuoco-casa, preferiti.length - 1);
+    // Rotella: spostamento accumulato e pausa dopo un cambio (un touchpad manda molti piccoli passi).
+    property <length> rotella: 0px;
+    property <bool> rotella-ferma: false;
 
     no-frame: true;
     always-on-top: true;
@@ -100,13 +162,141 @@ export component Pannello inherits Window {
     height: 300px;
     forward-focus: tasti;
 
+    pure function ha-zona(z: string) -> bool {
+        if (z == "indietro") {
+            return vista != "panoramica";
+        }
+        if (z == "contenuto") {
+            return vista == "panoramica" || (vista == "casa" && preferiti.length > 0);
+        }
+        return true;
+    }
+
+    pure function zona-dopo(z: string, avanti: bool) -> string {
+        if (avanti) {
+            return z == "indietro" ? "contenuto" : z == "contenuto" ? "dock" : "indietro";
+        }
+        return z == "dock" ? "contenuto" : z == "contenuto" ? "indietro" : "dock";
+    }
+
+    // Tab: la zona seguente che esiste in questa vista (il dock c'è sempre).
+    function passa-zona(avanti: bool) {
+        zona = zona-dopo(zona, avanti);
+        if (!ha-zona(zona)) {
+            zona = zona-dopo(zona, avanti);
+        }
+        if (!ha-zona(zona)) {
+            zona = zona-dopo(zona, avanti);
+        }
+    }
+
+    function vai(v: string) {
+        vista = v;
+        fuoco-casa = 0;
+        if (!ha-zona(zona)) {
+            zona = ha-zona("contenuto") ? "contenuto" : "dock";
+        }
+    }
+
+    function indietro() {
+        if (vista != "panoramica") {
+            fuoco-dock = 0;
+            vai("panoramica");
+        }
+    }
+
+    function apri(i: int, id: string) {
+        fuoco-dock = i;
+        vai(id);
+        root.apri-app(id);
+    }
+
+    function scegli(i: int) {
+        root.layout = i;
+        root.scegli-layout(i);
+    }
+
+    function freccia(k: string) {
+        if (zona == "dock") {
+            if (k == Key.LeftArrow) {
+                fuoco-dock = max(0, fuoco-dock - 1);
+            } else if (k == Key.RightArrow) {
+                fuoco-dock = min(app.length - 1, fuoco-dock + 1);
+            }
+        } else if (zona == "contenuto" && vista == "panoramica") {
+            if (k == Key.LeftArrow) {
+                root.scorri-layout(-1);
+            } else if (k == Key.RightArrow) {
+                root.scorri-layout(1);
+            }
+        } else if (zona == "contenuto" && vista == "casa") {
+            if (k == Key.LeftArrow) {
+                fuoco-casa = max(0, fuoco-casa-valido - 1);
+            } else if (k == Key.RightArrow) {
+                fuoco-casa = min(preferiti.length - 1, fuoco-casa-valido + 1);
+            } else if (k == Key.UpArrow && fuoco-casa-valido >= colonne-casa) {
+                fuoco-casa = fuoco-casa-valido - colonne-casa;
+            } else if (k == Key.DownArrow && fuoco-casa-valido + colonne-casa < preferiti.length) {
+                fuoco-casa = fuoco-casa-valido + colonne-casa;
+            }
+        }
+    }
+
+    // Invio / Spazio sulla zona col fuoco.
+    function attiva() {
+        if (zona == "indietro") {
+            indietro();
+        } else if (zona == "dock") {
+            apri(fuoco-dock, app[fuoco-dock].id);
+        } else if (vista == "panoramica") {
+            root.scorri-layout(1);
+        } else if (vista == "casa" && fuoco-casa-valido >= 0 && preferiti[fuoco-casa-valido].toccabile) {
+            root.tocca(preferiti[fuoco-casa-valido].entity-id);
+        }
+    }
+
     tasti := FocusScope {
         key-pressed(evento) => {
             if (evento.text == Key.Escape) {
                 root.chiudi();
                 return accept;
             }
+            if (evento.text == Key.Tab || evento.text == Key.Backtab) {
+                da-tastiera = true;
+                passa-zona(evento.text == Key.Tab && !evento.modifiers.shift);
+                return accept;
+            }
+            if (evento.text == Key.Backspace || (evento.text == Key.LeftArrow && evento.modifiers.alt)) {
+                if (vista == "panoramica") {
+                    return reject;
+                }
+                da-tastiera = true;
+                indietro();
+                return accept;
+            }
+            if (evento.modifiers.alt || evento.modifiers.control || evento.modifiers.meta) {
+                return reject;
+            }
+            if (evento.text == Key.LeftArrow || evento.text == Key.RightArrow || evento.text == Key.UpArrow || evento.text == Key.DownArrow) {
+                da-tastiera = true;
+                freccia(evento.text);
+                return accept;
+            }
+            if (evento.text == Key.Return || evento.text == Key.Space) {
+                da-tastiera = true;
+                attiva();
+                return accept;
+            }
             return reject;
+        }
+    }
+
+    Timer {
+        interval: 400ms;
+        running: rotella-ferma;
+        triggered => {
+            rotella-ferma = false;
+            rotella = 0px;
         }
     }
 
@@ -176,7 +366,7 @@ export component Pannello inherits Window {
             }
         }
 
-        // Riga alta: niente a sinistra, occhi al centro, ora a destra.
+        // Riga alta: occhi al centro, ora a destra («Indietro» a sinistra è più sotto).
         occhi := Rectangle {
             property <bool> contento: umore == "happy";
             property <bool> dorme: umore == "sleep";
@@ -229,42 +419,83 @@ export component Pannello inherits Window {
             color: Tema.testo-ora;
         }
 
-        // Centro: il layout scelto oppure la vista dell'app.
+        // «‹ Indietro» a sinistra della riga alta, solo dentro un'app: torna alla Panoramica.
+        if vista != "panoramica": Rectangle {
+            x: margine - 8px;
+            y: (altezza-riga - self.height) / 2;
+            height: 32px;
+            width: etichetta-indietro.preferred-width + 20px;
+            border-radius: self.height / 2;
+            background: area-indietro.has-hover ? Tema.scheda-sopra : transparent;
+            accessible-role: button;
+            accessible-label: "Indietro";
+            accessible-action-default => { indietro(); }
+
+            etichetta-indietro := Text {
+                text: "‹ Indietro";
+                font-size: 13px;
+                color: Tema.testo-ora;
+            }
+
+            area-indietro := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    da-tastiera = false;
+                    indietro();
+                }
+            }
+
+            if da-tastiera && zona == "indietro": Rectangle {
+                x: -4px;
+                y: -4px;
+                width: parent.width + 8px;
+                height: parent.height + 8px;
+                border-radius: parent.border-radius + 4px;
+                border-width: 2px;
+                border-color: Tema.anello;
+            }
+        }
+
+        // Centro: la Panoramica (solo sintesi, nessun comando) o la vista dell'app.
         Rectangle {
             x: centro-x;
             y: centro-y;
             width: centro-l;
             height: centro-a;
 
-            if vista == "" && layout == 0: LayoutOrologio {
+            if vista == "panoramica" && layout == 0: LayoutOrologio {
                 width: parent.width;
                 height: parent.height;
                 ora: root.ora;
                 data: root.data;
-                stato: root.stato-casa;
+                stato-casa: root.stato-casa;
+                casa-pronta: root.casa-pronta;
+                pc: root.pc;
             }
-            if vista == "" && layout == 1: LayoutQuadranti {
+            if vista == "panoramica" && layout == 1: LayoutQuadranti {
                 width: parent.width;
                 height: parent.height;
                 stat: root.pc;
-                ha-sensore: root.ha-sensore;
-                sensore: root.sensore;
-                sensore-frazione: root.sensore-frazione;
+                sensori: root.sensori;
                 stato-casa: root.stato-casa;
+                casa-pronta: root.casa-pronta;
             }
-            if vista == "" && layout == 2: LayoutColori {
+
+            // La rotella sulla Panoramica cambia layout (in giù il successivo).
+            if vista == "panoramica": TouchArea {
                 width: parent.width;
                 height: parent.height;
-                preferiti: root.preferiti;
-                tocca(id) => { root.tocca(id); }
-            }
-            if vista == "" && layout == 3: LayoutTutte {
-                width: parent.width;
-                height: parent.height;
-                app: root.app;
-                apri-app(id) => {
-                    root.vista = id;
-                    root.apri-app(id);
+                scroll-event(evento) => {
+                    if (rotella-ferma) {
+                        return accept;
+                    }
+                    rotella += abs(evento.delta-x) > abs(evento.delta-y) ? evento.delta-x : evento.delta-y;
+                    if (abs(rotella) >= 24px) {
+                        root.scorri-layout(rotella < 0 ? 1 : -1);
+                        rotella = 0px;
+                        rotella-ferma = true;
+                    }
+                    return accept;
                 }
             }
 
@@ -274,7 +505,12 @@ export component Pannello inherits Window {
                 preferiti: root.preferiti;
                 stato-casa: root.stato-casa;
                 casa-pronta: root.casa-pronta;
-                tocca(id) => { root.tocca(id); }
+                colonne: root.colonne-casa;
+                fuoco: da-tastiera && zona == "contenuto" ? fuoco-casa-valido : -1;
+                tocca(id) => {
+                    da-tastiera = false;
+                    root.tocca(id);
+                }
             }
 
             if vista == "pc": VistaPc {
@@ -283,11 +519,11 @@ export component Pannello inherits Window {
                 stat: root.pc;
             }
 
-            // Vista di un'app senza contenuti propri: per ora solo il titolo (Impostazioni, Task 9).
+            // Vista di un'app senza contenuti propri: per ora solo il titolo (Impostazioni, Task 11).
             for voce in app: VerticalLayout {
                 width: parent.width;
                 height: parent.height;
-                visible: vista == voce.id && voce.id != "pc" && voce.id != "casa";
+                visible: vista == voce.id && voce.id != "panoramica" && voce.id != "pc" && voce.id != "casa";
                 alignment: center;
                 spacing: 10px;
 
@@ -313,12 +549,59 @@ export component Pannello inherits Window {
             }
         }
 
-        // Dock centrato: i 4 layout (scelta del layout e ritorno alla schermata principale),
-        // un divisorio, poi le app del registro.
+        // Puntini dei layout, solo nella Panoramica: quello attivo è allungato.
+        if vista == "panoramica": HorizontalLayout {
+            x: 0;
+            width: parent.width;
+            y: puntini-y;
+            height: altezza-puntini;
+            alignment: center;
+
+            Rectangle {
+                // Gruppo dei puntini: l'anello del fuoco li circonda tutti.
+                HorizontalLayout {
+                    for nome[i] in ["Orologio", "Quadranti"]: Rectangle {
+                        property <bool> attivo: i == layout;
+                        width: (attivo ? 14px : 6px) + 8px;
+                        height: altezza-puntini;
+                        accessible-role: button;
+                        accessible-label: "Layout " + nome;
+                        accessible-action-default => { scegli(i); }
+
+                        Rectangle {
+                            width: attivo ? 14px : 6px;
+                            height: 6px;
+                            border-radius: 3px;
+                            background: attivo ? Tema.testo : Tema.puntino;
+                        }
+
+                        TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                da-tastiera = false;
+                                scegli(i);
+                            }
+                        }
+                    }
+                }
+
+                if da-tastiera && zona == "contenuto": Rectangle {
+                    x: -4px;
+                    y: 0px;
+                    width: parent.width + 8px;
+                    height: parent.height;
+                    border-radius: self.height / 2;
+                    border-width: 2px;
+                    border-color: Tema.anello;
+                }
+            }
+        }
+
+        // Dock centrato: solo le app del registro, solo icone (il nome nel suggerimento).
         HorizontalLayout {
             x: 0;
             width: parent.width;
-            y: root.height - altezza-dock - 16px;
+            y: dock-y;
             height: altezza-dock;
             alignment: center;
 
@@ -331,43 +614,18 @@ export component Pannello inherits Window {
                 HorizontalLayout {
                     padding-left: 6px;
                     padding-right: 6px;
-                    padding-top: 4px;
-                    padding-bottom: 4px;
+                    padding-top: 3px;
+                    padding-bottom: 3px;
                     spacing: 4px;
 
-                    for scheda[i] in [
-                        { icona: Icone.orologio, nome: "Orologio" },
-                        { icona: Icone.quadranti, nome: "Quadranti" },
-                        { icona: Icone.colori, nome: "Colori" },
-                        { icona: Icone.tutte, nome: "Tutte le app" },
-                    ]: Scheda {
-                        icona: scheda.icona;
-                        nome: scheda.nome;
-                        attiva: vista == "" && layout == i;
-                        scelta => {
-                            root.layout = i;
-                            root.vista = "";
-                            root.scegli-layout(i);
-                        }
-                    }
-
-                    Rectangle {
-                        width: 9px;
-
-                        Rectangle {
-                            width: 1px;
-                            height: 16px;
-                            background: rgba(255, 255, 255, 0.10);
-                        }
-                    }
-
-                    for voce in app: Scheda {
+                    for voce[i] in app: Scheda {
                         icona: voce.icona;
                         nome: voce.nome;
                         attiva: vista == voce.id;
+                        anello: da-tastiera && zona == "dock" && fuoco-dock == i;
                         scelta => {
-                            root.vista = voce.id;
-                            root.apri-app(voce.id);
+                            da-tastiera = false;
+                            apri(i, voce.id);
                         }
                     }
                 }

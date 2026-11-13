@@ -6,7 +6,7 @@
 //! la sua finestra né i suoi buffer né animazioni in sospeso, e la pillola torna al suo peso.
 //! I dati della casa e l'umore arrivano dal `Ponte`, che il pannello riprende a ogni apertura.
 
-use crate::layout::Layout;
+use crate::layout::{self, Layout};
 use crate::registro::app_disponibili;
 use crate::pc_stats::{formatta_byte, formatta_velocita, Campionatore, StatPc};
 use crate::ponte::Ponte;
@@ -32,7 +32,7 @@ pub struct Apertura {
     pillola: slint::Weak<Pillola>,
     ponte: Rc<Ponte>,
     pannello: RefCell<Option<Pannello>>,
-    /// Layout scelto (indice del dock), ricordato tra un'apertura e l'altra.
+    /// Layout della Panoramica (indice del puntino), ricordato tra un'apertura e l'altra.
     layout: Cell<i32>,
     /// Vero dalla fine dell'apertura: solo da lì una perdita del fuoco (clic fuori) chiude.
     /// Durante l'apertura il fuoco passa di mano da solo (la pillola appena cliccata si
@@ -53,6 +53,7 @@ pub struct Apertura {
 /// L'icona SVG di un'app del registro (bianca: il colore lo dà l'interfaccia).
 pub fn icona(nome: &str) -> Image {
     let svg: &[u8] = match nome {
+        "panoramica" => include_bytes!("../assets/icone/panoramica.svg"),
         "casa" => include_bytes!("../assets/icone/casa.svg"),
         "pc" => include_bytes!("../assets/icone/pc.svg"),
         "impostazioni" => include_bytes!("../assets/icone/impostazioni.svg"),
@@ -192,6 +193,7 @@ impl Apertura {
     fn crea(&self) -> Result<Pannello, slint::PlatformError> {
         let pannello = Pannello::new()?;
         debug_assert_eq!(pannello.get_larghezza_pannello(), finestre::LARGHEZZA_PANNELLO);
+        debug_assert_eq!(pannello.get_numero_layout() as usize, layout::TUTTI.len());
         pannello.set_app(voci_app());
         pannello.set_layout(self.layout.get());
         self.ponte.riempi(&pannello);
@@ -201,12 +203,20 @@ impl Apertura {
         let a = self.io.clone();
         pannello.on_scegli_layout(move |i| {
             if let Some(a) = a.upgrade() {
-                a.layout.set(i);
-                scelte::salva_layout(a.ponte.casa(), Layout::da_indice(i));
+                a.scegli_layout(Layout::da_indice(i));
             }
         });
+        let a = self.io.clone();
+        let debole = pannello.as_weak();
+        pannello.on_scorri_layout(move |passo| {
+            let (Some(a), Some(p)) = (a.upgrade(), debole.upgrade()) else { return };
+            let ora = Layout::da_indice(p.get_layout());
+            let nuovo = if passo < 0 { ora.precedente() } else { ora.successivo() };
+            p.set_layout(nuovo.indice());
+            a.scegli_layout(nuovo);
+        });
         // La vista la cambia già l'interfaccia; Casa e PC hanno già i loro dati, le Impostazioni
-        // arrivano col Task 9.
+        // arrivano col Task 11.
         pannello.on_apri_app(|_| {});
 
         let a = self.io.clone();
@@ -219,6 +229,12 @@ impl Apertura {
             EventResult::Propagate
         });
         Ok(pannello)
+    }
+
+    /// Il layout scelto: lo si ricorda per la prossima apertura e lo si salva.
+    fn scegli_layout(&self, l: Layout) {
+        self.layout.set(l.indice());
+        scelte::salva_layout(self.ponte.casa(), l);
     }
 
     pub fn apri(&self) {

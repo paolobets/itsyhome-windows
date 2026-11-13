@@ -1,8 +1,9 @@
-// Layout Quadranti: CPU, RAM e disco del PC e, al quarto posto, il primo sensore fra i preferiti
-// della casa. Senza dati l'arco è solo la traccia spenta e il valore è "—": nessun numero inventato.
+// Layout Quadranti della Panoramica: CPU, RAM e disco del PC e fino a 3 sensori fra i preferiti
+// della casa (senza sensori, un quadrante CASA con lo stato). Solo sintesi, nessun comando.
+// Senza dati l'arco è solo la traccia spenta e il valore è "—": nessun numero inventato.
 import { Tema } from "../tema.slint";
 import { Icone, Icona, Vetro } from "../icone.slint";
-import { StatPcUi, PreferitoUi } from "../voci.slint";
+import { StatPcUi, SensoreUi } from "../voci.slint";
 
 component Quadrante inherits Vetro {
     in property <string> etichetta;
@@ -13,7 +14,8 @@ component Quadrante inherits Vetro {
     // Frazione 0..1 dell'arco acceso; negativa = nessun dato (solo la traccia).
     in property <float> frazione: -1;
 
-    // Arco di 270° aperto in basso (raggio 44, centro 55,55): parte da 135° e gira in senso orario.
+    // Arco di 270° aperto in basso (raggio 44, centro 55,55 nel riquadro 110 × 110, disegnato a
+    // 96 px): parte da 135° e gira in senso orario.
     property <angle> fine: 135deg + 270deg * min(frazione, 1);
     property <bool> acceso: frazione >= 0.01;
 
@@ -24,30 +26,29 @@ component Quadrante inherits Vetro {
         padding-right: 8px;
 
         Rectangle {
-            height: 110px;
+            height: 96px;
 
-            // Arco di 270° aperto in basso (raggio 44, tratto 9), come nella bozza.
             Path {
-                x: (parent.width - 110px) / 2;
-                width: 110px;
-                height: 110px;
+                x: (parent.width - 96px) / 2;
+                width: 96px;
+                height: 96px;
                 viewbox-width: 110;
                 viewbox-height: 110;
                 commands: "M 23.89 86.11 A 44 44 0 1 1 86.11 86.11";
                 stroke: Tema.traccia;
-                stroke-width: 9px;
+                stroke-width: 8px;
                 stroke-line-cap: round;
             }
 
             if acceso: Path {
-                x: (parent.width - 110px) / 2;
-                width: 110px;
-                height: 110px;
+                x: (parent.width - 96px) / 2;
+                width: 96px;
+                height: 96px;
                 viewbox-width: 110;
                 viewbox-height: 110;
                 commands: "M 23.89 86.11 A 44 44 0 " + (frazione > 0.6667 ? 1 : 0) + " 1 " + (55 + 44 * cos(fine)) + " " + (55 + 44 * sin(fine));
                 stroke: frazione > 0.85 ? Tema.caldo-2 : Tema.petalo-2;
-                stroke-width: 9px;
+                stroke-width: 8px;
                 stroke-line-cap: round;
             }
 
@@ -56,7 +57,7 @@ component Quadrante inherits Vetro {
                 horizontal-alignment: center;
                 vertical-alignment: center;
                 font-weight: 500;
-                font-size: 22px;
+                font-size: 20px;
                 color: Tema.testo;
             }
         }
@@ -96,15 +97,19 @@ component Quadrante inherits Vetro {
 
 export component LayoutQuadranti inherits Rectangle {
     in property <StatPcUi> stat;
-    in property <bool> ha-sensore;
-    in property <PreferitoUi> sensore;
-    in property <float> sensore-frazione: -1;
+    in property <[SensoreUi]> sensori;
     in property <string> stato-casa;
-    // Quattro card uguali, qualunque sia la lunghezza dei valori.
-    property <length> lato: (self.width - 3 * 10px) / 4;
+    // Casa connessa coi dati: altrimenti i valori dei sensori sono vecchi e si mostrano tenui.
+    in property <bool> casa-pronta;
+
+    property <int> quanti: 3 + max(1, sensori.length);
+    property <length> spazio: 10px;
+    // Card uguali, qualunque sia la lunghezza dei valori; con poche card non diventano enormi.
+    property <length> lato: min(170px, (self.width - (quanti - 1) * spazio) / quanti);
 
     HorizontalLayout {
-        spacing: 10px;
+        alignment: center;
+        spacing: spazio;
 
         Quadrante {
             width: root.lato;
@@ -118,7 +123,7 @@ export component LayoutQuadranti inherits Rectangle {
             width: root.lato;
             etichetta: "RAM";
             icona: Icone.pc;
-            valore: stat.ram-testo;
+            valore: stat.ram-testo != "" ? stat.ram-testo : "—";
             frazione: stat.ram-testo != "" ? stat.ram : -1;
         }
 
@@ -126,17 +131,25 @@ export component LayoutQuadranti inherits Rectangle {
             width: root.lato;
             etichetta: "DISCO";
             icona: Icone.pc;
-            valore: stat.disco-testo;
+            valore: stat.disco-testo != "" ? stat.disco-testo : "—";
             frazione: stat.disco-testo != "" ? stat.disco : -1;
         }
 
-        Quadrante {
+        for s in sensori: Quadrante {
+            width: root.lato;
+            opacity: casa-pronta ? 1 : 0.55;
+            etichetta: "CASA";
+            icona: Icone.di-genere(s.voce.genere);
+            valore: s.voce.stato;
+            frazione: s.frazione;
+            dettaglio: s.voce.nome;
+        }
+
+        if sensori.length == 0: Quadrante {
             width: root.lato;
             etichetta: "CASA";
-            icona: ha-sensore ? Icone.di-genere(sensore.genere) : Icone.casa;
-            valore: ha-sensore ? sensore.stato : "—";
-            frazione: ha-sensore ? sensore-frazione : -1;
-            dettaglio: ha-sensore ? sensore.nome : stato-casa;
+            icona: Icone.casa;
+            dettaglio: stato-casa;
         }
     }
 }

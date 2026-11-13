@@ -1,32 +1,69 @@
-// Layout Orologio: l'ora grande, poi la data e una riga di stato della casa (come nella bozza:
-// "Venerdì 13 novembre · 2 luci accese · 21.5 °C").
+// Layout Orologio della Panoramica (bozza bozza-in-attesa.html): a sinistra l'ora grande e la
+// data, a destra una riga di stato per app (Casa, PC). Solo sintesi, nessun comando.
 import { Tema } from "../tema.slint";
+import { StatPcUi } from "../voci.slint";
 
 export component LayoutOrologio inherits Rectangle {
     in property <string> ora;
     in property <string> data;
-    in property <string> stato;
+    // Riga della casa (vedi `ponte::riga_stato`) e se la casa è connessa coi dati.
+    in property <string> stato-casa;
+    in property <bool> casa-pronta;
+    in property <StatPcUi> pc;
 
-    VerticalLayout {
+    // Con la casa connessa la riga dice solo i fatti ("2 luci accese · 21.5 °C"): le si mette
+    // davanti il nome; gli altri stati ("Casa non connessa", …) lo contengono già.
+    property <string> riga-casa: casa-pronta ? "Casa · " + stato-casa : stato-casa;
+    property <string> riga-pc: "PC · CPU " + (pc.pronta ? pc.cpu-testo : "—")
+        + " · RAM " + (pc.ram-testo != "" ? pc.ram-testo : "—");
+
+    HorizontalLayout {
         alignment: center;
-        spacing: 6px;
-        padding-bottom: 24px;
+        spacing: 40px;
 
-        Text {
-            text: ora;
-            horizontal-alignment: center;
-            font-family: Tema.carattere;
-            font-weight: 500;
-            font-size: 88px;
-            letter-spacing: -2.5px;
-            color: @linear-gradient(90deg, #e9d5ff 0%, #a5b4fc 50%, #67e8f9 100%);
+        VerticalLayout {
+            alignment: center;
+            spacing: 0px;
+
+            Text {
+                text: ora;
+                font-family: Tema.carattere;
+                font-weight: 500;
+                font-size: 68px;
+                letter-spacing: -1.5px;
+                color: @linear-gradient(90deg, #e9d5ff 0%, #a5b4fc 50%, #67e8f9 100%);
+            }
+
+            Text {
+                text: data;
+                font-size: 13px;
+                color: Tema.testo-tenue;
+            }
         }
 
-        Text {
-            text: stato == "" ? data : data + " · " + stato;
-            horizontal-alignment: center;
-            font-size: 13px;
-            color: Tema.testo-tenue;
+        VerticalLayout {
+            alignment: center;
+            spacing: 8px;
+
+            Text {
+                // Senza larghezza preferita: una riga lunga si accorcia invece di spingere l'ora.
+                preferred-width: 0px;
+                min-width: 220px;
+                max-width: 340px;
+                text: riga-casa;
+                overflow: elide;
+                font-size: 13px;
+                color: Tema.testo-ora;
+            }
+
+            Text {
+                min-width: 220px;
+                max-width: 340px;
+                text: riga-pc;
+                overflow: elide;
+                font-size: 13px;
+                color: Tema.testo-ora;
+            }
         }
     }
 }

@@ -211,7 +211,7 @@ fn prepara(cartella: &str, porta: u16, con_preferiti: bool) -> Result<(), String
         }],
         active_env_id: Some(AMBIENTE.into()),
         favorites: if con_preferiti {
-            ["light.soggiorno", "light.cucina", "switch.presa", "sensor.temperatura", "light.giardino", "switch.guasto"]
+            ["light.soggiorno", "light.cucina", "switch.presa", "sensor.temperatura", "scene.cinema", "light.giardino", "switch.guasto"]
                 .map(String::from)
                 .to_vec()
         } else {

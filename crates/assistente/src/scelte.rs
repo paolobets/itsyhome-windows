@@ -42,14 +42,24 @@ mod test {
         store.salva(&c).unwrap();
 
         let casa = servizio(dir.path());
-        salva_layout(&casa, Layout::Colori);
-        assert_eq!(layout_salvato(&casa), Layout::Colori);
+        salva_layout(&casa, Layout::Quadranti);
+        assert_eq!(layout_salvato(&casa), Layout::Quadranti);
         // Il salvataggio avviene sul thread del servizio: chiuderlo lo porta a termine.
         drop(casa);
         let dopo = store.leggi();
         assert_eq!(dopo.favorites, ["light.cucina"]);
         assert!(dopo.launch_at_login);
-        assert_eq!(dopo.ultimo_layout, "colori");
-        assert_eq!(layout_salvato(&servizio(dir.path())), Layout::Colori);
+        assert_eq!(dopo.ultimo_layout, "quadranti");
+        assert_eq!(layout_salvato(&servizio(dir.path())), Layout::Quadranti);
+    }
+
+    #[test]
+    fn layout_tolto_salvato_si_riapre_sull_orologio() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ConfigStore::apri(dir.path());
+        let mut c = store.leggi();
+        c.ultimo_layout = "colori".into();
+        store.salva(&c).unwrap();
+        assert_eq!(layout_salvato(&servizio(dir.path())), Layout::Orologio);
     }
 }

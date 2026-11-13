@@ -1,6 +1,7 @@
 // Vista Casa (M1): i preferiti in una griglia di card. Un tocco accende/spegne luci e
 // interruttori e attiva le scene; i sensori si leggono soltanto. Il colore compare solo sui
-// dispositivi accesi; quelli non disponibili restano tenui e non rispondono al tocco.
+// dispositivi accesi; quelli non disponibili (o tutti, a casa non connessa) restano tenui e non
+// rispondono al tocco. Da tastiera: frecce fra le card, Invio o Spazio = tocco (in pannello.slint).
 import { Tema } from "../tema.slint";
 import { Icone, Icona } from "../icone.slint";
 import { PreferitoUi } from "../voci.slint";
@@ -8,6 +9,8 @@ import { PreferitoUi } from "../voci.slint";
 // Una card dispositivo: icona in alto, nome e stato in basso.
 export component Dispositivo inherits Rectangle {
     in property <PreferitoUi> voce;
+    // Fuoco da tastiera su questa card: anello visibile.
+    in property <bool> anello;
     callback tocca();
 
     property <bool> luce: voce.genere == "luce";
@@ -24,17 +27,18 @@ export component Dispositivo inherits Rectangle {
         : luce
             ? @linear-gradient(160deg, rgba(253, 230, 138, 0.28) 0%, rgba(251, 191, 36, 0.10) 100%)
             : @linear-gradient(160deg, rgba(94, 234, 212, 0.24) 0%, rgba(45, 212, 191, 0.08) 100%);
-    opacity: voce.disponibile ? 1 : 0.55;
+    opacity: voce.tenue ? 0.55 : 1;
     accessible-role: button;
     accessible-enabled: voce.toccabile;
     accessible-label: voce.nome + ", " + voce.stato;
     accessible-action-default => { if (voce.toccabile) { root.tocca(); } }
 
+    // Card alte ~69 px: icona e nome non devono toccarsi.
     Icona {
         x: 11px;
-        y: 10px;
-        width: 24px;
-        height: 24px;
+        y: 8px;
+        width: 22px;
+        height: 22px;
         source: Icone.di-genere(voce.genere);
         colorize: !voce.disponibile ? Tema.icona-spenta
             : voce.acceso ? (luce ? Tema.luce-accesa : Tema.presa-accesa)
@@ -67,16 +71,28 @@ export component Dispositivo inherits Rectangle {
         mouse-cursor: voce.toccabile ? pointer : default;
         clicked => { root.tocca(); }
     }
+
+    if anello: Rectangle {
+        x: -4px;
+        y: -4px;
+        width: parent.width + 8px;
+        height: parent.height + 8px;
+        border-radius: parent.border-radius + 4px;
+        border-width: 2px;
+        border-color: Tema.anello;
+    }
 }
 
 export component VistaCasa inherits Rectangle {
     in property <[PreferitoUi]> preferiti;
     in property <string> stato-casa;
     in property <bool> casa-pronta;
+    // Card col fuoco da tastiera (-1 = nessuna).
+    in property <int> fuoco: -1;
     callback tocca(string);
 
     // Pannello largo e basso: 4 colonne, così gli 8 preferiti stanno in due righe.
-    property <int> colonne: 4;
+    in property <int> colonne: 4;
     property <length> spazio: 8px;
     property <length> lato: (self.width - (colonne - 1) * spazio) / colonne;
     property <length> testata: 26px;
@@ -114,6 +130,7 @@ export component VistaCasa inherits Rectangle {
         width: lato;
         height: alto-card;
         voce: voce;
+        anello: i == root.fuoco;
         tocca => { root.tocca(voce.entity-id); }
     }
 
