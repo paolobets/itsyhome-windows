@@ -261,7 +261,7 @@ impl EntityMapper {
             let ordered = Self::ordered_entities("", no_area_list, device_order);
             rooms.push(Room {
                 area_id: String::new(),
-                name: "Other".to_owned(),
+                name: "Altro".to_owned(),
                 entities: ordered,
             });
         }
@@ -661,6 +661,18 @@ mod tests {
         let menu = mappa(&stati, &aree, &voci, None, &[], &[], &["sala", "cucina"]);
         assert_eq!(menu.rooms[0].area_id, "sala");
         assert_eq!(menu.rooms[1].area_id, "cucina");
+    }
+
+    #[test]
+    fn entita_senza_area_nella_stanza_altro() {
+        let stati = [stato("light.a"), stato("light.b")];
+        let aree = [area("sala", "Sala")];
+        let voci = [voce("light.a", Some("sala")), voce("light.b", None)];
+        let menu = mappa(&stati, &aree, &voci, None, &[], &[], &[]);
+        let ultima = menu.rooms.last().unwrap();
+        assert_eq!(ultima.area_id, "");
+        assert_eq!(ultima.name, "Altro");
+        assert_eq!(ids(&ultima.entities), vec!["light.b"]);
     }
 
     #[test]
