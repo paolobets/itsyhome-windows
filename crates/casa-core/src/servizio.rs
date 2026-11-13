@@ -54,6 +54,9 @@ impl CasaService {
         ascolta: Ascoltatore,
         ritardi: Vec<Duration>,
     ) -> CasaService {
+        // Unico provider di rustls, esplicito: se un'altra dipendenza attivasse aws-lc-rs
+        // la scelta automatica fallirebbe e wss:// tornerebbe ad andare in panico.
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let config = Arc::new(Mutex::new(store.leggi()));
         let (tx, rx) = mpsc::unbounded_channel();
         let motore = Motore::new(store, segreti, ascolta, config.clone(), ritardi);
@@ -112,6 +115,9 @@ impl CasaService {
         let mut config = blocca(&self.config);
         let prima = config.clone();
         f(&mut config);
+        if *config == prima {
+            return;
+        }
         let rimappa = prima.favorites != config.favorites
             || prima.hidden_entities != config.hidden_entities
             || prima.room_order != config.room_order
@@ -258,13 +264,21 @@ impl Motore {
                 tokio::spawn(async move { fatto(client::prova_connessione(&url, &token).await) });
             }
             Comando::Salva { config, rimappa } => {
-                // L'API non restituisce errori: la modifica resta comunque in memoria.
-                let _ = self.store.salva(&config);
+                self.salva(&config);
                 if rimappa {
                     self.pubblica();
                 }
             }
             Comando::Ferma => {}
+        }
+    }
+
+    /// Un errore di scrittura non annulla la modifica in memoria: lo si segnala.
+    fn salva(&self, config: &Config) {
+        if let Err(e) = self.store.salva(config) {
+            self.emetti(CasaEvento::ConfigNonSalvata(format!(
+                "impossibile salvare la configurazione: {e}"
+            )));
         }
     }
 
@@ -279,6 +293,17 @@ impl Motore {
             self.emetti(CasaEvento::Stato(StatoConnessione::Errore("ambiente non trovato".into())));
             return;
         };
+        // L'ambiente scelto diventa quello attivo e sopravvive al riavvio.
+        let da_salvare = {
+            let mut c = blocca(&self.config);
+            (c.active_env_id.as_deref() != Some(env_id)).then(|| {
+                c.active_env_id = Some(env_id.to_owned());
+                c.clone()
+            })
+        };
+        if let Some(c) = da_salvare {
+            self.salva(&c);
+        }
         let token = match self.segreti.leggi(env_id) {
             Ok(Some(t)) if !t.is_empty() => t,
             Ok(_) => {

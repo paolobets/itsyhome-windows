@@ -17,6 +17,8 @@ pub enum CasaEvento {
     Dati(Arc<MenuData>),
     Notifica { titolo: String, messaggio: String },
     Esito { entity_id: String, ok: bool, errore: Option<String> },
+    /// La configurazione non è stata scritta su disco (resta valida in memoria).
+    ConfigNonSalvata(String),
 }
 
 /// Callback dell'applicazione: viene chiamata dal thread del servizio.

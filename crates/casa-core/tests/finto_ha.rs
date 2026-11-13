@@ -152,17 +152,24 @@ struct Prova {
 }
 
 fn prepara(url: &str, token: Option<&str>) -> Prova {
-    let dir = tempfile::tempdir().unwrap();
-    let store = Arc::new(ConfigStore::apri(dir.path()));
     let config = Config {
         environments: vec![HaEnvironment { id: "casa".into(), name: "Casa".into(), ha_url: url.into() }],
         active_env_id: Some("casa".into()),
         ..Config::default()
     };
-    store.salva(&config).unwrap();
+    let token: Vec<(&str, &str)> = token.map(|t| ("casa", t)).into_iter().collect();
+    prepara_con(tempfile::tempdir().unwrap(), Some(config), &token)
+}
+
+/// `config: None` lascia la cartella com'è (per preparare file illeggibili/non scrivibili).
+fn prepara_con(dir: tempfile::TempDir, config: Option<Config>, token: &[(&str, &str)]) -> Prova {
+    let store = Arc::new(ConfigStore::apri(dir.path()));
+    if let Some(config) = config {
+        store.salva(&config).unwrap();
+    }
     let segreti = Arc::new(MemoriaSegreti::new());
-    if let Some(t) = token {
-        segreti.salva("casa", t).unwrap();
+    for (env, t) in token {
+        segreti.salva(env, t).unwrap();
     }
     let (tx, eventi) = mpsc::unbounded_channel();
     let servizio = CasaService::avvia_con_ritardi(
@@ -402,4 +409,49 @@ async fn prova_connessione_conta_le_entita() {
     let r = timeout(Duration::from_secs(5), rx.recv()).await.unwrap().unwrap();
     assert!(!r.ok);
     assert_eq!(r.error.as_deref(), Some("token non valido"));
+}
+
+#[tokio::test]
+async fn config_non_salvata_arriva_come_evento() {
+    // al posto del file c'è una cartella: la scrittura (tmp + rename) fallisce
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("assistente.json")).unwrap();
+    let mut p = prepara_con(dir, None, &[]);
+
+    p.servizio.aggiorna_config(|c| c.ultimo_layout = "compatto".into());
+    match prossimo(&mut p).await {
+        CasaEvento::ConfigNonSalvata(msg) => assert!(msg.starts_with("impossibile salvare la configurazione")),
+        altro => panic!("atteso ConfigNonSalvata, arrivato {altro:?}"),
+    }
+    // la modifica resta in memoria
+    assert_eq!(p.servizio.config().ultimo_layout, "compatto");
+
+    // nessuna modifica: nessuna scrittura, nessun evento
+    p.servizio.aggiorna_config(|c| c.ultimo_layout = "compatto".into());
+    sleep(Duration::from_millis(300)).await;
+    assert!(p.eventi.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn connetti_rende_attivo_l_ambiente_e_lo_salva() {
+    let ha = FintoHa::avvia().await;
+    let env = |id: &str| HaEnvironment { id: id.into(), name: id.into(), ha_url: ha.url.clone() };
+    let config = Config {
+        environments: vec![env("casa"), env("env2")],
+        active_env_id: Some("casa".into()),
+        ..Config::default()
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let percorso = dir.path().to_path_buf();
+    let mut p = prepara_con(dir, Some(config), &[("casa", TOKEN), ("env2", TOKEN)]);
+
+    p.servizio.connetti("env2");
+    loop {
+        if stato_di(&prossimo(&mut p).await) == Some(&StatoConnessione::Connesso) {
+            break;
+        }
+    }
+    assert_eq!(p.servizio.config().active_env_id.as_deref(), Some("env2"));
+    let su_disco = ConfigStore::apri(&percorso).leggi();
+    assert_eq!(su_disco.active_env_id.as_deref(), Some("env2"));
 }

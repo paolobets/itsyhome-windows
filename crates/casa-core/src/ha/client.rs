@@ -213,7 +213,8 @@ async fn sessione(
                 }
             }
             _ = sleep_until(scadenza.unwrap_or(scadenza_apertura)), if scadenza.is_some() => {
-                let _ = scrivi.close().await;
+                // Il server non risponde: non si aspetta oltre nemmeno la chiusura.
+                let _ = timeout(Duration::from_secs(1), scrivi.close()).await;
                 break 'sessione Fine::Errore("Home Assistant non risponde".into());
             }
         }
