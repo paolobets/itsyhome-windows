@@ -74,7 +74,9 @@ export component Pannello inherits Window {
     callback chiudi();
 
     // Geometria (logica). La riga alta è alta quanto la pillola, così gli occhi cadono dove
-    // stavano i suoi (vedi `posizione_pannello` in finestre.rs).
+    // stavano i suoi (vedi `posizione_pannello` in finestre.rs). Pannello 800 × 300: zona
+    // centrale larga e bassa (764 × 180).
+    out property <length> larghezza-pannello: 800px;
     property <length> margine: 18px;
     property <length> altezza-riga: 48px;
     property <length> altezza-dock: 36px;
@@ -94,8 +96,8 @@ export component Pannello inherits Window {
     background: transparent;
     title: "ItsyHome — pannello";
     default-font-family: Tema.carattere;
-    width: 560px;
-    height: 440px;
+    width: larghezza-pannello;
+    height: 300px;
     forward-focus: tasti;
 
     tasti := FocusScope {

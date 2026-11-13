@@ -12,8 +12,8 @@ sysinfo = { version = "0.38", default-features = false, features = ["system", "d
 starship-battery = "0.12"
 
 [target.'cfg(windows)'.dependencies]
-# Stessa versione usata da winit 0.30 (HMONITOR = isize): serve solo per l'area di lavoro del monitor.
-windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Graphics_Gdi"] }
+# Stessa versione usata da winit 0.30 (HMONITOR = isize): area di lavoro del monitor, ritaglio e procedura della pillola.
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 tempfile = "3"

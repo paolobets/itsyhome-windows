@@ -191,6 +191,7 @@ impl Apertura {
     /// Crea il pannello e ne collega i callback.
     fn crea(&self) -> Result<Pannello, slint::PlatformError> {
         let pannello = Pannello::new()?;
+        debug_assert_eq!(pannello.get_larghezza_pannello(), finestre::LARGHEZZA_PANNELLO);
         pannello.set_app(voci_app());
         pannello.set_layout(self.layout.get());
         self.ponte.riempi(&pannello);

@@ -14,6 +14,8 @@ component Tessera inherits Vetro {
     property <bool> acceso: presente && voce.acceso;
     property <bool> luce: voce.genere == "luce";
     property <bool> toccabile: presente && voce.toccabile;
+    // Tessera bassa (pannello 800 × 300): l'icona va in alto a destra, così non tocca il valore.
+    property <bool> bassa: self.height < 110px;
 
     border-radius: 20px;
     border-color: acceso ? rgba(255, 255, 255, 0.14) : Tema.vetro-bordo;
@@ -37,7 +39,7 @@ component Tessera inherits Vetro {
     }
 
     Icona {
-        x: 14px;
+        x: bassa ? parent.width - 14px - lato-icona : 14px;
         y: 14px;
         source: presente ? Icone.di-genere(voce.genere) : Icone.casa;
         width: lato-icona;
@@ -49,7 +51,7 @@ component Tessera inherits Vetro {
     Text {
         x: 14px;
         y: parent.height - 14px - 16px - 2px - self.height;
-        width: parent.width - 28px;
+        width: parent.width - 28px - (bassa ? lato-icona + 8px : 0px);
         // Le tessere piccole sono strette: un comando fallito si dice con una parola sola.
         text: !presente ? "—" : voce.errore != "" ? "Errore" : voce.stato;
         overflow: elide;

@@ -19,7 +19,7 @@ component Riga inherits Rectangle {
         y: 7px;
         text: etichetta;
         font-family: Tema.carattere-mono;
-        font-size: 11px;
+        font-size: 12px;
         letter-spacing: 0.6px;
         color: Tema.testo-etichetta;
     }
@@ -28,7 +28,7 @@ component Riga inherits Rectangle {
         x: 14px;
         y: 24px;
         text: dettaglio;
-        font-size: 11px;
+        font-size: 12px;
         color: Tema.testo-tenue;
     }
 
@@ -63,44 +63,53 @@ component Riga inherits Rectangle {
 export component VistaPc inherits Rectangle {
     in property <StatPcUi> stat;
 
+    // Pannello basso: le righe stanno su due colonne (PC a sinistra, rete e batteria a destra).
     Vetro {
-        VerticalLayout {
+        HorizontalLayout {
             padding-top: 8px;
             padding-bottom: 8px;
-            alignment: center;
+            spacing: 8px;
 
-            Riga {
-                etichetta: "CPU";
-                valore: stat.cpu-testo;
-                frazione: stat.pronta ? stat.cpu : 0;
+            VerticalLayout {
+                alignment: start;
+
+                Riga {
+                    etichetta: "CPU";
+                    valore: stat.cpu-testo;
+                    frazione: stat.pronta ? stat.cpu : 0;
+                }
+
+                Riga {
+                    etichetta: "RAM";
+                    valore: stat.ram-testo;
+                    dettaglio: stat.ram-dettaglio;
+                    frazione: stat.ram;
+                }
+
+                Riga {
+                    etichetta: "DISCO";
+                    valore: stat.disco-testo;
+                    dettaglio: stat.disco-dettaglio;
+                    frazione: stat.disco;
+                }
             }
 
-            Riga {
-                etichetta: "RAM";
-                valore: stat.ram-testo;
-                dettaglio: stat.ram-dettaglio;
-                frazione: stat.ram;
-            }
+            VerticalLayout {
+                alignment: start;
 
-            Riga {
-                etichetta: "DISCO";
-                valore: stat.disco-testo;
-                dettaglio: stat.disco-dettaglio;
-                frazione: stat.disco;
-            }
+                Riga {
+                    etichetta: "RETE";
+                    valore: "↓ " + stat.rete-giu;
+                    dettaglio: "↑ " + stat.rete-su;
+                }
 
-            Riga {
-                etichetta: "RETE";
-                valore: "↓ " + stat.rete-giu;
-                dettaglio: "↑ " + stat.rete-su;
-            }
-
-            if stat.ha-batteria: Riga {
-                etichetta: "BATTERIA";
-                valore: stat.batteria-testo;
-                dettaglio: stat.in-carica ? "In carica" : "A batteria";
-                frazione: stat.batteria-frazione;
-                invertita: true;
+                if stat.ha-batteria: Riga {
+                    etichetta: "BATTERIA";
+                    valore: stat.batteria-testo;
+                    dettaglio: stat.in-carica ? "In carica" : "A batteria";
+                    frazione: stat.batteria-frazione;
+                    invertita: true;
+                }
             }
         }
     }

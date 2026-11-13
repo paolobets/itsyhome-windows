@@ -58,7 +58,7 @@ export component Dispositivo inherits Rectangle {
         width: parent.width - 22px;
         text: voce.stato;
         overflow: elide;
-        font-size: 11.5px;
+        font-size: 12px;
         color: voce.errore != "" ? Tema.caldo-2 : Tema.testo-tenue;
     }
 
@@ -75,11 +75,12 @@ export component VistaCasa inherits Rectangle {
     in property <bool> casa-pronta;
     callback tocca(string);
 
-    property <int> colonne: 3;
+    // Pannello largo e basso: 4 colonne, così gli 8 preferiti stanno in due righe.
+    property <int> colonne: 4;
     property <length> spazio: 8px;
     property <length> lato: (self.width - (colonne - 1) * spazio) / colonne;
-    property <length> alto-card: 76px;
-    property <length> testata: 30px;
+    property <length> testata: 26px;
+    property <length> alto-card: min(76px, (self.height - testata - spazio) / 2);
 
     // Testata: titolo a sinistra, stato della casa a destra.
     Text {
@@ -89,7 +90,7 @@ export component VistaCasa inherits Rectangle {
         text: "PREFERITI";
         vertical-alignment: center;
         font-family: Tema.carattere-mono;
-        font-size: 11px;
+        font-size: 12px;
         letter-spacing: 0.6px;
         color: Tema.testo-etichetta;
     }
@@ -103,7 +104,7 @@ export component VistaCasa inherits Rectangle {
         horizontal-alignment: right;
         vertical-alignment: center;
         overflow: elide;
-        font-size: 11.5px;
+        font-size: 12px;
         color: Tema.testo-tenue;
     }
 

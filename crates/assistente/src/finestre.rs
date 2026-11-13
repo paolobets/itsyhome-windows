@@ -13,8 +13,10 @@ pub struct RettangoloFisico {
     pub altezza: i32,
 }
 
-/// Distanza logica della finestra dal bordo alto dell'area di lavoro.
-pub const MARGINE_LOGICO: f32 = 8.0;
+/// Distanza logica della finestra della pillola dal bordo alto dell'area di lavoro: negativa
+/// quanto il margine dell'aura, così la finestra sporge sopra lo schermo e il bordo superiore
+/// della pillola tocca il bordo alto, come il notch di macOS (la pillola resta tutta arrotondata).
+pub const MARGINE_LOGICO: f32 = -MARGINE_AURA;
 
 /// Angolo in alto a sinistra (pixel fisici) di una finestra larga `larghezza_logica`,
 /// centrata orizzontalmente in `area` e staccata di `margine_logico` dal suo bordo alto.
@@ -39,11 +41,11 @@ pub const LARGHEZZA_FINESTRA_PILLOLA: f32 = 380.0;
 /// ingombro 30. Il pannello aperto da "ti cerca" fa partire gli occhi da qui.
 pub const SCARTO_OCCHI_ALLERTA: f32 = -145.0;
 /// Larghezza logica del pannello (`width` di pannello.slint).
-pub const LARGHEZZA_PANNELLO: f32 = 560.0;
+pub const LARGHEZZA_PANNELLO: f32 = 800.0;
 
 /// Angolo in alto a sinistra (pixel fisici) del pannello: centrato come la pillola e con il
-/// bordo alto dove sta il bordo alto della pillola, così la riga degli occhi (alta quanto la
-/// pillola) cade esattamente sugli occhi della pillola.
+/// bordo alto dove sta il bordo alto della pillola (cioè sul bordo alto dell'area di lavoro),
+/// così la riga degli occhi (alta quanto la pillola) cade esattamente sugli occhi della pillola.
 pub fn posizione_pannello(area: RettangoloFisico, scala: f32) -> (i32, i32) {
     let larghezza = (LARGHEZZA_PANNELLO * scala).round() as i32;
     let x = area.x + (area.larghezza - larghezza) / 2;
@@ -139,6 +141,7 @@ pub fn ritaglia_al_centro(finestra: &slint::Window, larghezza_logica: f32) {
         if ULTIMO.with(|u| u.replace(chiave)) == chiave {
             return;
         }
+        senza_barra_del_titolo(h.hwnd.get());
         // SAFETY: hwnd valido finché esiste la finestra winit; dopo SetWindowRgn riuscita la
         // regione appartiene al sistema, se fallisce va liberata qui.
         unsafe {
@@ -148,6 +151,49 @@ pub fn ritaglia_al_centro(finestra: &slint::Window, larghezza_logica: f32) {
             }
         }
     });
+}
+
+/// Procedura originale delle finestre winit (la stessa per tutte: è quella della classe).
+#[cfg(windows)]
+static PROCEDURA_WINIT: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+
+/// Toglie la barra del titolo "classica" che Windows disegnerebbe sopra la pillola.
+///
+/// Le finestre di winit senza cornice tengono gli stili `WS_CAPTION | WS_BORDER` e allargano
+/// l'area client a tutta la finestra. Finché la finestra non ha una regione, la cornice la
+/// disegna DWM, e non si vede. Con `SetWindowRgn` DWM smette di disegnarla e a ogni cambio di
+/// attivazione (`WM_NCACTIVATE`: clic sulla pillola, pannello che si chiude, clic altrove)
+/// `DefWindowProc` dipinge con GDI la barra del titolo classica (una striscia chiara a gradiente)
+/// sopra la pillola, che resta lì finché Slint non ridisegna quella zona. Con `lParam = -1`
+/// `DefWindowProc` aggiorna lo stato di attivazione senza ridisegnare l'area non client (vedi la
+/// documentazione di WM_NCACTIVATE); winit riceve il messaggio come prima.
+#[cfg(windows)]
+fn senza_barra_del_titolo(hwnd: isize) {
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CallWindowProcW, GetWindowLongPtrW, SetWindowLongPtrW, GWLP_WNDPROC, WM_NCACTIVATE, WNDPROC,
+    };
+    use std::sync::atomic::Ordering;
+
+    unsafe extern "system" fn procedura(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        // SAFETY: il valore è la procedura di winit letta da GetWindowLongPtrW prima di
+        // sostituirla (mai zero quando questa procedura è installata).
+        let originale: WNDPROC = unsafe { std::mem::transmute(PROCEDURA_WINIT.load(Ordering::Relaxed)) };
+        let lparam = if msg == WM_NCACTIVATE { -1 } else { lparam };
+        unsafe { CallWindowProcW(originale, hwnd, msg, wparam, lparam) }
+    }
+
+    let nostra = procedura as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT as usize as isize;
+    // SAFETY: hwnd è una finestra viva del thread dell'interfaccia; la procedura sostituita è
+    // salvata prima dell'installazione, così nessun messaggio arriva a `procedura` senza di essa.
+    unsafe {
+        let attuale = GetWindowLongPtrW(hwnd, GWLP_WNDPROC);
+        if attuale == 0 || attuale == nostra {
+            return;
+        }
+        PROCEDURA_WINIT.store(attuale, Ordering::Relaxed);
+        SetWindowLongPtrW(hwnd, GWLP_WNDPROC, nostra);
+    }
 }
 
 /// Altrove la finestra resta intera (fascia trasparente cliccabile ai lati).
@@ -190,14 +236,15 @@ mod test {
 
     #[test]
     fn centrata_su_monitor_1920_scala_1() {
-        assert_eq!(posizione_pillola(area(0, 0, 1920, 1040), 1.0, 200.0, MARGINE_LOGICO), (860, 8));
+        assert_eq!(posizione_pillola(area(0, 0, 1920, 1040), 1.0, 200.0, MARGINE_LOGICO), (860, -10));
     }
 
     #[test]
     fn centrata_con_scala_175() {
         let (x, y) = posizione_pillola(area(0, 0, 2560, 1528), 1.75, 200.0, MARGINE_LOGICO);
         assert_eq!(x, (2560 - 350) / 2);
-        assert_eq!(y, 14);
+        // -17,5 arrotondato lontano da zero: la finestra sporge di 18 px sopra lo schermo.
+        assert_eq!(y, -18);
     }
 
     #[test]
@@ -218,8 +265,9 @@ mod test {
             assert!((centro_pillola - centro_pannello).abs() <= 1.0, "x a scala {scala}: {centro_pillola} vs {centro_pannello}");
             let alto_pillola = py as f32 + MARGINE_AURA * scala;
             assert!((alto_pillola - qy as f32).abs() <= 1.0, "y a scala {scala}: {alto_pillola} vs {qy}");
-            // Il pannello resta dentro l'area di lavoro.
+            // Il pannello resta dentro l'area di lavoro, anche largo 800.
             assert!(qx >= a.x && qy >= a.y);
+            assert!(qx + (LARGHEZZA_PANNELLO * scala).round() as i32 <= a.x + a.larghezza);
         }
     }
 
@@ -247,10 +295,34 @@ mod test {
     }
 
     #[test]
+    fn pillola_e_pannello_attaccati_al_bordo_alto() {
+        // Come il notch: il bordo superiore della pillola (sotto il margine dell'aura) tocca il
+        // bordo alto dell'area di lavoro e il pannello parte da lì. Entro mezzo pixel fisico.
+        for (a, scala) in [
+            (area(0, 0, 1920, 1040), 1.0),
+            (area(0, 0, 2560, 1528), 1.75),
+            (area(-1920, 0, 1920, 1080), 1.25),
+            (area(0, 40, 1366, 728), 1.5),
+        ] {
+            let (_, py) = posizione_pillola(a, scala, LARGHEZZA_FINESTRA_PILLOLA, MARGINE_LOGICO);
+            let bordo_pillola = py as f32 + MARGINE_AURA * scala;
+            assert!((bordo_pillola - a.y as f32).abs() <= 0.5, "pillola a scala {scala}: {bordo_pillola} vs {}", a.y);
+            let (_, qy) = posizione_pannello(a, scala);
+            assert_eq!(qy, a.y, "pannello a scala {scala}");
+        }
+    }
+
+    #[test]
+    fn pannello_largo_800_centrato() {
+        assert_eq!(LARGHEZZA_PANNELLO, 800.0);
+        assert_eq!(posizione_pannello(area(0, 0, 1920, 1040), 1.0), ((1920 - 800) / 2, 0));
+    }
+
+    #[test]
     fn monitor_secondario_a_sinistra() {
         let (x, y) = posizione_pillola(area(-1920, 0, 1920, 1080), 1.0, 200.0, MARGINE_LOGICO);
         assert_eq!(x, -1920 + (1920 - 200) / 2);
         assert!(x < 0);
-        assert_eq!(y, 8);
+        assert_eq!(y, -10);
     }
 }
