@@ -1,0 +1,8 @@
+[package]
+name = "assistente"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+casa-core = { path = "../casa-core" }
+slint = { version = "=1.18.1", features = ["renderer-skia", "unstable-winit-030", "raw-window-handle-06"] }
