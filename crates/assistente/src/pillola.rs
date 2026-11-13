@@ -12,7 +12,8 @@ use slint::{ComponentHandle, Image, ModelRc, VecModel};
 use std::cell::Cell;
 use std::time::{Duration, Instant};
 
-/// L'animazione della larghezza in pillola.slint dura 220 ms: si stringe dopo, con un margine.
+/// L'animazione di larghezza e altezza in pillola.slint dura 220 ms: il ritaglio cala dopo, con
+/// un margine.
 const DOPO_ANIMAZIONE: Duration = Duration::from_millis(260);
 
 thread_local! {
@@ -104,7 +105,7 @@ fn applica_ritaglio(ui: &Pillola) {
     if LINEA.with(Cell::get) {
         finestre::ritaglia_a_linea(ui.window());
     } else {
-        finestre::ritaglia_al_centro(ui.window(), RITAGLIO.with(Cell::get));
+        finestre::ritaglia_alla_pillola(ui.window(), RITAGLIO.with(Cell::get));
     }
 }
 

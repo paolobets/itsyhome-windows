@@ -129,6 +129,9 @@ export component Pillola inherits Window {
     // verso il basso. Da Rust la finestra viene ritagliata a `larghezza-visibile` ×
     // `altezza-visibile` (una fascia trasparente ruberebbe i clic alle schede e alle barre
     // sotto); i pulsanti stanno dentro. Le stesse misure stanno in finestre.rs.
+    // VINCOLO: tutto ciò che sporge dalla pillola (velo esterno 4 + 1 px quando pulsa, bagliore
+    // dell'anello 5 px) deve stare sotto `margine-aura`: il ritaglio della finestra
+    // (`regione_pillola`) taglia di netto a un margine dalla pillola, anche in basso.
     out property <length> margine-aura: 8px;
     out property <length> larghezza-riposo: Faccia.larghezza-pillola;
     out property <length> altezza-riposo: Faccia.altezza-pillola;
@@ -197,7 +200,7 @@ export component Pillola inherits Window {
     // bagliore), accesa negli altri umori; quasi nulla mentre dorme.
     property <float> intensita-aura: dorme ? 0.12 : tranquillo ? 0 : contento ? 1.0 : allerta ? 0.7 + 0.3 * battito : 0.75;
     property <float> opacita-anello: dorme ? 0.25 : tranquillo ? 0.3 : 1.0;
-    property <length> spessore-anello: blocca ? 2.5px : 1.5px;
+    property <length> spessore-anello: blocca ? 3px : 2px;
     property <color> bagliore-occhi: blocca ? Tema.bloccante : allerta ? #fb923c : Tema.bagliore-occhio;
 
     property <bool> palpebra: false;
@@ -269,7 +272,7 @@ export component Pillola inherits Window {
             background: iride.with-alpha(0.42 * intensita-aura);
         }
 
-        // Anello: il bordo colorato (1,5 px; 2,5 px, fermo, per il bloccante).
+        // Anello: il bordo colorato (2 px; 3 px, fermo, per il bloccante), sul pixel.
         Rectangle {
             border-radius: self.height / 2;
             background: iride;
@@ -320,7 +323,12 @@ export component Pillola inherits Window {
             property <length> ingombro: 2 * (contento ? Faccia.larghezza-arco : larghezza-occhio) + spazio;
             // Distanza dal bordo sinistro della pillola a fine animazione, animata anch'essa:
             // allargandosi gli occhi scivolano a sinistra insieme al bordo, senza salti.
-            property <length> dal-bordo: allargata ? occhi-allerta-dal-bordo : (larghezza-pillola - ingombro) / 2;
+            // Allargata: il centro degli occhi è fisso (occhi-allerta-dal-bordo +
+            // mezzo-ingombro-allerta) con qualunque umore, così il pannello aperto da lì li fa
+            // partire dal punto giusto (`scarto-occhi-…`) anche se gli occhi sono più larghi.
+            property <length> dal-bordo: allargata
+                ? occhi-allerta-dal-bordo + mezzo-ingombro-allerta - ingombro / 2
+                : (larghezza-pillola - ingombro) / 2;
             animate dal-bordo { duration: 220ms; easing: ease-out; }
             x: dal-bordo + sguardo-x;
             y: sguardo-y;
@@ -376,7 +384,7 @@ export component Pillola inherits Window {
             width: self.preferred-width;
             x: parent.width - self.width - 8px;
             y: (parent.height - self.height) / 2;
-            height: 24px;
+            height: self.preferred-height;
             spacing: 4px;
             visible: allargata;
 

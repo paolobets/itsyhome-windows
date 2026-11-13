@@ -521,10 +521,12 @@ export component Pannello inherits Window {
         }
 
         // «‹ Indietro» a sinistra della riga alta, solo dentro un'app: torna alla Panoramica.
+        // Alto 28 nella riga da 32: 2 px sopra e sotto, così né lo sfondo dell'hover né l'anello
+        // del fuoco toccano il filo colorato del bordo (1,5 px) o la curva dell'angolo.
         if vista != "panoramica": Rectangle {
             x: margine - 8px;
             y: (altezza-riga - self.height) / 2;
-            height: 32px;
+            height: 28px;
             width: etichetta-indietro.preferred-width + 20px;
             border-radius: self.height / 2;
             background: area-indietro.has-hover ? Tema.scheda-sopra : transparent;
@@ -546,12 +548,10 @@ export component Pannello inherits Window {
                 }
             }
 
+            // Anello del fuoco sul contorno del pulsante (dentro, non fuori): fuori sarebbe
+            // tagliato dal bordo alto del pannello, che ha `clip`.
             if da-tastiera && zona == "indietro": Rectangle {
-                x: -4px;
-                y: -4px;
-                width: parent.width + 8px;
-                height: parent.height + 8px;
-                border-radius: parent.border-radius + 4px;
+                border-radius: parent.border-radius;
                 border-width: 2px;
                 border-color: Tema.anello;
             }

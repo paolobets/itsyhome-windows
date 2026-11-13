@@ -144,6 +144,8 @@ pub fn segui_schermo<C: ComponentHandle + 'static>(ui: &C, al_cambio: fn(&C)) {
 /// lavoro (`MARGINE_LOGICO`): quella striscia è fuori dallo schermo su un monitor solo, ma con un
 /// monitor sopra o con la barra delle applicazioni in alto disegnerebbe e prenderebbe clic lì.
 /// L'aura di sopra non si vede comunque, quindi non si perde nulla.
+/// Il taglio è netto a un margine dalla pillola: l'aura deve starci dentro (vincolo scritto
+/// accanto a `margine-aura` in pillola.slint).
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn regione_pillola(
     larghezza: i32,
@@ -175,7 +177,7 @@ pub fn regione_linea(larghezza: i32, altezza: i32, scala: f32) -> (i32, i32, i32
 /// la finestra non esiste per il mouse. Così la finestra della pillola può restare sempre grande
 /// quanto la pillola più grande senza rubare clic.
 #[cfg(windows)]
-pub fn ritaglia_al_centro(finestra: &slint::Window, (larghezza_logica, altezza_logica): (f32, f32)) {
+pub fn ritaglia_alla_pillola(finestra: &slint::Window, (larghezza_logica, altezza_logica): (f32, f32)) {
     let dimensioni = finestra.size();
     let rettangolo = regione_pillola(
         dimensioni.width as i32,
@@ -349,7 +351,7 @@ fn senza_barra_del_titolo(hwnd: isize) {
 
 /// Altrove la finestra resta intera (fascia trasparente cliccabile ai lati).
 #[cfg(not(windows))]
-pub fn ritaglia_al_centro(_finestra: &slint::Window, _visibile: (f32, f32)) {}
+pub fn ritaglia_alla_pillola(_finestra: &slint::Window, _visibile: (f32, f32)) {}
 
 #[cfg(not(windows))]
 pub fn ritaglia_a_linea(_finestra: &slint::Window) {}
