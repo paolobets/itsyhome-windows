@@ -36,3 +36,6 @@ npm-debug.log*
 
 # TypeScript incremental cache
 *.tsbuildinfo
+
+# Bozze brainstorming (visual companion)
+.superpowers/
