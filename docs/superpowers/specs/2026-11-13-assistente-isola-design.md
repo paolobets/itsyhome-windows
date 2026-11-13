@@ -41,7 +41,7 @@ Perché: un unico compagno sul desktop invece di tante app, che si fa notare sol
 Bozze approvate in `.superpowers/brainstorm/…/content/` (non versionate). Riferimento principale: `aperto-dock.html` e `isola-volto-aura.html`.
 
 **Tre momenti**
-1. **Pillola piccola** (in alto al centro dello schermo): l'isola *è* la faccia. Pillola nera, due occhi di luce, aura con i colori dei petali HIRIS che scorre lungo il bordo.
+1. **Pillola piccola** (in alto al centro dello schermo, **attaccata al bordo alto** come il notch di macOS, forma invariata): l'isola *è* la faccia. Pillola nera, due occhi di luce, aura con i colori dei petali HIRIS che scorre lungo il bordo.
 2. **Si allarga quando ti cerca** (notifica, richiesta di Claude Code, avviso casa).
 3. **Pannello aperto**.
 
@@ -49,11 +49,54 @@ Bozze approvate in `.superpowers/brainstorm/…/content/` (non versionate). Rife
 
 **Pannello aperto**
 - In alto: occhi al centro, **solo l'ora a destra**, a sinistra niente.
-- Centro: le informazioni, in **4 layout** come TwoCode: Orologio, Quadranti, Colori, Tutte le app.
-- In basso: **dock di icone centrato** dentro una capsula sottile; la scheda selezionata ha una capsula "vetro" leggera.
+- Misure: **800 × 300** logici, angoli arrotondati, attaccato al bordo alto (deciso da Paolo il 13/11 dopo tre anteprime).
+- Centro: le informazioni; per la Panoramica **2 layout** cambiabili al volo (Orologio, Quadranti) — vedi §3bis, che sostituisce i 4 layout iniziali.
+- In basso: **dock di sole icone** (solo app) centrato dentro una capsula sottile; la scheda selezionata ha una capsula "vetro" leggera.
 - Icone **leggere stile SF Symbols**, monocromatiche (`rgba(236,230,250,.62)`, tratto ~1,55); **il colore solo per lo stato** (regola 60-30-10). Niente piastrelle liquid glass.
 
 **Brand HIRIS**: colori `#c084fc #818cf8 #60a5fa #22d3ee #2dd4bf #e879f9`, fondo `#2a0a4e → #0a0015`, font Inter Tight + JetBrains Mono.
+
+## 3bis. Interfaccia: come si mostrano, si raggiungono e si usano le informazioni
+
+Decisa con Paolo il 13/11 sera, partendo dall'analisi di uno specialista UI/UX (`.superpowers/ux/analisi-architettura-informazioni.md`, riferimenti: TwoCode e gli obiettivi di §2) e dalla bozza `.superpowers/ux/bozza-in-attesa.html` (approvata). Elenco delle decisioni: `.superpowers/ux/decisioni.md`.
+
+**Tre livelli d'uso**
+1. **Pillola**: ti dice *che* qualcosa ti cerca e *chi*. Quando ti chiama si allarga con **icona della fonte + una riga + al massimo 2 pulsanti** (es. «Claude chiede: eliminare dist · Nega / Consenti»): se basta un sì/no si risolve lì.
+2. **Pannello 800 × 300**: guardare e azioni rapide. In cima, quando c'è qualcosa, la riga **«In attesa»**: le voci di tutte le app con **3 livelli uguali per tutte**: *bloccante* (rosso: aspetta te), *attenzione* (ambra: guarda presto), *informazione* (blu: quando vuoi). Clic su una voce = l'app giusta già su quella cosa; clic sulla pillola che chiama = pannello aperto su quella voce. Riga assente se vuota.
+3. **Finestra di gestione**: per lavorare a fondo: **Mail, Documenti, dettaglio Claude Code** (e, come opzione «Apri in finestra», la chat HIRIS lunga). Flusso: avviso → pannello con riassunto e azioni rapide → «Apri» → finestra; chiusa la finestra si torna alla pillola. Stesso stile dell'assistente. Questo rivede la regola iniziale: *nessuna finestra esterna per guardare e per le azioni rapide*; la finestra esiste solo per la gestione approfondita.
+
+**Pannello**
+- **Panoramica**: riga «In attesa» + layout **Orologio** o **Quadranti**, cambiabili al volo con **puntini** sotto il contenuto (clic, frecce, rotella); i puntini ci sono solo nella Panoramica. Escono i layout Colori e Tutte le app.
+- **Dock: solo app, solo icone** (Panoramica, Casa, Claude, HIRIS, PC, Mail, Documenti, Focus, Impostazioni; ognuna compare quando la sua milestone esiste).
+- **Riga alta**: occhi al centro, ora a destra; a sinistra **«‹ Indietro»** solo dentro un'app.
+- **Chat HIRIS dentro il pannello** per domande e comandi veloci.
+- Pannello **fisso a 800 × 300**: niente allungamento.
+
+**Agire senza errori**
+- Permessi di Claude: mai con Invio da solo; da tastiera **Ctrl+Invio**, fuoco iniziale su «Nega».
+- Azioni delicate (allarme, serrature): conferma sul pulsante stesso per 4 s.
+- Senza connessione a Home Assistant i preferiti diventano **tenui e non cliccabili**.
+- Le **scene** si possono mettere tra i preferiti.
+
+**Personaggio (ritocchi approvati)**
+- Aura **quasi spenta a riposo**; si accende solo quando significa qualcosa.
+- Un *bloccante* si distingue per **forma**, non solo per colore: pillola larga e ferma, bordo più spesso; un avviso normale si allarga per un po' e poi lascia un puntino.
+- In «dorme» nessun ridisegno.
+- **Modalità «ritirata»**: clic destro (o scorciatoia) → la pillola diventa una linea sottile e i clic passano alle finestre sotto; torna da sola per un *bloccante*.
+
+**Precisazioni dopo la revisione del costruttore (13/11 sera)** *(tutte scelte mie, seguendo l'indicazione di Paolo «seguiamo lo specialista»)*
+- **Comportamento della pillola per livello** = tabella §2.6 dell'analisi:
+  - *bloccante*: pillola larga **ferma** con bordo più spesso, icona + riga + fino a 2 pulsanti, resta finché non decidi; notifica di sistema sì; esce dalla «ritirata».
+  - *attenzione*: si allarga per 20 s con icona + riga, poi torna piccola lasciando un **puntino** sotto gli occhi finché la voce è in attesa; notifica di sistema sì.
+  - *informazione*: nessun allargamento; solo il **puntino**; notifica di sistema solo per le notifiche di Home Assistant (come ItsyHome v2).
+  - Umore: bloccante e attenzione = «ti cerca»; informazione non cambia umore.
+- **Fonti di M1**: notifica persistente HA = *informazione*, pulsante «Archivia» (la archivia anche in HA: azione innocua); batteria PC < 10% scollegata = *attenzione*; Home Assistant irraggiungibile da oltre 5 minuti = *attenzione*, pulsante «Riprova». Nessuna fonte di M1 produce *bloccante*: il meccanismo si costruisce e si prova con un comando di prova (`--prova-avviso <livello>`), la prova vera arriva con Claude Code.
+- **Vita di una voce «In attesa»**: sparisce quando la sua causa finisce (notifica archiviata in HA o dal pannello, batteria in carica/sopra soglia, connessione tornata). Il clic su una voce senza app di dettaglio (es. notifica HA in M1) **la espande sul posto** mostrando il testo completo e i pulsanti; nessuna vista nuova.
+- **Preferiti in M1**: la Panoramica mostra solo **sintesi** (Orologio: riga di stato; Quadranti: sensori e PC); **accendi/spegni** sta nella **vista Casa** del dock. Le scene possono stare nei preferiti (il mapper non le esclude più); l'editor dei preferiti (stella, ordinamento) è della milestone Casa.
+- **Ritirata**: si entra con clic destro sulla pillola o dal menu della tray; si esce dal menu della tray («Mostra l'isola»), con la scorciatoia globale **Ctrl+Alt+I**, o da sola per un *bloccante*. Non sopravvive al riavvio.
+- **Finestra di gestione**: processo separato con **cornice fidata disegnata in Slint** (stile dell'assistente: titolo, pulsanti) e, quando serve, un'area di **contenuto HTML ostile** (wry, JavaScript spento, navigazione bloccata). Comunicazione col processo principale su stdin/stdout con messaggi JSON (apri contenuto, chiudi, azione scelta). In M1 si costruisce e si misura con una mail di esempio; le interfacce interattive (dettaglio Claude, chat lunga HIRIS) si aggiungono nelle loro milestone sulla stessa cornice.
+
+**Leggibilità** (dall'analisi): testo ≥ 12 px, bersagli del dock 36 × 32, icone spente con contrasto ≥ 3:1, tastiera completa (Esc, frecce, Tab), movimento ridotto rispettato.
 
 ## 4. Requisito di leggerezza — numeri
 
@@ -64,8 +107,8 @@ Misurati negli spike del 13/11 (Windows, CPU media su tutti i core, RAM privata)
 | Pillola ferma | 7,3 MB, 0% CPU | ≤ 15 MB, ≤ 0,1% CPU |
 | Pillola che "pensa" (animata) | 7,4 MB, 0,7% | ≤ 1% CPU |
 | Pannello aperto, fermo | 10,8 MB | ≤ 30 MB, ~0% CPU |
-| Pannello con contenuto web aperto | ~133 MB, 7 processi | accettato **solo mentre è aperto** |
-| Dopo aver chiuso il contenuto web | 11,9 MB, 1 processo | ritorno entro +2 MB dal valore prima |
+| Finestra di gestione (motore web, processo separato) aperta | ~140 MB, 8 processi (spike «lettore») | accettato **solo mentre è aperta** |
+| Dopo aver chiuso la finestra di gestione | 7,3 MB, 1 processo (spike) | ritorno entro +2 MB dal valore prima |
 
 Regole che ne derivano:
 - **Si anima solo quando serve**; ciò che non cambia sta fermo (il rendering è software, la CPU cresce con l'area animata).
@@ -74,14 +117,13 @@ Regole che ne derivano:
 
 ## 5. Tecnologia (deciso dopo gli spike)
 
-**Modalità mista, in un unico pannello.**
+**Modalità mista: pannello Slint + finestra di gestione separata.**
 - Interfaccia in **Slint 1.x** con renderer **Skia in modalità software** (`renderer-skia`, backend `winit-skia-software`). Scelto dopo aver confrontato Tauri (122 MB, 7 processi), Slint femtovg, Slint software, Slint Skia GPU.
-- Contenuti "da web" (mail HTML; eventualmente anteprima documenti) mostrati con **wry** come **riquadro figlio dentro il pannello** (`build_as_child`), creato quando serve e **distrutto alla chiusura**. Provato: compare nel pannello, apertura 0,45–0,55 s, la memoria torna giù.
-- JavaScript disattivato e navigazione bloccata nel riquadro web (le mail sono contenuto ostile).
+- Contenuti "da web" (mail HTML, anteprima documenti) mostrati nella **finestra di gestione**: un **processo separato** (wry + tao, come lo spike «lettore»: 0,6 MB di eseguibile, apertura 0,64–0,78 s, ~140 MB solo mentre è aperta, memoria liberata alla chiusura, nessun processo orfano). Funziona anche su Linux Wayland. Il riquadro web *dentro* il pannello (provato il 13/11) non si usa più.
+- JavaScript disattivato e navigazione bloccata per i contenuti delle mail (contenuto ostile); il processo separato non ha accesso a casa, Claude Code o token.
 
 Vincoli noti:
-- Il riquadro web è un rettangolo nativo: Slint non può disegnarci sopra (niente aura o popup sopra la mail); va nascosto durante le animazioni del pannello.
-- **Linux**: il riquadro figlio funziona solo su X11. Su Wayland si usa il **piano B**: la mail convertita in testo formattato e mostrata con Slint. Il piano B vale anche ovunque il motore web manchi.
+- Dove il motore web manca, **piano B**: la mail convertita in testo formattato e mostrata con Slint.
 - Niente vetro sfocato vero (backdrop blur): si usano sfumature e bordi di luce, come nelle bozze.
 - Licenza Slint: royalty-free per app desktop anche a pagamento, **con attribuzione** (es. "Made with Slint" nelle informazioni). ItsyHome resta MIT; HIRIS è solo un servizio chiamato via API.
 
@@ -105,13 +147,14 @@ Obiettivo: l'assistente esiste, vive sul desktop, è leggero e mostra la casa e 
 Incluso:
 1. **Pillola** in alto al centro dello schermo principale, sempre in primo piano, fuori dalla taskbar, con i 5 umori e il battito di ciglia.
 2. **Clic sulla pillola → pannello** (animazione di apertura); chiusura con Esc, clic fuori o nuovo clic sulla pillola.
-3. **Pannello** come da §3: occhi, ora a destra, 4 layout commutabili, dock centrato.
+3. **Pannello** come da §3 e §3bis: 800 × 300 al bordo alto, occhi, ora a destra, «‹ Indietro» dentro le app, Panoramica con riga «In attesa» e layout Orologio/Quadranti con i puntini, dock di sole icone.
 4. **Dati reali nei layout** per le due fonti disponibili in M1: **Casa** (da `casa-core`) e **PC** (CPU, RAM, disco, rete, batteria se c'è).
 5. **Umori collegati a eventi reali**: pensa = in connessione/caricamento; ti cerca = notifica HA; contento = azione riuscita; dorme = inattività prolungata; tranquillo = default.
 6. **Impostazioni dentro il pannello** (non finestra separata): ambienti Home Assistant (aggiungi/modifica/rimuovi/prova connessione), avvio con il sistema.
 7. **Tray**: menu con Apri, Impostazioni, Esci; **istanza unica**; **avvio automatico**.
-8. **Componente "riquadro web"** pronto e misurato (apri/chiudi dentro il pannello), anche se nessuna app lo usa ancora.
+8. **Finestra di gestione** come componente pronto e misurato (processo separato, apri/chiudi, stile dell'assistente), provata con una mail di esempio, anche se nessuna app la usa ancora.
 9. **Misure** nel budget di §4 su Windows; build verificata anche per Linux/macOS dove possibile.
+10. **Attenzione e sicurezza d'uso** (§3bis) per le fonti di M1: riga «In attesa» con i 3 livelli, pillola che chiama con icona + riga + pulsanti, modalità «ritirata», aura quasi spenta a riposo, bloccante distinto per forma, preferiti tenui senza connessione, scene tra i preferiti.
 
 Escluso da M1 (milestone successive, ognuna col suo brainstorming): pagina Casa completa (controlli per tipo di entità, telecamere, ordinamenti), HIRIS, Claude Code, mail, documenti, focus/blocco app, aggiornamenti automatici, licenza freemium.
 
@@ -124,7 +167,8 @@ Ordine proposto delle milestone successive: Casa (porting completo del popup Its
 - **Casa in M1** *(scelta mia)*: i layout mostrano i **preferiti** (con la regola di ItsyHome; se non ce ne sono, i primi dispositivi in ordine). Comando minimo: un tocco accende/spegne luci e interruttori e attiva le scene; all'esito positivo l'umore diventa "contento". Il resto dei controlli è della milestone Casa.
 - **Pillola e schermo** *(scelta mia)*: sta sullo schermo principale, in alto al centro, sempre sopra; **si nasconde quando l'app in primo piano è a schermo intero** (giochi, video, presentazioni) e ricompare all'uscita; resta raggiungibile dalla tray. Cambi di DPI e di monitor gestiti. macOS (notch) e Linux: in M1 si verifica che compili; Linux Wayland non è bersaglio di M1 (la pillola sempre sopra in alto al centro non è garantita lì) — si affronta in una milestone dedicata.
 - **Budget con backend** *(scelta mia)*: i limiti del §4 valgono **con Home Assistant connesso** e le entità in memoria. Quindi: runtime tokio ridotto, `rustls` invece di `native-tls`, dipendenze minime (axum non entra in M1), modello entità compatto; scenario di misura con l'HA vero.
-- **Registro delle app** *(scelta mia)*: si costruisce in M1, perché ogni milestone successiva ci si aggancia. Dock e "Tutte le app" mostrano solo le app che esistono (Casa, PC) più Impostazioni: niente icone disattivate segnaposto.
+- **Registro delle app** *(scelta mia)*: si costruisce in M1, perché ogni milestone successiva ci si aggancia. Il dock mostra solo le app che esistono (Panoramica, Casa, PC) più Impostazioni: niente icone disattivate segnaposto.
+- **Livelli di attenzione in M1** *(scelta mia)*: notifica persistente di HA = *informazione*; batteria del PC sotto il 10% e scollegata = *attenzione*; connessione a Home Assistant persa da oltre 5 minuti = *attenzione*. Allarmi e aperture di sicurezza della casa restano alla milestone Casa. Il meccanismo (registro delle voci in attesa con livello, fonte, testo, azione, pulsanti) è comune e pronto per Claude Code.
 
 ## 8. Lasciato al costruttore
 

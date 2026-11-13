@@ -18,7 +18,7 @@
 - Nessun polling di Home Assistant: solo eventi WebSocket. Statistiche PC campionate solo a pannello aperto.
 - Renderer: `BackendSelector` con backend `winit` e renderer `skia-software`.
 - Colori brand: `#c084fc #818cf8 #60a5fa #22d3ee #2dd4bf #e879f9`; fondo `#2a0a4e → #0a0015`; testo icone `rgba(236,230,250,.62)`, tratto icone 1,55; colore solo per lo stato. Font Inter Tight + JetBrains Mono (inclusi negli asset).
-- Pannello: in alto occhi al centro e **solo l'ora a destra**; centro = 4 layout (Orologio, Quadranti, Colori, Tutte le app); dock centrato in basso. Nessuna finestra esterna per le funzioni.
+- Pannello 800×300 al bordo alto: in alto occhi al centro, ora a destra, «‹ Indietro» a sinistra solo dentro le app; Panoramica con riga «In attesa» e layout Orologio/Quadranti (puntini); dock di sole icone. Finestra separata solo per la gestione approfondita (spec §3bis).
 - Riquadro web: JavaScript disattivato, devtools spenti, navigazione bloccata, distrutto alla chiusura.
 - Token mai nel file di configurazione (portachiavi del sistema); mai nei log.
 - Dipendenze escluse in M1: axum, reqwest, native-tls.
@@ -314,87 +314,131 @@ tools/foto-zona.ps1                foto della sola zona dell'app
 - [ ] **Step 3:** prova dal vivo con l'HA di casa (solo luci/interruttori/scene innocui, **niente che suona o allarma** senza ok di Paolo): tocco → stato cambia, pillola "contento" 3 s; entità non disponibile → nessun comando.
 - [ ] **Step 4:** commit `feat(assistente): casa nel pannello e umori dagli eventi`.
 
-### Task 9: Impostazioni dentro il pannello
+> **Ripianificazione del 13/11 sera.** Dopo il Task 8 Paolo ha deciso la forma definitiva (800×300, pillola al bordo alto → Task 8b) e l'architettura dell'interfaccia (spec §3bis, con le precisazioni dopo la revisione del costruttore). I Task 9–12 originali sono sostituiti dai Task 9–14 qui sotto. Riferimenti UX: `.superpowers/ux/decisioni.md`, `.superpowers/ux/analisi-architettura-informazioni.md`, bozza approvata `.superpowers/ux/bozza-in-attesa.html`.
+
+### Task 8b: Forma definitiva, pillola al bordo alto, glitch bianco
+
+Brief a parte (`.superpowers/sdd/2026-11-13-assistente-m1-fondamenta/task-8b-brief.md`): pannello 800×300 al bordo alto, pillola invariata ma attaccata al bordo alto, causa ed eliminazione della striscia bianca, adattamento minimo dei contenuti.
+
+### Task 9: Panoramica, navigazione e dock nuovi
 
 **Files:**
-- Create: `ui/viste/impostazioni.slint`
-- Modify: `src/main.rs`, `src/ponte.rs`
+- Modify: `ui/pannello.slint`, `ui/layout/{orologio,quadranti}.slint`, `ui/viste/casa.slint`, `src/{layout,registro,pannello,ponte,scelte}.rs`, `crates/casa-core/src/ha/mapper.rs`
+- Delete: `ui/layout/{colori,tutte}.slint`
 
 **Interfaces:**
-- Consumes: `CasaService::{config, aggiorna_config, prova_connessione, connetti, disconnetti}`, `Segreti`, `sistema::autoavvio` (Task 10; fino ad allora l'interruttore salva solo `launch_at_login`).
-- Produces: vista `impostazioni` con: elenco ambienti (nome, URL, stato), aggiungi/modifica (nome, URL, token in campo password), **Prova connessione** (mostra n. entità o errore), **Rimuovi** con conferma che nomina l'ambiente, **Connetti**; interruttore "Avvia con il sistema"; sezione Informazioni con versione, "Made with Slint" e licenza MIT; avviso se il portachiavi non è disponibile. `fn valida_url(s: &str) -> Result<String, String>` (aggiunge `http://` se manca lo schema, rifiuta spazi e vuoto, toglie `/` finale).
+- Consumes: Task 8/8b (pannello 800×300, `Ponte`, `CasaService::aggiorna_config`).
+- Produces:
+  - `enum Layout { Orologio, Quadranti }` (`come_str` → `"orologio" | "quadranti"`; `da_str` di valori vecchi `"colori"`/`"tutte"`/sconosciuti → `Orologio`); `fn successivo(self) -> Layout`, `fn precedente(self) -> Layout` (ciclici).
+  - `fn app_disponibili() -> Vec<VoceApp>` → id `["panoramica", "casa", "pc", "impostazioni"]`, nomi `"Panoramica"`, `"Casa"`, `"PC"`, `"Impostazioni"`.
+  - Pannello: `in-out property <string> vista` (`"panoramica"` predefinita); riga alta con `«‹ Indietro»` a sinistra **solo** se `vista != "panoramica"` (clic o Backspace/Alt+← → torna alla Panoramica); puntini sotto il contenuto **solo** nella Panoramica (clic sul puntino, frecce ←/→, rotella → `scegli-layout`); dock di **sole icone**, bersagli 36×32, icona spenta con contrasto ≥ 3:1 sul fondo, tooltip col nome.
+  - Panoramica = sintesi senza comandi: Orologio (ora, data, una riga di stato per Casa e PC), Quadranti (CPU, RAM, disco + fino a 3 sensori preferiti). Accendi/spegni solo nella vista **Casa**.
+  - Preferiti **tenui e non cliccabili** se la connessione a HA non è `Connesso` (`fn voce_toccabile(p: &Preferito, connesso: bool) -> bool`).
+  - Mapper: le scene in `favorites` compaiono nei preferiti (prima escluse).
+  - Testo ≥ 12 px ovunque; navigazione completa da tastiera (Tab tra dock e contenuto, Invio attiva, Esc chiude).
 
 - [ ] **Step 1: test (falliscono)**
 
 ```rust
-#[test] fn url_senza_schema_diventa_http() // "192.168.1.95:8123" → "http://192.168.1.95:8123"
-#[test] fn url_slash_finale_tolto()
-#[test] fn url_vuoto_o_con_spazi_rifiutato()
+#[test] fn layout_solo_due_e_ciclici() // successivo(Orologio)==Quadranti, successivo(Quadranti)==Orologio, precedente idem
+#[test] fn layout_vecchi_diventano_orologio() // da_str("colori")==Orologio, da_str("tutte")==Orologio
+#[test] fn app_disponibili_con_panoramica() // ids == ["panoramica","casa","pc","impostazioni"]
+#[test] fn preferiti_non_toccabili_se_disconnesso() // voce_toccabile(luce, false)==false; (luce,true)==true; (sensore,true)==false
+// casa-core mapper:
+#[test] fn scena_preferita_nei_preferiti() // favorites ["scene.sera"] → menu.favorites contiene scene.sera
 ```
 
+- [ ] **Step 2:** FAIL → implementa → `cargo test --workspace` PASS.
+- [ ] **Step 3:** verifica dal vivo con HA finto (`ITSYHOME_ASSISTENTE_DIR`): navigazione dock/Indietro/puntini con mouse e tastiera; HA finto spento → preferiti tenui; foto di zona di Panoramica (2 layout) e Casa confrontate con `bozza-in-attesa.html` (senza la riga In attesa, che arriva nel Task 10); misure pannello ≤ 30 MB, ~0% CPU.
+- [ ] **Step 4:** commit `feat(assistente): panoramica, navigazione e dock di sole icone`.
+
+### Task 10: Attenzione: riga «In attesa», livelli e pillola che chiama
+
+**Files:**
+- Create: `crates/assistente/src/attenzione.rs`, `ui/attesa.slint`
+- Modify: `src/{umore,ponte,pillola,pannello,main,pc_stats}.rs`, `ui/{pillola,pannello}.slint`, `crates/casa-core/src/{eventi,servizio}.rs`, `crates/casa-core/src/ha/{client,eventi}.rs`, `crates/casa-core/examples/finto_ha.rs`
+
+**Interfaces:**
+- Produces:
+  - `enum Livello { Bloccante, Attenzione, Informazione }`; `enum Fonte { Casa, Pc, Prova }`; `struct Pulsante { id: String, testo: String }`; `struct Voce { id: String, livello: Livello, fonte: Fonte, titolo: String, dettaglio: String, pulsanti: Vec<Pulsante>, creata: Instant }` (massimo 2 pulsanti).
+  - `struct Attese`; `fn metti(&mut self, v: Voce)` (stesso id = aggiorna), `fn togli(&mut self, id: &str)`, `fn ordinate(&self) -> Vec<&Voce>` (bloccante > attenzione > informazione, poi la più recente), `fn piu_urgente(&self) -> Option<&Voce>`.
+  - Comportamento della pillola (spec §3bis, precisazioni): `fn aspetto_pillola(attese: &Attese, ora: Instant) -> AspettoPillola` con `enum AspettoPillola { Riposo, Puntino, Allargata { voce_id: String, ferma: bool } }`: bloccante → `Allargata{ferma:true}` finché c'è; attenzione → `Allargata{ferma:false}` per 20 s dalla creazione, poi `Puntino`; sola informazione → `Puntino`; niente → `Riposo`.
+  - `Cervello`: «ti cerca» se c'è almeno una voce bloccante o attenzione; l'informazione non cambia umore. Aura **quasi spenta a riposo** (tranquillo), accesa negli altri umori; in «dorme» nessun ridisegno.
+  - Pillola allargata: icona della fonte a sinistra degli occhi, una riga di testo, fino a 2 pulsanti (clic → azione, senza aprire il pannello); bloccante con bordo più spesso e fermo; clic sulla pillola (fuori dai pulsanti) → pannello aperto sulla voce.
+  - Riga «In attesa» in cima alla Panoramica (fino a 3 voci visibili + «+N»), barretta colorata per livello (rosso/ambra/blu, colore sempre accompagnato dalla parola del livello sotto il titolo); clic → espande la voce sul posto (dettaglio + pulsanti); riga assente se vuota.
+  - Fonti di M1: (a) notifiche persistenti HA = informazione, pulsante «Archivia» → `persistent_notification.dismiss`; la voce sparisce quando HA la rimuove. **Prima di scrivere codice verificare nella documentazione/sorgente di Home Assistant** il comando WS per seguire aggiunte e rimozioni (atteso `persistent_notification/subscribe` con eventi added/removed/current/updated) e il servizio di archiviazione; casa-core produce `CasaEvento::NotificaAggiunta { id, titolo, messaggio }` e `CasaEvento::NotificaRimossa { id }` e offre `CasaService::archivia_notifica(id)`; il finto HA le simula. (b) batteria PC < 10% e scollegata = attenzione, sparisce in carica o sopra soglia (controllo ogni 60 s anche a pannello chiuso: unica eccezione al campionamento solo a pannello aperto, solo batteria). (c) HA non connesso da più di 5 minuti = attenzione, pulsante «Riprova» → `connetti_attivo()`, sparisce a connessione tornata.
+  - Notifica di sistema: hook pronto (`fn notifica_sistema(v: &Voce)`), collegato a `notify-rust` nel Task 12; chiamata per bloccante, attenzione e notifiche HA.
+  - Flag di prova `--prova-avviso <bloccante|attenzione|informazione>`: crea una voce `Fonte::Prova` con 2 pulsanti finti.
+
+- [ ] **Step 1: test (falliscono)**
+
+```rust
+#[test] fn ordine_per_livello_poi_recenti()
+#[test] fn stesso_id_aggiorna_non_duplica()
+#[test] fn bloccante_allarga_ferma_finche_ce() // Allargata{ferma:true} a +0 e a +10 min
+#[test] fn attenzione_allarga_venti_secondi_poi_puntino() // +19,9 s Allargata{ferma:false}; +20,1 s Puntino
+#[test] fn sola_informazione_puntino()
+#[test] fn vuoto_riposo()
+#[test] fn al_massimo_due_pulsanti() // metti con 3 pulsanti → tenuti i primi 2
+#[test] fn ti_cerca_solo_per_bloccante_e_attenzione() // Cervello
+#[test] fn ha_offline_cinque_minuti_diventa_attenzione() // 4:59 nessuna voce, 5:01 voce "Home Assistant non raggiungibile"
+#[test] fn batteria_sotto_dieci_scollegata() // 9% scollegata → voce; 9% in carica → nessuna; 11% → nessuna
+// casa-core:
+#[test] fn notifica_aggiunta_e_rimossa_come_eventi() // con finto HA
+#[test] fn archivia_chiama_il_servizio() // finto HA riceve il dismiss con l'id giusto
+```
+
+- [ ] **Step 2:** FAIL → implementa → `cargo test --workspace` PASS.
+- [ ] **Step 3:** prova dal vivo con HA finto e `--prova-avviso` per i 3 livelli: pillola, riga In attesa, pulsanti, espansione, archiviazione; foto di zona confrontate con `bozza-in-attesa.html`; misure: pillola allargata ferma ~0% CPU, puntino ~0% CPU, riposo ≤ 0,1%.
+- [ ] **Step 4:** commit `feat(assistente): attenzione, riga In attesa e pillola che chiama`.
+
+### Task 11: Impostazioni dentro il pannello
+
+(Contenuto del vecchio Task 9, invariato salvo:) vista `impostazioni` del dock; mostra anche l'errore dell'import v2 e `CasaEvento::ConfigNonSalvata`; rimuovere gli `#[allow(dead_code)]` su `errore_import`/`errore_config`; «Made with Slint» e licenza MIT nella sezione Informazioni.
+
+**Interfaces:** `fn valida_url(s: &str) -> Result<String, String>` (aggiunge `http://` se manca lo schema, rifiuta vuoto e spazi, toglie `/` finale).
+
+- [ ] **Step 1: test (falliscono):** `url_senza_schema_diventa_http` ("192.168.1.95:8123" → "http://192.168.1.95:8123"), `url_slash_finale_tolto`, `url_vuoto_o_con_spazi_rifiutato`.
 - [ ] **Step 2:** FAIL → implementa → PASS.
-- [ ] **Step 3:** prova dal vivo: aggiungi un ambiente con token sbagliato → errore leggibile, pillola non bloccata su "pensa"; token giusto → connesso; rimuovi → token cancellato dal portachiavi.
+- [ ] **Step 3:** prova dal vivo con HA finto: token sbagliato → errore leggibile e pillola mai bloccata su «pensa»; token giusto → connesso; rimozione con conferma che nomina l'ambiente → token cancellato dal portachiavi (solo token di prova).
 - [ ] **Step 4:** commit `feat(assistente): impostazioni nel pannello`.
 
-### Task 10: Servizi di sistema
+### Task 12: Servizi di sistema e modalità «ritirata»
+
+(Contenuto del vecchio Task 10 — istanza unica, tray con «Apri», «Impostazioni», «Mostra l'isola», «Esci», autoavvio, `notify-rust` collegato a `notifica_sistema`, schermo intero, inattività — più:)
+- Il timer da 5 s riapplica anche la posizione della pillola (cambi di area di lavoro/risoluzione senza eventi di finestra).
+- **Ritirata**: clic destro sulla pillola o voce della tray → la pillola diventa una linea 300×4 px al bordo alto, colorata col livello più urgente, con **clic passanti** (Windows: `WS_EX_TRANSPARENT | WS_EX_LAYERED`); uscita da tray («Mostra l'isola»), scorciatoia globale **Ctrl+Alt+I** (crate `global-hotkey`), o automatica all'arrivo di un bloccante; non persiste al riavvio. Su macOS/Linux: compila, clic passanti dove la piattaforma lo consente.
+- Notifica arrivata a pannello aperto: la voce compare subito nella riga In attesa (nessun toast).
+
+**Interfaces:** `fn pillola_visibile(schermo_intero: bool, pannello_aperto: bool, ritirata: bool) -> Visibilita` con `enum Visibilita { Pillola, Linea, Nascosta }`.
+
+- [ ] **Step 1: test (falliscono):** `nascosta_a_schermo_intero` ((true,_,_)→Nascosta salvo pannello aperto), `pannello_aperto_pillola_nascosta`, `ritirata_mostra_la_linea`, `bloccante_esce_dalla_ritirata` (decisione pura sul flag dopo l'arrivo di un bloccante).
+- [ ] **Step 2:** FAIL → implementa → PASS.
+- [ ] **Step 3:** prova dal vivo: seconda istanza esce; tray; autoavvio (chiave `HKCU\...\Run`, poi tolta); video a schermo intero; ritirata con clic che passano davvero alla finestra sotto; Ctrl+Alt+I; `--prova-avviso bloccante` fa uscire dalla ritirata.
+- [ ] **Step 4:** commit `feat(assistente): servizi di sistema e modalità ritirata`.
+
+### Task 13: Finestra di gestione (processo separato)
 
 **Files:**
-- Create: `src/sistema/{mod,tray,autoavvio,istanza,notifiche,schermo_intero,inattivita}.rs`, `assets/tray.png` (da `src-tauri/icons`)
-- Modify: `src/main.rs`
+- Create: `crates/gestione/` (binario `itsyhome-gestione`: Slint per la cornice + wry per l'area HTML), `crates/assistente/src/gestione.rs`, `crates/gestione/assets/prova-mail.html`
+- Modify: `Cargo.toml` radice (membro), `crates/assistente/src/main.rs`
 
 **Interfaces:**
-- Produces:
-  - `istanza::prendi() -> Option<SingleInstance>` (nome `"itsyhome-assistente"`); se già attiva, il processo esce subito.
-  - `tray::crea(on_apri, on_impostazioni, on_esci) -> TrayIcon` (`tray-icon` + `muda`, creata dopo l'avvio del ciclo eventi; eventi del menu inoltrati con `invoke_from_event_loop`); voci "Apri", "Impostazioni", "Esci".
-  - `autoavvio::imposta(attivo: bool) -> Result<(), String>` (`auto-launch`, nome app `"ItsyHome"`, percorso `current_exe`).
-  - `notifiche::mostra(titolo: &str, messaggio: &str)` (`notify-rust`, errori solo nel log).
-  - `schermo_intero::attivo() -> bool`: Windows `SHQueryUserNotificationState` (`QUNS_BUSY`, `QUNS_RUNNING_D3D_FULL_SCREEN`, `QUNS_PRESENTATION_MODE` → true); altri sistemi `false`.
-  - `inattivita::secondi() -> Option<u64>`: Windows `GetLastInputInfo`; altri `None`.
-  - Un `slint::Timer` ogni 5 s controlla schermo intero (nasconde/mostra la pillola, mai il pannello se aperto) e inattività (`Segnale::Inattivo`).
+- Protocollo su stdin/stdout, una riga JSON per messaggio: verso la finestra `{"tipo":"apri","titolo":String,"html":String}`, `{"tipo":"chiudi"}`; verso l'assistente `{"tipo":"pronta"}`, `{"tipo":"chiusa"}`, `{"tipo":"azione","id":String}`.
+- `fn messaggio_da_riga(s: &str) -> Result<Messaggio, String>` e `fn riga_da_messaggio(m: &Messaggio) -> String` (in un piccolo crate o modulo condiviso).
+- `Gestione::apri(titolo: &str, html: &str) -> Result<(), String>` (avvia il processo se non c'è, invia `apri`), `Gestione::chiudi()`; processo figlio terminato e raccolto alla chiusura; nessun processo `msedgewebview2` orfano.
+- Cornice Slint nello stile dell'assistente (fondo scuro, bordo coi colori dei petali, titolo, pulsante chiudi); area HTML con JavaScript spento, devtools spenti, navigazione bloccata salvo il caricamento iniziale (`fn consenti_navigazione(url: &str, gia_caricato: bool) -> bool`); piano B (testo semplice) se il motore web manca.
+- Flag di prova dell'assistente `--prova-gestione`: apre la finestra con `prova-mail.html`, la chiude a 10 s, la riapre a 18 s.
 
-- [ ] **Step 1: test (falliscono)** in `sistema/mod.rs` sulla decisione pura `fn pillola_visibile(schermo_intero: bool, pannello_aperto: bool) -> bool`:
-
-```rust
-#[test] fn nascosta_a_schermo_intero()      // (true,false) → false
-#[test] fn visibile_normalmente()           // (false,false) → true
-#[test] fn pannello_aperto_pillola_nascosta() // (_,true) → false
-```
-
+- [ ] **Step 1: test (falliscono):** `andata_e_ritorno_del_protocollo`, `riga_malformata_e_errore`, `navigazione_consentita_solo_al_primo_caricamento` ((about:blank,false)→true, (https://x,true)→false).
 - [ ] **Step 2:** FAIL → implementa → PASS.
-- [ ] **Step 3:** prova dal vivo: seconda istanza esce; tray Apri/Impostazioni/Esci; autoavvio attiva/disattiva (verifica chiave `HKCU\...\Run`); video a schermo intero → pillola sparisce e torna; notifica HA di prova (`persistent_notification.create` innocua) → toast + pillola "ti cerca" allargata.
-- [ ] **Step 4:** commit `feat(assistente): tray, istanza unica, autoavvio, notifiche, schermo intero`.
+- [ ] **Step 3:** `tools/misura.ps1 -Argomenti --prova-gestione -Secondi 50`: finestra aperta ≈ 140 MB solo mentre è aperta; dopo la chiusura RAM dell'assistente entro +2 MB e nessun processo figlio vivo; apertura < 1 s; foto della sola finestra.
+- [ ] **Step 4:** commit `feat(gestione): finestra di gestione in processo separato`.
 
-### Task 11: Riquadro web dentro il pannello
+### Task 14: Verifica finale della milestone
 
-**Files:**
-- Create: `src/riquadro_web.rs`, `assets/prova-mail.html` (mail finta dello spike)
-- Modify: `src/main.rs`
-
-**Interfaces:**
-- Consumes: `Pannello::{centro-x, centro-y, centro-l, centro-a}`.
-- Produces:
-  - `struct RiquadroWeb`; `RiquadroWeb::new(cartella_dati: PathBuf) -> Self`; `apri_html(&mut self, finestra: &slint::Window, html: &str, area: slint::LogicalRect) -> Result<(), String>` (wry `build_as_child`, `with_javascript_disabled`, `with_devtools(false)`, `with_navigation_handler` che consente solo il caricamento iniziale; Linux non-X11 → `Err("non supportato")`); `nascondi(&self, nascosto: bool)`; `chiudi(&mut self)` (distrugge WebView e WebContext); `aperto(&self) -> bool`.
-  - Il riquadro si nasconde durante le animazioni del pannello e si chiude quando il pannello si chiude.
-  - Flag di prova `--prova-riquadro`: apre il pannello e mostra `prova-mail.html` nel centro, si chiude a 10 s e si riapre a 18 s (come lo spike).
-
-- [ ] **Step 1: test (fallisce)**
-
-```rust
-#[test] fn navigazione_consentita_solo_al_primo_caricamento() // fn consenti_navigazione(url, gia_caricato) : (about:blank,false)→true, (https://x,true)→false
-```
-
-- [ ] **Step 2:** FAIL → implementa → PASS.
-- [ ] **Step 3:** `tools/misura.ps1 -Argomenti --prova-riquadro -Secondi 50` → dopo la chiusura RAM entro +2 MB dal valore prima, nessun `msedgewebview2` rimasto vivo; foto di zona: mail dentro il centro del pannello.
-- [ ] **Step 4:** commit `feat(assistente): riquadro web nel pannello`.
-
-### Task 12: Verifica finale della milestone
-
-**Files:**
-- Create: `.github/workflows/v3-build.yml` (build `cargo build -p assistente` su windows-latest, macos-latest, ubuntu-latest con le librerie di sistema per webkit2gtk/gtk/xdo/appindicator; `cargo test --workspace`)
-- Modify: `README.md` (sezione "v3 in sviluppo" breve), `CHANGELOG.md`
-
-- [ ] **Step 1:** `cargo test --workspace` → tutti PASS; `cargo clippy --workspace -- -D warnings` → pulito.
-- [ ] **Step 2:** misure con HA di casa connesso (≥ 5 minuti per stato) con `tools/misura.ps1`: pillola ferma, pillola animata, pannello aperto fermo, riquadro web aperto/chiuso → tabella nel `CHANGELOG.md`; ogni valore nel budget dei Global Constraints, altrimenti si torna al task responsabile.
-- [ ] **Step 3:** primo avvio pulito con il file v2 reale di Paolo presente: ambienti, preferiti e ordini importati; `assistente.json` senza token; file v2 invariato (hash prima/dopo).
-- [ ] **Step 4:** prova dal vivo con Paolo dei Review Focus 1–5.
-- [ ] **Step 5:** commit `chore(v3): CI multipiattaforma e verifica M1`; il workflow parte solo dopo un push autorizzato da Paolo.
+(Contenuto del vecchio Task 12, più:)
+- Misure con cicli ripetuti apri/chiudi del pannello (≥ 20) e della finestra di gestione (≥ 5): pillola dopo i cicli entro +2 MB dal valore dopo il primo ciclo, CPU 0 a riposo, nessun thread o processo che cresce.
+- Prova a raffica anti-glitch ripetuta (nessun fotogramma con pixel chiari estranei).
+- Revisione degli specialisti UI/UX e frontend sull'app vera (richiesta da Paolo): foto di zona di tutte le viste e stati, il codice `ui/`, le misure; correzioni prima della prova con Paolo.
+- Prova dal vivo con Paolo sull'HA vero (azioni innocue scelte da lui) dei Review Focus 1–5 e delle decisioni UX.
