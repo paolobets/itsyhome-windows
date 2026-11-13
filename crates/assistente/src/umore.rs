@@ -27,6 +27,8 @@ impl Umore {
     }
 }
 
+// I segnali arrivano da casa, notifiche e pannello (task 6+): fino ad allora solo i test li usano.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum Segnale {
     Casa(StatoConnessione),
@@ -55,6 +57,7 @@ impl Cervello {
         }
     }
 
+    #[allow(dead_code)] // vedi `Segnale`
     pub fn ricevi(&mut self, s: Segnale, ora: Instant) {
         match s {
             Segnale::Casa(c) => self.connessione = c,

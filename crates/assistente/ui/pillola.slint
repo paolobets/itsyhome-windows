@@ -1,0 +1,214 @@
+// La pillola: la faccia dell'assistente, sempre in alto al centro.
+// Pillola nera, due occhi di luce, aura con i colori dei petali lungo il bordo.
+// Umori: "calm" | "think" | "alert" | "happy" | "sleep".
+import { Tema } from "tema.slint";
+
+// Un occhio: rettangolo di luce, arco quando è contento, trattino quando dorme.
+component Occhio inherits Rectangle {
+    in property <string> forma: "aperto"; // "aperto" | "arco" | "trattino"
+    in property <bool> chiuso;            // battito di ciglia
+    in property <length> larghezza-occhio: 9px;
+    in property <length> altezza-occhio: 15px;
+    in property <color> bagliore: Tema.bagliore-occhio;
+
+    width: forma == "arco" ? 13px : larghezza-occhio;
+    height: forma == "arco" ? 10px : forma == "trattino" ? 3px : (chiuso ? 2px : altezza-occhio);
+    animate height { duration: 60ms; }
+
+    luce := Rectangle {
+        visible: forma != "arco";
+        border-radius: 4px;
+        background: Tema.occhio;
+        opacity: forma == "trattino" ? 0.6 : 1.0;
+        drop-shadow-blur: forma == "aperto" ? 8px : 0px;
+        drop-shadow-color: bagliore;
+    }
+
+    Path {
+        visible: forma == "arco";
+        viewbox-width: 13;
+        viewbox-height: 10;
+        // Arco a "∩" come nella bozza: lati dritti e cima tonda.
+        commands: "M 1.5 10 L 1.5 6.5 A 5 5 0 0 1 11.5 6.5 L 11.5 10";
+        stroke: Tema.occhio;
+        stroke-width: 3px;
+        stroke-line-cap: round;
+    }
+}
+
+// Uno strato dell'aura: la sagoma della pillola allargata di `espansione`.
+component Velo inherits Rectangle {
+    in property <length> espansione;
+    in property <length> sagoma-larghezza;
+    in property <length> sagoma-altezza;
+    x: -espansione;
+    y: -espansione;
+    width: sagoma-larghezza + 2 * espansione;
+    height: sagoma-altezza + 2 * espansione;
+    border-radius: self.height / 2;
+}
+
+export component Pillola inherits Window {
+    in property <string> umore: "calm";
+    in property <string> messaggio;
+    callback cliccata();
+
+    // Geometria: la finestra è la pillola più il margine dell'aura, niente di più
+    // (un'area trasparente grande ruberebbe i clic alle schede e alle barre sotto).
+    out property <length> margine-aura: 10px;
+    out property <length> larghezza-pillola: allerta ? 360px : 200px;
+    out property <length> larghezza-finestra: larghezza-pillola + 2 * margine-aura;
+    property <length> altezza-pillola: 48px;
+
+    property <bool> pensa: umore == "think";
+    property <bool> allerta: umore == "alert";
+    property <bool> contento: umore == "happy";
+    property <bool> dorme: umore == "sleep";
+
+    // L'aura si muove solo quando pensa o ti cerca: allora un timer a 25 fotogrammi al secondo
+    // campiona animation-tick() in `tempo` (dentro un callback non crea dipendenze). Da
+    // tranquillo, contento o addormentato nulla si ridisegna tra un battito di ciglia e l'altro.
+    property <bool> in-moto: pensa || allerta;
+    property <duration> tempo: 0ms;
+    property <duration> giro: allerta ? 1200ms : 1600ms;
+    property <angle> rotazione: in-moto ? 90deg + (tempo / giro) * 360deg : 90deg;
+    // Pulsazione di "ti cerca" (0..1, periodo 0,8 s).
+    property <float> battito: allerta ? (1 - cos((tempo / 800ms) * 360deg)) / 2 : 0;
+    // Quando pensa, lo sguardo va da un lato all'altro (2,2 s).
+    property <length> sguardo-x: pensa ? 4px * sin((tempo / 2200ms) * 360deg) : 0px;
+    property <length> sguardo-y: pensa ? -3px : 0px;
+
+    property <brush> iride: allerta
+        ? @linear-gradient(rotazione, Tema.caldo-1 0%, Tema.caldo-2 35%, Tema.caldo-3 70%, Tema.caldo-4 100%)
+        : @linear-gradient(rotazione, Tema.petalo-1 0%, Tema.petalo-2 20%, Tema.petalo-3 40%, Tema.petalo-4 60%, Tema.petalo-5 80%, Tema.petalo-6 100%);
+    property <float> intensita-aura: dorme ? 0.12 : contento ? 1.0 : allerta ? 0.7 + 0.3 * battito : 0.75;
+    property <color> bagliore-occhi: allerta ? #fb923c : Tema.bagliore-occhio;
+
+    property <bool> palpebra: false;
+
+    no-frame: true;
+    always-on-top: true;
+    background: transparent;
+    title: "ItsyHome";
+    width: larghezza-finestra;
+    height: altezza-pillola + 2 * margine-aura;
+
+    Timer {
+        interval: 40ms;
+        running: in-moto;
+        triggered => {
+            tempo = animation-tick();
+        }
+    }
+
+    Timer {
+        interval: 4600ms;
+        running: !dorme && !contento;
+        triggered => {
+            palpebra = true;
+            riapri.running = true;
+        }
+    }
+
+    riapri := Timer {
+        interval: 110ms;
+        running: false;
+        triggered => {
+            palpebra = false;
+            self.running = false;
+        }
+    }
+
+    pillola := Rectangle {
+        x: margine-aura;
+        y: margine-aura;
+        width: larghezza-pillola;
+        height: altezza-pillola;
+        animate width { duration: 220ms; easing: ease-out; }
+
+        // Aura: due veli più larghi e tenui con gli stessi colori del bordo (trasparenza nel
+        // colore invece di `opacity`, per non comporre livelli a parte).
+        Velo {
+            sagoma-larghezza: parent.width;
+            sagoma-altezza: parent.height;
+            espansione: 6px + 2px * battito;
+            background: iride.with-alpha(0.18 * intensita-aura);
+        }
+        Velo {
+            sagoma-larghezza: parent.width;
+            sagoma-altezza: parent.height;
+            espansione: 3px;
+            background: iride.with-alpha(0.42 * intensita-aura);
+        }
+
+        // Anello: il bordo colorato di 2 px.
+        Rectangle {
+            border-radius: self.height / 2;
+            background: iride;
+            opacity: dorme ? 0.25 : 1.0;
+            // Bagliore sfumato sotto i veli, come il blur della bozza.
+            drop-shadow-blur: dorme ? 0px : 8px;
+            drop-shadow-color: (allerta ? #fb923c : #c084fc).with-alpha(0.55 * intensita-aura);
+        }
+
+        corpo := Rectangle {
+            x: 2px;
+            y: 2px;
+            width: parent.width - 4px;
+            height: parent.height - 4px;
+            border-radius: self.height / 2;
+            background: Tema.corpo;
+        }
+
+        occhi := Rectangle {
+            property <length> spazio: allerta ? 10px : 18px;
+            property <length> larghezza-occhio: allerta ? 10px : 9px;
+            property <length> ingombro: 2 * (contento ? 13px : larghezza-occhio) + spazio;
+            x: (allerta ? 20px : (parent.width - ingombro) / 2) + sguardo-x;
+            y: sguardo-y;
+            width: ingombro;
+            height: parent.height;
+
+            Occhio {
+                x: 0;
+                y: (parent.height - self.height) / 2;
+                forma: contento ? "arco" : dorme ? "trattino" : "aperto";
+                chiuso: palpebra;
+                larghezza-occhio: parent.larghezza-occhio;
+                altezza-occhio: allerta ? 18px : 15px;
+                bagliore: bagliore-occhi;
+            }
+
+            Occhio {
+                x: parent.width - self.width;
+                y: (parent.height - self.height) / 2;
+                forma: contento ? "arco" : dorme ? "trattino" : "aperto";
+                chiuso: palpebra;
+                larghezza-occhio: parent.larghezza-occhio;
+                altezza-occhio: allerta ? 18px : 15px;
+                bagliore: bagliore-occhi;
+            }
+        }
+
+        Text {
+            visible: allerta;
+            x: occhi.x + occhi.width + 14px;
+            width: parent.width - self.x - 22px;
+            height: parent.height;
+            text: messaggio;
+            overflow: elide;
+            vertical-alignment: center;
+            font-family: Tema.carattere;
+            font-weight: 500;
+            font-size: 13px;
+            color: Tema.testo;
+        }
+
+        TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                root.cliccata();
+            }
+        }
+    }
+}
