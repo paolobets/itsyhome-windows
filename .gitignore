@@ -39,3 +39,6 @@ npm-debug.log*
 
 # Bozze brainstorming (visual companion)
 .superpowers/
+
+# Cargo workspace v3
+/target/

@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = ["crates/casa-core"]
+exclude = ["src-tauri"]
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
