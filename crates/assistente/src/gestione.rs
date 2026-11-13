@@ -460,11 +460,16 @@ mod test {
         g.apri("T", "<p>x</p>").unwrap();
         // Il figlio è partito (ha scritto il suo PID).
         let pid_file = dir.path().join("pid.txt");
+        // Il file può esistere ancora vuoto o scritto a metà: si rilegge finché è un numero.
         let inizio = Instant::now();
-        while !pid_file.exists() && inizio.elapsed() < Duration::from_secs(10) {
+        let pid: u32 = loop {
+            let letto = std::fs::read_to_string(&pid_file).ok().and_then(|t| t.trim().parse().ok());
+            if let Some(pid) = letto {
+                break pid;
+            }
+            assert!(inizio.elapsed() < Duration::from_secs(10), "il figlio non ha scritto il suo PID");
             std::thread::sleep(Duration::from_millis(20));
-        }
-        let pid: u32 = std::fs::read_to_string(&pid_file).unwrap().trim().parse().unwrap();
+        };
 
         // L'uscita dell'assistente (Drop) torna entro la scadenza, anche col figlio appeso.
         let (fatto, finito) = std::sync::mpsc::channel();

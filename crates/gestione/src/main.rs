@@ -318,7 +318,7 @@ fn tasto_chiude(tasto: u32, premuto: bool) -> bool {
 fn esc_chiude(web: &WebView) -> Result<(), String> {
     use webview2_com::AcceleratorKeyPressedEventHandler;
     use webview2_com::Microsoft::Web::WebView2::Win32::{
-        COREWEBVIEW2_KEY_EVENT_KIND, COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
+        COREWEBVIEW2_KEY_EVENT_KIND, COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN,
     };
     use wry::WebViewExtWindows;
 
@@ -331,7 +331,8 @@ fn esc_chiude(web: &WebView) -> Result<(), String> {
             argomenti.KeyEventKind(&mut tipo)?;
             argomenti.VirtualKey(&mut tasto)?;
         }
-        let premuto = tipo == COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN || tipo == COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN;
+        // Solo KEY_DOWN: con Alt premuto arriva SYSTEM_KEY_DOWN, e Alt+Esc resta a Windows.
+        let premuto = tipo == COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN;
         if tasto_chiude(tasto, premuto) {
             // SAFETY: chiamata COM su argomenti validi durante l'evento.
             unsafe { argomenti.SetHandled(true)? };
