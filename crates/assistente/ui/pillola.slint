@@ -61,10 +61,19 @@ export component Pillola inherits Window {
     // finestra viene ritagliata alla `larghezza-visibile` (una fascia trasparente larga
     // ruberebbe i clic alle schede e alle barre sotto).
     out property <length> margine-aura: 10px;
-    out property <length> larghezza-pillola: allerta ? 360px : 200px;
+    out property <length> larghezza-pillola: allerta ? larghezza-allerta : 200px;
     out property <length> larghezza-visibile: larghezza-pillola + 2 * margine-aura;
-    out property <length> larghezza-finestra: 360px + 2 * margine-aura;
+    out property <length> larghezza-finestra: larghezza-allerta + 2 * margine-aura;
     property <length> altezza-pillola: 48px;
+
+    // Geometria degli occhi in "ti cerca" (larghezza-allerta, occhi a 20 px dal bordo sinistro,
+    // larghi 10 e distanti 10). `scarto-occhi-allerta`: centro degli occhi rispetto al centro
+    // della finestra; il pannello ci fa partire i suoi quando si apre da "ti cerca".
+    out property <length> larghezza-allerta: 360px;
+    property <length> occhi-allerta-dal-bordo: 20px;
+    property <length> occhio-allerta: 10px;
+    property <length> spazio-allerta: 10px;
+    out property <length> scarto-occhi-allerta: -larghezza-allerta / 2 + occhi-allerta-dal-bordo + (2 * occhio-allerta + spazio-allerta) / 2;
 
     property <bool> pensa: umore == "think";
     property <bool> allerta: umore == "alert";
@@ -168,12 +177,12 @@ export component Pillola inherits Window {
         }
 
         occhi := Rectangle {
-            property <length> spazio: allerta ? 10px : 18px;
-            property <length> larghezza-occhio: allerta ? 10px : 9px;
+            property <length> spazio: allerta ? spazio-allerta : 18px;
+            property <length> larghezza-occhio: allerta ? occhio-allerta : 9px;
             property <length> ingombro: 2 * (contento ? 13px : larghezza-occhio) + spazio;
             // Distanza dal bordo sinistro della pillola a fine animazione, animata anch'essa:
             // passando a "ti cerca" gli occhi scivolano a sinistra insieme al bordo, senza salti.
-            property <length> dal-bordo: allerta ? 20px : (larghezza-pillola - ingombro) / 2;
+            property <length> dal-bordo: allerta ? occhi-allerta-dal-bordo : (larghezza-pillola - ingombro) / 2;
             animate dal-bordo { duration: 220ms; easing: ease-out; }
             x: dal-bordo + sguardo-x;
             y: sguardo-y;

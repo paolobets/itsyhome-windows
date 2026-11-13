@@ -1,37 +1,53 @@
 //! Apertura e chiusura del pannello: la pillola si nasconde e al suo posto scende il pannello,
 //! con gli occhi dove stavano i suoi. L'orologio (timer da 1 s) e il campionamento delle
-//! statistiche del PC (timer da 2 s) girano solo a pannello aperto.
+//! statistiche del PC (un campione ogni 2 s) girano solo a pannello aperto.
 //!
 //! Il pannello nasce a ogni apertura e viene distrutto alla chiusura: da chiuso non restano né
 //! la sua finestra né i suoi buffer né animazioni in sospeso, e la pillola torna al suo peso.
+//! I dati della casa e l'umore arrivano dal `Ponte`, che il pannello riprende a ogni apertura.
 
 use crate::layout::Layout;
 use crate::registro::app_disponibili;
 use crate::pc_stats::{formatta_byte, formatta_velocita, Campionatore, StatPc};
+use crate::ponte::Ponte;
+use crate::umore::Umore;
 use crate::{finestre, orologio, scelte, Pannello, Pillola, StatPcUi, VoceAppUi};
 use slint::winit_030::{winit, EventResult, WinitWindowAccessor};
 use slint::{ComponentHandle, Image, ModelRc, VecModel};
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Ogni quanto si campionano le statistiche del PC (solo a pannello aperto).
 const PERIODO_CAMPIONI: Duration = Duration::from_secs(2);
 
+/// Fine dell'apertura (finestra creata + animazione di 200 ms in pannello.slint, con margine):
+/// da qui una perdita del fuoco chiude il pannello.
+const ARMA_DOPO: Duration = Duration::from_millis(300);
+
 pub struct Apertura {
     io: Weak<Apertura>,
     pillola: slint::Weak<Pillola>,
+    ponte: Rc<Ponte>,
     pannello: RefCell<Option<Pannello>>,
     /// Layout scelto (indice del dock), ricordato tra un'apertura e l'altra.
     layout: Cell<i32>,
-    /// Vero da quando il pannello, dopo l'apertura, ha ricevuto il fuoco: solo da lì una
-    /// perdita del fuoco (clic fuori) lo chiude. Così un `Focused(false)` di passaggio durante
-    /// l'apertura non lo richiude subito.
+    /// Vero dalla fine dell'apertura: solo da lì una perdita del fuoco (clic fuori) chiude.
+    /// Durante l'apertura il fuoco passa di mano da solo (la pillola appena cliccata si
+    /// nasconde e Windows attiva un'altra finestra, il pannello nasce e chiede il fuoco): quei
+    /// `Focused(false)` di passaggio non devono richiuderlo. A fine apertura, se il fuoco non
+    /// c'è, lo si richiede.
     armato: Cell<bool>,
+    /// Aperto con `--apri` (misure e foto): la perdita del fuoco non lo chiude, Esc e gli occhi sì.
+    fisso: Cell<bool>,
+    /// Conta le aperture: la sveglia che arma la chiusura vale solo per l'apertura che l'ha messa.
+    aperture: Cell<u64>,
     orologio: slint::Timer,
-    /// Nasce all'apertura e muore alla chiusura, come il timer che lo alimenta.
-    campionatore: RefCell<Option<Campionatore>>,
-    campionamento: slint::Timer,
+    /// Il thread che campiona le statistiche del PC finché il pannello è aperto: il segnale di
+    /// stop e il thread da svegliare.
+    campionamento: RefCell<Option<(Arc<AtomicBool>, std::thread::Thread)>>,
 }
 
 /// L'icona SVG di un'app del registro (bianca: il colore lo dà l'interfaccia).
@@ -113,41 +129,63 @@ fn dopo(apertura: &Weak<Apertura>, f: fn(&Apertura)) {
 }
 
 impl Apertura {
-    pub fn collega(pillola: &Pillola) -> Rc<Apertura> {
+    pub fn collega(pillola: &Pillola, ponte: Rc<Ponte>) -> Rc<Apertura> {
+        let layout = scelte::layout_salvato(ponte.casa()).indice();
         let apertura = Rc::new_cyclic(|io| Apertura {
             io: io.clone(),
             pillola: pillola.as_weak(),
+            ponte,
             pannello: RefCell::new(None),
-            layout: Cell::new(scelte::layout_salvato().indice()),
+            layout: Cell::new(layout),
             armato: Cell::new(false),
+            fisso: Cell::new(false),
+            aperture: Cell::new(0),
             orologio: slint::Timer::default(),
-            campionatore: RefCell::new(None),
-            campionamento: slint::Timer::default(),
+            campionamento: RefCell::new(None),
         });
         let a = Rc::downgrade(&apertura);
         pillola.on_cliccata(move || dopo(&a, Apertura::apri));
         apertura
     }
 
-    /// Un campione subito e poi uno ogni 2 s, finché il pannello è aperto.
+    /// Un campione subito e poi uno ogni 2 s, finché il pannello è aperto, su un thread a parte:
+    /// preparare il campionatore e il primo campione costa centinaia di millisecondi (contatori
+    /// di sistema, dischi, reti, batteria) e sul thread dell'interfaccia ritarderebbe l'apertura.
+    /// Al thread dell'interfaccia arrivano solo i numeri (`StatPc`) e un riferimento debole.
     fn avvia_campionamento(&self, pannello: &Pannello) {
-        *self.campionatore.borrow_mut() = Some(Campionatore::new());
-        let io = self.io.clone();
+        let ferma = Arc::new(AtomicBool::new(false));
+        let stop = ferma.clone();
         let debole = pannello.as_weak();
-        let campiona = move || {
-            let (Some(a), Some(p)) = (io.upgrade(), debole.upgrade()) else { return };
-            if let Some(c) = a.campionatore.borrow_mut().as_mut() {
-                let stat = c.campiona();
-                p.set_pc(stat_ui(&stat, c.cpu_pronta()));
-            };
-        };
-        campiona();
-        self.campionamento.start(slint::TimerMode::Repeated, PERIODO_CAMPIONI, campiona);
+        let thread = std::thread::Builder::new().name("campioni-pc".into()).spawn(move || {
+            let mut campionatore = Campionatore::new();
+            while !stop.load(Ordering::Relaxed) {
+                let stat = campionatore.campiona();
+                let pronta = campionatore.cpu_pronta();
+                let debole = debole.clone();
+                let consegnato = slint::invoke_from_event_loop(move || {
+                    if let Some(p) = debole.upgrade() {
+                        p.set_pc(stat_ui(&stat, pronta));
+                    }
+                });
+                if consegnato.is_err() {
+                    break;
+                }
+                // Svegliato prima del tempo da `ferma_campionamento`.
+                std::thread::park_timeout(PERIODO_CAMPIONI);
+            }
+        });
+        match thread {
+            Ok(t) => *self.campionamento.borrow_mut() = Some((ferma, t.thread().clone())),
+            Err(e) => eprintln!("statistiche del PC non avviate: {e}"),
+        }
     }
 
+    /// Ferma il thread senza aspettarlo: finisce da solo appena finito il campione in corso.
     fn ferma_campionamento(&self) {
-        self.campionamento.stop();
-        *self.campionatore.borrow_mut() = None;
+        if let Some((ferma, thread)) = self.campionamento.borrow_mut().take() {
+            ferma.store(true, Ordering::Relaxed);
+            thread.unpark();
+        }
     }
 
     /// Crea il pannello e ne collega i callback.
@@ -155,6 +193,7 @@ impl Apertura {
         let pannello = Pannello::new()?;
         pannello.set_app(voci_app());
         pannello.set_layout(self.layout.get());
+        self.ponte.riempi(&pannello);
 
         let a = self.io.clone();
         pannello.on_chiudi(move || dopo(&a, Apertura::chiudi));
@@ -162,21 +201,18 @@ impl Apertura {
         pannello.on_scegli_layout(move |i| {
             if let Some(a) = a.upgrade() {
                 a.layout.set(i);
+                scelte::salva_layout(a.ponte.casa(), Layout::da_indice(i));
             }
-            scelte::salva_layout(Layout::da_indice(i));
         });
-        // La vista la cambia già l'interfaccia; le app la riempiranno nei task 8–9.
+        // La vista la cambia già l'interfaccia; Casa e PC hanno già i loro dati, le Impostazioni
+        // arrivano col Task 9.
         pannello.on_apri_app(|_| {});
 
         let a = self.io.clone();
         pannello.window().on_winit_window_event(move |_, evento| {
-            if let winit::event::WindowEvent::Focused(fuoco) = evento {
-                if let Some(ap) = a.upgrade() {
-                    if *fuoco {
-                        ap.armato.set(true);
-                    } else if ap.armato.get() {
-                        dopo(&a, Apertura::chiudi);
-                    }
+            if let winit::event::WindowEvent::Focused(false) = evento {
+                if a.upgrade().is_some_and(|ap| ap.armato.get() && !ap.fisso.get()) {
+                    dopo(&a, Apertura::chiudi);
                 }
             }
             EventResult::Propagate
@@ -204,6 +240,12 @@ impl Apertura {
             finestre::sposta(pannello.window(), finestre::posizione_pannello(area, scala));
         }
 
+        // Aprendo da "ti cerca" gli occhi del pannello partono da dove stanno quelli della
+        // pillola allargata e scivolano al centro durante l'apertura.
+        if pillola.get_umore() == Umore::TiCerca.come_stringa() {
+            pannello.set_partenza_occhi(pillola.get_scarto_occhi_allerta());
+        }
+        // Parte con l'umore della pillola; il ponte glielo aggiorna appena la pillola è sparita.
         pannello.set_umore(pillola.get_umore());
         aggiorna_ora(&pannello);
         let debole = pannello.as_weak();
@@ -224,6 +266,27 @@ impl Apertura {
         // Da `aperto` falso (appena creato) a vero: parte l'animazione di apertura.
         pannello.set_aperto(true);
 
+        // A fine apertura si arma la chiusura sulla perdita del fuoco; se il fuoco non c'è (è
+        // passato a un'altra finestra mentre la pillola si nascondeva), lo si richiede: il
+        // pannello aperto da un clic deve averlo, o Esc e il clic fuori non lo chiuderebbero.
+        let a = self.io.clone();
+        let questa = self.aperture.get() + 1;
+        self.aperture.set(questa);
+        slint::Timer::single_shot(ARMA_DOPO, move || {
+            let Some(ap) = a.upgrade() else { return };
+            let pannello = ap.pannello.borrow();
+            let Some(p) = pannello.as_ref() else { return };
+            // Il pannello fisso di `--apri` non ruba il fuoco a chi sta usando il PC.
+            if ap.aperture.get() != questa || ap.armato.replace(true) || ap.fisso.get() {
+                return;
+            }
+            p.window().with_winit_window(|w| {
+                if !w.has_focus() {
+                    w.focus_window();
+                }
+            });
+        });
+
         let debole = pannello.as_weak();
         let _ = slint::spawn_local(async move {
             let Some(p) = debole.upgrade() else { return };
@@ -238,22 +301,33 @@ impl Apertura {
             }
             p.window().with_winit_window(|w| w.focus_window());
         });
-        *self.pannello.borrow_mut() = Some(pannello);
-
         // Nascosta solo ora che il pannello è visibile (vedi `chiudi`).
         pillola.set_attiva(false);
         let _ = pillola.hide();
+        // Solo ora la notifica in attesa è vista: la pillola non si vede cambiare d'umore e il
+        // pannello segue l'umore finché resta aperto.
+        self.ponte.pannello_aperto(&pannello);
+        *self.pannello.borrow_mut() = Some(pannello);
+    }
+
+    /// Apertura per prova (`--apri`): resta aperto anche se il fuoco va altrove (il PC intanto
+    /// si usa), finché non lo si chiude con Esc o con gli occhi.
+    pub fn apri_fisso(&self) {
+        self.fisso.set(true);
+        self.apri();
     }
 
     pub fn chiudi(&self) {
         let Some(pannello) = self.pannello.borrow_mut().take() else { return };
         self.armato.set(false);
+        self.fisso.set(false);
         self.orologio.stop();
         self.ferma_campionamento();
         // Prima la pillola, poi via il pannello: con zero finestre visibili il ciclo eventi
         // di Slint terminerebbe.
         if let Some(pillola) = self.pillola.upgrade() {
             pillola.set_attiva(true);
+            self.ponte.pannello_chiuso();
             let _ = pillola.show();
         }
         let _ = pannello.hide();

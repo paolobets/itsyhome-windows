@@ -27,8 +27,7 @@ impl Umore {
     }
 }
 
-// I segnali arrivano da casa, notifiche e pannello (task 6+): fino ad allora solo i test li usano.
-#[allow(dead_code)]
+/// I segnali arrivano dal ponte con la casa e dal pannello.
 #[derive(Debug, Clone)]
 pub enum Segnale {
     Casa(StatoConnessione),
@@ -36,7 +35,8 @@ pub enum Segnale {
     PannelloAperto,
     ComandoRiuscito,
     ComandoFallito,
-    /// Da quanto tempo l'utente è inattivo.
+    /// Da quanto tempo l'utente è inattivo (lo manderà il controllo dell'inattività, Task 10).
+    #[allow(dead_code)]
     Inattivo(Duration),
 }
 
@@ -57,7 +57,6 @@ impl Cervello {
         }
     }
 
-    #[allow(dead_code)] // vedi `Segnale`
     pub fn ricevi(&mut self, s: Segnale, ora: Instant) {
         match s {
             Segnale::Casa(c) => self.connessione = c,
@@ -81,6 +80,13 @@ impl Cervello {
         } else {
             Umore::Tranquillo
         }
+    }
+
+    /// Fra quanto l'umore cambierà da solo (fine di "contento"); `None` se nulla scade:
+    /// solo allora serve un timer.
+    pub fn prossimo_cambio(&self, ora: Instant) -> Option<Duration> {
+        let fine = self.contento_da? + CONTENTO_PER;
+        (fine > ora).then(|| fine - ora)
     }
 
     pub fn messaggio(&self) -> Option<&str> {
@@ -155,6 +161,19 @@ mod test {
         c.ricevi(Segnale::ComandoRiuscito, t);
         c.ricevi(Segnale::ComandoFallito, t);
         assert_eq!(c.umore(t), Umore::Tranquillo);
+    }
+
+    #[test]
+    fn solo_contento_ha_una_scadenza() {
+        let t = Instant::now();
+        let mut c = Cervello::new(t);
+        assert_eq!(c.prossimo_cambio(t), None);
+        c.ricevi(Segnale::ComandoRiuscito, t);
+        assert_eq!(c.prossimo_cambio(t + Duration::from_secs(1)), Some(Duration::from_secs(2)));
+        assert_eq!(c.prossimo_cambio(t + CONTENTO_PER), None);
+        c.ricevi(Segnale::ComandoRiuscito, t);
+        c.ricevi(Segnale::ComandoFallito, t);
+        assert_eq!(c.prossimo_cambio(t), None);
     }
 
     #[test]

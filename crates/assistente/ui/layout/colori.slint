@@ -1,57 +1,128 @@
-// Layout Colori: tessere grandi (una doppia a sinistra, quattro a destra). Il colore arriva solo
-// con lo stato (dispositivo acceso, Task 8): senza dati le tessere restano vetro neutro con "—".
+// Layout Colori: tessere grandi con i primi cinque preferiti (una doppia a sinistra, quattro a
+// destra). Il colore arriva solo con lo stato: una luce o un interruttore acceso prende la sua
+// tinta, tutto il resto resta vetro neutro. Una tessera senza preferito resta vuota ("—").
 import { Tema } from "../tema.slint";
 import { Icone, Icona, Vetro } from "../icone.slint";
+import { PreferitoUi } from "../voci.slint";
 
 component Tessera inherits Vetro {
-    in property <image> icona: Icone.casa;
-    in property <string> valore: "—";
+    in property <PreferitoUi> voce;
+    in property <bool> presente;
     in property <length> lato-icona: 28px;
+    callback tocca(string);
+
+    property <bool> acceso: presente && voce.acceso;
+    property <bool> luce: voce.genere == "luce";
+    property <bool> toccabile: presente && voce.toccabile;
+
     border-radius: 20px;
+    border-color: acceso ? rgba(255, 255, 255, 0.14) : Tema.vetro-bordo;
+    background: acceso
+        ? (luce
+            ? @linear-gradient(140deg, #f59e0b 0%, #92400e 100%)
+            : @linear-gradient(140deg, #14b8a6 0%, #115e59 100%))
+        : area.has-hover && toccabile
+            ? @linear-gradient(160deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.04) 100%)
+            : @linear-gradient(160deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.02) 100%);
+    opacity: presente && !voce.disponibile ? 0.55 : 1;
+    accessible-role: button;
+    accessible-enabled: toccabile;
+    accessible-label: presente ? voce.nome + ", " + voce.stato : "";
+    accessible-action-default => { if (toccabile) { root.tocca(voce.entity-id); } }
+
+    // Riflesso morbido sulle tessere accese, come nella bozza.
+    if acceso: Rectangle {
+        border-radius: parent.border-radius;
+        background: @linear-gradient(160deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0) 45%);
+    }
 
     Icona {
         x: 14px;
         y: 14px;
-        source: icona;
+        source: presente ? Icone.di-genere(voce.genere) : Icone.casa;
         width: lato-icona;
         height: lato-icona;
+        colorize: acceso ? #ffffff : presente && voce.disponibile && !(voce.genere == "luce" || voce.genere == "presa")
+            ? Tema.icona : Tema.icona-spenta;
     }
 
     Text {
         x: 14px;
-        y: parent.height - self.height - 14px;
-        text: valore;
+        y: parent.height - 14px - 16px - 2px - self.height;
+        width: parent.width - 28px;
+        // Le tessere piccole sono strette: un comando fallito si dice con una parola sola.
+        text: !presente ? "—" : voce.errore != "" ? "Errore" : voce.stato;
+        overflow: elide;
         font-weight: 500;
-        font-size: 26px;
-        color: Tema.testo;
+        font-size: 24px;
+        color: presente && voce.errore != "" ? (acceso ? #ffffff : Tema.caldo-2) : Tema.testo;
+    }
+
+    Text {
+        x: 14px;
+        y: parent.height - 14px - self.height;
+        width: parent.width - 28px;
+        height: 16px;
+        text: presente ? voce.nome : "";
+        overflow: elide;
+        font-size: 12px;
+        color: acceso ? rgba(255, 255, 255, 0.9) : Tema.testo-tenue;
+    }
+
+    area := TouchArea {
+        enabled: toccabile;
+        mouse-cursor: toccabile ? pointer : default;
+        clicked => { root.tocca(voce.entity-id); }
     }
 }
 
 export component LayoutColori inherits Rectangle {
+    in property <[PreferitoUi]> preferiti;
+    callback tocca(string);
+
     HorizontalLayout {
         spacing: 10px;
 
         Tessera {
             horizontal-stretch: 2;
             lato-icona: 34px;
+            voce: preferiti[0];
+            presente: preferiti.length > 0;
+            tocca(id) => { root.tocca(id); }
         }
 
         VerticalLayout {
             horizontal-stretch: 1;
             spacing: 10px;
 
-            Tessera { }
+            Tessera {
+                voce: preferiti[1];
+                presente: preferiti.length > 1;
+                tocca(id) => { root.tocca(id); }
+            }
 
-            Tessera { }
+            Tessera {
+                voce: preferiti[2];
+                presente: preferiti.length > 2;
+                tocca(id) => { root.tocca(id); }
+            }
         }
 
         VerticalLayout {
             horizontal-stretch: 1;
             spacing: 10px;
 
-            Tessera { }
+            Tessera {
+                voce: preferiti[3];
+                presente: preferiti.length > 3;
+                tocca(id) => { root.tocca(id); }
+            }
 
-            Tessera { }
+            Tessera {
+                voce: preferiti[4];
+                presente: preferiti.length > 4;
+                tocca(id) => { root.tocca(id); }
+            }
         }
     }
 }

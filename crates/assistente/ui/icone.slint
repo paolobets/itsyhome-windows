@@ -10,6 +10,25 @@ export global Icone {
     out property <image> quadranti: @image-url("../assets/icone/quadranti.svg");
     out property <image> colori: @image-url("../assets/icone/colori.svg");
     out property <image> tutte: @image-url("../assets/icone/tutte.svg");
+
+    // Dispositivi della casa.
+    out property <image> luce: @image-url("../assets/icone/luce.svg");
+    out property <image> presa: @image-url("../assets/icone/presa.svg");
+    out property <image> scena: @image-url("../assets/icone/scena.svg");
+    out property <image> termo: @image-url("../assets/icone/termo.svg");
+    out property <image> goccia: @image-url("../assets/icone/goccia.svg");
+    out property <image> sensore: @image-url("../assets/icone/sensore.svg");
+
+    // L'icona di un preferito dal suo genere (vedi `ponte::genere`).
+    public pure function di-genere(genere: string) -> image {
+        if (genere == "luce") { return luce; }
+        if (genere == "presa") { return presa; }
+        if (genere == "scena") { return scena; }
+        if (genere == "termo") { return termo; }
+        if (genere == "goccia") { return goccia; }
+        if (genere == "sensore") { return sensore; }
+        return casa;
+    }
 }
 
 // Un'icona del set, nel colore neutro delle icone.

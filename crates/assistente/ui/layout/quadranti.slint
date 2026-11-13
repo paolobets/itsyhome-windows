@@ -1,13 +1,15 @@
-// Layout Quadranti: quattro quadranti in card vetro. Senza dati (PC al Task 7, casa al Task 8)
-// l'arco è solo la traccia spenta e il valore è "—": nessun numero inventato.
+// Layout Quadranti: CPU, RAM e disco del PC e, al quarto posto, il primo sensore fra i preferiti
+// della casa. Senza dati l'arco è solo la traccia spenta e il valore è "—": nessun numero inventato.
 import { Tema } from "../tema.slint";
 import { Icone, Icona, Vetro } from "../icone.slint";
-import { StatPcUi } from "../voci.slint";
+import { StatPcUi, PreferitoUi } from "../voci.slint";
 
 component Quadrante inherits Vetro {
     in property <string> etichetta;
     in property <image> icona;
     in property <string> valore: "—";
+    // Riga piccola sotto l'etichetta (nome del sensore, stato della casa).
+    in property <string> dettaglio;
     // Frazione 0..1 dell'arco acceso; negativa = nessun dato (solo la traccia).
     in property <float> frazione: -1;
 
@@ -18,6 +20,8 @@ component Quadrante inherits Vetro {
     VerticalLayout {
         alignment: center;
         spacing: 8px;
+        padding-left: 8px;
+        padding-right: 8px;
 
         Rectangle {
             height: 110px;
@@ -77,16 +81,33 @@ component Quadrante inherits Vetro {
                 color: Tema.testo-etichetta;
             }
         }
+
+        Text {
+            // Senza larghezza preferita: un nome lungo si accorcia invece di allargare la card.
+            preferred-width: 0px;
+            text: dettaglio;
+            horizontal-alignment: center;
+            overflow: elide;
+            font-size: 11.5px;
+            color: Tema.testo-tenue;
+        }
     }
 }
 
 export component LayoutQuadranti inherits Rectangle {
     in property <StatPcUi> stat;
+    in property <bool> ha-sensore;
+    in property <PreferitoUi> sensore;
+    in property <float> sensore-frazione: -1;
+    in property <string> stato-casa;
+    // Quattro card uguali, qualunque sia la lunghezza dei valori.
+    property <length> lato: (self.width - 3 * 10px) / 4;
 
     HorizontalLayout {
         spacing: 10px;
 
         Quadrante {
+            width: root.lato;
             etichetta: "CPU";
             icona: Icone.pc;
             valore: stat.pronta ? stat.cpu-testo : "—";
@@ -94,6 +115,7 @@ export component LayoutQuadranti inherits Rectangle {
         }
 
         Quadrante {
+            width: root.lato;
             etichetta: "RAM";
             icona: Icone.pc;
             valore: stat.ram-testo;
@@ -101,6 +123,7 @@ export component LayoutQuadranti inherits Rectangle {
         }
 
         Quadrante {
+            width: root.lato;
             etichetta: "DISCO";
             icona: Icone.pc;
             valore: stat.disco-testo;
@@ -108,8 +131,12 @@ export component LayoutQuadranti inherits Rectangle {
         }
 
         Quadrante {
+            width: root.lato;
             etichetta: "CASA";
-            icona: Icone.casa;
+            icona: ha-sensore ? Icone.di-genere(sensore.genere) : Icone.casa;
+            valore: ha-sensore ? sensore.stato : "—";
+            frazione: ha-sensore ? sensore-frazione : -1;
+            dettaglio: ha-sensore ? sensore.nome : stato-casa;
         }
     }
 }

@@ -3,14 +3,15 @@
 import { Tema } from "tema.slint";
 import { Occhio } from "pillola.slint";
 import { Icone } from "icone.slint";
-import { VoceAppUi, StatPcUi } from "voci.slint";
+import { VoceAppUi, StatPcUi, PreferitoUi } from "voci.slint";
 import { VistaPc } from "viste/pc.slint";
+import { VistaCasa } from "viste/casa.slint";
 import { LayoutOrologio } from "layout/orologio.slint";
 import { LayoutQuadranti } from "layout/quadranti.slint";
 import { LayoutColori } from "layout/colori.slint";
 import { LayoutTutte } from "layout/tutte.slint";
 
-export { VoceAppUi, StatPcUi }
+export { VoceAppUi, StatPcUi, PreferitoUi }
 
 // Una scheda del dock: icona leggera; quella attiva sta in una capsula "vetro" e diventa bianca.
 component Scheda inherits Rectangle {
@@ -57,6 +58,17 @@ export component Pannello inherits Window {
     in property <StatPcUi> pc;
     // Vero mentre il pannello è aperto: guida l'animazione di apertura e il battito degli occhi.
     in-out property <bool> aperto;
+    // Casa: i preferiti (al massimo 8), la riga di stato, il sensore del quadrante CASA.
+    in property <[PreferitoUi]> preferiti;
+    in property <string> stato-casa;
+    in property <bool> casa-pronta;
+    in property <bool> ha-sensore;
+    in property <PreferitoUi> sensore;
+    in property <float> sensore-frazione: -1;
+    // Da dove partono gli occhi all'apertura, rispetto al centro: aprendo da "ti cerca" sono
+    // dove stavano quelli della pillola allargata e, appena il pannello è comparso, scivolano al centro.
+    in property <length> partenza-occhi: 0px;
+    callback tocca(string);
     callback scegli-layout(int);
     callback apri-app(string);
     callback chiudi();
@@ -72,6 +84,10 @@ export component Pannello inherits Window {
     out property <length> centro-a: root.height - centro-y - altezza-dock - 16px - 12px;
 
     property <bool> palpebra: false;
+    // Diventa vero poco dopo l'apertura, quando i primi fotogrammi hanno già disegnato gli occhi
+    // al punto di partenza: solo allora lo scarto si anima (le proprietà si calcolano solo
+    // quando servono, quindi un cambio nello stesso istante dell'apertura non si vedrebbe).
+    property <bool> occhi-al-centro: partenza-occhi == 0px;
 
     no-frame: true;
     always-on-top: true;
@@ -99,6 +115,14 @@ export component Pannello inherits Window {
         triggered => {
             palpebra = true;
             riapri.running = true;
+        }
+    }
+
+    Timer {
+        interval: 160ms;
+        running: aperto && !occhi-al-centro;
+        triggered => {
+            occhi-al-centro = true;
         }
     }
 
@@ -155,7 +179,11 @@ export component Pannello inherits Window {
             property <bool> contento: umore == "happy";
             property <bool> dorme: umore == "sleep";
             property <length> ingombro: 2 * (contento ? 13px : 9px) + 18px;
-            x: (parent.width - self.ingombro) / 2;
+            // Restano sugli occhi della pillola mentre il pannello compare, poi vanno al centro
+            // (solo lo scarto è animato: un cambio d'umore li ricentra subito).
+            property <length> scarto: occhi-al-centro ? 0px : partenza-occhi;
+            animate scarto { duration: 240ms; easing: ease-in-out; }
+            x: (parent.width - self.ingombro) / 2 + self.scarto;
             y: 0;
             width: self.ingombro;
             height: altezza-riga;
@@ -211,15 +239,22 @@ export component Pannello inherits Window {
                 height: parent.height;
                 ora: root.ora;
                 data: root.data;
+                stato: root.stato-casa;
             }
             if vista == "" && layout == 1: LayoutQuadranti {
                 width: parent.width;
                 height: parent.height;
                 stat: root.pc;
+                ha-sensore: root.ha-sensore;
+                sensore: root.sensore;
+                sensore-frazione: root.sensore-frazione;
+                stato-casa: root.stato-casa;
             }
             if vista == "" && layout == 2: LayoutColori {
                 width: parent.width;
                 height: parent.height;
+                preferiti: root.preferiti;
+                tocca(id) => { root.tocca(id); }
             }
             if vista == "" && layout == 3: LayoutTutte {
                 width: parent.width;
@@ -231,17 +266,26 @@ export component Pannello inherits Window {
                 }
             }
 
+            if vista == "casa": VistaCasa {
+                width: parent.width;
+                height: parent.height;
+                preferiti: root.preferiti;
+                stato-casa: root.stato-casa;
+                casa-pronta: root.casa-pronta;
+                tocca(id) => { root.tocca(id); }
+            }
+
             if vista == "pc": VistaPc {
                 width: parent.width;
                 height: parent.height;
                 stat: root.pc;
             }
 
-            // Vista di un'app senza contenuti propri: per ora solo il titolo (Task 8–9).
+            // Vista di un'app senza contenuti propri: per ora solo il titolo (Impostazioni, Task 9).
             for voce in app: VerticalLayout {
                 width: parent.width;
                 height: parent.height;
-                visible: vista == voce.id && voce.id != "pc";
+                visible: vista == voce.id && voce.id != "pc" && voce.id != "casa";
                 alignment: center;
                 spacing: 10px;
 

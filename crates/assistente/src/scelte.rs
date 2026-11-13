@@ -1,45 +1,35 @@
 //! Le scelte dell'utente che il pannello ricorda tra un avvio e l'altro (oggi: il layout).
-//! Passano da qui sole, così il Task 8 le può instradare su `CasaService` in un punto.
+//! Passano dalla configurazione di `CasaService`, unico proprietario della `Config` in memoria:
+//! nessuno rilegge o riscrive `assistente.json` alle sue spalle.
 
 use crate::layout::{self, Layout};
-use casa_core::config::{cartella_config, ConfigStore};
-use std::path::Path;
+use casa_core::servizio::CasaService;
 
 /// Il layout salvato; Orologio se non c'è o non è valido.
-pub fn layout_salvato() -> Layout {
-    layout_salvato_in(&cartella_config())
+pub fn layout_salvato(casa: &CasaService) -> Layout {
+    layout::da_str(&casa.config().ultimo_layout)
 }
 
-/// Salva il layout scelto (errori solo nel log: non è grave perderlo).
-pub fn salva_layout(l: Layout) {
-    if let Err(e) = salva_layout_in(&cartella_config(), l) {
-        eprintln!("layout non salvato: {e}");
-    }
-}
-
-fn layout_salvato_in(dir: &Path) -> Layout {
-    layout::da_str(&ConfigStore::apri(dir).leggi().ultimo_layout)
-}
-
-/// Rilegge la configurazione e cambia solo `ultimo_layout`; se è già quello non scrive.
-fn salva_layout_in(dir: &Path, l: Layout) -> std::io::Result<()> {
-    let store = ConfigStore::apri(dir);
-    let mut config = store.leggi();
-    if config.ultimo_layout == l.come_str() {
-        return Ok(());
-    }
-    config.ultimo_layout = l.come_str().to_owned();
-    store.salva(&config)
+/// Salva il layout scelto (solo `ultimo_layout`; se è già quello non si scrive nulla).
+pub fn salva_layout(casa: &CasaService, l: Layout) {
+    casa.aggiorna_config(|c| c.ultimo_layout = l.come_str().to_owned());
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use casa_core::config::ConfigStore;
+    use casa_core::segreti::MemoriaSegreti;
+    use std::sync::Arc;
+
+    fn servizio(dir: &std::path::Path) -> CasaService {
+        CasaService::avvia(Arc::new(ConfigStore::apri(dir)), Arc::new(MemoriaSegreti::new()), Arc::new(|_| {}))
+    }
 
     #[test]
     fn senza_file_parte_dall_orologio() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(layout_salvato_in(dir.path()), Layout::Orologio);
+        assert_eq!(layout_salvato(&servizio(dir.path())), Layout::Orologio);
     }
 
     #[test]
@@ -51,11 +41,15 @@ mod test {
         c.launch_at_login = true;
         store.salva(&c).unwrap();
 
-        salva_layout_in(dir.path(), Layout::Colori).unwrap();
-        assert_eq!(layout_salvato_in(dir.path()), Layout::Colori);
+        let casa = servizio(dir.path());
+        salva_layout(&casa, Layout::Colori);
+        assert_eq!(layout_salvato(&casa), Layout::Colori);
+        // Il salvataggio avviene sul thread del servizio: chiuderlo lo porta a termine.
+        drop(casa);
         let dopo = store.leggi();
         assert_eq!(dopo.favorites, ["light.cucina"]);
         assert!(dopo.launch_at_login);
         assert_eq!(dopo.ultimo_layout, "colori");
+        assert_eq!(layout_salvato(&servizio(dir.path())), Layout::Colori);
     }
 }

@@ -24,3 +24,18 @@ export struct StatPcUi {
     batteria-frazione: float,
     in-carica: bool,
 }
+
+// Un preferito della casa, già pronto per l'interfaccia (vedi `ponte::voce_ui`).
+// `genere`: "luce" | "presa" | "scena" | "termo" | "goccia" | "sensore" | "casa" (icona e tinta).
+// `stato`: il testo sotto il nome; `errore`: vuoto se l'ultimo comando non è fallito.
+// `toccabile`: un tocco manda un comando (luci, interruttori, scene disponibili).
+export struct PreferitoUi {
+    entity-id: string,
+    nome: string,
+    genere: string,
+    acceso: bool,
+    stato: string,
+    disponibile: bool,
+    errore: string,
+    toccabile: bool,
+}

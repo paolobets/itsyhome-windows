@@ -34,6 +34,10 @@ pub fn posizione_pillola(
 pub const MARGINE_AURA: f32 = 10.0;
 /// Larghezza logica fissa della finestra della pillola (`larghezza-finestra` in pillola.slint).
 pub const LARGHEZZA_FINESTRA_PILLOLA: f32 = 380.0;
+/// Centro degli occhi della pillola in "ti cerca" rispetto al centro della sua finestra
+/// (`scarto-occhi-allerta` in pillola.slint): pillola larga 360, occhi a 20 dal bordo sinistro,
+/// ingombro 30. Il pannello aperto da "ti cerca" fa partire gli occhi da qui.
+pub const SCARTO_OCCHI_ALLERTA: f32 = -145.0;
 /// Larghezza logica del pannello (`width` di pannello.slint).
 pub const LARGHEZZA_PANNELLO: f32 = 560.0;
 
@@ -216,6 +220,29 @@ mod test {
             assert!((alto_pillola - qy as f32).abs() <= 1.0, "y a scala {scala}: {alto_pillola} vs {qy}");
             // Il pannello resta dentro l'area di lavoro.
             assert!(qx >= a.x && qy >= a.y);
+        }
+    }
+
+    #[test]
+    fn da_ti_cerca_gli_occhi_del_pannello_partono_da_quelli_della_pillola() {
+        // In "ti cerca" gli occhi della pillola stanno a sinistra (pillola larga 360 al centro
+        // della finestra, occhi a 20 px dal bordo, ingombro 30): centro a 35 px dal bordo sinistro.
+        // Il pannello, aperto da lì, fa partire i suoi occhi da `partenza-occhi` =
+        // SCARTO_OCCHI_ALLERTA rispetto al proprio centro, poi li porta al centro.
+        let occhi_dal_bordo = 20.0 + (2.0 * 10.0 + 10.0) / 2.0;
+        for (a, scala) in [
+            (area(0, 0, 1920, 1040), 1.0),
+            (area(0, 0, 2560, 1528), 1.75),
+            (area(-1920, 0, 1920, 1080), 1.25),
+            (area(0, 40, 1366, 728), 1.5),
+        ] {
+            let (px, _) = posizione_pillola(a, scala, LARGHEZZA_FINESTRA_PILLOLA, MARGINE_LOGICO);
+            let (qx, _) = posizione_pannello(a, scala);
+            let bordo_pillola = px as f32 + (LARGHEZZA_FINESTRA_PILLOLA - 360.0) / 2.0 * scala;
+            let occhi_pillola = bordo_pillola + occhi_dal_bordo * scala;
+            let centro_pannello = qx as f32 + (LARGHEZZA_PANNELLO * scala).round() / 2.0;
+            let partenza = centro_pannello + SCARTO_OCCHI_ALLERTA * scala;
+            assert!((occhi_pillola - partenza).abs() <= 1.0, "scala {scala}: {occhi_pillola} vs {partenza}");
         }
     }
 
