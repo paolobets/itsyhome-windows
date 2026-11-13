@@ -1,6 +1,8 @@
-//! Impostazioni nel pannello: logica pura degli ambienti di Home Assistant (validazione del
-//! modulo, aggiunta/modifica/rimozione nella configurazione) e i testi che la vista mostra.
-//! I token non passano mai di qui: li tiene il portachiavi (`Segreti`), li maneggia il `Ponte`.
+//! Impostazioni (finestra dedicata, `finestra_impostazioni`): logica pura degli ambienti di Home
+//! Assistant (validazione del modulo, aggiunta/modifica/rimozione nella configurazione) e i testi
+//! che la finestra mostra. Un token scritto nel modulo passa di qui solo per arrivare al
+//! portachiavi (`Segreti`, nel `Ponte`): mai nella configurazione, mai nei log (il `Debug` di
+//! `Modulo` e `Ambiente` lo nasconde).
 
 use casa_core::config::Config;
 use casa_core::eventi::StatoConnessione;
@@ -32,7 +34,7 @@ pub fn valida_url(s: &str) -> Result<String, String> {
 
 /// Il modulo «aggiungi/modifica ambiente» come arriva dalla vista. `id` vuoto = nuovo ambiente;
 /// `token` vuoto in modifica = lascia quello salvato.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct Modulo {
     pub id: String,
     pub nome: String,
@@ -41,13 +43,41 @@ pub struct Modulo {
 }
 
 /// Il modulo controllato, pronto da applicare. `token` è `Some` solo se ne è stato scritto uno.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Ambiente {
     pub id: String,
     pub nome: String,
     pub url: String,
     pub nuovo: bool,
     pub token: Option<String>,
+}
+
+/// Il token non compare mai in un `Debug` (log, messaggi d'errore dei test).
+fn token_nascosto(t: &str) -> &'static str {
+    if t.is_empty() { "" } else { "«nascosto»" }
+}
+
+impl std::fmt::Debug for Modulo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Modulo")
+            .field("id", &self.id)
+            .field("nome", &self.nome)
+            .field("url", &self.url)
+            .field("token", &token_nascosto(&self.token))
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for Ambiente {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Ambiente")
+            .field("id", &self.id)
+            .field("nome", &self.nome)
+            .field("url", &self.url)
+            .field("nuovo", &self.nuovo)
+            .field("token", &self.token.as_deref().map(token_nascosto))
+            .finish()
+    }
 }
 
 /// Nome predefinito di un ambiente lasciato senza nome.
@@ -297,6 +327,15 @@ mod test {
         let giu = TestConnectionResult { ok: false, entity_count: None, error: Some("connessione non riuscita: IO".into()) };
         assert_eq!(esito_prova(&giu).1, Tono::Errore);
         assert!(!esito_prova(&giu).0.contains("IO"), "niente dettaglio tecnico nella frase");
+    }
+
+    #[test]
+    fn il_debug_non_mostra_il_token() {
+        let m = modulo("", "Casa", "h", "segreto-123");
+        assert!(!format!("{m:?}").contains("segreto-123"));
+        let a = prepara(&Config::default(), &m).unwrap();
+        assert!(!format!("{a:?}").contains("segreto-123"));
+        assert!(format!("{a:?}").contains("nascosto"));
     }
 
     #[test]

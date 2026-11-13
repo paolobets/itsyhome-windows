@@ -381,6 +381,9 @@ export component FinestraImpostazioni inherits Window {
         } else if (conferma-id != id) {
             conferma-pronta = false;
             conferma-id = id;
+            // Passando da un ambiente all'altro i 4 s ripartono.
+            scadenza-conferma.restart();
+            armo-conferma.restart();
         }
     }
 
@@ -390,13 +393,13 @@ export component FinestraImpostazioni inherits Window {
     }
 
     // Conferma della rimozione: si arma dopo 400 ms e scade dopo 4 s (timer solo in quei momenti).
-    Timer {
+    armo-conferma := Timer {
         interval: 400ms;
         running: conferma-id != "" && !conferma-pronta;
         triggered => { conferma-pronta = true; }
     }
 
-    Timer {
+    scadenza-conferma := Timer {
         interval: 4s;
         running: conferma-id != "";
         triggered => { conferma-id = ""; }

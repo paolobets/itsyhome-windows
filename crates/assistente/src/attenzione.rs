@@ -243,6 +243,9 @@ impl SorveglianzaCasa {
     }
 
     pub fn ricevi(&mut self, s: &StatoConnessione, ora: Instant) {
+        // Il tempo passato col token rotto non conta per i 5 minuti: uscendo da un problema di
+        // token (token sistemato, nuovo tentativo) il conto riparte da adesso.
+        let usciva_dal_token = self.token.is_some();
         self.token = match s {
             StatoConnessione::TokenNonValido => Some(ProblemaToken::NonValido),
             StatoConnessione::TokenMancante => Some(ProblemaToken::Mancante),
@@ -254,10 +257,15 @@ impl SorveglianzaCasa {
                 self.sorvegliata = false;
                 self.non_connessa_da = None;
             }
-            StatoConnessione::InConnessione
-            | StatoConnessione::Errore(_)
-            | StatoConnessione::TokenNonValido
-            | StatoConnessione::TokenMancante => {
+            StatoConnessione::InConnessione | StatoConnessione::Errore(_) => {
+                self.sorvegliata = true;
+                if usciva_dal_token {
+                    self.non_connessa_da = Some(ora);
+                } else {
+                    self.non_connessa_da.get_or_insert(ora);
+                }
+            }
+            StatoConnessione::TokenNonValido | StatoConnessione::TokenMancante => {
                 self.sorvegliata = true;
                 self.non_connessa_da.get_or_insert(ora);
             }
@@ -549,6 +557,28 @@ pub(crate) mod test {
         // Disconnesso apposta: niente voce.
         s.ricevi(&StatoConnessione::Disconnesso, t + S(1));
         assert_eq!(s.voce(t + S(1)), None);
+    }
+
+    #[test]
+    fn il_tempo_col_token_rotto_non_conta_per_i_cinque_minuti() {
+        let t = Instant::now();
+        let mut s = SorveglianzaCasa::new(t);
+        s.ricevi(&StatoConnessione::TokenMancante, t);
+        // Token sistemato dopo 6 minuti: si riconnette, nessuna «non raggiungibile» subito.
+        s.ricevi(&StatoConnessione::InConnessione, t + S(6 * 60));
+        assert_eq!(s.voce(t + S(6 * 60)), None);
+        assert_eq!(s.scadenza(t + S(6 * 60)), Some(CASA_OFFLINE_DOPO));
+    }
+
+    #[test]
+    fn dopo_il_token_un_errore_aspetta_i_suoi_cinque_minuti() {
+        let t = Instant::now();
+        let mut s = SorveglianzaCasa::new(t);
+        s.ricevi(&StatoConnessione::TokenNonValido, t);
+        s.ricevi(&StatoConnessione::Errore("Home Assistant non risponde".into()), t + S(6 * 60));
+        assert_eq!(s.voce(t + S(6 * 60)), None);
+        assert_eq!(s.voce(t + S(11 * 60) - Duration::from_millis(1)), None);
+        assert_eq!(s.voce(t + S(11 * 60)).map(|v| v.id), Some(ID_CASA_OFFLINE.to_owned()));
     }
 
     #[test]

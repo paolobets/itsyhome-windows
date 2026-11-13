@@ -21,6 +21,8 @@ thread_local! {
 pub fn apri_impostazioni() {
     let aperta = FINESTRA.with(|f| f.borrow().as_ref().map(|w| w.as_weak()));
     if let Some(w) = aperta.and_then(|w| w.upgrade()) {
+        // Ridotta a icona: prima la si rimette su, poi davanti.
+        w.window().set_minimized(false);
         let _ = w.show();
         w.window().with_winit_window(|w| w.focus_window());
         return;
