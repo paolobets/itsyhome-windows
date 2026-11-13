@@ -33,14 +33,32 @@ pub fn posizione_pillola(
 }
 
 /// Margine logico dell'aura attorno alla pillola (`margine-aura` in pillola.slint).
-pub const MARGINE_AURA: f32 = 10.0;
-/// Larghezza logica fissa della finestra della pillola (`larghezza-finestra` in pillola.slint):
-/// la pillola allargata che chiama (460: icona, occhi, una riga, 2 pulsanti) più l'aura.
-pub const LARGHEZZA_FINESTRA_PILLOLA: f32 = 480.0;
-/// Centro degli occhi della pillola allargata rispetto al centro della sua finestra
-/// (`scarto-occhi-allerta` in pillola.slint): pillola larga 460, occhi a 44 dal bordo sinistro
-/// (dopo l'icona della fonte), ingombro 30. Il pannello aperto da lì fa partire gli occhi da qui.
-pub const SCARTO_OCCHI_ALLERTA: f32 = -171.0;
+pub const MARGINE_AURA: f32 = 8.0;
+/// Pillola a riposo (`Faccia.larghezza-pillola` × `Faccia.altezza-pillola` in pillola.slint).
+pub const LARGHEZZA_PILLOLA: f32 = 124.0;
+pub const ALTEZZA_PILLOLA: f32 = 32.0;
+/// Pillola che chiama (*attenzione*): icona della fonte, occhi, una riga, fino a 2 pulsanti.
+pub const LARGHEZZA_ATTENZIONE: f32 = 400.0;
+pub const ALTEZZA_ATTENZIONE: f32 = 36.0;
+/// Pillola *bloccante*: più larga e più alta di quella che chiama, ferma, bordo più spesso.
+pub const LARGHEZZA_BLOCCANTE: f32 = 440.0;
+pub const ALTEZZA_BLOCCANTE: f32 = 40.0;
+/// Finestra della pillola (`larghezza-finestra` × `altezza-finestra` in pillola.slint): la
+/// pillola più grande (bloccante) più l'aura tutt'intorno. Fissa: cambiando aspetto la pillola
+/// cresce o cala attorno al centro (in larghezza) e verso il basso (in altezza).
+pub const LARGHEZZA_FINESTRA_PILLOLA: f32 = LARGHEZZA_BLOCCANTE + 2.0 * MARGINE_AURA;
+pub const ALTEZZA_FINESTRA_PILLOLA: f32 = ALTEZZA_BLOCCANTE + 2.0 * MARGINE_AURA;
+/// Centro degli occhi della pillola che chiama rispetto a quello degli occhi del pannello appena
+/// aperto, `(x, y)` logici (`scarto-occhi-attenzione` / `scarto-occhi-bloccante` in
+/// pillola.slint): x rispetto al centro della finestra, y rispetto al centro della riga alta del
+/// pannello. Il pannello aperto da lì fa partire gli occhi da qui. Occhi a 36 dal bordo sinistro
+/// della pillola (dopo l'icona della fonte), ingombro 21: x = -larghezza/2 + 46,5; y = metà
+/// della pillola meno metà della riga del pannello.
+pub const SCARTO_OCCHI_ATTENZIONE: (f32, f32) = (-153.5, 2.0);
+pub const SCARTO_OCCHI_BLOCCANTE: (f32, f32) = (-173.5, 4.0);
+/// Altezza della riga alta del pannello (`altezza-riga` in pannello.slint): quanto la pillola a
+/// riposo, così gli occhi del pannello cadono sui suoi.
+pub const ALTEZZA_RIGA_PANNELLO: f32 = ALTEZZA_PILLOLA;
 /// Larghezza logica del pannello (`width` di pannello.slint).
 pub const LARGHEZZA_PANNELLO: f32 = 800.0;
 
@@ -119,17 +137,26 @@ pub fn segui_schermo<C: ComponentHandle + 'static>(ui: &C, al_cambio: fn(&C)) {
 }
 
 /// Regione della finestra della pillola, `(sinistra, alto, destra, basso)` in pixel fisici della
-/// finestra larga `larghezza` e alta `altezza`: una fascia centrale larga `larghezza_logica`
-/// che parte sotto il margine dell'aura. La finestra sporge di quel margine sopra l'area di
-/// lavoro (`MARGINE_LOGICO`): quella striscia è fuori dallo schermo su un monitor solo, ma
-/// con un monitor sopra o con la barra delle applicazioni in alto disegnerebbe e prenderebbe
-/// clic lì. L'aura di sopra non si vede comunque, quindi non si perde nulla.
+/// finestra larga `larghezza` e alta `altezza`: la pillola con la sua aura, cioè una fascia
+/// centrale larga `larghezza_logica` che parte sotto il margine dell'aura e arriva a
+/// `altezza_logica` dall'alto della finestra (pillola + aura sotto; la fascia vuota che resta
+/// sotto una pillola piccola ruberebbe clic). La finestra sporge di quel margine sopra l'area di
+/// lavoro (`MARGINE_LOGICO`): quella striscia è fuori dallo schermo su un monitor solo, ma con un
+/// monitor sopra o con la barra delle applicazioni in alto disegnerebbe e prenderebbe clic lì.
+/// L'aura di sopra non si vede comunque, quindi non si perde nulla.
 #[cfg_attr(not(windows), allow(dead_code))]
-pub fn regione_pillola(larghezza: i32, altezza: i32, scala: f32, larghezza_logica: f32) -> (i32, i32, i32, i32) {
+pub fn regione_pillola(
+    larghezza: i32,
+    altezza: i32,
+    scala: f32,
+    larghezza_logica: f32,
+    altezza_logica: f32,
+) -> (i32, i32, i32, i32) {
     let fascia = ((larghezza_logica * scala).round() as i32).min(larghezza);
     let sinistra = (larghezza - fascia) / 2;
     let alto = ((MARGINE_AURA * scala).round() as i32).min(altezza);
-    (sinistra, alto, sinistra + fascia, altezza)
+    let basso = ((altezza_logica * scala).round() as i32).clamp(alto, altezza);
+    (sinistra, alto, sinistra + fascia, basso)
 }
 
 /// Regione della finestra della pillola ritirata: la linea `LARGHEZZA_LINEA` × `ALTEZZA_LINEA`
@@ -145,16 +172,17 @@ pub fn regione_linea(larghezza: i32, altezza: i32, scala: f32) -> (i32, i32, i32
 }
 
 /// Limita disegno e clic della finestra alla regione di `regione_pillola`: fuori dalla fascia
-/// la finestra non esiste per il mouse. Così la finestra della pillola può restare sempre larga
-/// quanto la pillola più larga senza rubare clic.
+/// la finestra non esiste per il mouse. Così la finestra della pillola può restare sempre grande
+/// quanto la pillola più grande senza rubare clic.
 #[cfg(windows)]
-pub fn ritaglia_al_centro(finestra: &slint::Window, larghezza_logica: f32) {
+pub fn ritaglia_al_centro(finestra: &slint::Window, (larghezza_logica, altezza_logica): (f32, f32)) {
     let dimensioni = finestra.size();
     let rettangolo = regione_pillola(
         dimensioni.width as i32,
         dimensioni.height as i32,
         finestra.scale_factor(),
         larghezza_logica,
+        altezza_logica,
     );
     applica_regione(finestra, rettangolo);
 }
@@ -321,7 +349,7 @@ fn senza_barra_del_titolo(hwnd: isize) {
 
 /// Altrove la finestra resta intera (fascia trasparente cliccabile ai lati).
 #[cfg(not(windows))]
-pub fn ritaglia_al_centro(_finestra: &slint::Window, _larghezza_logica: f32) {}
+pub fn ritaglia_al_centro(_finestra: &slint::Window, _visibile: (f32, f32)) {}
 
 #[cfg(not(windows))]
 pub fn ritaglia_a_linea(_finestra: &slint::Window) {}
@@ -362,35 +390,56 @@ mod test {
 
     #[test]
     fn centrata_su_monitor_1920_scala_1() {
-        assert_eq!(posizione_pillola(area(0, 0, 1920, 1040), 1.0, 200.0, MARGINE_LOGICO), (860, -10));
+        assert_eq!(posizione_pillola(area(0, 0, 1920, 1040), 1.0, 456.0, MARGINE_LOGICO), (732, -8));
     }
 
     #[test]
     fn centrata_con_scala_175() {
-        let (x, y) = posizione_pillola(area(0, 0, 2560, 1528), 1.75, 200.0, MARGINE_LOGICO);
-        assert_eq!(x, (2560 - 350) / 2);
-        // -17,5 arrotondato lontano da zero: la finestra sporge di 18 px sopra lo schermo.
-        assert_eq!(y, -18);
+        let (x, y) = posizione_pillola(area(0, 0, 2560, 1528), 1.75, 456.0, MARGINE_LOGICO);
+        assert_eq!(x, (2560 - 798) / 2);
+        // Margine dell'aura 8 × 1,75: la finestra sporge di 14 px sopra lo schermo.
+        assert_eq!(y, -14);
+        // Un margine che non cade sul pixel (-10 × 1,75 = -17,5) si arrotonda lontano da zero.
+        assert_eq!(posizione_pillola(area(0, 0, 2560, 1528), 1.75, 456.0, -10.0).1, -18);
+    }
+
+    fn aree() -> [(RettangoloFisico, f32); 4] {
+        [
+            (area(0, 0, 1920, 1040), 1.0),
+            (area(0, 0, 2560, 1528), 1.75),
+            (area(-1920, 0, 1920, 1080), 1.25),
+            (area(0, 40, 1366, 728), 1.5),
+        ]
+    }
+
+    #[test]
+    fn misure_della_pillola_come_twocode() {
+        // Decisione di Paolo (13/11): pillola più piccola, sulle proporzioni di TwoCode.
+        assert_eq!((LARGHEZZA_PILLOLA, ALTEZZA_PILLOLA), (124.0, 32.0), "a riposo");
+        assert_eq!((LARGHEZZA_ATTENZIONE, ALTEZZA_ATTENZIONE), (400.0, 36.0), "che chiama");
+        assert_eq!((LARGHEZZA_BLOCCANTE, ALTEZZA_BLOCCANTE), (440.0, 40.0), "bloccante");
+        // La finestra: la bloccante più l'aura (8) tutt'intorno.
+        assert_eq!(MARGINE_AURA, 8.0);
+        assert_eq!((LARGHEZZA_FINESTRA_PILLOLA, ALTEZZA_FINESTRA_PILLOLA), (456.0, 56.0));
+        // La riga alta del pannello è alta quanto la pillola a riposo.
+        assert_eq!(ALTEZZA_RIGA_PANNELLO, 32.0);
     }
 
     #[test]
     fn occhi_del_pannello_sugli_occhi_della_pillola() {
         // Gli occhi della pillola stanno al centro della sua finestra (umore tranquillo) e a metà
-        // altezza della pillola; quelli del pannello al centro e a metà della riga alta, alta
-        // quanto la pillola. Si confrontano al pixel fisico (gli arrotondamenti valgono mezzo pixel).
-        for (a, scala) in [
-            (area(0, 0, 1920, 1040), 1.0),
-            (area(0, 0, 2560, 1528), 1.75),
-            (area(-1920, 0, 1920, 1080), 1.25),
-            (area(0, 40, 1366, 728), 1.5),
-        ] {
+        // altezza della pillola; quelli del pannello al centro e a metà della riga alta. Si
+        // confrontano al pixel fisico (gli arrotondamenti valgono mezzo pixel).
+        for (a, scala) in aree() {
             let (px, py) = posizione_pillola(a, scala, LARGHEZZA_FINESTRA_PILLOLA, MARGINE_LOGICO);
             let (qx, qy) = posizione_pannello(a, scala);
             let centro_pillola = px as f32 + (LARGHEZZA_FINESTRA_PILLOLA * scala).round() / 2.0;
             let centro_pannello = qx as f32 + (LARGHEZZA_PANNELLO * scala).round() / 2.0;
             assert!((centro_pillola - centro_pannello).abs() <= 1.0, "x a scala {scala}: {centro_pillola} vs {centro_pannello}");
-            let alto_pillola = py as f32 + MARGINE_AURA * scala;
-            assert!((alto_pillola - qy as f32).abs() <= 1.0, "y a scala {scala}: {alto_pillola} vs {qy}");
+            // Occhi a metà della pillola a riposo (32: 16 sotto il bordo alto) e a metà della riga.
+            let occhi_pillola = py as f32 + (MARGINE_AURA + 16.0) * scala;
+            let occhi_pannello = qy as f32 + ALTEZZA_RIGA_PANNELLO / 2.0 * scala;
+            assert!((occhi_pillola - occhi_pannello).abs() <= 1.0, "y a scala {scala}: {occhi_pillola} vs {occhi_pannello}");
             // Il pannello resta dentro l'area di lavoro, anche largo 800.
             assert!(qx >= a.x && qy >= a.y);
             assert!(qx + (LARGHEZZA_PANNELLO * scala).round() as i32 <= a.x + a.larghezza);
@@ -399,25 +448,28 @@ mod test {
 
     #[test]
     fn da_ti_cerca_gli_occhi_del_pannello_partono_da_quelli_della_pillola() {
-        // Nella pillola allargata (che chiama) gli occhi stanno a sinistra, dopo l'icona della
-        // fonte: pillola larga 460 al centro della finestra, occhi a 44 px dal bordo (18 + icona 16
-        // + 10), ingombro 30: centro a 59 px dal bordo sinistro. Il pannello, aperto da lì, fa
-        // partire i suoi occhi da `partenza-occhi` = SCARTO_OCCHI_ALLERTA rispetto al proprio
-        // centro, poi li porta al centro.
-        let occhi_dal_bordo = 44.0 + (2.0 * 10.0 + 10.0) / 2.0;
-        for (a, scala) in [
-            (area(0, 0, 1920, 1040), 1.0),
-            (area(0, 0, 2560, 1528), 1.75),
-            (area(-1920, 0, 1920, 1080), 1.25),
-            (area(0, 40, 1366, 728), 1.5),
+        // Nella pillola che chiama gli occhi stanno a sinistra, dopo l'icona della fonte: occhi a
+        // 36 px dal bordo sinistro (14 + icona 14 + 8), larghi 7 e distanti 7 (ingombro 21):
+        // centro a 46,5 px dal bordo. In altezza a metà della pillola (36 o 40), che è più alta
+        // della riga del pannello (32). Il pannello, aperto da lì, fa partire i suoi occhi da
+        // `partenza-occhi` = scarto rispetto al proprio centro, poi li porta al centro.
+        let occhi_dal_bordo = 36.0 + (2.0 * 7.0 + 7.0) / 2.0;
+        for (larghezza, altezza, scarto, nome) in [
+            (400.0, 36.0, SCARTO_OCCHI_ATTENZIONE, "attenzione"),
+            (440.0, 40.0, SCARTO_OCCHI_BLOCCANTE, "bloccante"),
         ] {
-            let (px, _) = posizione_pillola(a, scala, LARGHEZZA_FINESTRA_PILLOLA, MARGINE_LOGICO);
-            let (qx, _) = posizione_pannello(a, scala);
-            let bordo_pillola = px as f32 + (LARGHEZZA_FINESTRA_PILLOLA - 460.0) / 2.0 * scala;
-            let occhi_pillola = bordo_pillola + occhi_dal_bordo * scala;
-            let centro_pannello = qx as f32 + (LARGHEZZA_PANNELLO * scala).round() / 2.0;
-            let partenza = centro_pannello + SCARTO_OCCHI_ALLERTA * scala;
-            assert!((occhi_pillola - partenza).abs() <= 1.0, "scala {scala}: {occhi_pillola} vs {partenza}");
+            for (a, scala) in aree() {
+                let (px, py) = posizione_pillola(a, scala, LARGHEZZA_FINESTRA_PILLOLA, MARGINE_LOGICO);
+                let (qx, qy) = posizione_pannello(a, scala);
+                let bordo_pillola = px as f32 + (LARGHEZZA_FINESTRA_PILLOLA - larghezza) / 2.0 * scala;
+                let occhi_x = bordo_pillola + occhi_dal_bordo * scala;
+                let centro_pannello = qx as f32 + (LARGHEZZA_PANNELLO * scala).round() / 2.0;
+                let partenza_x = centro_pannello + scarto.0 * scala;
+                assert!((occhi_x - partenza_x).abs() <= 1.0, "{nome} x a scala {scala}: {occhi_x} vs {partenza_x}");
+                let occhi_y = py as f32 + (MARGINE_AURA + altezza / 2.0) * scala;
+                let partenza_y = qy as f32 + (ALTEZZA_RIGA_PANNELLO / 2.0 + scarto.1) * scala;
+                assert!((occhi_y - partenza_y).abs() <= 1.0, "{nome} y a scala {scala}: {occhi_y} vs {partenza_y}");
+            }
         }
     }
 
@@ -425,12 +477,7 @@ mod test {
     fn pillola_e_pannello_attaccati_al_bordo_alto() {
         // Come il notch: il bordo superiore della pillola (sotto il margine dell'aura) tocca il
         // bordo alto dell'area di lavoro e il pannello parte da lì. Entro mezzo pixel fisico.
-        for (a, scala) in [
-            (area(0, 0, 1920, 1040), 1.0),
-            (area(0, 0, 2560, 1528), 1.75),
-            (area(-1920, 0, 1920, 1080), 1.25),
-            (area(0, 40, 1366, 728), 1.5),
-        ] {
+        for (a, scala) in aree() {
             let (_, py) = posizione_pillola(a, scala, LARGHEZZA_FINESTRA_PILLOLA, MARGINE_LOGICO);
             let bordo_pillola = py as f32 + MARGINE_AURA * scala;
             assert!((bordo_pillola - a.y as f32).abs() <= 0.5, "pillola a scala {scala}: {bordo_pillola} vs {}", a.y);
@@ -441,32 +488,30 @@ mod test {
 
     #[test]
     fn regione_della_pillola_sotto_il_margine_dell_aura() {
-        // Finestra 480 × 68 logici; fascia calm 220 al centro. La regione parte dove inizia lo
-        // schermo (sotto l'aura che sporge) e arriva in fondo alla finestra.
-        assert_eq!(LARGHEZZA_FINESTRA_PILLOLA, 480.0);
-        assert_eq!(regione_pillola(480, 68, 1.0, 220.0), (130, 10, 350, 68));
-        // Allargata (460 + aura): la fascia è tutta la finestra, pulsanti a destra compresi.
-        assert_eq!(regione_pillola(480, 68, 1.0, 480.0), (0, 10, 480, 68));
-        let (l, a) = ((480.0_f32 * 1.75).round() as i32, (68.0_f32 * 1.75).round() as i32);
-        let (sinistra, alto, destra, basso) = regione_pillola(l, a, 1.75, 220.0);
-        assert_eq!(alto, 18, "margine dell'aura a 1,75: 17,5 arrotondato");
-        assert_eq!(basso - alto, a - 18);
-        assert_eq!(destra - sinistra, 385);
-        assert_eq!(sinistra, (l - 385) / 2);
+        // Finestra 456 × 56 logici. La regione è la pillola più l'aura a destra, a sinistra e
+        // sotto: parte dove inizia lo schermo (sotto l'aura che sporge) e finisce sotto l'aura
+        // della pillola, non in fondo alla finestra (la fascia vuota sotto ruberebbe clic).
+        // A riposo: 124 + 16 = 140 di larghezza, fino a 8 + 32 + 8 = 48.
+        assert_eq!(regione_pillola(456, 56, 1.0, 140.0, 48.0), (158, 8, 298, 48));
+        // Che chiama: 400 + 16, fino a 8 + 36 + 8; pulsanti a destra compresi.
+        assert_eq!(regione_pillola(456, 56, 1.0, 416.0, 52.0), (20, 8, 436, 52));
+        // Bloccante: tutta la finestra sotto il margine.
+        assert_eq!(regione_pillola(456, 56, 1.0, 456.0, 56.0), (0, 8, 456, 56));
+        // A 1,75 (finestra 798 × 98): margine 14, riposo 245 × fino a 84.
+        assert_eq!(regione_pillola(798, 98, 1.75, 140.0, 48.0), (276, 14, 521, 84));
+        // Mai fuori dalla finestra.
+        assert_eq!(regione_pillola(456, 56, 1.0, 600.0, 90.0), (0, 8, 456, 56));
         // L'alto della regione coincide col bordo alto dell'area di lavoro.
         let (_, py) = posizione_pillola(area(0, 0, 2560, 1528), 1.75, LARGHEZZA_FINESTRA_PILLOLA, MARGINE_LOGICO);
-        assert_eq!(py + alto, 0);
+        assert_eq!(py + 14, 0);
     }
 
     #[test]
     fn regione_della_linea_al_bordo_alto() {
-        // Finestra 480 × 68: linea 300 × 4 al centro, dal bordo alto dello schermo (y = 10).
-        assert_eq!(regione_linea(480, 68, 1.0), (90, 10, 390, 14));
-        // A 1,75: 525 × 7, sotto i 18 px di aura che sporgono.
-        let (l, a) = ((480.0_f32 * 1.75).round() as i32, (68.0_f32 * 1.75).round() as i32);
-        let (sinistra, alto, destra, basso) = regione_linea(l, a, 1.75);
-        assert_eq!((alto, basso - alto, destra - sinistra), (18, 7, 525));
-        assert_eq!(sinistra, (l - 525) / 2);
+        // Finestra 456 × 56: linea 300 × 4 al centro, dal bordo alto dello schermo (y = 8).
+        assert_eq!(regione_linea(456, 56, 1.0), (78, 8, 378, 12));
+        // A 1,75 (798 × 98): 525 × 7, sotto i 14 px di aura che sporgono.
+        assert_eq!(regione_linea(798, 98, 1.75), (136, 14, 661, 21));
     }
 
     #[test]
@@ -477,9 +522,9 @@ mod test {
 
     #[test]
     fn monitor_secondario_a_sinistra() {
-        let (x, y) = posizione_pillola(area(-1920, 0, 1920, 1080), 1.0, 200.0, MARGINE_LOGICO);
-        assert_eq!(x, -1920 + (1920 - 200) / 2);
+        let (x, y) = posizione_pillola(area(-1920, 0, 1920, 1080), 1.0, 456.0, MARGINE_LOGICO);
+        assert_eq!(x, -1920 + (1920 - 456) / 2);
         assert!(x < 0);
-        assert_eq!(y, -10);
+        assert_eq!(y, -8);
     }
 }

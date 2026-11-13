@@ -204,6 +204,7 @@ impl Apertura {
     fn crea(&self) -> Result<Pannello, slint::PlatformError> {
         let pannello = Pannello::new()?;
         debug_assert_eq!(pannello.get_larghezza_pannello(), finestre::LARGHEZZA_PANNELLO);
+        debug_assert_eq!(pannello.get_altezza_riga(), finestre::ALTEZZA_RIGA_PANNELLO);
         debug_assert_eq!(pannello.get_numero_layout() as usize, layout::TUTTI.len());
         pannello.set_app(voci_app());
         pannello.set_layout(self.layout.get());
@@ -285,6 +286,7 @@ impl Apertura {
         // voce, espansa sul posto nella riga «In attesa».
         if pillola.get_aspetto() == "allargata" {
             pannello.set_partenza_occhi(pillola.get_scarto_occhi_allerta());
+            pannello.set_partenza_occhi_y(pillola.get_scarto_occhi_allerta_y());
         }
         if let Some(indice) = self.ponte.voce_della_pillola() {
             // Espande la voce e porta lì il fuoco da tastiera (frecce e Invio agiscono su di lei).

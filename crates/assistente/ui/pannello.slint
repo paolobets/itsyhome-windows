@@ -10,7 +10,7 @@
 // Esc chiude. Un unico FocusScope tiene il fuoco e l'anello (visibile solo da tastiera) segue la
 // zona scelta.
 import { Tema } from "tema.slint";
-import { Occhio } from "pillola.slint";
+import { Faccia, Occhio } from "pillola.slint";
 import { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi } from "voci.slint";
 import { RigaAttesa, VoceEspansa } from "attesa.slint";
 import { VistaPc } from "viste/pc.slint";
@@ -114,6 +114,8 @@ export component Pannello inherits Window {
     // Da dove partono gli occhi all'apertura, rispetto al centro: aprendo da "ti cerca" sono
     // dove stavano quelli della pillola allargata e, appena il pannello è comparso, scivolano al centro.
     in property <length> partenza-occhi: 0px;
+    // Lo stesso in altezza, rispetto al centro della riga alta: la pillola che chiama è più alta.
+    in property <length> partenza-occhi-y: 0px;
     // Le voci «In attesa», già in ordine (bloccante, attenzione, informazione; poi le più recenti).
     in property <[VoceAttesaUi]> attese;
     // Id della voce espansa sul posto ("" = nessuna). Rust la azzera se la voce sparisce e la
@@ -131,12 +133,12 @@ export component Pannello inherits Window {
     callback apri-app(string);
     callback chiudi();
 
-    // Geometria (logica). La riga alta è alta quanto la pillola, così gli occhi cadono dove
+    // Geometria (logica). La riga alta è alta quanto la pillola a riposo, così gli occhi cadono dove
     // stavano i suoi (vedi `posizione_pannello` in finestre.rs). Pannello 800 × 300: zona
-    // centrale 764 × 172, poi la riga dei puntini (solo nella Panoramica) e il dock.
+    // centrale 764 × 188, poi la riga dei puntini (solo nella Panoramica) e il dock.
     out property <length> larghezza-pannello: 800px;
     property <length> margine: 18px;
-    property <length> altezza-riga: 48px;
+    out property <length> altezza-riga: Faccia.altezza-pillola;
     property <length> altezza-dock: 38px;
     property <length> dock-y: root.height - altezza-dock - 12px;
     property <length> altezza-puntini: 20px;
@@ -155,7 +157,7 @@ export component Pannello inherits Window {
     // Diventa vero poco dopo l'apertura, quando i primi fotogrammi hanno già disegnato gli occhi
     // al punto di partenza: solo allora lo scarto si anima (le proprietà si calcolano solo
     // quando servono, quindi un cambio nello stesso istante dell'apertura non si vedrebbe).
-    property <bool> occhi-al-centro: partenza-occhi == 0px;
+    property <bool> occhi-al-centro: partenza-occhi == 0px && partenza-occhi-y == 0px;
 
     // ─── Tastiera ───
     // Zona col fuoco: "indietro", "contenuto" o "dock". All'apertura il fuoco va sul contenuto.
@@ -468,13 +470,14 @@ export component Pannello inherits Window {
         occhi := Rectangle {
             property <bool> contento: umore == "happy";
             property <bool> dorme: umore == "sleep";
-            property <length> ingombro: 2 * (contento ? 13px : 9px) + 18px;
+            property <length> ingombro: 2 * (contento ? Faccia.larghezza-arco : Faccia.larghezza-occhio) + Faccia.spazio-occhi;
             // Restano sugli occhi della pillola mentre il pannello compare, poi vanno al centro
             // (solo lo scarto è animato: un cambio d'umore li ricentra subito).
             property <length> scarto: occhi-al-centro ? 0px : partenza-occhi;
-            animate scarto { duration: 240ms; easing: ease-in-out; }
+            property <length> scarto-y: occhi-al-centro ? 0px : partenza-occhi-y;
+            animate scarto, scarto-y { duration: 240ms; easing: ease-in-out; }
             x: (parent.width - self.ingombro) / 2 + self.scarto;
-            y: 0;
+            y: self.scarto-y;
             width: self.ingombro;
             height: altezza-riga;
             accessible-role: button;

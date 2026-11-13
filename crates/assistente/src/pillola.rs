@@ -1,9 +1,9 @@
 //! La pillola: umore, aspetto (riposo, puntino, allargata che chiama) e ritaglio della finestra.
 //!
-//! La finestra della pillola è sempre larga quanto la pillola più larga e la pillola le sta al
-//! centro, quindi cambiando aspetto nulla si sposta. Per non rubare clic, la finestra è ritagliata
-//! alla fascia visibile (pulsanti compresi): si allarga subito quando la pillola cresce e si
-//! stringe solo a fine animazione quando la pillola cala.
+//! La finestra della pillola è sempre grande quanto la pillola più grande (la bloccante) e la
+//! pillola le sta al centro, attaccata in alto, quindi cambiando aspetto nulla si sposta. Per non
+//! rubare clic, la finestra è ritagliata alla pillola con la sua aura (pulsanti compresi): il
+//! ritaglio cresce subito quando la pillola cresce e cala solo a fine animazione.
 
 use crate::attenzione::{aspetto_pillola, Attese, AspettoPillola, Fonte, Livello, Pulsante};
 use crate::umore::Umore;
@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 const DOPO_ANIMAZIONE: Duration = Duration::from_millis(260);
 
 thread_local! {
-    /// Larghezza logica del ritaglio in vigore (la riapplica chi cambia schermo o DPI).
-    static RITAGLIO: Cell<f32> = const { Cell::new(0.0) };
+    /// Larghezza e altezza logiche del ritaglio in vigore (le riapplica chi cambia schermo o DPI).
+    static RITAGLIO: Cell<(f32, f32)> = const { Cell::new((0.0, 0.0)) };
     /// Conta i cambi d'aspetto: un restringimento rimandato vale solo se nel frattempo non ne è
     /// arrivato un altro.
     static GIRO: Cell<u64> = const { Cell::new(0) };
@@ -94,8 +94,8 @@ pub fn pulsanti_ui(p: &[Pulsante]) -> ModelRc<PulsanteUi> {
     ModelRc::new(VecModel::from(voci))
 }
 
-fn ritaglia(ui: &Pillola, larghezza: f32) {
-    RITAGLIO.with(|r| r.set(larghezza));
+fn ritaglia(ui: &Pillola, visibile: (f32, f32)) {
+    RITAGLIO.with(|r| r.set(visibile));
     applica_ritaglio(ui);
 }
 
@@ -159,24 +159,37 @@ pub fn imposta(ui: &Pillola, v: &VistaPillola) {
     }
     ui.set_pulsanti(pulsanti_ui(&v.pulsanti));
 
-    let dopo = ui.get_larghezza_visibile();
+    let dopo = visibile(ui);
     let giro = GIRO.with(|g| {
         g.set(g.get() + 1);
         g.get()
     });
-    if dopo >= prima {
-        ritaglia(ui, dopo);
-    } else {
+    let (subito, poi) = ritagli(prima, dopo);
+    ritaglia(ui, subito);
+    if let Some(poi) = poi {
         let debole = ui.as_weak();
         slint::Timer::single_shot(DOPO_ANIMAZIONE, move || {
             if GIRO.with(Cell::get) != giro {
                 return;
             }
             if let Some(ui) = debole.upgrade() {
-                ritaglia(&ui, ui.get_larghezza_visibile());
+                ritaglia(&ui, poi);
             }
         });
     }
+}
+
+/// Larghezza e altezza logiche della pillola con l'aura, a fine animazione.
+fn visibile(ui: &Pillola) -> (f32, f32) {
+    (ui.get_larghezza_visibile(), ui.get_altezza_visibile())
+}
+
+/// Passando dal ritaglio `prima` a `dopo`: quello da applicare subito (abbastanza grande per
+/// tutta l'animazione, in ogni direzione) e, se la pillola cala, quello da applicare a fine
+/// animazione.
+fn ritagli(prima: (f32, f32), dopo: (f32, f32)) -> ((f32, f32), Option<(f32, f32)>) {
+    let subito = (prima.0.max(dopo.0), prima.1.max(dopo.1));
+    (subito, (subito != dopo).then_some(dopo))
 }
 
 /// Finestra appena nata, spostata, DPI o monitor cambiati: posizione e ritaglio di nuovo.
@@ -210,5 +223,17 @@ mod test {
         assert_eq!(vp.livello, Livello::Informazione);
         assert!(vp.testo.is_empty() && vp.pulsanti.is_empty());
         assert_eq!(vista(Umore::Tranquillo, &Attese::default(), t), VistaPillola::riposo(Umore::Tranquillo));
+    }
+
+    #[test]
+    fn il_ritaglio_cresce_subito_e_cala_a_fine_animazione() {
+        // A riposo → che chiama: cresce subito in tutte e due le direzioni.
+        assert_eq!(ritagli((140.0, 48.0), (416.0, 52.0)), ((416.0, 52.0), None));
+        // Che chiama → riposo: resta grande per l'animazione, poi cala.
+        assert_eq!(ritagli((416.0, 52.0), (140.0, 48.0)), ((416.0, 52.0), Some((140.0, 48.0))));
+        // Uguale: nulla da rimandare.
+        assert_eq!(ritagli((140.0, 48.0), (140.0, 48.0)), ((140.0, 48.0), None));
+        // Più larga ma più bassa: subito la più grande in ogni direzione, poi quella giusta.
+        assert_eq!(ritagli((140.0, 56.0), (416.0, 52.0)), ((416.0, 56.0), Some((416.0, 52.0))));
     }
 }

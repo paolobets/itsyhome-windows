@@ -110,9 +110,32 @@ fn main() -> Result<(), slint::PlatformError> {
     sincronizza_avvio(&casa);
 
     let pillola = Pillola::new()?;
-    debug_assert_eq!(pillola.get_larghezza_finestra(), finestre::LARGHEZZA_FINESTRA_PILLOLA);
+    // Le misure della pillola in Rust (finestre.rs, con i test) e in pillola.slint coincidono.
     debug_assert_eq!(pillola.get_margine_aura(), finestre::MARGINE_AURA);
-    debug_assert_eq!(pillola.get_scarto_occhi_allerta(), finestre::SCARTO_OCCHI_ALLERTA);
+    debug_assert_eq!(
+        (pillola.get_larghezza_finestra(), pillola.get_altezza_finestra()),
+        (finestre::LARGHEZZA_FINESTRA_PILLOLA, finestre::ALTEZZA_FINESTRA_PILLOLA)
+    );
+    debug_assert_eq!(
+        (pillola.get_larghezza_riposo(), pillola.get_altezza_riposo()),
+        (finestre::LARGHEZZA_PILLOLA, finestre::ALTEZZA_PILLOLA)
+    );
+    debug_assert_eq!(
+        (pillola.get_larghezza_attenzione(), pillola.get_altezza_attenzione()),
+        (finestre::LARGHEZZA_ATTENZIONE, finestre::ALTEZZA_ATTENZIONE)
+    );
+    debug_assert_eq!(
+        (pillola.get_larghezza_bloccante(), pillola.get_altezza_bloccante()),
+        (finestre::LARGHEZZA_BLOCCANTE, finestre::ALTEZZA_BLOCCANTE)
+    );
+    debug_assert_eq!(
+        (pillola.get_scarto_occhi_attenzione(), pillola.get_scarto_occhi_attenzione_y()),
+        finestre::SCARTO_OCCHI_ATTENZIONE
+    );
+    debug_assert_eq!(
+        (pillola.get_scarto_occhi_bloccante(), pillola.get_scarto_occhi_bloccante_y()),
+        finestre::SCARTO_OCCHI_BLOCCANTE
+    );
 
     let argomenti: Vec<String> = std::env::args().skip(1).collect();
     let forzato = umore_forzato(argomenti.iter().cloned());
