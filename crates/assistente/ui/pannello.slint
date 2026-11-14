@@ -453,11 +453,20 @@ export component Pannello inherits Window {
                 indietro();
                 return accept;
             }
-            // Ctrl+Invio prima del rifiuto dei modificatori: concede il permesso col fuoco.
-            if (evento.text == Key.Return && evento.modifiers.control && !evento.modifiers.alt && !evento.modifiers.meta) {
+            // Ctrl+Invio esatto (niente Alt, AltGr, Maiusc o Win) prima del rifiuto dei modificatori:
+            // concede il permesso col fuoco.
+            if (evento.text == Key.Return && evento.modifiers.control && !evento.modifiers.alt
+                    && !evento.modifiers.meta && !evento.modifiers.shift) {
                 da-tastiera = true;
                 attiva(true);
                 return accept;
+            }
+            // Invio o Spazio con qualunque altro modificatore: presi qui e ignorati. Rifiutati,
+            // arriverebbero all'elemento col fuoco vero (un pulsante, magari «Consenti»).
+            if (evento.text == Key.Return || evento.text == Key.Space) {
+                if (evento.modifiers.alt || evento.modifiers.control || evento.modifiers.meta || evento.modifiers.shift) {
+                    return accept;
+                }
             }
             if (evento.modifiers.alt || evento.modifiers.control || evento.modifiers.meta) {
                 return reject;

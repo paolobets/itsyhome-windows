@@ -73,6 +73,13 @@ export component Pulsante inherits FocusScope {
     in property <bool> anello: root.has-focus;
     // Il pannello decide da sé dove sta il fuoco (FE13): vero = questo pulsante lo prende.
     in property <bool> chiede-fuoco;
+    // Tastiera propria (Invio o Spazio, senza modificatori, lo premono): vero dove nessun altro
+    // governa i tasti (Impostazioni). Falso nel pannello, dove li governa `tasti`, e nella
+    // pillola, dove nessun pulsante si preme da tastiera.
+    in property <bool> tasti-propri: true;
+    // Concede un permesso: mai premuto dalla sua tastiera. Nel pannello lo concede solo
+    // Ctrl+Invio, gestito da `tasti`; altrimenti il clic.
+    in property <bool> delicato;
     property <bool> vuole-fuoco: chiede-fuoco && Fuochi.pronti;
     callback premuto();
     // Ha appena preso il fuoco (Tab): chi lo contiene lo porta in vista.
@@ -100,6 +107,12 @@ export component Pulsante inherits FocusScope {
     accessible-label: testo;
     accessible-action-default => { root.premuto(); }
     key-pressed(evento) => {
+        if (!tasti-propri || delicato) {
+            return reject;
+        }
+        if (evento.modifiers.alt || evento.modifiers.control || evento.modifiers.meta || evento.modifiers.shift) {
+            return reject;
+        }
         if (evento.text == Key.Return || evento.text == Key.Space) {
             root.premuto();
             return accept;

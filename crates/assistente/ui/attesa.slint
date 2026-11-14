@@ -314,6 +314,9 @@ export component VoceEspansa inherits Rectangle {
             tipo: i == voce.pulsanti.length - 1 ? TipoPulsante.azione : TipoPulsante.neutro;
             anello: i == root.fuoco;
             chiede-fuoco: i == root.fuoco;
+            // La tastiera la governa il pannello (Ctrl+Invio per un permesso).
+            tasti-propri: false;
+            delicato: p.delicato;
             premuto => { root.azione(p.id); }
         }
     }

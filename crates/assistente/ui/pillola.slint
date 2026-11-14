@@ -321,6 +321,11 @@ export component Pillola inherits Window {
                 corpo-testo: Tema.testo-piccolo;
                 testo: p.testo;
                 tipo: i == pulsanti.length - 1 ? TipoPulsante.azione : TipoPulsante.neutro;
+                // Nella pillola niente tastiera: né Tab ai pulsanti né Invio o Spazio (il permesso
+                // si dà col clic, o dal pannello col testo intero).
+                tasti-propri: false;
+                focus-on-tab-navigation: false;
+                delicato: p.delicato;
                 premuto => { root.azione(p.id); }
             }
         }

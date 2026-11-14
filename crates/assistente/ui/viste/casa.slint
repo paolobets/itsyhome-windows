@@ -135,6 +135,7 @@ export component VistaCasa inherits Rectangle {
         testo: "Riprova";
         anello: fuoco-riprova;
         chiede-fuoco: fuoco-riprova;
+        tasti-propri: false;
         premuto => { root.riprova-casa(); }
     }
 
@@ -192,6 +193,7 @@ export component VistaCasa inherits Rectangle {
                 tipo: TipoPulsante.azione;
                 anello: fuoco-impostazioni;
                 chiede-fuoco: fuoco-impostazioni;
+                tasti-propri: false;
                 premuto => { root.apri-impostazioni(); }
             }
         }

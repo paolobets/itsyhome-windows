@@ -323,4 +323,100 @@ mod accessibilita {
         p.window().dispatch_event(WindowEvent::KeyReleased { text: Key::Control.into() });
         assert_eq!(*azioni.borrow(), ["consenti"]);
     }
+
+    /// Un pannello con la voce «Permesso» (Nega / Consenti) espansa e il fuoco vero su «Consenti»;
+    /// restituisce le azioni arrivate.
+    fn pannello_sul_consenso() -> (Pannello, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
+        use slint::platform::Key;
+        piattaforma_di_prova();
+        let p = pannello();
+        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        p.global::<crate::Fuochi>().set_pronti(true);
+        let pulsanti = ModelRc::new(VecModel::from(vec![
+            PulsanteUi { id: "nega".into(), testo: "Nega".into(), delicato: false },
+            PulsanteUi { id: "consenti".into(), testo: "Consenti".into(), delicato: true },
+        ]));
+        p.set_attese(ModelRc::new(VecModel::from(vec![VoceAttesaUi {
+            id: "v".into(),
+            livello: LivelloUi::Bloccante,
+            titolo: "Permesso".into(),
+            sotto: "Aspetta te · prova".into(),
+            dettaglio: "Posso?".into(),
+            icona: Default::default(),
+            pulsanti,
+        }])));
+        let azioni = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let a = azioni.clone();
+        p.on_azione(move |_, id| a.borrow_mut().push(id.to_string()));
+        p.invoke_espandi(0);
+        tasto(&p, Key::RightArrow);
+        (p, azioni)
+    }
+
+    /// `tasto` con i modificatori premuti prima e rilasciati dopo.
+    fn con_modificatori(p: &Pannello, modificatori: &[slint::platform::Key], t: slint::platform::Key) {
+        use slint::platform::WindowEvent;
+        for m in modificatori {
+            p.window().dispatch_event(WindowEvent::KeyPressed { text: (*m).into() });
+        }
+        tasto(p, t);
+        for m in modificatori.iter().rev() {
+            p.window().dispatch_event(WindowEvent::KeyReleased { text: (*m).into() });
+        }
+    }
+
+    #[test]
+    fn consenti_solo_con_ctrl_invio_esatto() {
+        // Giro di correzioni 1, rilievo 1 (bloccante): col fuoco vero su «Consenti» nessuna
+        // combinazione diversa da Ctrl+Invio deve concedere (UX3/FE15). AltGr su Windows arriva
+        // come Ctrl+Alt.
+        use slint::platform::Key;
+        let casi: [(&str, &[Key], Key); 9] = [
+            ("Invio", &[], Key::Return),
+            ("Spazio", &[], Key::Space),
+            ("Alt+Invio", &[Key::Alt], Key::Return),
+            ("Ctrl+Spazio", &[Key::Control], Key::Space),
+            ("Maiusc+Invio", &[Key::Shift], Key::Return),
+            ("Alt+Spazio", &[Key::Alt], Key::Space),
+            ("AltGr+Invio (Ctrl+Alt)", &[Key::Control, Key::Alt], Key::Return),
+            ("AltGr+Invio", &[Key::AltGr], Key::Return),
+            ("Maiusc+Ctrl+Invio", &[Key::Shift, Key::Control], Key::Return),
+        ];
+        for (nome, modificatori, t) in casi {
+            let (p, azioni) = pannello_sul_consenso();
+            con_modificatori(&p, modificatori, t);
+            assert!(azioni.borrow().is_empty(), "{nome} ha concesso: {:?}", azioni.borrow());
+        }
+        let (p, azioni) = pannello_sul_consenso();
+        con_modificatori(&p, &[Key::Control], Key::Return);
+        assert_eq!(*azioni.borrow(), ["consenti"], "Ctrl+Invio concede");
+    }
+
+    #[test]
+    fn la_pillola_non_concede_da_tastiera() {
+        // Giro di correzioni 1, rilievo 2: anche con la finestra della pillola a fuoco, Tab non
+        // porta ai suoi pulsanti e Invio o Spazio non premono nulla (il permesso nella pillola
+        // si dà col clic o, col testo intero, dal pannello).
+        use slint::platform::{Key, WindowEvent};
+        piattaforma_di_prova();
+        let p = Pillola::new().expect("pillola");
+        p.show().expect("pillola mostrata nel backend di prova");
+        p.set_aspetto(AspettoPillolaUi::Allargata);
+        p.set_messaggio("Posso?".into());
+        p.set_pulsanti(ModelRc::new(VecModel::from(vec![
+            PulsanteUi { id: "nega".into(), testo: "Nega".into(), delicato: false },
+            PulsanteUi { id: "consenti".into(), testo: "Consenti".into(), delicato: true },
+        ])));
+        p.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
+        let azioni = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let a = azioni.clone();
+        p.on_azione(move |id| a.borrow_mut().push(id.to_string()));
+        for _ in 0..3 {
+            for t in [Key::Tab, Key::Return, Key::Space] {
+                p.window().dispatch_event(WindowEvent::KeyPressed { text: t.into() });
+                p.window().dispatch_event(WindowEvent::KeyReleased { text: t.into() });
+            }
+        }
+        assert!(azioni.borrow().is_empty(), "la tastiera ha premuto: {:?}", azioni.borrow());
+    }
 }
