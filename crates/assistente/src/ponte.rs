@@ -74,14 +74,16 @@ fn preferito(e: &AppEntity) -> Preferito {
         AppEntity::Light(l) => (Tipo::Interruttore, l.is_on, b.state.clone()),
         AppEntity::Switch(s) => (Tipo::Interruttore, s.is_on, b.state.clone()),
         AppEntity::Scene(_) => (Tipo::Scena, false, String::new()),
+        // Il testo con la virgola italiana; l'arco dei Quadranti legge il valore grezzo.
         AppEntity::Sensor(s) => {
+            let numero = numero_italiano(&s.value);
             let valore = match s.unit.as_deref().filter(|u| !u.is_empty()) {
-                Some(u) => format!("{} {u}", s.value),
-                None => s.value.clone(),
+                Some(u) => format!("{numero} {u}"),
+                None => numero,
             };
             (Tipo::Lettura, false, valore)
         }
-        _ => (Tipo::Lettura, false, b.state.clone()),
+        _ => (Tipo::Lettura, false, numero_italiano(&b.state)),
     };
     Preferito {
         entity_id: b.entity_id.clone(),
@@ -134,6 +136,22 @@ pub fn comando_per(e: &AppEntity) -> Option<(&'static str, &'static str)> {
 /// con la casa connessa (senza connessione i preferiti restano tenui e non rispondono).
 pub fn voce_toccabile(p: &Preferito, connesso: bool) -> bool {
     connesso && p.disponibile && p.tipo != Tipo::Lettura
+}
+
+/// Un numero di Home Assistant con la virgola italiana («21.5» → «21,5»); tutto il resto com'è.
+/// Numero = cifre, al più un punto con cifre da entrambi i lati, segno davanti facoltativo.
+pub fn numero_italiano(v: &str) -> String {
+    let senza_segno = v.strip_prefix('-').unwrap_or(v);
+    let numero = match senza_segno.split_once('.') {
+        Some((intera, decimali)) => {
+            !intera.is_empty()
+                && !decimali.is_empty()
+                && intera.bytes().all(|b| b.is_ascii_digit())
+                && decimali.bytes().all(|b| b.is_ascii_digit())
+        }
+        None => false,
+    };
+    if numero { v.replacen('.', ",", 1) } else { v.to_owned() }
 }
 
 /// Il testo sotto il nome di un preferito.
@@ -203,17 +221,23 @@ pub fn riga_stato(stato: &StatoConnessione, menu: Option<&MenuData>) -> String {
         (StatoConnessione::InConnessione, _) => "Connessione alla casa…".into(),
         (StatoConnessione::Disconnesso, _) => "Casa non connessa".into(),
         (StatoConnessione::NonConfigurato, _) => "Casa non configurata".into(),
-        (StatoConnessione::TokenNonValido, _) => "Token non valido".into(),
-        (StatoConnessione::TokenMancante, _) => "Token della casa mancante".into(),
+        (StatoConnessione::TokenNonValido, _) => "Token di Home Assistant non valido".into(),
+        (StatoConnessione::TokenMancante, _) => "Token di Home Assistant mancante".into(),
         (StatoConnessione::Errore(e), _) => frase_errore(e).into(),
     }
+}
+
+/// «Riprova» ha senso mentre la casa non risponde (errore o tentativo in corso): non dopo un
+/// «Disconnetti» voluto, senza ambiente o con un token da sistemare (lì servono le Impostazioni).
+pub fn riprovabile(s: &StatoConnessione) -> bool {
+    matches!(s, StatoConnessione::Errore(_) | StatoConnessione::InConnessione)
 }
 
 /// Una frase semplice al posto dell'errore tecnico di casa-core (il dettaglio resta per le
 /// Impostazioni, sezione Informazioni).
 pub fn frase_errore(e: &str) -> &'static str {
     if e.starts_with("portachiavi") {
-        "Portachiavi non leggibile"
+        "Token salvato non leggibile"
     } else {
         "Casa non raggiungibile"
     }
@@ -299,7 +323,7 @@ pub fn batteria(percentuale: f32, scollegata: bool) {
 /// Una voce «In attesa» per la riga del pannello.
 /// `non_archiviata`: l'ultimo «Archivia» non è riuscito (lo dice la riga sotto il titolo).
 fn voce_attesa_ui(v: &Voce, non_archiviata: bool) -> VoceAttesaUi {
-    let mut sotto = format!("{} · {}", v.livello.come_stringa(), v.fonte.come_stringa());
+    let mut sotto = format!("{} · {}", v.livello.parola(), v.fonte.come_stringa());
     if non_archiviata {
         sotto.push_str(" · archiviazione non riuscita");
     }
@@ -330,6 +354,9 @@ pub struct Ponte {
     /// riprende a ogni apertura.
     preferiti: Rc<VecModel<PreferitoUi>>,
     sensori: Rc<VecModel<SensoreUi>>,
+    /// Ora (HH:MM) degli ultimi dati arrivati dalla casa: senza connessione la vista Casa dice di
+    /// quando sono i valori che mostra.
+    dati_delle: RefCell<Option<String>>,
     /// Ultima vista della pillola mostrata, per non riscriverla senza motivo.
     mostrato: RefCell<Option<VistaPillola>>,
     /// Gira solo mentre qualcosa scade da solo (contento, i 20 s di un'attenzione): nessun timer fisso.
@@ -379,6 +406,7 @@ pub fn collega(
         umore_fisso,
         stato: RefCell::new(StatoConnessione::Disconnesso),
         menu: RefCell::new(None),
+        dati_delle: RefCell::new(None),
         errori: RefCell::new(HashMap::new()),
         preferiti: Rc::new(VecModel::default()),
         sensori: Rc::new(VecModel::default()),
@@ -432,7 +460,7 @@ fn dettaglio_stato(s: &StatoConnessione) -> Option<String> {
     let testo = match s {
         StatoConnessione::Errore(e) => e.clone(),
         StatoConnessione::TokenNonValido => "token rifiutato da Home Assistant (auth_invalid)".into(),
-        StatoConnessione::TokenMancante => "nessun token nel portachiavi per l'ambiente attivo".into(),
+        StatoConnessione::TokenMancante => "nessun token nell'archivio sicuro del sistema per l'ambiente attivo".into(),
         _ => return None,
     };
     Some(format!("{} · {testo}", adesso_hh_mm()))
@@ -490,6 +518,7 @@ impl Ponte {
             CasaEvento::Dati(menu) => {
                 self.appena_connesso.set(false);
                 *self.menu.borrow_mut() = Some(menu);
+                *self.dati_delle.borrow_mut() = Some(adesso_hh_mm());
                 self.ricostruisci_preferiti();
                 self.aggiorna_pannello();
             }
@@ -748,7 +777,7 @@ impl Ponte {
             if let Err(e) = self.segreti.salva(&a.id, t) {
                 *self.errore_connessione.borrow_mut() = Some(format!("{} · salvataggio del token: {e}", adesso_hh_mm()));
                 self.aggiorna_pannello();
-                return "Portachiavi non disponibile: il token non è stato salvato".into();
+                return "Archivio sicuro del sistema non disponibile: il token non è stato salvato".into();
             }
         }
         let mut url_cambiato = false;
@@ -777,7 +806,7 @@ impl Ponte {
             Err(e) => {
                 *self.errore_connessione.borrow_mut() = Some(format!("{} · cancellazione del token: {e}", adesso_hh_mm()));
                 self.aggiorna_pannello();
-                "Ambiente rimosso, ma il token è rimasto nel portachiavi".into()
+                "Ambiente rimosso, ma il token è rimasto nell'archivio sicuro del sistema".into()
             }
         }
     }
@@ -795,7 +824,7 @@ impl Ponte {
             "" => match self.segreti.leggi(id) {
                 Ok(Some(t)) if !t.is_empty() => t,
                 Ok(_) => return self.esito_prova(numero, "Nessun token salvato: scrivilo".into(), Tono::Errore),
-                Err(_) => return self.esito_prova(numero, "Portachiavi non leggibile".into(), Tono::Errore),
+                Err(_) => return self.esito_prova(numero, "Token salvato non leggibile".into(), Tono::Errore),
             },
             t => t.to_owned(),
         };
@@ -832,6 +861,11 @@ impl Ponte {
             p.set_stato_casa(riga.into());
         }
         p.set_casa_pronta(*stato == StatoConnessione::Connesso && menu.is_some());
+        let dati = self.dati_delle.borrow().clone().unwrap_or_default();
+        if p.get_dati_delle() != dati.as_str() {
+            p.set_dati_delle(dati.into());
+        }
+        p.set_casa_riprovabile(riprovabile(&stato));
     }
 
     /// Il pannello appena creato: modelli dei preferiti, dei sensori e delle voci in attesa,
@@ -849,6 +883,11 @@ impl Ponte {
         p.on_azione(|voce, pulsante| {
             if let Some(ponte) = ponte() {
                 ponte.azione(&voce, &pulsante);
+            }
+        });
+        p.on_riprova_casa(|| {
+            if let Some(ponte) = ponte() {
+                ponte.riprova_casa();
             }
         });
     }
@@ -1176,7 +1215,7 @@ pub(crate) mod test {
         let m = menu(vec![sensore("sensor.t", "21.5", Some("°C")), sensore("sensor.n", "7", None), serratura("lock.porta")], vec![]);
         let p = preferiti_ui(&m, MASSIMO_PREFERITI);
         assert_eq!(p[0].tipo, Tipo::Lettura);
-        assert_eq!(p[0].valore, "21.5 °C");
+        assert_eq!(p[0].valore, "21,5 °C");
         assert_eq!(p[1].valore, "7");
         // Altri tipi: lettura con lo stato.
         assert_eq!(p[2].tipo, Tipo::Lettura);
@@ -1254,7 +1293,7 @@ pub(crate) mod test {
             vec![sensore("sensor.t", "21.5", Some("°C"))],
             vec![vec![luce("light.a", true), luce("light.b", true), luce("light.c", false)], vec![sensore("sensor.t", "21.5", Some("°C"))]],
         );
-        assert_eq!(riga_stato(&StatoConnessione::Connesso, Some(&m)), "2 luci accese · 21.5 °C");
+        assert_eq!(riga_stato(&StatoConnessione::Connesso, Some(&m)), "2 luci accese · 21,5 °C");
         let una = menu(vec![], vec![vec![luce("light.a", true)]]);
         assert_eq!(riga_stato(&StatoConnessione::Connesso, Some(&una)), "1 luce accesa");
         let spente = menu(vec![], vec![vec![luce("light.a", false)]]);
@@ -1262,8 +1301,8 @@ pub(crate) mod test {
         assert_eq!(riga_stato(&StatoConnessione::Connesso, None), "Casa connessa");
         assert_eq!(riga_stato(&StatoConnessione::InConnessione, Some(&m)), "Connessione alla casa…");
         assert_eq!(riga_stato(&StatoConnessione::Disconnesso, Some(&m)), "Casa non connessa");
-        assert_eq!(riga_stato(&StatoConnessione::TokenMancante, None), "Token della casa mancante");
-        assert_eq!(riga_stato(&StatoConnessione::TokenNonValido, None), "Token non valido");
+        assert_eq!(riga_stato(&StatoConnessione::TokenMancante, None), "Token di Home Assistant mancante");
+        assert_eq!(riga_stato(&StatoConnessione::TokenNonValido, None), "Token di Home Assistant non valido");
         assert_eq!(riga_stato(&StatoConnessione::NonConfigurato, Some(&m)), "Casa non configurata");
     }
 
@@ -1273,7 +1312,44 @@ pub(crate) mod test {
         assert_eq!(riga("connessione non riuscita: IO error: Impossibile stabilire la connessione"), "Casa non raggiungibile");
         assert_eq!(riga("Home Assistant non risponde"), "Casa non raggiungibile");
         assert_eq!(riga("connessione chiusa da Home Assistant"), "Casa non raggiungibile");
-        assert_eq!(riga("portachiavi: accesso negato"), "Portachiavi non leggibile");
+        assert_eq!(riga("portachiavi: accesso negato"), "Token salvato non leggibile");
+    }
+
+    #[test]
+    fn riprova_solo_se_la_casa_non_risponde() {
+        assert!(riprovabile(&StatoConnessione::Errore("giù".into())));
+        assert!(riprovabile(&StatoConnessione::InConnessione), "niente pulsante che lampeggia fra un tentativo e l'altro");
+        assert!(!riprovabile(&StatoConnessione::Connesso));
+        assert!(!riprovabile(&StatoConnessione::Disconnesso));
+        assert!(!riprovabile(&StatoConnessione::NonConfigurato));
+        assert!(!riprovabile(&StatoConnessione::TokenNonValido));
+    }
+
+    #[test]
+    fn numeri_di_home_assistant_con_la_virgola() {
+        assert_eq!(numero_italiano("21.5"), "21,5");
+        assert_eq!(numero_italiano("-3.25"), "-3,25");
+        assert_eq!(numero_italiano("1013"), "1013");
+        // Non numeri: restano come sono.
+        assert_eq!(numero_italiano("on"), "on");
+        assert_eq!(numero_italiano("2026-11-13"), "2026-11-13");
+        assert_eq!(numero_italiano("1.2.3"), "1.2.3");
+        assert_eq!(numero_italiano("192.168.1.1"), "192.168.1.1");
+        assert_eq!(numero_italiano(".5"), ".5");
+        assert_eq!(numero_italiano(""), "");
+        // L'arco usa il valore grezzo: la virgola nel testo non lo cambia.
+        let m = menu(vec![sensore("sensor.t", "20.0", Some("°C"))], vec![]);
+        assert!((sensori_quadranti(&m, 8, 3)[0].1 - 0.5).abs() < 1e-6);
+        assert_eq!(sensori_quadranti(&m, 8, 3)[0].0.valore, "20,0 °C");
+    }
+
+    #[test]
+    fn sotto_il_titolo_la_parola_del_livello() {
+        let v = attenzione::voce_di_prova(Livello::Attenzione, false, Instant::now());
+        assert_eq!(voce_attesa_ui(&v, false).sotto, "Guarda presto · prova");
+        assert_eq!(voce_attesa_ui(&v, true).sotto, "Guarda presto · prova · archiviazione non riuscita");
+        // Il nome interno resta per il colore.
+        assert_eq!(voce_attesa_ui(&v, false).livello, "attenzione");
     }
 
     #[test]

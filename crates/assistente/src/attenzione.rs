@@ -42,6 +42,15 @@ impl Livello {
         }
     }
 
+    /// La parola per l'utente (decisione B).
+    pub fn parola(self) -> &'static str {
+        match self {
+            Livello::Bloccante => "Aspetta te",
+            Livello::Attenzione => "Guarda presto",
+            Livello::Informazione => "Quando vuoi",
+        }
+    }
+
     pub fn da_str(s: &str) -> Option<Livello> {
         match s {
             "bloccante" => Some(Livello::Bloccante),
@@ -231,7 +240,8 @@ pub const SOGLIA_BATTERIA_FINE: f32 = 12.0;
 
 /// Tiene il conto di da quanto Home Assistant non è connesso (dall'avvio, se non lo è mai stato)
 /// e decide la voce della casa:
-/// - irraggiungibile da oltre 5 minuti (errori, tentativi): «Home Assistant non raggiungibile»;
+/// - irraggiungibile da oltre 5 minuti (errori, tentativi): «Casa non raggiungibile» (nell'assistente
+///   la casa si chiama sempre «Casa»; «Home Assistant» solo nelle Impostazioni e per il token);
 /// - token rifiutato o mancante: subito una voce sua (aspettare non serve, si sistema solo nelle
 ///   Impostazioni);
 /// - «Disconnetti» voluto o nessun ambiente configurato: nessuna voce.
@@ -288,11 +298,11 @@ impl SorveglianzaCasa {
         if let Some(problema) = self.token {
             let (titolo, dettaglio) = match problema {
                 ProblemaToken::NonValido => (
-                    "Token non valido — aggiornalo nelle Impostazioni",
+                    "Token di Home Assistant non valido",
                     "Home Assistant ha rifiutato il token di accesso. Creane uno nuovo nel tuo profilo di Home Assistant e scrivilo in Impostazioni › Home Assistant.",
                 ),
                 ProblemaToken::Mancante => (
-                    "Token mancante — aggiornalo nelle Impostazioni",
+                    "Token di Home Assistant mancante",
                     "Per questo ambiente non c'è un token di accesso salvato. Scrivilo in Impostazioni › Home Assistant.",
                 ),
             };
@@ -311,7 +321,7 @@ impl SorveglianzaCasa {
             id: ID_CASA_OFFLINE.into(),
             livello: Livello::Attenzione,
             fonte: Fonte::Casa,
-            titolo: "Home Assistant non raggiungibile".into(),
+            titolo: "Casa non raggiungibile".into(),
             dettaglio: "La casa non risponde da più di 5 minuti. Riprovo da solo; puoi anche riprovare adesso.".into(),
             pulsanti: vec![Pulsante::new(PULSANTE_RIPROVA, "Riprova")],
             creata: da + CASA_OFFLINE_DOPO,
@@ -369,12 +379,12 @@ pub fn voce_notifica(id: &str, titolo: &str, messaggio: &str, ora: Instant) -> V
 pub fn voce_di_prova(livello: Livello, lungo: bool, ora: Instant) -> Voce {
     let (titolo, dettaglio) = if lungo {
         (
-            format!("Avviso di prova ({}): consentire a un programma di prova di cancellare la cartella dist e tutto il suo contenuto?", livello.come_stringa()),
+            format!("Avviso di prova ({}): consentire a un programma di prova di cancellare la cartella dist e tutto il suo contenuto?", livello.parola().to_lowercase()),
             "Questo è un avviso di prova lungo, creato con --prova-avviso e --lungo. I due pulsanti non fanno nulla: lo tolgono soltanto.\n\nServe a provare che un testo più lungo dello spazio della voce espansa si legge tutto: con la rotella del mouse o con le frecce ↑ e ↓ quando il fuoco è sulla voce, il testo scorre.\n\nNella pillola il titolo è tagliato: per questo al posto di «Consenti» c'è «Apri», che porta qui, dove il testo si legge intero e si decide.\n\nRiga in più per lo scorrimento.\n\nUltima riga dell'avviso di prova.".to_owned(),
         )
     } else {
         (
-            format!("Avviso di prova: {}", livello.come_stringa()),
+            format!("Avviso di prova: {}", livello.parola().to_lowercase()),
             "Questo è un avviso di prova creato con --prova-avviso. I due pulsanti non fanno nulla: lo tolgono soltanto.".to_owned(),
         )
     };
@@ -540,6 +550,15 @@ pub(crate) mod test {
     }
 
     #[test]
+    fn livelli_con_le_parole_per_l_utente() {
+        // Decisione B: nell'interfaccia le parole, nel codice i nomi interni.
+        assert_eq!(Livello::Bloccante.parola(), "Aspetta te");
+        assert_eq!(Livello::Attenzione.parola(), "Guarda presto");
+        assert_eq!(Livello::Informazione.parola(), "Quando vuoi");
+        assert_eq!(voce_di_prova(Livello::Bloccante, false, Instant::now()).titolo, "Avviso di prova: aspetta te");
+    }
+
+    #[test]
     fn ha_offline_cinque_minuti_diventa_attenzione() {
         let t = Instant::now();
         let mut s = SorveglianzaCasa::new(t);
@@ -547,7 +566,7 @@ pub(crate) mod test {
         s.ricevi(&StatoConnessione::Errore("connessione non riuscita".into()), t);
         assert_eq!(s.voce(t + S(4 * 60 + 59)), None);
         let v = s.voce(t + S(5 * 60 + 1)).expect("voce dopo 5 minuti");
-        assert_eq!(v.titolo, "Home Assistant non raggiungibile");
+        assert_eq!(v.titolo, "Casa non raggiungibile");
         assert_eq!(v.livello, Livello::Attenzione);
         assert_eq!(v.fonte, Fonte::Casa);
         assert_eq!(v.id, ID_CASA_OFFLINE);
@@ -589,7 +608,7 @@ pub(crate) mod test {
         s.ricevi(&StatoConnessione::TokenNonValido, t + S(1));
         let v = s.voce(t + S(1)).expect("voce subito, senza aspettare 5 minuti");
         assert_eq!(v.id, ID_CASA_TOKEN);
-        assert_eq!(v.titolo, "Token non valido — aggiornalo nelle Impostazioni");
+        assert_eq!(v.titolo, "Token di Home Assistant non valido");
         assert_eq!(v.livello, Livello::Attenzione);
         assert_eq!(v.pulsanti.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), [PULSANTE_IMPOSTAZIONI]);
         // Mai «non raggiungibile» per un token, nemmeno dopo 5 minuti.
@@ -606,7 +625,7 @@ pub(crate) mod test {
         s.ricevi(&StatoConnessione::TokenMancante, t);
         let v = s.voce(t).expect("voce subito");
         assert_eq!(v.id, ID_CASA_TOKEN);
-        assert!(v.titolo.starts_with("Token mancante"), "{}", v.titolo);
+        assert_eq!(v.titolo, "Token di Home Assistant mancante");
         // Disconnesso apposta: niente voce.
         s.ricevi(&StatoConnessione::Disconnesso, t + S(1));
         assert_eq!(s.voce(t + S(1)), None);

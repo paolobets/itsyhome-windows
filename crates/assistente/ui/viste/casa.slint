@@ -15,19 +15,26 @@ export component Dispositivo inherits Rectangle {
 
     property <bool> luce: voce.genere == "luce";
     property <bool> sopra: area.has-hover && voce.toccabile;
+    // Il colore dello stato solo se il dato è vivo: a casa non connessa una luce «Acceso» è un
+    // valore vecchio e resta neutra, come una non disponibile.
+    property <bool> colorata: voce.acceso && !voce.tenue;
+    // Tenue = colori con trasparenza (non opacity, che disegna in uno strato a parte): testo
+    // dello stato circa 4,8:1 sulla card, nome più chiaro.
+    property <float> velatura: voce.tenue ? 0.78 : 1.0;
 
     border-radius: 16px;
     border-width: 1px;
-    border-color: !voce.acceso ? Tema.vetro-bordo
+    border-color: !colorata ? Tema.vetro-bordo
         : luce ? rgba(253, 230, 138, 0.35) : rgba(94, 234, 212, 0.32);
-    background: !voce.acceso
-        ? (sopra
-            ? @linear-gradient(160deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.04) 100%)
-            : @linear-gradient(160deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.02) 100%))
-        : luce
-            ? @linear-gradient(160deg, rgba(253, 230, 138, 0.28) 0%, rgba(251, 191, 36, 0.10) 100%)
-            : @linear-gradient(160deg, rgba(94, 234, 212, 0.24) 0%, rgba(45, 212, 191, 0.08) 100%);
-    opacity: voce.tenue ? 0.55 : 1;
+    background: voce.tenue
+        ? rgba(255, 255, 255, 0.04)
+        : !colorata
+            ? (sopra
+                ? @linear-gradient(160deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.04) 100%)
+                : @linear-gradient(160deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.02) 100%))
+            : luce
+                ? @linear-gradient(160deg, rgba(253, 230, 138, 0.28) 0%, rgba(251, 191, 36, 0.10) 100%)
+                : @linear-gradient(160deg, rgba(94, 234, 212, 0.24) 0%, rgba(45, 212, 191, 0.08) 100%);
     accessible-role: button;
     accessible-enabled: voce.toccabile;
     accessible-label: voce.nome + ", " + voce.stato;
@@ -40,8 +47,8 @@ export component Dispositivo inherits Rectangle {
         width: 22px;
         height: 22px;
         source: Icone.di-genere(voce.genere);
-        colorize: !voce.disponibile ? Tema.icona-spenta
-            : voce.acceso ? (luce ? Tema.luce-accesa : Tema.presa-accesa)
+        colorize: voce.tenue ? Tema.icona-spenta
+            : colorata ? (luce ? Tema.luce-accesa : Tema.presa-accesa)
             : voce.genere == "luce" || voce.genere == "presa" ? Tema.icona-spenta : Tema.icona;
     }
 
@@ -53,7 +60,7 @@ export component Dispositivo inherits Rectangle {
         overflow: elide;
         font-weight: 500;
         font-size: 12.5px;
-        color: Tema.testo;
+        color: Tema.testo.with-alpha(velatura);
     }
 
     Text {
@@ -63,7 +70,7 @@ export component Dispositivo inherits Rectangle {
         text: voce.stato;
         overflow: elide;
         font-size: 12px;
-        color: voce.errore != "" ? Tema.caldo-2 : Tema.testo-tenue;
+        color: voce.errore != "" ? Tema.caldo-2 : Tema.testo-tenue.with-alpha(velatura);
     }
 
     area := TouchArea {
@@ -83,26 +90,78 @@ export component Dispositivo inherits Rectangle {
     }
 }
 
+// Pulsante di testo della vista Casa (alto 28 nella testata, 30 sotto la frase della vista vuota).
+component PulsanteCasa inherits Rectangle {
+    in property <string> testo;
+    in property <bool> primario;
+    in property <bool> anello;
+    callback premuto();
+
+    height: 28px;
+    width: max(84px, etichetta.preferred-width + 24px);
+    border-radius: 10px;
+    border-width: primario ? 1px : 0px;
+    border-color: rgba(45, 212, 191, 0.45);
+    background: primario
+        ? (area.has-hover ? rgba(45, 212, 191, 0.30) : rgba(45, 212, 191, 0.20))
+        : (area.has-hover ? rgba(255, 255, 255, 0.16) : rgba(255, 255, 255, 0.09));
+    accessible-role: button;
+    accessible-label: testo;
+    accessible-action-default => { root.premuto(); }
+
+    etichetta := Text {
+        text: testo;
+        font-weight: 500;
+        font-size: 13px;
+        color: Tema.testo;
+    }
+
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.premuto(); }
+    }
+
+    if anello: Rectangle {
+        x: -4px;
+        y: -4px;
+        width: parent.width + 8px;
+        height: parent.height + 8px;
+        border-radius: parent.border-radius + 4px;
+        border-width: 2px;
+        border-color: Tema.anello;
+    }
+}
+
 export component VistaCasa inherits Rectangle {
     in property <[PreferitoUi]> preferiti;
     in property <string> stato-casa;
     in property <bool> casa-pronta;
-    // Card col fuoco da tastiera (-1 = nessuna).
+    // Ora degli ultimi dati («10:42»; vuota se non ne sono mai arrivati).
+    in property <string> dati-delle;
+    // «Riprova» nella testata: casa non connessa che si può riprovare.
+    in property <bool> riprova;
+    // Card col fuoco da tastiera (-1 = nessuna); fuoco su «Riprova» e su «Apri Impostazioni».
     in property <int> fuoco: -1;
+    in property <bool> fuoco-riprova;
+    in property <bool> fuoco-impostazioni;
     callback tocca(string);
+    callback riprova-casa();
+    callback apri-impostazioni();
 
     // Pannello largo e basso: 4 colonne, così gli 8 preferiti stanno in due righe.
     in property <int> colonne: 4;
     property <length> spazio: 8px;
     property <length> lato: (self.width - (colonne - 1) * spazio) / colonne;
-    property <length> testata: 26px;
+    property <length> testata: 32px;
     property <length> alto-card: min(76px, (self.height - testata - spazio) / 2);
+    // Senza connessione la testata dice di quando sono i dati mostrati.
+    property <string> riga-testata: casa-pronta || dati-delle == "" ? stato-casa : stato-casa + " · dati delle " + dati-delle;
 
-    // Testata: titolo a sinistra, stato della casa a destra.
+    // Testata: titolo a sinistra, stato della casa (e «Riprova») a destra.
     Text {
         x: 2px;
         y: 0;
-        height: 20px;
+        height: 28px;
         text: "PREFERITI";
         vertical-alignment: center;
         font-family: Tema.carattere-mono;
@@ -112,16 +171,25 @@ export component VistaCasa inherits Rectangle {
     }
 
     Text {
-        x: parent.width - self.width - 2px;
+        x: (riprova ? pulsante-riprova.x - 10px : parent.width - 2px) - self.width;
         y: 0;
-        width: parent.width * 0.6;
-        height: 20px;
-        text: preferiti.length > 0 ? stato-casa : "";
+        width: parent.width * 0.65;
+        height: 28px;
+        text: preferiti.length > 0 ? riga-testata : "";
         horizontal-alignment: right;
         vertical-alignment: center;
         overflow: elide;
         font-size: 12px;
         color: Tema.testo-tenue;
+    }
+
+    pulsante-riprova := PulsanteCasa {
+        visible: riprova;
+        x: parent.width - self.width - 2px;
+        y: 0;
+        testo: "Riprova";
+        anello: fuoco-riprova;
+        premuto => { root.riprova-casa(); }
     }
 
     for voce[i] in preferiti: Dispositivo {
@@ -166,6 +234,20 @@ export component VistaCasa inherits Rectangle {
             horizontal-alignment: center;
             font-size: 12px;
             color: Tema.testo-tenue;
+        }
+
+        // Una via d'uscita: le Impostazioni, dove la casa si collega.
+        if !casa-pronta: HorizontalLayout {
+            alignment: center;
+            padding-top: 4px;
+
+            PulsanteCasa {
+                height: 30px;
+                testo: "Apri Impostazioni";
+                primario: true;
+                anello: fuoco-impostazioni;
+                premuto => { root.apri-impostazioni(); }
+            }
         }
     }
 }

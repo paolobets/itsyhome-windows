@@ -5,7 +5,8 @@
 //
 // Tastiera: Tab / Maiusc+Tab fra «Indietro», «In attesa», contenuto e dock; frecce dentro la zona
 // (in «In attesa» ←/→ fra le voci e, a voce espansa, ↓ ai pulsanti e ↑ di nuovo alla voce; nella
-// Panoramica ←/→ cambiano layout, nel dock cambiano icona, in Casa si muovono fra le card);
+// Panoramica ←/→ cambiano layout, nel dock cambiano icona, in Casa si muovono fra le card e ↑
+// dalla prima riga porta a «Riprova» quando c'è; Casa vuota e non connessa: «Apri Impostazioni»);
 // Invio o Spazio attivano (su una voce: la espande o la riduce; un permesso, «Consenti», solo con
 // Ctrl+Invio, e la voce che lo chiede si apre col fuoco su «Nega»); Backspace o Alt+← = Indietro;
 // Esc chiude. Un unico FocusScope tiene il fuoco e l'anello (visibile solo da tastiera) segue la
@@ -112,6 +113,9 @@ export component Pannello inherits Window {
     in property <[SensoreUi]> sensori;
     in property <string> stato-casa;
     in property <bool> casa-pronta;
+    // Senza connessione: l'ora degli ultimi dati («dati delle 10:42») e se ha senso «Riprova».
+    in property <string> dati-delle;
+    in property <bool> casa-riprovabile;
     // Da dove partono gli occhi all'apertura, rispetto al centro: aprendo da "ti cerca" sono
     // dove stavano quelli della pillola allargata e, appena il pannello è comparso, scivolano al centro.
     in property <length> partenza-occhi: 0px;
@@ -133,6 +137,8 @@ export component Pannello inherits Window {
     callback scorri-layout(int);
     callback apri-app(string);
     callback chiudi();
+    // «Riprova» nella testata della vista Casa (stessa azione della voce «Casa non raggiungibile»).
+    callback riprova-casa();
 
     // Geometria (logica). La riga alta è alta quanto la pillola a riposo, così gli occhi cadono dove
     // stavano i suoi (vedi `posizione_pannello` in finestre.rs). Pannello 800 × 300: zona
@@ -169,6 +175,8 @@ export component Pannello inherits Window {
     property <int> fuoco-casa: 0;
     property <int> colonne-casa: 4;
     property <int> fuoco-casa-valido: min(fuoco-casa, preferiti.length - 1);
+    // «Riprova» nella testata della vista Casa: casa non connessa che si può riprovare.
+    property <bool> riprova-visibile: !casa-pronta && casa-riprovabile && preferiti.length > 0;
     // «In attesa»: voce col fuoco (da chiusa 0..2, 3 = «+N») e pulsante della voce espansa
     // (-1 = la voce stessa).
     property <int> fuoco-attesa: 0;
@@ -198,7 +206,8 @@ export component Pannello inherits Window {
             if (espansa) {
                 return false;
             }
-            return vista == "panoramica" || (vista == "casa" && preferiti.length > 0);
+            // Casa vuota e non connessa: il fuoco va su «Apri Impostazioni».
+            return vista == "panoramica" || (vista == "casa" && (preferiti.length > 0 || !casa-pronta));
         }
         return true;
     }
@@ -322,13 +331,20 @@ export component Pannello inherits Window {
             } else if (k == Key.RightArrow) {
                 root.scorri-layout(1);
             }
-        } else if (zona == "contenuto" && vista == "casa") {
-            if (k == Key.LeftArrow) {
+        } else if (zona == "contenuto" && vista == "casa" && preferiti.length > 0) {
+            // -1 = «Riprova» nella testata (solo se c'è): ↑ dalla prima riga, ↓ torna alle card.
+            if (fuoco-casa < 0) {
+                if (k == Key.DownArrow) {
+                    fuoco-casa = 0;
+                }
+            } else if (k == Key.LeftArrow) {
                 fuoco-casa = max(0, fuoco-casa-valido - 1);
             } else if (k == Key.RightArrow) {
                 fuoco-casa = min(preferiti.length - 1, fuoco-casa-valido + 1);
             } else if (k == Key.UpArrow && fuoco-casa-valido >= colonne-casa) {
                 fuoco-casa = fuoco-casa-valido - colonne-casa;
+            } else if (k == Key.UpArrow && riprova-visibile) {
+                fuoco-casa = -1;
             } else if (k == Key.DownArrow && fuoco-casa-valido + colonne-casa < preferiti.length) {
                 fuoco-casa = fuoco-casa-valido + colonne-casa;
             }
@@ -361,6 +377,12 @@ export component Pannello inherits Window {
             apri(fuoco-dock, app[fuoco-dock].id);
         } else if (vista == "panoramica") {
             root.scorri-layout(1);
+        } else if (vista == "casa" && preferiti.length == 0) {
+            root.apri-app("impostazioni");
+        } else if (vista == "casa" && fuoco-casa < 0) {
+            if (riprova-visibile) {
+                root.riprova-casa();
+            }
         } else if (vista == "casa" && fuoco-casa-valido >= 0 && preferiti[fuoco-casa-valido].toccabile) {
             root.tocca(preferiti[fuoco-casa-valido].entity-id);
         }
@@ -681,11 +703,23 @@ export component Pannello inherits Window {
                 preferiti: root.preferiti;
                 stato-casa: root.stato-casa;
                 casa-pronta: root.casa-pronta;
+                dati-delle: root.dati-delle;
+                riprova: riprova-visibile;
                 colonne: root.colonne-casa;
                 fuoco: da-tastiera && zona == "contenuto" ? fuoco-casa-valido : -1;
+                fuoco-riprova: da-tastiera && zona == "contenuto" && fuoco-casa < 0;
+                fuoco-impostazioni: da-tastiera && zona == "contenuto";
                 tocca(id) => {
                     da-tastiera = false;
                     root.tocca(id);
+                }
+                riprova-casa => {
+                    da-tastiera = false;
+                    root.riprova-casa();
+                }
+                apri-impostazioni => {
+                    da-tastiera = false;
+                    root.apri-app("impostazioni");
                 }
             }
 

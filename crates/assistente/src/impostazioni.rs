@@ -184,7 +184,7 @@ pub fn stato_ambiente(attivo: bool, s: &StatoConnessione) -> (&'static str, Tono
         StatoConnessione::Disconnesso | StatoConnessione::NonConfigurato => ("Disconnesso", Tono::Spento),
         StatoConnessione::TokenNonValido => ("Token non valido", Tono::Errore),
         StatoConnessione::TokenMancante => ("Token mancante", Tono::Errore),
-        StatoConnessione::Errore(e) if e.starts_with("portachiavi") => ("Portachiavi non leggibile", Tono::Errore),
+        StatoConnessione::Errore(e) if e.starts_with("portachiavi") => ("Token salvato non leggibile", Tono::Errore),
         StatoConnessione::Errore(_) => ("Non raggiungibile", Tono::Errore),
     }
 }
