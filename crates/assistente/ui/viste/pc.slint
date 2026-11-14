@@ -37,10 +37,12 @@ component Riga inherits Rectangle {
         color: Tema.testo-tenue;
     }
 
+    // Il valore: largo quanto la barra; senza barra (rete) può prendersi tutta la riga dopo
+    // l'etichetta, così «↓ 1,6 KB/s · ↑ 286 B/s» sta su una riga sola.
     Text {
         x: parent.width - 14px - self.width;
         y: 7px;
-        width: 150px;
+        width: frazione >= 0 ? 150px : max(150px, parent.width - 28px - 110px);
         text: valore;
         horizontal-alignment: right;
         font-weight: 500;
@@ -67,8 +69,11 @@ component Riga inherits Rectangle {
 
 export component VistaPc inherits Rectangle {
     in property <StatPcUi> stat;
+    property <length> alto-riga: 44px;
 
-    // Pannello basso: le righe stanno su due colonne (PC a sinistra, rete e batteria a destra).
+    // Pannello basso: le righe stanno su due colonne (PC a sinistra, rete e batteria a destra),
+    // tre posti per colonna distribuiti su tutta l'altezza della card (UX22: niente terzo
+    // inferiore vuoto) e allineati fra le colonne (i posti senza riga restano vuoti).
     Vetro {
         HorizontalLayout {
             padding-top: 8px;
@@ -76,7 +81,7 @@ export component VistaPc inherits Rectangle {
             spacing: 8px;
 
             VerticalLayout {
-                alignment: start;
+                alignment: space-around;
 
                 // Prima del primo campione i testi sono vuoti: «—» e niente barra, come nei
                 // Quadranti e nell'Orologio.
@@ -102,13 +107,15 @@ export component VistaPc inherits Rectangle {
             }
 
             VerticalLayout {
-                alignment: start;
+                alignment: space-around;
 
-                // Frecce solo con un valore accanto (mai «↓ » orfano).
+                // Giù e su con lo stesso peso, sulla stessa riga (UX22). Frecce solo con un valore
+                // accanto (mai «↓ » orfano).
                 Riga {
                     etichetta: "RETE";
-                    valore: stat.rete-giu != "" ? "↓ " + stat.rete-giu : "—";
-                    dettaglio: stat.rete-su != "" ? "↑ " + stat.rete-su : "";
+                    valore: stat.rete-giu == "" ? "—"
+                        : stat.rete-su == "" ? "↓ " + stat.rete-giu
+                        : "↓ " + stat.rete-giu + " · ↑ " + stat.rete-su;
                 }
 
                 if stat.ha-batteria: Riga {
@@ -118,6 +125,10 @@ export component VistaPc inherits Rectangle {
                     frazione: stat.batteria-frazione;
                     invertita: true;
                 }
+
+                // Posti vuoti: le righe restano allineate a quelle della colonna del PC.
+                if !stat.ha-batteria: Rectangle { height: alto-riga; }
+                Rectangle { height: alto-riga; }
             }
         }
     }
