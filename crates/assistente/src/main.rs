@@ -186,10 +186,15 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // `--prova-gestione`: la finestra di gestione con una mail di prova (aperta, chiusa, riaperta);
     // `--prova-gestione-cicli <n>`: n aperture e chiusure, alla fine chiusa.
-    let cicli = argomenti
-        .iter()
-        .position(|a| a == "--prova-gestione-cicli")
-        .and_then(|i| argomenti.get(i + 1)?.parse::<u32>().ok());
+    // Un numero mancante o non valido lo si dice (la prova non parte), invece di ignorarlo.
+    let cicli = argomenti.iter().position(|a| a == "--prova-gestione-cicli").and_then(|i| {
+        let valore = argomenti.get(i + 1).map(String::as_str).unwrap_or("");
+        let numero = valore.parse::<u32>().ok();
+        if numero.is_none() {
+            eprintln!("--prova-gestione-cicli vuole un numero di cicli (es. 5), non «{valore}»: prova non avviata");
+        }
+        numero
+    });
     if cicli.is_some() || argomenti.iter().any(|a| a == "--prova-gestione") {
         gestione::prova(&cartella, cicli);
     }
