@@ -389,8 +389,13 @@ mod accessibilita {
     #[test]
     fn consenti_solo_con_ctrl_invio_esatto() {
         // Giro di correzioni 1, rilievo 1 (bloccante): col fuoco vero su «Consenti» nessuna
-        // combinazione diversa da Ctrl+Invio deve concedere (UX3/FE15). AltGr su Windows arriva
-        // come Ctrl+Alt.
+        // combinazione diversa da Ctrl+Invio deve concedere (UX3/FE15).
+        // Ctrl+Alt+Invio: su Windows Slint legge Ctrl+Alt come AltGr e, se non nasce un carattere
+        // alfanumerico, toglie tutti e due; nel backend di prova arriva quindi come Invio semplice.
+        // Il caso resta (un AltGr non deve concedere), ma NON esercita il `!evento.modifiers.alt`
+        // della clausola Ctrl+Invio in pannello.slint: quel ramo è coperto solo dalla prova dal
+        // vivo con winit (giro di correzioni 1: Ctrl+Alt+Invio non ha concesso). Alt+Invio prova
+        // l'altro ramo, quello che prende e ignora Invio con un modificatore.
         use slint::platform::Key;
         let casi: [(&str, &[Key], Key); 9] = [
             ("Invio", &[], Key::Return),
@@ -399,7 +404,7 @@ mod accessibilita {
             ("Ctrl+Spazio", &[Key::Control], Key::Space),
             ("Maiusc+Invio", &[Key::Shift], Key::Return),
             ("Alt+Spazio", &[Key::Alt], Key::Space),
-            ("AltGr+Invio (Ctrl+Alt)", &[Key::Control, Key::Alt], Key::Return),
+            ("Ctrl+Alt+Invio (qui arriva come Invio semplice)", &[Key::Control, Key::Alt], Key::Return),
             ("AltGr+Invio", &[Key::AltGr], Key::Return),
             ("Maiusc+Ctrl+Invio", &[Key::Shift, Key::Control], Key::Return),
         ];
@@ -415,9 +420,9 @@ mod accessibilita {
 
     #[test]
     fn la_pillola_non_concede_da_tastiera() {
-        // Giro di correzioni 1, rilievo 2: anche con la finestra della pillola a fuoco, Tab non
-        // porta ai suoi pulsanti e Invio o Spazio non premono nulla (il permesso nella pillola
-        // si dà col clic o, col testo intero, dal pannello).
+        // Giro di correzioni 1, rilievo 2: anche con la finestra della pillola a fuoco, Invio o
+        // Spazio non premono nulla (il permesso nella pillola si dà col clic o, col testo intero,
+        // dal pannello). Che Tab non porti ai pulsanti lo prova `la_pillola_non_da_il_fuoco_ai_pulsanti`.
         use slint::platform::{Key, WindowEvent};
         piattaforma_di_prova();
         let p = Pillola::new().expect("pillola");
@@ -439,5 +444,42 @@ mod accessibilita {
             }
         }
         assert!(azioni.borrow().is_empty(), "la tastiera ha premuto: {:?}", azioni.borrow());
+    }
+
+    #[test]
+    fn la_pillola_non_da_il_fuoco_ai_pulsanti() {
+        // Giro di correzioni 2, N1: Tab e Maiusc+Tab (ripetuti, nei due ordini dei pulsanti) non
+        // portano il fuoco su un pulsante della pillola, quindi lì niente anello del fuoco. La
+        // pillola non ha altro che possa prendere il fuoco: qualunque elemento col fuoco sarebbe
+        // un suo pulsante.
+        use slint::platform::{Key, WindowEvent};
+        piattaforma_di_prova();
+        for consenti_primo in [false, true] {
+            let p = Pillola::new().expect("pillola");
+            p.show().expect("pillola mostrata nel backend di prova");
+            p.set_aspetto(AspettoPillolaUi::Allargata);
+            let nega = PulsanteUi { id: "nega".into(), testo: "Nega".into(), delicato: false };
+            let consenti = PulsanteUi { id: "consenti".into(), testo: "Consenti".into(), delicato: true };
+            p.set_pulsanti(ModelRc::new(VecModel::from(if consenti_primo { vec![consenti, nega] } else { vec![nega, consenti] })));
+            p.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
+            for _ in 0..4 {
+                for t in [Key::Tab, Key::Backtab] {
+                    p.window().dispatch_event(WindowEvent::KeyPressed { text: t.into() });
+                    p.window().dispatch_event(WindowEvent::KeyReleased { text: t.into() });
+                    // Il fuoco (se c'è) sta sulla tastiera della pillola, mai su un pulsante né su
+                    // qualcosa dentro un pulsante (da cui i tasti risalirebbero al pulsante).
+                    let col_fuoco = i_slint_core::window::WindowInner::from_pub(p.window()).focus_item.borrow().upgrade();
+                    let dove = col_fuoco
+                        .as_ref()
+                        .and_then(|f| f.element_type_names_and_ids(0))
+                        .and_then(|v| v.first().map(|(_, id)| id.to_string()))
+                        .unwrap_or_default();
+                    assert!(
+                        col_fuoco.is_none() || dove == "Pillola::tastiera",
+                        "consenti_primo={consenti_primo}: dopo {t:?} il fuoco è su «{dove}»"
+                    );
+                }
+            }
+        }
     }
 }

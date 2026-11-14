@@ -147,6 +147,16 @@ export component Pillola inherits Window {
     width: larghezza-finestra;
     height: altezza-finestra;
 
+    // La tastiera della pillola: l'unico elemento che può prendere il fuoco (Tab ci arriva e ci
+    // resta) e che prende e ignora ogni tasto. Senza, quando nessuno accetta il fuoco Slint 1.18
+    // lascia comunque il fuoco sull'ultimo elemento provato (per esempio la TouchArea di un
+    // pulsante) e i tasti risalirebbero fino al pulsante. Nessun ruolo: per Narrator resta la
+    // finestra. Non prende i clic.
+    tastiera := FocusScope {
+        focus-on-click: false;
+        key-pressed(evento) => { return accept; }
+    }
+
     // 20 fotogrammi al secondo quando pensa (pillola piccola); 12,5 per la pulsazione della pillola
     // allargata, che è più del doppio più larga (il costo cresce con l'area ridisegnata).
     Timer {
@@ -321,10 +331,12 @@ export component Pillola inherits Window {
                 corpo-testo: Tema.testo-piccolo;
                 testo: p.testo;
                 tipo: i == pulsanti.length - 1 ? TipoPulsante.azione : TipoPulsante.neutro;
-                // Nella pillola niente tastiera: né Tab ai pulsanti né Invio o Spazio (il permesso
-                // si dà col clic, o dal pannello col testo intero).
+                // Nella pillola niente tastiera: i pulsanti non prendono il fuoco (né da Tab né
+                // altrimenti, quindi niente anello) e nessun tasto li preme. Il permesso si dà col
+                // clic, o dal pannello col testo intero.
                 tasti-propri: false;
-                focus-on-tab-navigation: false;
+                focalizzabile: false;
+                anello: false;
                 delicato: p.delicato;
                 premuto => { root.azione(p.id); }
             }

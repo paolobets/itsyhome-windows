@@ -80,6 +80,9 @@ export component Pulsante inherits FocusScope {
     // Concede un permesso: mai premuto dalla sua tastiera. Nel pannello lo concede solo
     // Ctrl+Invio, gestito da `tasti`; altrimenti il clic.
     in property <bool> delicato;
+    // Tab può portargli il fuoco. Falso nella pillola, dove nessun pulsante deve avere il fuoco
+    // né l'anello (lì il fuoco lo tiene la `tastiera` della pillola: vedi pillola.slint).
+    in property <bool> focalizzabile: true;
     property <bool> vuole-fuoco: chiede-fuoco && Fuochi.pronti;
     callback premuto();
     // Ha appena preso il fuoco (Tab): chi lo contiene lo porta in vista.
@@ -103,6 +106,7 @@ export component Pulsante inherits FocusScope {
     height: altezza;
     width: min(largo-max, max(largo-min, etichetta.preferred-width + margine-testo));
     focus-on-click: false;
+    focus-on-tab-navigation: focalizzabile;
     accessible-role: button;
     accessible-label: testo;
     accessible-action-default => { root.premuto(); }

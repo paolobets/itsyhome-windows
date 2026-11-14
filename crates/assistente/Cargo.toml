@@ -45,6 +45,9 @@ tempfile = "3"
 # Backend di prova di Slint: crea pillola, pannello e Impostazioni nei test, senza finestre
 # (misure Slint↔Rust, ruoli e nomi per l'accessibilità).
 i-slint-backend-testing = "=1.18.1"
+# Solo per leggere nei test quale elemento ha il fuoco (`WindowInner::focus_item`): stessa
+# versione di Slint, nessuna funzione in più.
+i-slint-core = { version = "=1.18.1", default-features = false }
 
 [build-dependencies]
 slint-build = "=1.18.1"

@@ -286,6 +286,7 @@ dependencies = [
  "gestione-protocollo",
  "global-hotkey",
  "i-slint-backend-testing",
+ "i-slint-core",
  "image",
  "notify-rust",
  "slint",
