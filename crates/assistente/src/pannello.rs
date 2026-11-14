@@ -61,25 +61,23 @@ thread_local! {
     static ICONE: RefCell<HashMap<&'static str, Image>> = RefCell::new(HashMap::new());
 }
 
-const NOMI_ICONE: [&str; 5] = ["panoramica", "casa", "pc", "impostazioni", "avviso"];
+/// Le icone che Rust passa all'interfaccia: un solo elenco, nome e SVG insieme.
+const ICONE_SVG: [(&str, &[u8]); 5] = [
+    ("panoramica", include_bytes!("../assets/icone/panoramica.svg")),
+    ("casa", include_bytes!("../assets/icone/casa.svg")),
+    ("pc", include_bytes!("../assets/icone/pc.svg")),
+    ("impostazioni", include_bytes!("../assets/icone/impostazioni.svg")),
+    // Fonte «prova» delle voci in attesa (un campanello).
+    ("avviso", include_bytes!("../assets/icone/avviso.svg")),
+];
 
-/// L'icona SVG di un'app del registro (bianca: il colore lo dà l'interfaccia), dalla cache.
+/// L'icona SVG di un'app del registro (bianca: il colore lo dà l'interfaccia), dalla cache;
+/// un nome sconosciuto dà un'immagine vuota.
 pub fn icona(nome: &str) -> Image {
-    let Some(chiave) = NOMI_ICONE.iter().copied().find(|n| *n == nome) else { return Image::default() };
-    ICONE.with(|c| c.borrow_mut().entry(chiave).or_insert_with(|| leggi_icona(chiave)).clone())
-}
-
-fn leggi_icona(nome: &str) -> Image {
-    let svg: &[u8] = match nome {
-        "panoramica" => include_bytes!("../assets/icone/panoramica.svg"),
-        "casa" => include_bytes!("../assets/icone/casa.svg"),
-        "pc" => include_bytes!("../assets/icone/pc.svg"),
-        "impostazioni" => include_bytes!("../assets/icone/impostazioni.svg"),
-        // Fonte «prova» delle voci in attesa (un campanello).
-        "avviso" => include_bytes!("../assets/icone/avviso.svg"),
-        _ => return Image::default(),
-    };
-    Image::load_from_svg_data(svg).unwrap_or_default()
+    let Some(&(chiave, svg)) = ICONE_SVG.iter().find(|(n, _)| *n == nome) else { return Image::default() };
+    ICONE.with(|c| {
+        c.borrow_mut().entry(chiave).or_insert_with(|| Image::load_from_svg_data(svg).unwrap_or_default()).clone()
+    })
 }
 
 fn voci_app() -> ModelRc<VoceAppUi> {
@@ -486,5 +484,11 @@ mod test {
             let dimensioni = icona(app.icona).size();
             assert!(dimensioni.width > 0 && dimensioni.height > 0, "icona di {}", app.id);
         }
+        // Tutte le icone dell'elenco si leggono, comprese quelle che non sono app («avviso»).
+        for (nome, _) in ICONE_SVG {
+            let dimensioni = icona(nome).size();
+            assert!(dimensioni.width > 0 && dimensioni.height > 0, "icona {nome}");
+        }
+        assert_eq!(icona("non-esiste").size().width, 0);
     }
 }
