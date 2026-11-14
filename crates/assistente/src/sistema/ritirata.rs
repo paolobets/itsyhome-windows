@@ -1,4 +1,4 @@
-//! La ritirata: la pillola diventa una linea 300 × 4 al bordo alto, con clic passanti. Entra e
+//! La ritirata: la pillola diventa una linea 300 × 5 al bordo alto, con clic passanti. Entra e
 //! esce con il clic destro sulla pillola, la tray o Ctrl+Alt+Maiusc+I; esce anche tenendo il
 //! mouse sulla linea per 450 ms (TwoCode) e da sola all'arrivo di un bloccante. Non si ricorda al
 //! riavvio. Logica pura: il tempo e la posizione del mouse arrivano dal chiamante.
@@ -14,7 +14,7 @@ pub const SONDAGGIO_MOUSE: Duration = Duration::from_millis(100);
 
 /// Linea della ritirata, in pixel logici.
 pub const LARGHEZZA_LINEA: f32 = 300.0;
-pub const ALTEZZA_LINEA: f32 = 4.0;
+pub const ALTEZZA_LINEA: f32 = 5.0;
 /// Zona sensibile al mouse attorno alla linea (TwoCode: 340 × 10), dal bordo alto in giù: al
 /// bordo dello schermo il mouse ci arriva da solo spingendolo in alto.
 pub const LARGHEZZA_ZONA: f32 = 340.0;

@@ -66,15 +66,18 @@ component Velo inherits Rectangle {
     border-radius: self.height / 2;
 }
 
-// Un pulsante della pillola che chiama (bersaglio alto 24): risolve la voce senza aprire il pannello.
+// Un pulsante della pillola che chiama: risolve la voce senza aprire il pannello. Alto 26
+// nell'attenzione e 28 nel bloccante (come TwoCode), largo da 64 a 120 px: un testo lungo si
+// accorcia invece di spingere la riga fin sopra gli occhi.
 component PulsantePillola inherits Rectangle {
     in property <string> testo;
     in property <bool> primo;
+    in property <length> altezza: 26px;
     callback scelto();
 
-    height: 24px;
-    width: max(52px, etichetta.preferred-width + 16px);
-    border-radius: 7px;
+    height: altezza;
+    width: min(120px, max(64px, etichetta.preferred-width + 16px));
+    border-radius: 8px;
     // Il secondo pulsante (es. «Consenti») ha la tinta verde acqua della bozza.
     background: primo
         ? (area.has-hover ? rgba(255, 255, 255, 0.16) : rgba(255, 255, 255, 0.09))
@@ -84,7 +87,10 @@ component PulsantePillola inherits Rectangle {
     accessible-action-default => { root.scelto(); }
 
     etichetta := Text {
+        width: parent.width - 12px;
         text: testo;
+        horizontal-alignment: center;
+        overflow: elide;
         font-family: Tema.carattere;
         font-weight: 500;
         font-size: 12px;
@@ -112,7 +118,7 @@ export component Pillola inherits Window {
     in property <string> livello: "informazione";
     in property <image> icona-fonte;
     in property <[PulsanteUi]> pulsanti;
-    // Ritirata: al posto della pillola una linea 300 × 4 al bordo alto (la finestra è ritagliata
+    // Ritirata: al posto della pillola una linea 300 × 5 al bordo alto (la finestra è ritagliata
     // alla linea e lascia passare i clic), del colore del livello più urgente in attesa
     // (`livello-linea`, vuoto = nessuno: colore neutro). Opaca: la finestra ritirata è layered.
     in property <bool> ritirata;
@@ -198,11 +204,13 @@ export component Pillola inherits Window {
         : allerta
             ? @linear-gradient(rotazione, Tema.caldo-1 0%, Tema.caldo-2 35%, Tema.caldo-3 70%, Tema.caldo-4 100%)
             : @linear-gradient(rotazione, Tema.petalo-1 0%, Tema.petalo-2 20%, Tema.petalo-3 40%, Tema.petalo-4 60%, Tema.petalo-5 80%, Tema.petalo-6 100%);
-    // Aura quasi spenta a riposo (tranquillo: solo un anello sottile al 30%, nessun velo né
+    // Aura quasi spenta a riposo (tranquillo: solo un anello sottile al 45%, nessun velo né
     // bagliore), accesa negli altri umori; quasi nulla mentre dorme.
     property <float> intensita-aura: dorme ? 0.12 : tranquillo ? 0 : contento ? 1.0 : allerta ? 0.7 + 0.3 * battito : 0.75;
-    property <float> opacita-anello: dorme ? 0.25 : tranquillo ? 0.3 : 1.0;
-    property <length> spessore-anello: blocca ? 3px : 2px;
+    // A riposo l'anello al 45% (decisione E): la pillola resta trovabile anche su una barra scura.
+    property <float> opacita-anello: dorme ? 0.25 : tranquillo ? 0.45 : 1.0;
+    // Bloccante: anello da 4 px contro 2, distinto per forma anche col movimento ridotto.
+    property <length> spessore-anello: blocca ? 4px : 2px;
     property <color> bagliore-occhi: blocca ? Tema.bloccante : allerta ? #fb923c : Tema.bagliore-occhio;
 
     property <bool> palpebra: false;
@@ -248,12 +256,16 @@ export component Pillola inherits Window {
         }
     }
 
+    // 300 × 5 come TwoCode, con un filo scuro di 1 px tutt'intorno: si vede anche sopra una barra
+    // chiara (il grigio neutro da solo era 2,6:1 sul bianco), e il colore del livello resta.
     if ritirata: Rectangle {
         x: (root.width - self.width) / 2;
         y: margine-aura;
         width: 300px;
-        height: 4px;
+        height: 5px;
         background: livello-linea == "" ? Tema.testo-tenue : Tema.colore-livello(livello-linea);
+        border-width: 1px;
+        border-color: Tema.corpo;
     }
 
     pillola := Rectangle {
@@ -280,7 +292,7 @@ export component Pillola inherits Window {
             background: iride.with-alpha(0.42 * intensita-aura);
         }
 
-        // Anello: il bordo colorato (2 px; 3 px, fermo, per il bloccante), sul pixel.
+        // Anello: il bordo colorato (2 px; 4 px, fermo, per il bloccante), sul pixel.
         Rectangle {
             border-radius: self.height / 2;
             background: iride;
@@ -288,7 +300,8 @@ export component Pillola inherits Window {
             // Bagliore sfumato sotto i veli, come il blur della bozza (niente a riposo, e niente
             // mentre l'aura si muove, che pensi o che pulsi: ricomporlo a ogni fotogramma costa
             // troppo, bastano i veli).
-            drop-shadow-blur: intensita-aura > 0.2 && !in-moto ? 5px : 0px;
+            // Bloccante: bagliore da 4 px, così anello e bagliore stanno sotto il margine dell'aura.
+            drop-shadow-blur: intensita-aura > 0.2 && !in-moto ? (blocca ? 4px : 5px) : 0px;
             drop-shadow-color: (blocca ? Tema.bloccante : allerta ? #fb923c : #c084fc).with-alpha(0.55 * intensita-aura);
         }
 
@@ -364,14 +377,20 @@ export component Pillola inherits Window {
                 bagliore: bagliore-occhi;
             }
 
-            // Il puntino: qualcosa è in attesa (colore del livello). Fermo, sotto gli occhi.
+            // Il puntino: qualcosa è in attesa. Fermo, sotto gli occhi, 5 × 5 con un leggero
+            // bagliore; il livello si legge anche dalla forma, non solo dal colore: attenzione =
+            // pieno (ambra), informazione = anello (blu). Il bloccante non ha puntino (resta larga).
             if aspetto == "puntino": Rectangle {
                 x: (parent.width - self.width) / 2;
-                y: parent.height - 7px;
-                width: 3px;
-                height: 3px;
-                border-radius: 1.5px;
-                background: Tema.colore-livello(livello);
+                y: parent.height - 8px;
+                width: 5px;
+                height: 5px;
+                border-radius: 2.5px;
+                background: livello == "informazione" ? transparent : Tema.colore-livello(livello);
+                border-width: livello == "informazione" ? 1.5px : 0px;
+                border-color: Tema.colore-livello(livello);
+                drop-shadow-blur: 3px;
+                drop-shadow-color: Tema.colore-livello(livello).with-alpha(0.5);
             }
         }
 
@@ -401,6 +420,7 @@ export component Pillola inherits Window {
             visible: allargata;
 
             for p[i] in pulsanti: PulsantePillola {
+                altezza: blocca ? 28px : 26px;
                 testo: p.testo;
                 primo: i == 0 && pulsanti.length > 1;
                 scelto => { root.azione(p.id); }

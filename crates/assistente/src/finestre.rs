@@ -510,10 +510,10 @@ mod test {
 
     #[test]
     fn regione_della_linea_al_bordo_alto() {
-        // Finestra 456 × 56: linea 300 × 4 al centro, dal bordo alto dello schermo (y = 8).
-        assert_eq!(regione_linea(456, 56, 1.0), (78, 8, 378, 12));
-        // A 1,75 (798 × 98): 525 × 7, sotto i 14 px di aura che sporgono.
-        assert_eq!(regione_linea(798, 98, 1.75), (136, 14, 661, 21));
+        // Finestra 456 × 56: linea 300 × 5 al centro, dal bordo alto dello schermo (y = 8).
+        assert_eq!(regione_linea(456, 56, 1.0), (78, 8, 378, 13));
+        // A 1,75 (798 × 98): 525 × 9, sotto i 14 px di aura che sporgono.
+        assert_eq!(regione_linea(798, 98, 1.75), (136, 14, 661, 23));
     }
 
     #[test]

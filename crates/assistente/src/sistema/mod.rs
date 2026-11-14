@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Visibilita {
     Pillola,
-    /// Ritirata: una linea 300 × 4 al bordo alto, con clic passanti.
+    /// Ritirata: una linea 300 × 5 al bordo alto, con clic passanti.
     Linea,
     Nascosta,
 }
