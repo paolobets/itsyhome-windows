@@ -341,9 +341,23 @@ thread_local! {
 
 const MAIL_DI_PROVA: &str = include_str!("../../gestione/assets/prova-mail.html");
 
-/// `--prova-gestione`: apre la finestra con la mail di prova a 3 s (prima c'è la misura
-/// dell'assistente da solo), la chiude a 10 s e la riapre a 18 s. Tempi di apertura nel log.
-pub fn prova(cartella_assistente: &Path) {
+/// Calendario della prova: (quando, apri o chiudi). Senza `cicli` (`--prova-gestione`) apre a 3 s
+/// (prima c'è la misura dell'assistente da solo), chiude a 10 s e riapre a 18 s, lasciandola
+/// aperta. Con `cicli` (`--prova-gestione-cicli <n>`) ripete `n` volte apri (3 s + 12 s × i) e
+/// chiudi 7 s dopo, e alla fine resta chiusa: misure dei cicli ripetuti.
+fn calendario_prova(cicli: Option<u32>) -> Vec<(Duration, bool)> {
+    let s = Duration::from_secs;
+    match cicli {
+        None => vec![(s(3), true), (s(10), false), (s(18), true)],
+        Some(n) => (0..u64::from(n))
+            .flat_map(|i| [(s(3 + 12 * i), true), (s(10 + 12 * i), false)])
+            .collect(),
+    }
+}
+
+/// `--prova-gestione [--prova-gestione-cicli <n>]`: la finestra con la mail di prova secondo
+/// `calendario_prova`. Tempi di apertura nel log.
+pub fn prova(cartella_assistente: &Path, cicli: Option<u32>) {
     let aperta_alle: Arc<Mutex<Option<Instant>>> = Arc::default();
     let per_messaggi = aperta_alle.clone();
     let gestione = Gestione::new(cartella_assistente, move |m| match m {
@@ -354,22 +368,24 @@ pub fn prova(cartella_assistente: &Path) {
         m => eprintln!("finestra di gestione: {m:?}"),
     });
     PROVA.with_borrow_mut(|p| *p = Some(gestione));
-    let apri = move || {
-        if let Ok(mut t) = aperta_alle.lock() {
-            *t = Some(Instant::now());
-        }
-        PROVA.with_borrow_mut(|p| {
-            if let Some(Err(e)) = p.as_mut().map(|g| g.apri("Riepilogo del tuo ordine", MAIL_DI_PROVA)) {
-                eprintln!("{e}");
-            }
+    for (quando, apri) in calendario_prova(cicli) {
+        let aperta_alle = aperta_alle.clone();
+        slint::Timer::single_shot(quando, move || {
+            PROVA.with_borrow_mut(|p| {
+                let Some(g) = p.as_mut() else { return };
+                if !apri {
+                    g.chiudi();
+                    return;
+                }
+                if let Ok(mut t) = aperta_alle.lock() {
+                    *t = Some(Instant::now());
+                }
+                if let Err(e) = g.apri("Riepilogo del tuo ordine", MAIL_DI_PROVA) {
+                    eprintln!("{e}");
+                }
+            });
         });
-    };
-    let riapri = apri.clone();
-    slint::Timer::single_shot(Duration::from_secs(3), apri);
-    slint::Timer::single_shot(Duration::from_secs(10), || {
-        PROVA.with_borrow_mut(|p| p.as_mut().map(Gestione::chiudi));
-    });
-    slint::Timer::single_shot(Duration::from_secs(18), riapri);
+    }
 }
 
 /// All'uscita dell'assistente: chiude la finestra di prova e ne raccoglie il processo.
@@ -395,6 +411,18 @@ mod test {
         // L'ultima riga senza a capo vale (il figlio è uscito a metà riga).
         assert_eq!(leggi_riga(&mut lettore, &mut buf), Riga::Testo("y".repeat(10)));
         assert_eq!(leggi_riga(&mut lettore, &mut buf), Riga::Fine);
+    }
+
+    #[test]
+    fn calendario_della_prova() {
+        let s = Duration::from_secs;
+        assert_eq!(calendario_prova(None), vec![(s(3), true), (s(10), false), (s(18), true)]);
+        let cicli = calendario_prova(Some(5));
+        assert_eq!(cicli.len(), 10);
+        assert_eq!(cicli[..4], [(s(3), true), (s(10), false), (s(15), true), (s(22), false)]);
+        assert_eq!(cicli.last(), Some(&(s(58), false)), "alla fine resta chiusa");
+        assert!(cicli.windows(2).all(|c| c[0].0 < c[1].0 && c[0].1 != c[1].1), "alterna apri e chiudi");
+        assert!(calendario_prova(Some(0)).is_empty());
     }
 
     #[test]

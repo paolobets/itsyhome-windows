@@ -181,9 +181,14 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
-    // `--prova-gestione`: la finestra di gestione con una mail di prova (aperta, chiusa, riaperta).
-    if argomenti.iter().any(|a| a == "--prova-gestione") {
-        gestione::prova(&cartella);
+    // `--prova-gestione`: la finestra di gestione con una mail di prova (aperta, chiusa, riaperta);
+    // `--prova-gestione-cicli <n>`: n aperture e chiusure, alla fine chiusa.
+    let cicli = argomenti
+        .iter()
+        .position(|a| a == "--prova-gestione-cicli")
+        .and_then(|i| argomenti.get(i + 1)?.parse::<u32>().ok());
+    if cicli.is_some() || argomenti.iter().any(|a| a == "--prova-gestione") {
+        gestione::prova(&cartella, cicli);
     }
 
     casa.connetti_attivo();
