@@ -214,17 +214,14 @@ pub fn esito_prova(r: &TestConnectionResult) -> (String, Tono) {
 }
 
 /// Il dettaglio tecnico per la sezione Informazioni: ultimo errore di connessione, dell'import
-/// dalla v2 e del salvataggio della configurazione.
+/// dalla v2 e del salvataggio della configurazione. Vuoto se non c'è nessun errore (la finestra
+/// lo dice allora in una frase, nel carattere normale).
 pub fn dettagli_tecnici(connessione: Option<&str>, import: Option<&str>, config: Option<&str>) -> String {
-    let righe: Vec<String> = [("Connessione", connessione), ("Import dalla versione precedente", import), ("Configurazione", config)]
+    [("Connessione", connessione), ("Import dalla versione precedente", import), ("Configurazione", config)]
         .into_iter()
         .filter_map(|(cosa, e)| e.map(|e| format!("{cosa}: {e}")))
-        .collect();
-    if righe.is_empty() {
-        "Nessun errore registrato.".into()
-    } else {
-        righe.join("\n")
-    }
+        .collect::<Vec<String>>()
+        .join("\n")
 }
 
 #[cfg(test)]
@@ -233,7 +230,7 @@ mod test {
 
     #[test]
     fn url_senza_schema_diventa_http() {
-        assert_eq!(valida_url("192.168.1.95:8123").as_deref(), Ok("http://192.168.1.95:8123"));
+        assert_eq!(valida_url("192.0.2.10:8123").as_deref(), Ok("http://192.0.2.10:8123"));
         assert_eq!(valida_url("  casa.local:8123 ").as_deref(), Ok("http://casa.local:8123"));
         // Uno schema già scritto resta com'è.
         assert_eq!(valida_url("https://ha.esempio.it").as_deref(), Ok("https://ha.esempio.it"));
@@ -242,8 +239,8 @@ mod test {
 
     #[test]
     fn url_slash_finale_tolto() {
-        assert_eq!(valida_url("http://192.168.1.95:8123/").as_deref(), Ok("http://192.168.1.95:8123"));
-        assert_eq!(valida_url("192.168.1.95:8123//").as_deref(), Ok("http://192.168.1.95:8123"));
+        assert_eq!(valida_url("http://192.0.2.10:8123/").as_deref(), Ok("http://192.0.2.10:8123"));
+        assert_eq!(valida_url("192.0.2.10:8123//").as_deref(), Ok("http://192.0.2.10:8123"));
     }
 
     #[test]
@@ -251,7 +248,7 @@ mod test {
         assert!(valida_url("").is_err());
         assert!(valida_url("   ").is_err());
         assert!(valida_url("http://").is_err());
-        assert!(valida_url("192.168.1.95 :8123").is_err());
+        assert!(valida_url("192.0.2.10 :8123").is_err());
         assert!(valida_url("casa locale").is_err());
     }
 
@@ -340,7 +337,7 @@ mod test {
 
     #[test]
     fn dettagli_tecnici_righe() {
-        assert_eq!(dettagli_tecnici(None, None, None), "Nessun errore registrato.");
+        assert_eq!(dettagli_tecnici(None, None, None), "", "nessun errore: la frase la scrive la finestra");
         assert_eq!(
             dettagli_tecnici(Some("14:02 · token rifiutato"), None, Some("disco pieno")),
             "Connessione: 14:02 · token rifiutato\nConfigurazione: disco pieno"

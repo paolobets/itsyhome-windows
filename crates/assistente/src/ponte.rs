@@ -1334,7 +1334,7 @@ pub(crate) mod test {
         assert_eq!(numero_italiano("on"), "on");
         assert_eq!(numero_italiano("2026-11-13"), "2026-11-13");
         assert_eq!(numero_italiano("1.2.3"), "1.2.3");
-        assert_eq!(numero_italiano("192.168.1.1"), "192.168.1.1");
+        assert_eq!(numero_italiano("192.0.2.1"), "192.0.2.1");
         assert_eq!(numero_italiano(".5"), ".5");
         assert_eq!(numero_italiano(""), "");
         // L'arco usa il valore grezzo: la virgola nel testo non lo cambia.

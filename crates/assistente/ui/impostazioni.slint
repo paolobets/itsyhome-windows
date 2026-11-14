@@ -5,13 +5,16 @@
 //   Modifica e Rimuovi (conferma sul pulsante stesso per 4 s, che nomina l'ambiente); il modulo
 //   aggiungi/modifica (nome, indirizzo, token in un campo password) prende il posto dell'elenco.
 // - Sistema: «Avvia con il sistema».
-// - Informazioni: versione, licenza MIT, «Made with Slint» e il dettaglio tecnico degli errori.
+// - Informazioni: nome, versione, «© Paolo Bets», il riquadro AboutSlint (la licenza Slint
+//   royalty-free 2.0, punto 2(a), chiede proprio quel widget in una schermata «Informazioni») e
+//   il dettaglio tecnico degli errori.
 //
 // Tastiera: Tab / Maiusc+Tab nell'ordine naturale (sezioni, pulsanti, campi), Invio o Spazio
 // premono il pulsante col fuoco. In un campo si scrive come in ogni casella (frecce, Backspace,
 // selezione); Esc esce dal campo, Esc fuori da un campo chiude la finestra; Invio in un campo salva.
 import { Tema, Movimento } from "tema.slint";
 import { AmbienteUi } from "voci.slint";
+import { AboutSlint, Palette } from "std-widgets.slint";
 
 export { AmbienteUi }
 
@@ -26,6 +29,13 @@ component Bottone inherits FocusScope {
     in property <string> testo;
     in property <string> tipo: "normale";
     callback premuto();
+    // Ha appena preso il fuoco (Tab): chi lo contiene lo porta in vista.
+    callback fuoco-preso();
+    changed has-focus => {
+        if (self.has-focus) {
+            root.fuoco-preso();
+        }
+    }
 
     height: 30px;
     width: max(72px, etichetta.preferred-width + 28px);
@@ -105,6 +115,8 @@ component Campo inherits Rectangle {
         border-color: input.has-focus ? Tema.petalo-4 : Tema.vetro-bordo;
         background: rgba(255, 255, 255, 0.05);
 
+        // Il suggerimento è più tenue del testo vero (circa 4,5:1 contro 15:1): non sembra un
+        // valore già scritto.
         Text {
             x: 12px;
             width: parent.width - 24px;
@@ -113,7 +125,7 @@ component Campo inherits Rectangle {
             vertical-alignment: center;
             overflow: elide;
             font-size: 13px;
-            color: Tema.testo-tenue;
+            color: rgba(236, 230, 250, 0.40);
         }
 
         input := TextInput {
@@ -188,10 +200,12 @@ component Sezione inherits FocusScope {
     if root.has-focus: Anello { x: -4px; y: -4px; width: root.width + 8px; height: root.height + 8px; border-radius: 22px; }
 }
 
-// Pallino + parola dello stato (il colore non basta mai da solo).
+// Pallino + parola dello stato (il colore non basta mai da solo). Largo quanto il suo testo
+// (`naturale`): chi lo usa lo allinea a destra.
 component Stato inherits Rectangle {
     in property <string> testo;
     in property <string> tono;
+    out property <length> naturale: 15px + parola.preferred-width;
 
     Rectangle {
         x: 0;
@@ -204,7 +218,7 @@ component Stato inherits Rectangle {
             : Tema.icona-spenta;
     }
 
-    Text {
+    parola := Text {
         x: 15px;
         width: parent.width - 15px;
         text: testo;
@@ -323,6 +337,9 @@ export component FinestraImpostazioni inherits Window {
     default-font-family: Tema.carattere;
     background: @linear-gradient(160deg, Tema.fondo-alto 0%, Tema.fondo-basso 55%);
     forward-focus: radice;
+    // Il riquadro AboutSlint segue la tavolozza dei widget standard: logo e testo chiari sul
+    // fondo scuro, qualunque sia il tema di Windows.
+    init => { Palette.color-scheme = ColorScheme.dark; }
 
     // ─── Azioni ───
 
@@ -510,10 +527,19 @@ export component FinestraImpostazioni inherits Window {
                 }
             }
 
-            Flickable {
+            elenco := Flickable {
                 y: 44px;
                 height: parent.height - 44px;
                 content-height: max(self.height, ambienti.length * passo-riga);
+
+                // Tab su un pulsante di una riga fuori vista: la riga scorre in vista.
+                function porta-in-vista(i: int) {
+                    if (i * passo-riga + self.content-y < 0) {
+                        self.content-y = -i * passo-riga;
+                    } else if (i * passo-riga + alto-riga + self.content-y > self.height) {
+                        self.content-y = self.height - i * passo-riga - alto-riga;
+                    }
+                }
 
                 for amb[i] in ambienti: Rectangle {
                     property <bool> conferma: conferma-id == amb.id;
@@ -537,10 +563,11 @@ export component FinestraImpostazioni inherits Window {
                         color: conferma ? Tema.caldo-1 : Tema.testo;
                     }
 
+                    // A destra, al bordo della card (largo quanto la parola, al più 150).
                     if !conferma: Stato {
                         x: parent.width - self.width - 16px;
                         y: 10px;
-                        width: 150px;
+                        width: min(150px, self.naturale);
                         height: 20px;
                         testo: amb.stato;
                         tono: amb.tono;
@@ -565,6 +592,7 @@ export component FinestraImpostazioni inherits Window {
                         if !conferma: Bottone {
                             testo: amb.collegato ? "Disconnetti" : "Connetti";
                             tipo: amb.collegato ? "normale" : "primario";
+                            fuoco-preso => { elenco.porta-in-vista(i); }
                             premuto => {
                                 if (amb.collegato) {
                                     root.disconnetti-casa();
@@ -576,6 +604,7 @@ export component FinestraImpostazioni inherits Window {
 
                         Bottone {
                             testo: conferma ? "Annulla" : "Modifica";
+                            fuoco-preso => { elenco.porta-in-vista(i); }
                             premuto => {
                                 if (conferma) {
                                     conferma-id = "";
@@ -589,10 +618,21 @@ export component FinestraImpostazioni inherits Window {
                             testo: conferma ? "Conferma" : "Rimuovi";
                             tipo: conferma ? "pericolo" : "normale";
                             accessible-label: conferma ? "Conferma la rimozione di " + amb.nome : "Rimuovi " + amb.nome;
+                            fuoco-preso => { elenco.porta-in-vista(i); }
                             premuto => { rimuovi(amb.id); }
                         }
                     }
                 }
+            }
+
+            // Barretta di scorrimento disegnata (4 px), solo se l'elenco non sta tutto.
+            if elenco.content-height > elenco.height + 0.5px: Rectangle {
+                x: parent.width + 8px;
+                y: elenco.y + (-elenco.content-y / elenco.content-height) * elenco.height;
+                width: 4px;
+                height: elenco.height * elenco.height / elenco.content-height;
+                border-radius: 2px;
+                background: Tema.vetro-bordo;
             }
         }
 
@@ -618,7 +658,7 @@ export component FinestraImpostazioni inherits Window {
                 y: 44px;
                 width: parent.width;
                 etichetta: "Nome";
-                suggerimento: "Casa";
+                suggerimento: "es. Casa";
                 testo <=> campo-nome;
                 esci => { radice.focus(); }
                 invio => { salva(); }
@@ -628,7 +668,7 @@ export component FinestraImpostazioni inherits Window {
                 y: 88px;
                 width: parent.width;
                 etichetta: "Indirizzo";
-                suggerimento: "192.168.1.95:8123";
+                suggerimento: "es. homeassistant.local:8123";
                 testo <=> campo-url;
                 esci => { radice.focus(); }
                 invio => { salva(); }
@@ -638,7 +678,7 @@ export component FinestraImpostazioni inherits Window {
                 y: 132px;
                 width: parent.width;
                 etichetta: "Token";
-                suggerimento: modulo-id == "" ? "Token di accesso a lunga durata" : "Lascia vuoto per non cambiarlo";
+                suggerimento: modulo-id == "" ? "Incolla il token di accesso a lunga durata" : "Lascia vuoto per non cambiarlo";
                 password: true;
                 testo <=> campo-token;
                 esci => { radice.focus(); }
@@ -766,28 +806,47 @@ export component FinestraImpostazioni inherits Window {
                 x: 0;
                 y: 30px;
                 height: 22px;
-                text: "Licenza MIT · Made with Slint";
+                text: "© Paolo Bets";
                 vertical-alignment: center;
                 font-size: 13px;
                 color: Tema.testo-ora;
             }
 
+            // Attribuzione richiesta dalla licenza Slint royalty-free 2.0 (punto 2(a)).
+            AboutSlint {
+                x: -12px;
+                y: 58px;
+                width: 240px;
+                height: 96px;
+            }
+
             Titoletto {
                 x: 0;
-                y: 70px;
+                y: 164px;
                 height: 24px;
                 text: "DETTAGLI TECNICI";
             }
 
-            Flickable {
-                y: 100px;
+            // Nessun errore: una frase nel carattere normale, in alto (non a metà della finestra).
+            if dettagli-tecnici == "": Text {
+                x: 0;
+                y: 194px;
+                text: "Nessun errore registrato.";
+                font-size: 13px;
+                color: Tema.testo-tenue;
+            }
+
+            if dettagli-tecnici != "": Flickable {
+                y: 194px;
                 height: parent.height - self.y;
                 content-height: max(self.height, dettagli.preferred-height);
 
                 dettagli := Text {
                     width: parent.width;
+                    height: self.preferred-height;
                     text: dettagli-tecnici;
                     wrap: word-wrap;
+                    vertical-alignment: top;
                     font-family: Tema.carattere-mono;
                     font-size: 12px;
                     color: Tema.testo-tenue;
