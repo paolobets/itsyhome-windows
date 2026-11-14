@@ -688,11 +688,14 @@ impl Ponte {
         *self.apri_impostazioni.borrow_mut() = Some(Box::new(f));
     }
 
-    /// Icona del dock o pulsante di una voce: la finestra delle Impostazioni.
-    pub fn chiedi_impostazioni(&self) {
+    /// Icona del dock o pulsante di una voce: la finestra delle Impostazioni. Falso se nessuno sa
+    /// aprirla (nessuna finestra aperta).
+    pub fn chiedi_impostazioni(&self) -> bool {
         if let Some(apri) = self.apri_impostazioni.borrow().as_ref() {
             apri();
+            return true;
         }
+        false
     }
 
     /// La finestra delle Impostazioni appena creata: modelli, dati di adesso e azioni.

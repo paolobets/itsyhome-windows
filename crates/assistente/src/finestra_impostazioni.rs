@@ -23,8 +23,18 @@ pub const SEZIONE_INFORMAZIONI: i32 = 2;
 
 /// La prossima `apri_impostazioni` mostra questa sezione (la si chiede dalla tray, prima che il
 /// pannello si chiuda e la finestra si apra).
-pub fn alla_sezione(sezione: i32) {
+fn alla_sezione(sezione: i32) {
     SEZIONE.with(|s| s.set(Some(sezione)));
+}
+
+/// Chiede le Impostazioni su `sezione` (voce «Informazioni» della tray). `apri` dice se una
+/// finestra si è aperta davvero: se no, la sezione si dimentica (la prossima apertura normale
+/// non deve finire lì).
+pub fn apri_alla_sezione(sezione: i32, apri: impl FnOnce() -> bool) {
+    alla_sezione(sezione);
+    if !apri() {
+        SEZIONE.with(|s| s.set(None));
+    }
 }
 
 fn mostra_sezione_chiesta(f: &FinestraImpostazioni) {
@@ -92,4 +102,32 @@ fn chiudi_dopo() {
             drop(f);
         }
     });
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    fn in_attesa() -> Option<i32> {
+        SEZIONE.with(Cell::get)
+    }
+
+    #[test]
+    fn sezione_dimenticata_se_non_si_apre_nulla() {
+        // La tray chiede «Informazioni» ma le Impostazioni non si aprono (nessuno sa aprirle):
+        // la prossima apertura normale non deve finire su «Informazioni».
+        apri_alla_sezione(SEZIONE_INFORMAZIONI, || false);
+        assert_eq!(in_attesa(), None);
+    }
+
+    #[test]
+    fn sezione_tenuta_per_la_finestra_che_si_apre() {
+        let mut vista = None;
+        apri_alla_sezione(SEZIONE_INFORMAZIONI, || {
+            vista = in_attesa();
+            true
+        });
+        assert_eq!(vista, Some(SEZIONE_INFORMAZIONI), "l'apertura la trova");
+        SEZIONE.with(|s| s.set(None));
+    }
 }

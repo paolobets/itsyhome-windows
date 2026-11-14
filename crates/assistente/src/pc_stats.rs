@@ -68,6 +68,9 @@ pub struct Campionatore {
     /// Ultima lettura dei tempi di sistema (CPU su Windows).
     #[cfg(windows)]
     tempi: Option<TempiCpu>,
+    /// L'ultima percentuale calcolata: resta se fra due letture non passa tempo di CPU.
+    #[cfg(windows)]
+    ultima_cpu: Option<f32>,
     dischi: Disks,
     reti: Networks,
     batterie: Option<Manager>,
@@ -92,6 +95,8 @@ impl Campionatore {
             sistema,
             #[cfg(windows)]
             tempi: tempi_cpu(),
+            #[cfg(windows)]
+            ultima_cpu: None,
             dischi: Disks::new_with_refreshed_list_specifics(disco_mirato()),
             reti: Networks::new_with_refreshed_list(),
             batterie: Manager::new().ok(),
@@ -157,10 +162,11 @@ impl Campionatore {
     #[cfg(windows)]
     fn cpu(&mut self) -> Option<f32> {
         let ora = tempi_cpu();
-        let pct = cpu_da(self.tempi, ora);
+        let pct = cpu_da(self.tempi, ora, self.ultima_cpu);
         if ora.is_some() {
             self.tempi = ora;
         }
+        self.ultima_cpu = pct;
         pct
     }
 
@@ -194,12 +200,16 @@ struct TempiCpu {
 }
 
 /// La CPU fra la lettura di prima e quella di adesso: `None` se una delle due manca (GetSystemTimes
-/// fallito) o se fra le due non è passato tempo di CPU (nessuna differenza da cui calcolare).
+/// fallito). Se fra le due non è passato tempo di CPU (intervallo nullo) non c'è una differenza da
+/// cui calcolare, ma nemmeno un errore: resta `ultima`, il valore di prima.
 #[cfg_attr(not(windows), allow(dead_code))]
-fn cpu_da(prima: Option<TempiCpu>, ora: Option<TempiCpu>) -> Option<f32> {
+fn cpu_da(prima: Option<TempiCpu>, ora: Option<TempiCpu>, ultima: Option<f32>) -> Option<f32> {
     let (prima, ora) = (prima?, ora?);
     let totale = ora.kernel.saturating_sub(prima.kernel) + ora.utente.saturating_sub(prima.utente);
-    (totale > 0).then(|| percentuale_cpu(prima, ora))
+    if totale == 0 {
+        return ultima;
+    }
+    Some(percentuale_cpu(prima, ora))
 }
 
 /// Percentuale di CPU occupata tra due letture: (kernel + utente − inattivo) / (kernel + utente).
@@ -324,10 +334,18 @@ mod test {
         // numero (l'interfaccia mostra «—»), mai «0%».
         let prima = TempiCpu { inattivo: 1_000, kernel: 5_000, utente: 3_000 };
         let ora = TempiCpu { inattivo: 1_600, kernel: 6_000, utente: 4_000 };
-        assert_eq!(cpu_da(Some(prima), Some(ora)), Some(70.0));
-        assert_eq!(cpu_da(Some(prima), None), None, "lettura di adesso fallita");
-        assert_eq!(cpu_da(None, Some(ora)), None, "lettura di prima fallita");
-        assert_eq!(cpu_da(Some(prima), Some(prima)), None, "nessun tempo di CPU passato");
+        assert_eq!(cpu_da(Some(prima), Some(ora), None), Some(70.0));
+        assert_eq!(cpu_da(Some(prima), None, Some(42.0)), None, "lettura di adesso fallita");
+        assert_eq!(cpu_da(None, Some(ora), Some(42.0)), None, "lettura di prima fallita");
+    }
+
+    #[test]
+    fn intervallo_nullo_tiene_l_ultimo_valore() {
+        // Due letture riuscite senza tempo di CPU fra loro non sono un errore: resta il valore di
+        // prima (un «—» lo farebbe sembrare illeggibile); senza un valore di prima, nessuno.
+        let prima = TempiCpu { inattivo: 1_000, kernel: 5_000, utente: 3_000 };
+        assert_eq!(cpu_da(Some(prima), Some(prima), Some(42.0)), Some(42.0));
+        assert_eq!(cpu_da(Some(prima), Some(prima), None), None);
     }
 
     #[test]

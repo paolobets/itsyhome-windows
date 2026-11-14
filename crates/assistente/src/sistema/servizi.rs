@@ -113,14 +113,12 @@ fn al_comando_tray(c: Comando) {
         Comando::Apri => apri(),
         Comando::Impostazioni => {
             if let Some(s) = servizi() {
-                s.ponte.chiedi_impostazioni();
+                let _ = s.ponte.chiedi_impostazioni();
             }
         }
         Comando::Informazioni => {
-            crate::finestra_impostazioni::alla_sezione(crate::finestra_impostazioni::SEZIONE_INFORMAZIONI);
-            if let Some(s) = servizi() {
-                s.ponte.chiedi_impostazioni();
-            }
+            use crate::finestra_impostazioni::{apri_alla_sezione, SEZIONE_INFORMAZIONI};
+            apri_alla_sezione(SEZIONE_INFORMAZIONI, || servizi().is_some_and(|s| s.ponte.chiedi_impostazioni()));
         }
         Comando::Ritirata => commuta_ritirata(),
         Comando::Esci => {
