@@ -18,9 +18,11 @@ export component Dispositivo inherits Rectangle {
     // Il colore dello stato solo se il dato è vivo: a casa non connessa una luce «Acceso» è un
     // valore vecchio e resta neutra, come una non disponibile.
     property <bool> colorata: voce.acceso && !voce.tenue;
-    // Tenue = colori con trasparenza (non opacity, che disegna in uno strato a parte): testo
-    // dello stato circa 4,8:1 sulla card, nome più chiaro.
-    property <float> velatura: voce.tenue ? 0.78 : 1.0;
+    // Tenue = colori con trasparenza (non opacity, che disegna in uno strato a parte). A 0,85 il
+    // testo dello stato (testo-tenue) sulla card tenue (bianco al 4%) è 5,6:1 sul corpo #07030f e
+    // 5,0:1 nel punto peggiore, sotto il bagliore indaco del pannello (+10%); il nome 11:1.
+    // (A 0,78 era 4,9 / 4,5:1: al limite.)
+    property <float> velatura: voce.tenue ? 0.85 : 1.0;
 
     border-radius: 16px;
     border-width: 1px;
