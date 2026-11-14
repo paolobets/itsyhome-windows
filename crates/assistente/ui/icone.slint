@@ -1,6 +1,7 @@
 // Icone leggere in stile SF Symbols: contorni a tratto sottile (1,55 su 24), un solo colore.
 // I file SVG sono bianchi: il colore lo decide chi le usa (`colorize`), il colore solo per lo stato.
 import { Tema } from "tema.slint";
+import { GenereUi } from "voci.slint";
 
 export global Icone {
     out property <image> casa: @image-url("../assets/icone/casa.svg");
@@ -20,13 +21,13 @@ export global Icone {
     out property <image> sensore: @image-url("../assets/icone/sensore.svg");
 
     // L'icona di un preferito dal suo genere (vedi `ponte::genere`).
-    public pure function di-genere(genere: string) -> image {
-        if (genere == "luce") { return luce; }
-        if (genere == "presa") { return presa; }
-        if (genere == "scena") { return scena; }
-        if (genere == "termo") { return termo; }
-        if (genere == "goccia") { return goccia; }
-        if (genere == "sensore") { return sensore; }
+    public pure function di-genere(genere: GenereUi) -> image {
+        if (genere == GenereUi.luce) { return luce; }
+        if (genere == GenereUi.presa) { return presa; }
+        if (genere == GenereUi.scena) { return scena; }
+        if (genere == GenereUi.termo) { return termo; }
+        if (genere == GenereUi.goccia) { return goccia; }
+        if (genere == GenereUi.sensore) { return sensore; }
         return casa;
     }
 }

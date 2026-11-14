@@ -4,7 +4,7 @@
 // rispondono al tocco. Da tastiera: frecce fra le card, Invio o Spazio = tocco (in pannello.slint).
 import { Tema } from "../tema.slint";
 import { Icone, Icona } from "../icone.slint";
-import { PreferitoUi } from "../voci.slint";
+import { PreferitoUi, GenereUi } from "../voci.slint";
 import { Anello, Pulsante, TipoPulsante, Etichetta } from "../componenti.slint";
 
 // Una card dispositivo: icona in alto, nome e stato in basso.
@@ -14,7 +14,7 @@ export component Dispositivo inherits Rectangle {
     in property <bool> anello;
     callback tocca();
 
-    property <bool> luce: voce.genere == "luce";
+    property <bool> luce: voce.genere == GenereUi.luce;
     property <bool> sopra: area.has-hover && voce.toccabile;
     // Il colore dello stato solo se il dato è vivo: a casa non connessa una luce «Acceso» è un
     // valore vecchio e resta neutra, come una non disponibile.
@@ -45,7 +45,7 @@ export component Dispositivo inherits Rectangle {
         source: Icone.di-genere(voce.genere);
         colorize: voce.tenue ? Tema.icona-spenta
             : colorata ? (luce ? Tema.luce-accesa : Tema.presa-accesa)
-            : voce.genere == "luce" || voce.genere == "presa" ? Tema.icona-spenta : Tema.icona;
+            : voce.genere == GenereUi.luce || voce.genere == GenereUi.presa ? Tema.icona-spenta : Tema.icona;
     }
 
     Text {

@@ -33,15 +33,6 @@ impl Livello {
         }
     }
 
-    /// Nome per l'interfaccia (colore della barretta) e parola sotto il titolo.
-    pub fn come_stringa(self) -> &'static str {
-        match self {
-            Livello::Bloccante => "bloccante",
-            Livello::Attenzione => "attenzione",
-            Livello::Informazione => "informazione",
-        }
-    }
-
     /// La parola per l'utente (decisione B).
     pub fn parola(self) -> &'static str {
         match self {

@@ -11,7 +11,7 @@ use crate::sistema::{autoavvio, servizi};
 use crate::impostazioni::{self, Modulo, Tono};
 use crate::pillola::{self, VistaPillola};
 use crate::umore::{Cervello, Segnale, Umore};
-use crate::{AmbienteUi, FinestraImpostazioni, Pannello, Pillola, PreferitoUi, SensoreUi, VoceAttesaUi};
+use crate::{AmbienteUi, FinestraImpostazioni, GenereUi, Pannello, Pillola, PreferitoUi, SensoreUi, TonoUi, VoceAttesaUi};
 use casa_core::eventi::{Ascoltatore, CasaEvento, StatoConnessione};
 use casa_core::segreti::Segreti;
 use casa_core::servizio::CasaService;
@@ -169,18 +169,28 @@ pub fn testo_stato(p: &Preferito) -> String {
     }
 }
 
-/// Che cosa è un preferito per l'interfaccia (icona e tinta): "luce", "presa", "scena",
-/// "termo", "goccia", "sensore" o "casa".
-pub fn genere(p: &Preferito) -> &'static str {
+/// Che cosa è un preferito per l'interfaccia (icona e tinta): luce, presa, scena, termo, goccia,
+/// sensore o casa (tutto il resto).
+pub fn genere(p: &Preferito) -> GenereUi {
     match p.entity_id.split('.').next().unwrap_or_default() {
-        "light" => "luce",
-        "switch" => "presa",
-        "scene" => "scena",
-        "climate" => "termo",
-        "sensor" if p.valore.contains('°') => "termo",
-        "sensor" if p.valore.ends_with('%') => "goccia",
-        "sensor" => "sensore",
-        _ => "casa",
+        "light" => GenereUi::Luce,
+        "switch" => GenereUi::Presa,
+        "scene" => GenereUi::Scena,
+        "climate" => GenereUi::Termo,
+        "sensor" if p.valore.contains('°') => GenereUi::Termo,
+        "sensor" if p.valore.ends_with('%') => GenereUi::Goccia,
+        "sensor" => GenereUi::Sensore,
+        _ => GenereUi::Casa,
+    }
+}
+
+/// Il tono di uno stato come lo conosce l'interfaccia (colore del pallino).
+fn tono_ui(t: Tono) -> TonoUi {
+    match t {
+        Tono::Ok => TonoUi::Ok,
+        Tono::Attesa => TonoUi::Attesa,
+        Tono::Errore => TonoUi::Errore,
+        Tono::Spento => TonoUi::Spento,
     }
 }
 
@@ -329,7 +339,7 @@ fn voce_attesa_ui(v: &Voce, non_archiviata: bool) -> VoceAttesaUi {
     }
     VoceAttesaUi {
         id: v.id.as_str().into(),
-        livello: v.livello.come_stringa().into(),
+        livello: pillola::livello_ui(v.livello),
         titolo: v.titolo.as_str().into(),
         sotto: sotto.into(),
         dettaglio: v.dettaglio.as_str().into(),
@@ -470,7 +480,7 @@ fn voce_ui(p: &Preferito, connesso: bool) -> PreferitoUi {
     PreferitoUi {
         entity_id: p.entity_id.as_str().into(),
         nome: p.nome.as_str().into(),
-        genere: genere(p).into(),
+        genere: genere(p),
         acceso: p.acceso && p.disponibile,
         stato: testo_stato(p).into(),
         disponibile: p.disponibile,
@@ -577,7 +587,7 @@ impl Ponte {
                 pillola::imposta(&p, &nuova);
             }
             if let Some(p) = self.pannello.borrow().upgrade() {
-                p.set_umore(nuova.umore.come_stringa().into());
+                p.set_umore(pillola::umore_ui(nuova.umore));
             }
             *self.mostrato.borrow_mut() = Some(nuova);
         }
@@ -657,7 +667,7 @@ impl Ponte {
                     nome: e.name.as_str().into(),
                     url: e.ha_url.as_str().into(),
                     stato: testo.into(),
-                    tono: tono.come_stringa().into(),
+                    tono: tono_ui(tono),
                     attivo,
                     collegato: impostazioni::collegato(attivo, &stato),
                 }
@@ -852,7 +862,7 @@ impl Ponte {
         }
         if let Some(f) = self.finestra.borrow().upgrade() {
             f.set_esito_prova(testo.into());
-            f.set_tono_prova(tono.come_stringa().into());
+            f.set_tono_prova(tono_ui(tono));
         }
     }
 
@@ -1281,13 +1291,13 @@ pub(crate) mod test {
 
     #[test]
     fn genere_per_icona_e_tinta() {
-        assert_eq!(genere(&p("light.a", Tipo::Interruttore, true, "on")), "luce");
-        assert_eq!(genere(&p("switch.a", Tipo::Interruttore, true, "on")), "presa");
-        assert_eq!(genere(&p("scene.a", Tipo::Scena, false, "")), "scena");
-        assert_eq!(genere(&p("sensor.t", Tipo::Lettura, false, "21.5 °C")), "termo");
-        assert_eq!(genere(&p("sensor.u", Tipo::Lettura, false, "48 %")), "goccia");
-        assert_eq!(genere(&p("sensor.x", Tipo::Lettura, false, "7")), "sensore");
-        assert_eq!(genere(&p("lock.porta", Tipo::Lettura, false, "locked")), "casa");
+        assert_eq!(genere(&p("light.a", Tipo::Interruttore, true, "on")), GenereUi::Luce);
+        assert_eq!(genere(&p("switch.a", Tipo::Interruttore, true, "on")), GenereUi::Presa);
+        assert_eq!(genere(&p("scene.a", Tipo::Scena, false, "")), GenereUi::Scena);
+        assert_eq!(genere(&p("sensor.t", Tipo::Lettura, false, "21.5 °C")), GenereUi::Termo);
+        assert_eq!(genere(&p("sensor.u", Tipo::Lettura, false, "48 %")), GenereUi::Goccia);
+        assert_eq!(genere(&p("sensor.x", Tipo::Lettura, false, "7")), GenereUi::Sensore);
+        assert_eq!(genere(&p("lock.porta", Tipo::Lettura, false, "locked")), GenereUi::Casa);
     }
 
     #[test]
@@ -1352,7 +1362,7 @@ pub(crate) mod test {
         assert_eq!(voce_attesa_ui(&v, false).sotto, "Guarda presto · prova");
         assert_eq!(voce_attesa_ui(&v, true).sotto, "Guarda presto · prova · archiviazione non riuscita");
         // Il nome interno resta per il colore.
-        assert_eq!(voce_attesa_ui(&v, false).livello, "attenzione");
+        assert_eq!(voce_attesa_ui(&v, false).livello, crate::LivelloUi::Attenzione);
     }
 
     #[test]

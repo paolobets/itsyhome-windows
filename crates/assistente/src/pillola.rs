@@ -7,7 +7,7 @@
 
 use crate::attenzione::{aspetto_pillola, Attese, AspettoPillola, Fonte, Livello, Pulsante, PULSANTE_APRI};
 use crate::umore::Umore;
-use crate::{finestre, pannello, Pillola, PulsanteUi};
+use crate::{finestre, pannello, AspettoPillolaUi, LivelloUi, Pillola, PulsanteUi, UmoreUi};
 use slint::{ComponentHandle, Image, ModelRc, VecModel};
 use std::cell::Cell;
 use std::time::{Duration, Instant};
@@ -133,9 +133,29 @@ pub fn mostra_linea(ui: &Pillola, livello: Option<Livello>) {
 }
 
 pub fn colora_linea(ui: &Pillola, livello: Option<Livello>) {
-    let colore = livello.map(Livello::come_stringa).unwrap_or("");
+    let colore = livello.map_or(LivelloUi::Nessuno, livello_ui);
     if ui.get_livello_linea() != colore {
-        ui.set_livello_linea(colore.into());
+        ui.set_livello_linea(colore);
+    }
+}
+
+/// L'umore come lo conosce l'interfaccia (pillola e pannello).
+pub fn umore_ui(u: Umore) -> UmoreUi {
+    match u {
+        Umore::Tranquillo => UmoreUi::Tranquillo,
+        Umore::Pensa => UmoreUi::Pensa,
+        Umore::TiCerca => UmoreUi::TiCerca,
+        Umore::Contento => UmoreUi::Contento,
+        Umore::Dorme => UmoreUi::Dorme,
+    }
+}
+
+/// Il livello di una voce come lo conosce l'interfaccia (colori e forme).
+pub fn livello_ui(l: Livello) -> LivelloUi {
+    match l {
+        Livello::Bloccante => LivelloUi::Bloccante,
+        Livello::Attenzione => LivelloUi::Attenzione,
+        Livello::Informazione => LivelloUi::Informazione,
     }
 }
 
@@ -157,22 +177,23 @@ pub fn togli_linea(ui: &Pillola) {
 pub fn imposta(ui: &Pillola, v: &VistaPillola) {
     let prima = RITAGLIO.with(Cell::get);
     let (aspetto, ferma) = match &v.aspetto {
-        AspettoPillola::Riposo => ("riposo", false),
-        AspettoPillola::Puntino => ("puntino", false),
-        AspettoPillola::Allargata { ferma, .. } => ("allargata", *ferma),
+        AspettoPillola::Riposo => (AspettoPillolaUi::Riposo, false),
+        AspettoPillola::Puntino => (AspettoPillolaUi::Puntino, false),
+        AspettoPillola::Allargata { ferma, .. } => (AspettoPillolaUi::Allargata, *ferma),
     };
-    ui.set_umore(v.umore.come_stringa().into());
-    ui.set_aspetto(aspetto.into());
+    let allargata = aspetto == AspettoPillolaUi::Allargata;
+    ui.set_umore(umore_ui(v.umore));
+    ui.set_aspetto(aspetto);
     ui.set_ferma(ferma);
-    ui.set_livello(v.livello.come_stringa().into());
+    ui.set_livello(livello_ui(v.livello));
     ui.set_messaggio(v.testo.as_str().into());
-    if aspetto == "allargata" {
+    if allargata {
         ui.set_icona_fonte(icona_fonte(v.fonte));
     }
     ui.set_pulsanti(pulsanti_ui(&v.pulsanti));
     // Con i pulsanti della voce la riga sa se il testo ci sta (misura sulle larghezze finali, non
     // su quelle animate): se no, il consenso diventa «Apri».
-    if aspetto == "allargata" {
+    if allargata {
         let finali = pulsanti_pillola(&v.pulsanti, ui.get_testo_tagliato());
         if finali != v.pulsanti {
             ui.set_pulsanti(pulsanti_ui(&finali));

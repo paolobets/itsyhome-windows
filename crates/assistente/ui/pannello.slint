@@ -13,9 +13,9 @@
 // Un unico FocusScope tiene il fuoco e l'anello (visibile solo da tastiera) segue la
 // zona scelta.
 import { Tema, Movimento } from "tema.slint";
-import { Faccia, Occhio } from "pillola.slint";
+import { Faccia, Occhio, FormaOcchio } from "pillola.slint";
 import { Anello } from "componenti.slint";
-import { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi } from "voci.slint";
+import { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, UmoreUi } from "voci.slint";
 import { RigaAttesa, VoceEspansa } from "attesa.slint";
 import { VistaPc } from "viste/pc.slint";
 import { VistaCasa } from "viste/casa.slint";
@@ -88,8 +88,11 @@ component Scheda inherits Rectangle {
     }
 }
 
+// Zona del pannello col fuoco da tastiera.
+enum Zona { indietro, attesa, contenuto, dock }
+
 export component Pannello inherits Window {
-    in property <string> umore: "calm";
+    in property <UmoreUi> umore: UmoreUi.tranquillo;
     in property <string> ora;
     in property <string> data;
     // Layout della Panoramica (indice del puntino: 0 Orologio, 1 Quadranti, come `layout.rs`).
@@ -161,8 +164,8 @@ export component Pannello inherits Window {
     property <bool> occhi-al-centro: partenza-occhi == 0px && partenza-occhi-y == 0px;
 
     // ─── Tastiera ───
-    // Zona col fuoco: "indietro", "contenuto" o "dock". All'apertura il fuoco va sul contenuto.
-    property <string> zona: "contenuto";
+    // Zona col fuoco: Zona.indietro, Zona.contenuto o Zona.dock. All'apertura il fuoco va sul contenuto.
+    property <Zona> zona: Zona.contenuto;
     // L'anello si vede solo dopo un tasto; un clic lo spegne.
     property <bool> da-tastiera: false;
     property <int> fuoco-dock: 0;
@@ -193,14 +196,14 @@ export component Pannello inherits Window {
     height: 300px;
     forward-focus: tasti;
 
-    pure function ha-zona(z: string) -> bool {
-        if (z == "indietro") {
+    pure function ha-zona(z: Zona) -> bool {
+        if (z == Zona.indietro) {
             return vista != "panoramica";
         }
-        if (z == "attesa") {
+        if (z == Zona.attesa) {
             return con-attese;
         }
-        if (z == "contenuto") {
+        if (z == Zona.contenuto) {
             // Con una voce espansa il layout è coperto: niente fuoco lì.
             if (espansa) {
                 return false;
@@ -211,11 +214,11 @@ export component Pannello inherits Window {
         return true;
     }
 
-    pure function zona-dopo(z: string, avanti: bool) -> string {
+    pure function zona-dopo(z: Zona, avanti: bool) -> Zona {
         if (avanti) {
-            return z == "indietro" ? "attesa" : z == "attesa" ? "contenuto" : z == "contenuto" ? "dock" : "indietro";
+            return z == Zona.indietro ? Zona.attesa : z == Zona.attesa ? Zona.contenuto : z == Zona.contenuto ? Zona.dock : Zona.indietro;
         }
-        return z == "dock" ? "contenuto" : z == "contenuto" ? "attesa" : z == "attesa" ? "indietro" : "dock";
+        return z == Zona.dock ? Zona.contenuto : z == Zona.contenuto ? Zona.attesa : z == Zona.attesa ? Zona.indietro : Zona.dock;
     }
 
     // Tab: la zona seguente che esiste in questa vista (il dock c'è sempre).
@@ -261,7 +264,7 @@ export component Pannello inherits Window {
         if (i >= 0 && i < attese.length) {
             voce-aperta = attese[i].id;
             indice-aperta = i;
-            zona = "attesa";
+            zona = Zona.attesa;
             fuoco-attesa = min(i, 3);
             fuoco-pulsante = chiede-permesso(i) ? primo-non-delicato(i) : -1;
         }
@@ -282,7 +285,7 @@ export component Pannello inherits Window {
         vista = v;
         fuoco-casa = 0;
         if (!ha-zona(zona)) {
-            zona = ha-zona("contenuto") ? "contenuto" : "dock";
+            zona = ha-zona(Zona.contenuto) ? Zona.contenuto : Zona.dock;
         }
     }
 
@@ -308,13 +311,13 @@ export component Pannello inherits Window {
     }
 
     function freccia(k: string) {
-        if (zona == "dock") {
+        if (zona == Zona.dock) {
             if (k == Key.LeftArrow) {
                 fuoco-dock = max(0, fuoco-dock - 1);
             } else if (k == Key.RightArrow) {
                 fuoco-dock = min(app.length - 1, fuoco-dock + 1);
             }
-        } else if (zona == "attesa" && espansa) {
+        } else if (zona == Zona.attesa && espansa) {
             if (fuoco-pulsante >= 0) {
                 if (k == Key.LeftArrow) {
                     fuoco-pulsante = max(0, fuoco-pulsante - 1);
@@ -335,19 +338,19 @@ export component Pannello inherits Window {
             } else if (k == Key.DownArrow && indice-aperta >= 0 && attese[indice-aperta].pulsanti.length > 0) {
                 fuoco-pulsante = 0;
             }
-        } else if (zona == "attesa") {
+        } else if (zona == Zona.attesa) {
             if (k == Key.LeftArrow) {
                 fuoco-attesa = max(0, min(fuoco-attesa, 3) - 1);
             } else if (k == Key.RightArrow) {
                 fuoco-attesa = min(min(attese.length, 4) - 1, fuoco-attesa + 1);
             }
-        } else if (zona == "contenuto" && vista == "panoramica") {
+        } else if (zona == Zona.contenuto && vista == "panoramica") {
             if (k == Key.LeftArrow) {
                 root.scorri-layout(-1);
             } else if (k == Key.RightArrow) {
                 root.scorri-layout(1);
             }
-        } else if (zona == "contenuto" && vista == "casa" && preferiti.length > 0) {
+        } else if (zona == Zona.contenuto && vista == "casa" && preferiti.length > 0) {
             // -1 = «Riprova» nella testata (solo se c'è): ↑ dalla prima riga, ↓ torna alle card.
             if (fuoco-casa < 0) {
                 if (k == Key.DownArrow) {
@@ -371,15 +374,15 @@ export component Pannello inherits Window {
     // permesso (su un pulsante delicato Invio e Spazio da soli non fanno nulla).
     function attiva(ctrl: bool) {
         if (ctrl) {
-            if (zona == "attesa" && espansa && fuoco-pulsante >= 0 && indice-aperta >= 0
+            if (zona == Zona.attesa && espansa && fuoco-pulsante >= 0 && indice-aperta >= 0
                     && attese[indice-aperta].pulsanti[fuoco-pulsante].delicato) {
                 root.azione(voce-aperta, attese[indice-aperta].pulsanti[fuoco-pulsante].id);
             }
             return;
         }
-        if (zona == "indietro") {
+        if (zona == Zona.indietro) {
             indietro();
-        } else if (zona == "attesa" && espansa) {
+        } else if (zona == Zona.attesa && espansa) {
             if (fuoco-pulsante >= 0 && indice-aperta >= 0) {
                 if (!attese[indice-aperta].pulsanti[fuoco-pulsante].delicato) {
                     root.azione(voce-aperta, attese[indice-aperta].pulsanti[fuoco-pulsante].id);
@@ -387,9 +390,9 @@ export component Pannello inherits Window {
             } else {
                 riduci-voce();
             }
-        } else if (zona == "attesa") {
+        } else if (zona == Zona.attesa) {
             apri-voce(min(fuoco-attesa, attese.length - 1));
-        } else if (zona == "dock") {
+        } else if (zona == Zona.dock) {
             apri(fuoco-dock, app[fuoco-dock].id);
         } else if (vista == "panoramica") {
             root.scorri-layout(1);
@@ -474,7 +477,7 @@ export component Pannello inherits Window {
     // Battito di ciglia come la pillola, solo a pannello aperto.
     Timer {
         interval: 4600ms;
-        running: aperto && umore != "sleep" && umore != "happy";
+        running: aperto && umore != UmoreUi.dorme && umore != UmoreUi.contento;
         triggered => {
             palpebra = true;
             riapri.running = true;
@@ -541,8 +544,8 @@ export component Pannello inherits Window {
 
         // Riga alta: occhi al centro, ora a destra («Indietro» a sinistra è più sotto).
         occhi := Rectangle {
-            property <bool> contento: umore == "happy";
-            property <bool> dorme: umore == "sleep";
+            property <bool> contento: umore == UmoreUi.contento;
+            property <bool> dorme: umore == UmoreUi.dorme;
             property <length> ingombro: 2 * (contento ? Faccia.larghezza-arco : Faccia.larghezza-occhio) + Faccia.spazio-occhi;
             // Restano sugli occhi della pillola mentre il pannello compare, poi vanno al centro
             // (solo lo scarto è animato: un cambio d'umore li ricentra subito).
@@ -560,14 +563,14 @@ export component Pannello inherits Window {
             Occhio {
                 x: 0;
                 y: (parent.height - self.height) / 2;
-                forma: parent.contento ? "arco" : parent.dorme ? "trattino" : "aperto";
+                forma: parent.contento ? FormaOcchio.arco : parent.dorme ? FormaOcchio.trattino : FormaOcchio.aperto;
                 chiuso: palpebra;
             }
 
             Occhio {
                 x: parent.width - self.width;
                 y: (parent.height - self.height) / 2;
-                forma: parent.contento ? "arco" : parent.dorme ? "trattino" : "aperto";
+                forma: parent.contento ? FormaOcchio.arco : parent.dorme ? FormaOcchio.trattino : FormaOcchio.aperto;
                 chiuso: palpebra;
             }
 
@@ -623,7 +626,7 @@ export component Pannello inherits Window {
 
             // Anello del fuoco sul contorno del pulsante (dentro, non fuori): fuori sarebbe
             // tagliato dal bordo alto del pannello, che ha `clip`.
-            if da-tastiera && zona == "indietro": Anello {
+            if da-tastiera && zona == Zona.indietro: Anello {
                 raggio: parent.border-radius;
                 distanza: -2px;
             }
@@ -636,7 +639,7 @@ export component Pannello inherits Window {
             width: centro-l;
             height: altezza-attese;
             voci: root.attese;
-            fuoco: da-tastiera && zona == "attesa" ? fuoco-attesa : -1;
+            fuoco: da-tastiera && zona == Zona.attesa ? fuoco-attesa : -1;
             scelta(i) => {
                 da-tastiera = false;
                 apri-voce(i);
@@ -652,7 +655,7 @@ export component Pannello inherits Window {
             voce: root.attese[indice-aperta];
             posizione: indice-aperta;
             totale: root.attese.length;
-            fuoco: !(da-tastiera && zona == "attesa") ? -1 : fuoco-pulsante >= 0 ? fuoco-pulsante : -2;
+            fuoco: !(da-tastiera && zona == Zona.attesa) ? -1 : fuoco-pulsante >= 0 ? fuoco-pulsante : -2;
             scorri-su: root.testo-su;
             scorri-giu: root.testo-giu;
             fondo(a-fondo) => { root.testo-a-fondo = a-fondo; }
@@ -729,9 +732,9 @@ export component Pannello inherits Window {
                 dati-delle: root.dati-delle;
                 riprova: riprova-visibile;
                 colonne: root.colonne-casa;
-                fuoco: da-tastiera && zona == "contenuto" ? fuoco-casa-valido : -1;
-                fuoco-riprova: da-tastiera && zona == "contenuto" && fuoco-casa < 0;
-                fuoco-impostazioni: da-tastiera && zona == "contenuto";
+                fuoco: da-tastiera && zona == Zona.contenuto ? fuoco-casa-valido : -1;
+                fuoco-riprova: da-tastiera && zona == Zona.contenuto && fuoco-casa < 0;
+                fuoco-impostazioni: da-tastiera && zona == Zona.contenuto;
                 tocca(id) => {
                     da-tastiera = false;
                     root.tocca(id);
@@ -824,7 +827,7 @@ export component Pannello inherits Window {
                 }
 
                 // Solo ai lati: sopra e sotto c'è appena posto fra layout e dock.
-                if da-tastiera && zona == "contenuto": Anello {
+                if da-tastiera && zona == Zona.contenuto: Anello {
                     distanza-y: -2px;
                     raggio-anello: self.height / 2;
                 }
@@ -856,7 +859,7 @@ export component Pannello inherits Window {
                         icona: voce.icona;
                         nome: voce.nome;
                         attiva: vista == voce.id;
-                        anello: da-tastiera && zona == "dock" && fuoco-dock == i;
+                        anello: da-tastiera && zona == Zona.dock && fuoco-dock == i;
                         scelta => {
                             da-tastiera = false;
                             apri(i, voce.id);

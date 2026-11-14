@@ -13,11 +13,14 @@
 // premono il pulsante col fuoco. In un campo si scrive come in ogni casella (frecce, Backspace,
 // selezione); Esc esce dal campo, Esc fuori da un campo chiude la finestra; Invio in un campo salva.
 import { Tema, Movimento } from "tema.slint";
-import { AmbienteUi } from "voci.slint";
+import { AmbienteUi, TonoUi } from "voci.slint";
 import { AboutSlint, Palette } from "std-widgets.slint";
 import { Anello, Pulsante, TipoPulsante, Etichetta } from "componenti.slint";
 
-export { AmbienteUi }
+export { AmbienteUi, TonoUi }
+
+// Il contenuto della sezione Home Assistant: l'elenco degli ambienti o il modulo.
+enum ModoAmbienti { elenco, modulo }
 
 // Pulsante di testo delle Impostazioni: il pulsante comune (componenti.slint), raggiungibile
 // con Tab, con le larghezze di questa finestra.
@@ -150,7 +153,7 @@ component Sezione inherits FocusScope {
 // (`naturale`): chi lo usa lo allinea a destra.
 component Stato inherits Rectangle {
     in property <string> testo;
-    in property <string> tono;
+    in property <TonoUi> tono;
     out property <length> naturale: 15px + parola.preferred-width;
 
     Rectangle {
@@ -158,9 +161,9 @@ component Stato inherits Rectangle {
         width: 8px;
         height: 8px;
         border-radius: self.height / 2;
-        background: tono == "ok" ? Tema.presa-accesa
-            : tono == "attesa" ? Tema.attenzione
-            : tono == "errore" ? Tema.bloccante
+        background: tono == TonoUi.ok ? Tema.presa-accesa
+            : tono == TonoUi.attesa ? Tema.attenzione
+            : tono == TonoUi.errore ? Tema.bloccante
             : Tema.icona-spenta;
     }
 
@@ -225,9 +228,9 @@ export component FinestraImpostazioni inherits Window {
     in property <bool> config-non-salvata;
     in property <string> versione;
     in property <string> dettagli-tecnici;
-    // Esito di «Prova connessione» e suo tono ("ok", "attesa", "errore"): lo scrive Rust.
+    // Esito di «Prova connessione» e suo tono: lo scrive Rust.
     in-out property <string> esito-prova;
-    in-out property <string> tono-prova;
+    in-out property <TonoUi> tono-prova;
 
     callback prova-connessione(string, string, string);
     // (id, nome, url, token) → errore da mostrare, "" se salvato.
@@ -243,8 +246,8 @@ export component FinestraImpostazioni inherits Window {
 
     // 0 Home Assistant, 1 Sistema, 2 Informazioni.
     in-out property <int> sezione: 0;
-    // "elenco" o "modulo" (aggiungi/modifica).
-    out property <string> modo: "elenco";
+    // L'elenco o il modulo (aggiungi/modifica).
+    property <ModoAmbienti> modo: ModoAmbienti.elenco;
 
     // Modulo: id dell'ambiente in modifica ("" = nuovo), campi e messaggio d'errore.
     property <string> modulo-id;
@@ -298,7 +301,7 @@ export component FinestraImpostazioni inherits Window {
             campo-url = "";
         }
         campo-token = "";
-        modo = "modulo";
+        modo = ModoAmbienti.modulo;
     }
 
     // Chiude il modulo e svuota i campi: il token scritto non resta in memoria.
@@ -309,7 +312,7 @@ export component FinestraImpostazioni inherits Window {
         campo-token = "";
         errore-modulo = "";
         esito-prova = "";
-        modo = "elenco";
+        modo = ModoAmbienti.elenco;
         radice.focus();
     }
 
@@ -408,7 +411,7 @@ export component FinestraImpostazioni inherits Window {
         }
 
         // ─── Home Assistant: elenco ───
-        if sezione == 0 && modo == "elenco": Rectangle {
+        if sezione == 0 && modo == ModoAmbienti.elenco: Rectangle {
             x: contenuto-x;
             y: alto-testata;
             width: parent.width - self.x - margine;
@@ -574,7 +577,7 @@ export component FinestraImpostazioni inherits Window {
         }
 
         // ─── Home Assistant: modulo aggiungi/modifica ───
-        if sezione == 0 && modo == "modulo": Rectangle {
+        if sezione == 0 && modo == ModoAmbienti.modulo: Rectangle {
             x: contenuto-x;
             y: alto-testata;
             width: min(560px, parent.width - self.x - margine);
@@ -654,8 +657,8 @@ export component FinestraImpostazioni inherits Window {
                 text: errore-modulo != "" ? errore-modulo : esito-prova;
                 wrap: word-wrap;
                 font-size: Tema.testo-corpo;
-                color: errore-modulo != "" || tono-prova == "errore" ? Tema.caldo-2
-                    : tono-prova == "ok" ? Tema.presa-accesa
+                color: errore-modulo != "" || tono-prova == TonoUi.errore ? Tema.caldo-2
+                    : tono-prova == TonoUi.ok ? Tema.presa-accesa
                     : Tema.testo-tenue;
                 accessible-role: text;
             }

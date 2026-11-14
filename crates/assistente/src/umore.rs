@@ -16,18 +16,6 @@ pub enum Umore {
     Dorme,
 }
 
-impl Umore {
-    pub fn come_stringa(self) -> &'static str {
-        match self {
-            Umore::Tranquillo => "calm",
-            Umore::Pensa => "think",
-            Umore::TiCerca => "alert",
-            Umore::Contento => "happy",
-            Umore::Dorme => "sleep",
-        }
-    }
-}
-
 /// I segnali arrivano dal ponte con la casa e dal pannello.
 #[derive(Debug, Clone)]
 pub enum Segnale {

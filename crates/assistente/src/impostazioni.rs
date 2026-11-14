@@ -162,17 +162,6 @@ pub enum Tono {
     Spento,
 }
 
-impl Tono {
-    pub fn come_stringa(self) -> &'static str {
-        match self {
-            Tono::Ok => "ok",
-            Tono::Attesa => "attesa",
-            Tono::Errore => "errore",
-            Tono::Spento => "spento",
-        }
-    }
-}
-
 /// Lo stato di un ambiente nell'elenco: solo quello attivo ha una connessione.
 pub fn stato_ambiente(attivo: bool, s: &StatoConnessione) -> (&'static str, Tono) {
     if !attivo {

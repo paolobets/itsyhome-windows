@@ -344,7 +344,7 @@ impl Apertura {
         // Aprendo dalla pillola allargata (che chiama) gli occhi del pannello partono da dove
         // stanno i suoi e scivolano al centro durante l'apertura; e il pannello si apre su quella
         // voce, espansa sul posto nella riga «In attesa».
-        if pillola.get_aspetto() == "allargata" {
+        if pillola.get_aspetto() == crate::AspettoPillolaUi::Allargata {
             pannello.set_partenza_occhi(pillola.get_scarto_occhi_allerta());
             pannello.set_partenza_occhi_y(pillola.get_scarto_occhi_allerta_y());
         }

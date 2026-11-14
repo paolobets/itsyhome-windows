@@ -1,3 +1,21 @@
+// Stati con un nome (FE9): un errore di battitura non compila, invece di cadere nel ramo
+// «altrimenti». Rust usa gli enum generati (UmoreUi, AspettoPillolaUi…).
+
+// L'umore della faccia (pillola e pannello).
+export enum UmoreUi { tranquillo, pensa, ti-cerca, contento, dorme }
+
+// Come la pillola mostra le voci «In attesa»: piccola, col puntino sotto gli occhi, allargata.
+export enum AspettoPillolaUi { riposo, puntino, allargata }
+
+// Livello di una voce «In attesa»; `nessuno` = nessuna voce (linea della ritirata neutra).
+export enum LivelloUi { nessuno, informazione, attenzione, bloccante }
+
+// Che cosa è un preferito della casa (icona e tinta), vedi `ponte::genere`.
+export enum GenereUi { casa, luce, presa, scena, termo, goccia, sensore }
+
+// Tono di uno stato nelle Impostazioni: decide solo il colore del pallino (la parola c'è sempre).
+export enum TonoUi { spento, ok, attesa, errore }
+
 // Una app del registro, come la vede l'interfaccia (le icone del dock).
 export struct VoceAppUi {
     id: string,
@@ -26,14 +44,14 @@ export struct StatPcUi {
 }
 
 // Un preferito della casa, già pronto per l'interfaccia (vedi `ponte::voce_ui`).
-// `genere`: "luce" | "presa" | "scena" | "termo" | "goccia" | "sensore" | "casa" (icona e tinta).
+// `genere`: icona e tinta.
 // `stato`: il testo sotto il nome; `errore`: vuoto se l'ultimo comando non è fallito.
 // `toccabile`: un tocco manda un comando (luci, interruttori, scene disponibili, casa connessa).
 // `tenue`: non disponibile o casa non connessa (la voce si mostra spenta e non risponde).
 export struct PreferitoUi {
     entity-id: string,
     nome: string,
-    genere: string,
+    genere: GenereUi,
     acceso: bool,
     stato: string,
     disponibile: bool,
@@ -57,11 +75,11 @@ export struct PulsanteUi {
 }
 
 // Una voce «In attesa» per la riga in cima alla Panoramica (vedi `attenzione.rs`).
-// `livello`: "bloccante" | "attenzione" | "informazione" (colore della barretta e parola);
+// `livello`: colore della barretta (la parola è in `sotto`);
 // `sotto`: la riga piccola sotto il titolo, «attenzione · pc»; `icona`: la fonte.
 export struct VoceAttesaUi {
     id: string,
-    livello: string,
+    livello: LivelloUi,
     titolo: string,
     sotto: string,
     dettaglio: string,
@@ -70,14 +88,14 @@ export struct VoceAttesaUi {
 }
 
 // Un ambiente di Home Assistant nelle Impostazioni (vedi `ponte::aggiorna_ambienti`).
-// `stato`: la parola dello stato («Connesso», «Non attivo»…); `tono`: "ok" | "attesa" | "errore" |
-// "spento" (colore del pallino); `collegato`: connesso o che ci prova (pulsante «Disconnetti»).
+// `stato`: la parola dello stato («Connesso», «Non attivo»…); `tono`: colore del pallino;
+// `collegato`: connesso o che ci prova (pulsante «Disconnetti»).
 export struct AmbienteUi {
     id: string,
     nome: string,
     url: string,
     stato: string,
-    tono: string,
+    tono: TonoUi,
     attivo: bool,
     collegato: bool,
 }

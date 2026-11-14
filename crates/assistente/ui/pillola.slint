@@ -1,9 +1,11 @@
 // La pillola: la faccia dell'assistente, sempre in alto al centro.
 // Pillola nera, due occhi di luce, aura con i colori dei petali lungo il bordo.
-// Umori: "calm" | "think" | "alert" | "happy" | "sleep". Aspetti: "riposo" | "puntino" | "allargata".
 import { Tema, Movimento } from "tema.slint";
-import { PulsanteUi } from "voci.slint";
+import { PulsanteUi, UmoreUi, AspettoPillolaUi, LivelloUi } from "voci.slint";
 import { Pulsante, TipoPulsante } from "componenti.slint";
+
+// Forma di un occhio: aperto (rettangolo di luce), ad arco (contento), trattino (dorme).
+export enum FormaOcchio { aperto, arco, trattino }
 
 // Le misure della faccia, in un solo punto: la pillola a riposo e la riga degli occhi del
 // pannello, che è alta quanto lei (gli occhi del pannello cadono su quelli della pillola).
@@ -24,27 +26,27 @@ export global Faccia {
 
 // Un occhio: rettangolo di luce, arco quando è contento, trattino quando dorme.
 export component Occhio inherits Rectangle {
-    in property <string> forma: "aperto"; // "aperto" | "arco" | "trattino"
+    in property <FormaOcchio> forma: FormaOcchio.aperto;
     in property <bool> chiuso;            // battito di ciglia
     in property <length> larghezza-occhio: Faccia.larghezza-occhio;
     in property <length> altezza-occhio: Faccia.altezza-occhio;
     in property <color> bagliore: Tema.bagliore-occhio;
 
-    width: forma == "arco" ? Faccia.larghezza-arco : larghezza-occhio;
-    height: forma == "arco" ? Faccia.altezza-arco : forma == "trattino" ? 2px : (chiuso ? 1px : altezza-occhio);
+    width: forma == FormaOcchio.arco ? Faccia.larghezza-arco : larghezza-occhio;
+    height: forma == FormaOcchio.arco ? Faccia.altezza-arco : forma == FormaOcchio.trattino ? 2px : (chiuso ? 1px : altezza-occhio);
     animate height { duration: 60ms; }
 
     luce := Rectangle {
-        visible: forma != "arco";
+        visible: forma != FormaOcchio.arco;
         border-radius: 3px;
         // Trasparenza nel colore, non `opacity` (che disegnerebbe un livello a parte).
-        background: forma == "trattino" ? Tema.occhio.with-alpha(0.6) : Tema.occhio;
-        drop-shadow-blur: forma == "aperto" ? 5px : 0px;
+        background: forma == FormaOcchio.trattino ? Tema.occhio.with-alpha(0.6) : Tema.occhio;
+        drop-shadow-blur: forma == FormaOcchio.aperto ? 5px : 0px;
         drop-shadow-color: bagliore;
     }
 
     Path {
-        visible: forma == "arco";
+        visible: forma == FormaOcchio.arco;
         viewbox-width: 13;
         viewbox-height: 10;
         // Arco a "∩" come nella bozza: lati dritti e cima tonda.
@@ -68,25 +70,25 @@ component Velo inherits Rectangle {
 }
 
 export component Pillola inherits Window {
-    in property <string> umore: "calm";
+    in property <UmoreUi> umore: UmoreUi.tranquillo;
     in property <string> messaggio;
     // Falso mentre la pillola è nascosta (pannello aperto): fermi anche i timer.
     in property <bool> attiva: true;
-    // Come mostra le voci «In attesa» (vedi `attenzione::aspetto_pillola`):
-    // "riposo" | "puntino" (piccola, con un puntino del colore del livello sotto gli occhi) |
-    // "allargata" (icona della fonte + una riga + fino a 2 pulsanti).
-    in property <string> aspetto: "riposo";
+    // Come mostra le voci «In attesa» (vedi `attenzione::aspetto_pillola`): a riposo, col
+    // puntino (piccola, con un puntino del colore del livello sotto gli occhi) o allargata (icona
+    // della fonte + una riga + fino a 2 pulsanti).
+    in property <AspettoPillolaUi> aspetto: AspettoPillolaUi.riposo;
     // Allargata per un bloccante: ferma (nessuna pulsazione) e con il bordo più spesso.
     in property <bool> ferma;
     // Livello della voce mostrata (colore del puntino e del bordo del bloccante).
-    in property <string> livello: "informazione";
+    in property <LivelloUi> livello: LivelloUi.informazione;
     in property <image> icona-fonte;
     in property <[PulsanteUi]> pulsanti;
     // Ritirata: al posto della pillola una linea 300 × 5 al bordo alto (la finestra è ritagliata
     // alla linea e lascia passare i clic), del colore del livello più urgente in attesa
-    // (`livello-linea`, vuoto = nessuno: colore neutro). Opaca: la finestra ritirata è layered.
+    // (`livello-linea`; `nessuno`: colore neutro). Opaca: la finestra ritirata è layered.
     in property <bool> ritirata;
-    in property <string> livello-linea;
+    in property <LivelloUi> livello-linea: LivelloUi.nessuno;
     callback cliccata();
     // Clic destro sulla pillola: ritirata.
     callback ritira();
@@ -139,13 +141,13 @@ export component Pillola inherits Window {
     out property <length> scarto-occhi-allerta: blocca ? scarto-occhi-bloccante : scarto-occhi-attenzione;
     out property <length> scarto-occhi-allerta-y: blocca ? scarto-occhi-bloccante-y : scarto-occhi-attenzione-y;
 
-    property <bool> allargata: aspetto == "allargata";
+    property <bool> allargata: aspetto == AspettoPillolaUi.allargata;
     property <bool> blocca: allargata && ferma;
-    property <bool> tranquillo: umore == "calm";
-    property <bool> pensa: umore == "think";
-    property <bool> allerta: umore == "alert";
-    property <bool> contento: umore == "happy";
-    property <bool> dorme: umore == "sleep";
+    property <bool> tranquillo: umore == UmoreUi.tranquillo;
+    property <bool> pensa: umore == UmoreUi.pensa;
+    property <bool> allerta: umore == UmoreUi.ti-cerca;
+    property <bool> contento: umore == UmoreUi.contento;
+    property <bool> dorme: umore == UmoreUi.dorme;
 
     // L'aura si muove solo quando pensa o quando un'attenzione allarga la pillola (20 s): allora
     // un timer a 20 fotogrammi al secondo campiona animation-tick() in `tempo` (dentro un callback
@@ -227,7 +229,7 @@ export component Pillola inherits Window {
         y: margine-aura;
         width: 300px;
         height: 5px;
-        background: livello-linea == "" ? Tema.testo-tenue : Tema.colore-livello(livello-linea);
+        background: Tema.colore-livello(livello-linea);
         border-width: 1px;
         border-color: Tema.corpo;
     }
@@ -323,7 +325,7 @@ export component Pillola inherits Window {
             Occhio {
                 x: 0;
                 y: (parent.height - self.height) / 2;
-                forma: contento ? "arco" : dorme ? "trattino" : "aperto";
+                forma: contento ? FormaOcchio.arco : dorme ? FormaOcchio.trattino : FormaOcchio.aperto;
                 chiuso: palpebra;
                 larghezza-occhio: parent.larghezza-occhio;
                 altezza-occhio: parent.altezza-occhio;
@@ -333,7 +335,7 @@ export component Pillola inherits Window {
             Occhio {
                 x: parent.width - self.width;
                 y: (parent.height - self.height) / 2;
-                forma: contento ? "arco" : dorme ? "trattino" : "aperto";
+                forma: contento ? FormaOcchio.arco : dorme ? FormaOcchio.trattino : FormaOcchio.aperto;
                 chiuso: palpebra;
                 larghezza-occhio: parent.larghezza-occhio;
                 altezza-occhio: parent.altezza-occhio;
@@ -343,14 +345,14 @@ export component Pillola inherits Window {
             // Il puntino: qualcosa è in attesa. Fermo, sotto gli occhi, 5 × 5 con un leggero
             // bagliore; il livello si legge anche dalla forma, non solo dal colore: attenzione =
             // pieno (ambra), informazione = anello (blu). Il bloccante non ha puntino (resta larga).
-            if aspetto == "puntino": Rectangle {
+            if aspetto == AspettoPillolaUi.puntino: Rectangle {
                 x: (parent.width - self.width) / 2;
                 y: parent.height - 8px;
                 width: 5px;
                 height: 5px;
                 border-radius: self.height / 2;
-                background: livello == "informazione" ? transparent : Tema.colore-livello(livello);
-                border-width: livello == "informazione" ? 1.5px : 0px;
+                background: livello == LivelloUi.informazione ? transparent : Tema.colore-livello(livello);
+                border-width: livello == LivelloUi.informazione ? 1.5px : 0px;
                 border-color: Tema.colore-livello(livello);
                 drop-shadow-blur: 3px;
                 drop-shadow-color: Tema.colore-livello(livello).with-alpha(0.5);
