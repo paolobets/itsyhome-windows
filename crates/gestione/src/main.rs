@@ -297,6 +297,8 @@ fn costruisci_web(debole: slint::Weak<Cornice>) {
                         }
                     }
                     stato.web = Some(web);
+                    #[cfg(windows)]
+                    prova_dpi(&stato.cornice);
                 }
                 Err(e) => {
                     // Motore web assente o guasto: da qui in poi solo testo.
@@ -313,22 +315,37 @@ fn costruisci_web(debole: slint::Weak<Cornice>) {
 /// L'area del riquadro web adesso: rientrato dentro la cornice, sotto la linea di separazione
 /// (non tocca mai la testata), in pixel fisici alla scala attuale della finestra.
 fn area_da(cornice: &Cornice) -> Rect {
+    let dimensione = cornice.window().size();
+    area_per(cornice, (dimensione.width, dimensione.height), cornice.window().scale_factor())
+}
+
+/// L'area del riquadro web per una finestra di `finestra` pixel fisici a scala `scala`.
+fn area_per(cornice: &Cornice, finestra: (u32, u32), scala: f32) -> Rect {
     let lato = cornice.get_bordo() + cornice.get_rientro();
     let alto = cornice.get_alto_testata() + cornice.get_sotto_linea();
-    let dimensione = cornice.window().size();
-    let (x, y, larghezza, altezza) =
-        misure::area_web((dimensione.width, dimensione.height), cornice.window().scale_factor(), lato, alto);
+    let (x, y, larghezza, altezza) = misure::area_web(finestra, scala, lato, alto);
     Rect { position: PhysicalPosition::new(x, y).into(), size: PhysicalSize::new(larghezza, altezza).into() }
 }
 
 /// FE20: quando cambia la scala (la finestra passa a un monitor con un'altra scala, o cambia il
 /// DPI) o la misura, la cornice si ridisegna da sé; il riquadro web no, quindi lo si rimette al
-/// suo posto. Rimandato al giro dopo del ciclo: durante l'evento winit applica ancora la misura
-/// suggerita da WM_DPICHANGED. Anche `Tema.scala` (spessori sul pixel) segue.
+/// suo posto. Subito, dentro `Resized` (con la misura nuova dell'evento e la scala della finestra
+/// di winit, già aggiornata da `ScaleFactorChanged`), PRIMA che Slint disegni il fotogramma nuovo:
+/// spostato dopo, il riquadro lascerebbe scoperta una fascia che Slint, disegnando solo le zone
+/// cambiate, non ridipinge (visto dal vivo: pixel vecchi della scala di prima sotto la testata).
+/// Poi, al giro dopo del ciclo, di nuovo con le misure di Slint, e `Tema.scala` (spessori sul
+/// pixel) segue.
 fn segui_la_scala(cornice: &Cornice) {
-    use slint::winit_030::{winit::event::WindowEvent, EventResult};
+    use slint::winit_030::{winit::event::WindowEvent, EventResult, WinitWindowAccessor};
     let debole = cornice.as_weak();
-    cornice.window().on_winit_window_event(move |_, evento| {
+    cornice.window().on_winit_window_event(move |finestra, evento| {
+        if let WindowEvent::Resized(misura) = evento {
+            if let Some(scala) = finestra.with_winit_window(|w| w.scale_factor() as f32) {
+                if let Some(cornice) = debole.upgrade() {
+                    sposta_web(area_per(&cornice, (misura.width, misura.height), scala));
+                }
+            }
+        }
         if matches!(evento, WindowEvent::ScaleFactorChanged { .. } | WindowEvent::Resized(_)) {
             let debole = debole.clone();
             slint::Timer::single_shot(std::time::Duration::ZERO, move || {
@@ -340,19 +357,29 @@ fn segui_la_scala(cornice: &Cornice) {
     });
 }
 
+fn sposta_web(area: Rect) {
+    if std::env::var_os(VAR_PROVA_DPI).is_some() {
+        eprintln!("gestione: riquadro web {area:?}");
+    }
+    // Durante un evento di winit `STATO` può essere già in prestito (ciclo annidato di WebView2):
+    // allora ci pensa il giro dopo del ciclo.
+    let _ = STATO.try_with(|s| {
+        if let Ok(s) = s.try_borrow() {
+            if let Some(web) = s.as_ref().and_then(|s| s.web.as_ref()) {
+                if let Err(e) = web.set_bounds(area) {
+                    eprintln!("gestione: riquadro web non riposizionato: {e}");
+                }
+            }
+        }
+    });
+}
+
 fn riposiziona_web(cornice: &Cornice) {
     let scala = cornice.window().scale_factor();
     if cornice.global::<Tema>().get_scala() != scala {
         cornice.global::<Tema>().set_scala(scala);
     }
-    let area = area_da(cornice);
-    STATO.with_borrow(|s| {
-        if let Some(web) = s.as_ref().and_then(|s| s.web.as_ref()) {
-            if let Err(e) = web.set_bounds(area) {
-                eprintln!("gestione: riquadro web non riposizionato: {e}");
-            }
-        }
-    });
+    sposta_web(area_da(cornice));
 }
 
 fn crea_web(cornice: &Cornice, contesto: &mut WebContext, caricato: Rc<Cell<bool>>, html: &str) -> Result<WebView, String> {
@@ -410,6 +437,58 @@ fn crea_web(cornice: &Cornice, contesto: &mut WebContext, caricato: Rc<Cell<bool
         eprintln!("gestione: Esc nel riquadro web non disponibile: {e}");
     }
     Ok(web)
+}
+
+/// Prova di FE20: `ITSYHOME_PROVA_DPI=<dpi>` nell'ambiente (lo eredita dall'assistente).
+const VAR_PROVA_DPI: &str = "ITSYHOME_PROVA_DPI";
+
+/// Prova di FE20 (solo con `ITSYHOME_PROVA_DPI=<dpi>`): 2 s dopo la nascita del riquadro web la
+/// finestra si manda da sola un WM_DPICHANGED a quel DPI, come quando passa a un monitor con
+/// un'altra scala, e 3 s dopo uno al DPI di prima; nel log la scala e l'area del riquadro dopo
+/// ciascuno. Da un altro processo non si può: Windows rifiuta un WM_DPICHANGED che arriva da
+/// fuori (il rettangolo suggerito è un puntatore).
+#[cfg(windows)]
+fn prova_dpi(cornice: &Cornice) {
+    use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
+    use wry::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let Some(dpi) = std::env::var(VAR_PROVA_DPI).ok().and_then(|v| v.parse::<u32>().ok()) else { return };
+    let finestra = cornice.window().window_handle();
+    let Ok(maniglia) = finestra.window_handle() else { return };
+    let RawWindowHandle::Win32(w) = maniglia.as_raw() else { return };
+    let hwnd = w.hwnd.get();
+    // SAFETY: la finestra della cornice esiste (il riquadro web le è appena nato dentro).
+    let prima = unsafe { GetDpiForWindow(hwnd) };
+    slint::Timer::single_shot(std::time::Duration::from_secs(2), move || {
+        manda_dpi(hwnd, dpi);
+        slint::Timer::single_shot(std::time::Duration::from_secs(3), move || manda_dpi(hwnd, prima));
+    });
+}
+
+/// WM_DPICHANGED alla propria finestra col rettangolo che suggerirebbe Windows: stessa posizione,
+/// misura scalata dal DPI di adesso a `dpi`.
+#[cfg(windows)]
+fn manda_dpi(hwnd: isize, dpi: u32) {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetWindowRect, SendMessageW, WM_DPICHANGED};
+    // SAFETY: `hwnd` è la finestra di questo processo (stesso thread); il rettangolo è locale e
+    // vale per tutta la SendMessageW, che è sincrona.
+    unsafe {
+        let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        if GetWindowRect(hwnd, &mut r) == 0 {
+            return;
+        }
+        let adesso = GetDpiForWindow(hwnd).max(1) as f32;
+        let scala = dpi as f32 / adesso;
+        let nuovo = RECT {
+            left: r.left,
+            top: r.top,
+            right: r.left + ((r.right - r.left) as f32 * scala).round() as i32,
+            bottom: r.top + ((r.bottom - r.top) as f32 * scala).round() as i32,
+        };
+        eprintln!("gestione: prova DPI {dpi} (era {adesso})");
+        SendMessageW(hwnd, WM_DPICHANGED, ((dpi << 16) | dpi) as usize, &nuovo as *const RECT as isize);
+    }
 }
 
 /// Codice del tasto Esc (VK_ESCAPE).
