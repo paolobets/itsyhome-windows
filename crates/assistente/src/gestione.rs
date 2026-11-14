@@ -132,7 +132,10 @@ impl Gestione {
     /// `Ok` vuol dire **inviato**, non mostrato: fa fede `Pronta` (in `al_messaggio`). Se l'utente
     /// ha appena chiuso la finestra e la `chiusa` non è ancora arrivata, l'invio va a vuoto e dopo
     /// arriva `Chiusa`: chi vuole il contenuto visibile ripete `apri`.
+    /// Il titolo è testo NON fidato (con la Mail, l'oggetto): parte ripulito (`titolo_pulito`).
     pub fn apri(&mut self, titolo: &str, html: &str) -> Result<(), String> {
+        let titolo = titolo_pulito(titolo);
+        let titolo = titolo.as_str();
         self.raccogli_finiti();
         if self.figlio.as_ref().is_some_and(|f| !f.viva.load(Ordering::SeqCst)) {
             self.congeda();
@@ -253,6 +256,33 @@ impl Drop for Gestione {
             c.chiudi_entro(limite);
         }
     }
+}
+
+/// Lunghezza massima del titolo, in caratteri (puntini compresi).
+pub const LUNGHEZZA_TITOLO: usize = 200;
+
+/// Il titolo non fidato pronto per la cornice e per il titolo della finestra di sistema (barra
+/// delle applicazioni, Alt+Tab): via i caratteri di controllo (a capo compresi), le sostituzioni
+/// di direzione e i caratteri a larghezza zero; spazi compressi; al più `LUNGHEZZA_TITOLO`
+/// caratteri.
+pub fn titolo_pulito(titolo: &str) -> String {
+    // Direzione (LRE..RLO, LRI..PDI, ALM) e larghezza zero (ZWSP..RLM, WJ, BOM): spariscono.
+    let invisibile = |c: char| {
+        matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200B}'..='\u{200F}' | '\u{2060}' | '\u{FEFF}' | '\u{061C}')
+    };
+    // Controlli (a capo, tabulazioni, campanello…): diventano spazi, poi compressi.
+    let parole: String = titolo
+        .chars()
+        .filter(|c| !invisibile(*c))
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let compatto = parole.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compatto.chars().count() <= LUNGHEZZA_TITOLO {
+        return compatto;
+    }
+    let mut corto: String = compatto.chars().take(LUNGHEZZA_TITOLO - 1).collect();
+    corto.push('…');
+    corto
 }
 
 /// Thread scrittore: una riga per messaggio; a canale chiuso (o pipe rotta) chiude lo stdin.
@@ -397,6 +427,22 @@ pub fn spegni() {
 mod test {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn titolo_ripulito_prima_della_cornice() {
+        // Sostituzione di direzione: «moc.lapyap» non deve mostrarsi come «paypal.com».
+        assert_eq!(titolo_pulito("Fattura \u{202E}moc.lapyap\u{202C} pagata"), "Fattura moc.lapyap pagata");
+        assert_eq!(titolo_pulito("a\u{2066}b\u{2069}c\u{200B}d\u{200F}e\u{FEFF}f\u{061C}g"), "abcdefg");
+        // A capo, tabulazioni e controlli: niente righe finte, spazi compressi.
+        assert_eq!(titolo_pulito("  Oggetto\n\nReinserisci\til\u{0007}token  "), "Oggetto Reinserisci il token");
+        // Lungo: al più 200 caratteri (non byte), con i puntini.
+        let lungo = "è".repeat(500);
+        let pulito = titolo_pulito(&lungo);
+        assert_eq!(pulito.chars().count(), LUNGHEZZA_TITOLO);
+        assert!(pulito.ends_with('…'));
+        assert_eq!(titolo_pulito("Riepilogo del tuo ordine"), "Riepilogo del tuo ordine");
+        assert_eq!(titolo_pulito("\u{202E}\n "), "");
+    }
 
     #[test]
     fn righe_lunghe_scartate_senza_tenerle_in_memoria() {

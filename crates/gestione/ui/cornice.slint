@@ -3,8 +3,15 @@
 // l'area del contenuto ostile, coperta dal riquadro web (wry, figlio di questa finestra) o, se il
 // motore web manca, dal testo semplice del piano B.
 //
-// Tastiera: Esc chiude (quando il fuoco è sulla cornice: il riquadro web nasce senza fuoco);
-// Tab raggiunge il pulsante chiudi, Invio o Spazio lo premono.
+// Tastiera: Esc chiude (anche col fuoco nel riquadro web: lo intercetta Rust); Tab raggiunge il
+// pulsante chiudi, Invio o Spazio lo premono; Tab da «Chiudi», o PagSu/PagGiù/frecce sulla
+// cornice, portano il fuoco nel contenuto, che allora si scorre da tastiera.
+//
+// Separazione fidata: il contenuto ostile non tocca mai la testata. Sta rientrato di `rientro`
+// sotto una linea di separazione disegnata qui, con un filo intorno: appare come una scheda
+// dentro la cornice, e tutto ciò che sta fuori da quel rettangolo è dell'assistente. REGOLA: i
+// futuri pulsanti d'azione (Archivia, Rispondi…) stanno solo in una barra fidata della cornice,
+// fuori dal riquadro web, mai nell'HTML.
 //
 // I token del tema sono quelli dell'assistente (un solo file: stessi colori e caratteri).
 import { Tema } from "../../assistente/ui/tema.slint";
@@ -17,6 +24,8 @@ component Anello inherits Rectangle {
 // Pulsante chiudi della testata: icona a croce nel colore delle icone, rosso tenue al passaggio.
 component Chiudi inherits FocusScope {
     callback premuto();
+    // Tab (senza Maiusc) dal pulsante: il fuoco va nel contenuto.
+    callback avanti();
 
     width: 40px;
     height: 30px;
@@ -27,6 +36,10 @@ component Chiudi inherits FocusScope {
     key-pressed(evento) => {
         if (evento.text == Key.Return || evento.text == Key.Space) {
             root.premuto();
+            return accept;
+        }
+        if (evento.text == Key.Tab && !evento.modifiers.shift) {
+            root.avanti();
             return accept;
         }
         return reject;
@@ -57,27 +70,40 @@ component Chiudi inherits FocusScope {
 }
 
 export component Cornice inherits Window {
-    // Titolo NON fidato: con la Mail sarà l'oggetto della mail, cioè testo ostile. Si mostra solo
-    // in un `Text` e nel titolo della finestra di sistema (mai in HTML), quindi niente iniezione;
-    // resta il rischio di imitare la cornice (un oggetto «Reinserisci il token»): la milestone Mail
-    // separerà un'etichetta fidata fissa («Mail · ») dall'oggetto in uno stile diverso.
+    // Titolo NON fidato: con la Mail sarà l'oggetto della mail, cioè testo ostile. Arriva già
+    // ripulito dall'assistente (controlli, direzione, larghezza zero, al più 200 caratteri); si
+    // mostra solo in un `Text` e nel titolo della finestra di sistema (mai in HTML). Contro
+    // l'imitazione della cornice (un oggetto «Reinserisci il token») sta dopo un'etichetta fidata
+    // fissa, in uno stile diverso.
     in property <string> titolo;
     // Piano B: il contenuto come testo semplice, mostrato al posto del riquadro web.
     in property <bool> piano-b;
     in property <string> testo-semplice;
 
-    // Geometria dell'area del contenuto: Rust ci appoggia il riquadro web.
+    // Geometria dell'area del contenuto: Rust ci appoggia il riquadro web, rientrato di `rientro`
+    // dai bordi e `sotto-linea` sotto la linea di separazione (1 px a `alto-testata`).
     out property <length> bordo: 2px;
     out property <length> alto-testata: 46px;
+    out property <length> rientro: 8px;
+    out property <length> sotto-linea: 7px;
+    property <length> contenuto-x: bordo + rientro;
+    property <length> contenuto-y: alto-testata + sotto-linea;
+    property <length> contenuto-l: root.width - 2 * contenuto-x;
+    property <length> contenuto-a: root.height - contenuto-y - bordo - rientro;
 
     callback chiudi();
     // Pressione sulla testata: Rust avvia lo spostamento della finestra.
     callback trascina();
+    // Il fuoco va nel contenuto (riquadro web): da lì si scorre con la tastiera.
+    callback al-contenuto();
 
     title: titolo == "" ? "ItsyHome" : "ItsyHome — " + titolo;
     no-frame: true;
-    width: 780px;
-    height: 680px;
+    // Rust la adatta all'area di lavoro del monitor (al più 780 × 680, vedi misure.rs).
+    preferred-width: 780px;
+    preferred-height: 680px;
+    min-width: 480px;
+    min-height: 360px;
     default-font-family: Tema.carattere;
     background: Tema.fondo-basso;
     forward-focus: radice;
@@ -100,6 +126,12 @@ export component Cornice inherits Window {
         key-pressed(evento) => {
             if (evento.text == Key.Escape) {
                 root.chiudi();
+                return accept;
+            }
+            // Tasti di scorrimento sulla cornice: il fuoco passa al contenuto (il tasto dopo scorre).
+            if (evento.text == Key.PageDown || evento.text == Key.PageUp || evento.text == Key.DownArrow
+                    || evento.text == Key.UpArrow || evento.text == Key.Home || evento.text == Key.End) {
+                root.al-contenuto();
                 return accept;
             }
             return reject;
@@ -128,31 +160,64 @@ export component Cornice inherits Window {
             background: @linear-gradient(135deg, Tema.petalo-1 0%, Tema.petalo-3 50%, Tema.petalo-5 100%);
         }
 
-        Text {
+        // Etichetta fidata (fissa, dell'assistente) e poi il titolo non fidato, in un altro stile.
+        etichetta := Text {
             x: 38px;
             y: bordo;
-            width: root.width - 38px - pulsante-chiudi.width - 24px;
+            height: alto-testata - bordo;
+            text: "CONTENUTO ESTERNO";
+            vertical-alignment: center;
+            font-family: Tema.carattere-mono;
+            font-size: 12px;
+            letter-spacing: 0.6px;
+            color: Tema.testo-etichetta;
+        }
+
+        Text {
+            x: etichetta.x + etichetta.width + 12px;
+            y: bordo;
+            width: max(0px, pulsante-chiudi.x - self.x - 14px);
             height: alto-testata - bordo;
             text: titolo;
             overflow: elide;
             vertical-alignment: center;
             font-size: 14px;
-            font-weight: 500;
-            color: Tema.testo;
+            font-weight: 400;
+            color: Tema.testo-ora;
         }
 
         pulsante-chiudi := Chiudi {
             x: root.width - self.width - 10px;
             y: bordo + (alto-testata - bordo - self.height) / 2;
             premuto => { root.chiudi(); }
+            avanti => { root.al-contenuto(); }
         }
 
-        // Piano B: testo semplice, solo se il motore web manca.
-        if piano-b: Flickable {
+        // Linea di separazione fidata fra testata e contenuto.
+        Rectangle {
             x: bordo;
             y: alto-testata;
             width: root.width - 2 * bordo;
-            height: root.height - alto-testata - bordo;
+            height: 1px;
+            background: Tema.vetro-bordo;
+        }
+
+        // Filo intorno al contenuto: il riquadro web sta dentro, la cornice tutt'intorno.
+        Rectangle {
+            x: contenuto-x - 1px;
+            y: contenuto-y - 1px;
+            width: contenuto-l + 2px;
+            height: contenuto-a + 2px;
+            border-width: 1px;
+            border-color: Tema.vetro-bordo;
+        }
+
+        // Piano B: testo semplice, solo se il motore web manca (stesso posto del riquadro web).
+        if piano-b: Flickable {
+            x: contenuto-x;
+            y: contenuto-y;
+            width: contenuto-l;
+            height: contenuto-a;
             content-height: max(self.height, corpo.preferred-height + 40px);
 
             corpo := Text {

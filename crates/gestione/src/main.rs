@@ -19,6 +19,7 @@
 //! distribuisce l'assistente deve mettere `itsyhome-gestione(.exe)` accanto al suo eseguibile.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod misure;
 mod sicurezza;
 mod testo;
 
@@ -47,6 +48,8 @@ struct Stato {
     in_costruzione: bool,
     /// Contenuto arrivato mentre il riquadro si costruisce.
     in_attesa: Option<String>,
+    /// Misura e posizione già decise (alla prima `apri`, sull'area di lavoro del monitor).
+    misurata: bool,
 }
 
 thread_local! {
@@ -95,6 +98,17 @@ fn avvia(dati: PathBuf, senza_web: bool) -> Result<(), slint::PlatformError> {
             let _ = c.window().with_winit_window(|w| w.drag_window());
         }
     });
+    // Tab da «Chiudi» o un tasto di scorrimento sulla cornice: il fuoco nel riquadro web, che
+    // allora scorre la mail con PagSu/PagGiù/frecce (Esc continua a chiudere, vedi `esc_chiude`).
+    cornice.on_al_contenuto(|| {
+        STATO.with_borrow(|s| {
+            if let Some(web) = s.as_ref().and_then(|s| s.web.as_ref()) {
+                if let Err(e) = web.focus() {
+                    eprintln!("gestione: fuoco al contenuto non riuscito: {e}");
+                }
+            }
+        });
+    });
     STATO.with_borrow_mut(|s| {
         *s = Some(Stato {
             cornice,
@@ -105,6 +119,7 @@ fn avvia(dati: PathBuf, senza_web: bool) -> Result<(), slint::PlatformError> {
             caricato: Rc::new(Cell::new(false)),
             in_costruzione: false,
             in_attesa: None,
+            misurata: false,
         })
     });
 
@@ -156,6 +171,10 @@ fn apri(titolo: String, html: String) {
     STATO.with_borrow_mut(|s| {
         let Some(stato) = s.as_mut() else { return };
         stato.cornice.set_titolo(titolo.into());
+        if !stato.misurata {
+            stato.misurata = true;
+            misura_sull_area_di_lavoro(&stato.cornice);
+        }
         if let Err(e) = stato.cornice.show() {
             eprintln!("gestione: finestra non mostrata: {e}");
             let _ = slint::quit_event_loop();
@@ -177,6 +196,53 @@ fn apri(titolo: String, html: String) {
             }
         }
     });
+}
+
+/// Prima di mostrarla la prima volta: al più 780 × 680 logici, ridotta se l'area di lavoro del
+/// monitor (quello del puntatore) è più piccola, e centrata lì. Senza l'area (fuori da Windows,
+/// o se la lettura non riesce) resta la misura preferita della cornice.
+fn misura_sull_area_di_lavoro(cornice: &Cornice) {
+    let Some((area, scala)) = area_di_lavoro() else { return };
+    let ((larghezza, altezza), (x, y)) = misure::misura(area, scala);
+    cornice.window().set_size(slint::LogicalSize::new(larghezza, altezza));
+    cornice.window().set_position(slint::PhysicalPosition::new(x, y));
+}
+
+/// L'area di lavoro (senza barra delle applicazioni, pixel fisici) e la scala del monitor sotto
+/// il puntatore.
+#[cfg(windows)]
+fn area_di_lavoro() -> Option<(misure::Rettangolo, f32)> {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+    use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    let mut punto = POINT { x: 0, y: 0 };
+    // SAFETY: puntatori a variabili locali valide per tutta la chiamata; il monitor restituito da
+    // MonitorFromPoint (mai nullo con DEFAULTTONEAREST) si usa solo qui.
+    unsafe {
+        if GetCursorPos(&mut punto) == 0 {
+            return None;
+        }
+        let monitor = MonitorFromPoint(punto, MONITOR_DEFAULTTONEAREST);
+        let mut info: MONITORINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(monitor, &mut info) == 0 {
+            return None;
+        }
+        let (mut dpi_x, mut dpi_y) = (96u32, 96u32);
+        let scala = if GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) == 0 {
+            dpi_x as f32 / 96.0
+        } else {
+            1.0
+        };
+        let r = info.rcWork;
+        Some(((r.left, r.top, r.right - r.left, r.bottom - r.top), scala))
+    }
+}
+
+#[cfg(not(windows))]
+fn area_di_lavoro() -> Option<(misure::Rettangolo, f32)> {
+    None
 }
 
 fn mostra_piano_b(stato: &mut Stato, html: &str) {
@@ -243,12 +309,17 @@ fn costruisci_web(debole: slint::Weak<Cornice>) {
 }
 
 fn crea_web(cornice: &Cornice, contesto: &mut WebContext, caricato: Rc<Cell<bool>>, html: &str) -> Result<WebView, String> {
-    let bordo = cornice.get_bordo();
-    let alto = cornice.get_alto_testata();
+    // Rientrato dentro la cornice, sotto la linea di separazione: non tocca mai la testata.
+    let lato = cornice.get_bordo() + cornice.get_rientro();
+    let alto = cornice.get_alto_testata() + cornice.get_sotto_linea();
     let dimensione = cornice.window().size().to_logical(cornice.window().scale_factor());
     let area = Rect {
-        position: LogicalPosition::new(bordo, alto).into(),
-        size: LogicalSize::new(dimensione.width - 2.0 * bordo, dimensione.height - alto - bordo).into(),
+        position: LogicalPosition::new(lato, alto).into(),
+        size: LogicalSize::new(
+            (dimensione.width - 2.0 * lato).max(0.0),
+            (dimensione.height - alto - lato).max(0.0),
+        )
+        .into(),
     };
 
     let caricato_nav = caricato.clone();

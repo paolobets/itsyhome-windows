@@ -1925,6 +1925,7 @@ dependencies = [
  "slint",
  "slint-build",
  "webview2-com",
+ "windows-sys 0.52.0",
  "wry",
 ]
 

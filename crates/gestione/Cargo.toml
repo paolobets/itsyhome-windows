@@ -21,3 +21,10 @@ slint-build = "=1.18.1"
 [target.'cfg(windows)'.dependencies]
 # Solo per Esc nel riquadro web (evento AcceleratorKeyPressed del controller): stessa versione di wry.
 webview2-com = "0.39"
+# Area di lavoro e scala del monitor (misura della finestra): stessa versione dell'assistente.
+windows-sys = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_HiDpi",
+    "Win32_UI_WindowsAndMessaging",
+] }
