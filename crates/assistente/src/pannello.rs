@@ -307,6 +307,15 @@ impl Apertura {
         scelte::salva_layout(self.ponte.casa(), l);
     }
 
+    /// Il movimento ridotto cambiato a pannello aperto (controllo da 5 s dei servizi).
+    pub fn movimento(&self, ridotto: bool) {
+        if let Some(p) = self.pannello.borrow().as_ref() {
+            if p.global::<Movimento>().get_ridotto() != ridotto {
+                p.global::<Movimento>().set_ridotto(ridotto);
+            }
+        }
+    }
+
     /// Il pannello è aperto (la pillola, intanto, è nascosta).
     pub fn aperto(&self) -> bool {
         self.pannello.borrow().is_some()

@@ -4,7 +4,8 @@
 //! pannello che compare solo in dissolvenza breve. Fuori da Windows (per ora): mai ridotto.
 //!
 //! Si legge all'avvio, a ogni apertura del pannello e delle Impostazioni e nel controllo da 5 s
-//! dei servizi (una chiamata di sistema, nessun timer in più): un cambio fatto mentre l'app gira
+//! dei servizi (una chiamata di sistema, nessun timer in più), che lo porta anche nel pannello e
+//! nelle Impostazioni se sono aperti: un cambio fatto mentre l'app gira
 //! arriva entro 5 s.
 
 /// Ridotto solo se Windows dice esplicitamente che le animazioni sono spente; se la lettura non
@@ -44,8 +45,11 @@ mod test {
         assert!(!ridotto_da(None), "lettura non riuscita o fuori Windows: animazioni come sempre");
     }
 
+    /// SPI_GETCLIENTAREAANIMATION deve rispondere: un parametro o un flag sbagliati la fanno
+    /// fallire (`None`) e il test con lei.
+    #[cfg(windows)]
     #[test]
-    fn la_lettura_di_sistema_non_va_in_panico() {
-        let _ = ridotto();
+    fn windows_risponde_sulle_animazioni() {
+        assert!(animazioni_di_sistema().is_some(), "SPI_GETCLIENTAREAANIMATION deve rispondere");
     }
 }

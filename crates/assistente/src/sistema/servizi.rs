@@ -196,12 +196,14 @@ impl Servizi {
     fn controlla(&self) {
         self.controlla_schermo_intero();
         if let Some(p) = self.pillola.upgrade() {
-            // «Effetti di animazione» cambiato mentre l'app gira: la pillola lo prende qui (il
-            // pannello e le Impostazioni lo leggono quando nascono).
+            // «Effetti di animazione» cambiato mentre l'app gira: lo prendono qui la pillola e,
+            // se aperti, il pannello e le Impostazioni (che lo leggono anche quando nascono).
             let ridotto = movimento_ridotto();
             if p.global::<Movimento>().get_ridotto() != ridotto {
                 p.global::<Movimento>().set_ridotto(ridotto);
             }
+            self.apertura.movimento(ridotto);
+            crate::finestra_impostazioni::movimento(ridotto);
             if self.mostrata.get() != Visibilita::Nascosta {
                 finestre::metti_sopra(p.window());
                 pillola::al_cambio_schermo(&p);

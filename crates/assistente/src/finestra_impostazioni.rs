@@ -50,6 +50,17 @@ pub fn apri_impostazioni() {
     FINESTRA.with(|f| *f.borrow_mut() = Some(finestra));
 }
 
+/// Il movimento ridotto cambiato a finestra aperta (controllo da 5 s dei servizi).
+pub fn movimento(ridotto: bool) {
+    FINESTRA.with(|f| {
+        if let Some(w) = f.borrow().as_ref() {
+            if w.global::<Movimento>().get_ridotto() != ridotto {
+                w.global::<Movimento>().set_ridotto(ridotto);
+            }
+        }
+    });
+}
+
 /// Fuori dal gestore in corso: nasconde e distrugge la finestra.
 fn chiudi_dopo() {
     slint::Timer::single_shot(Duration::ZERO, || {
