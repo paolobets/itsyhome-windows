@@ -178,7 +178,7 @@ export component Pillola inherits Window {
     property <bool> dorme: umore == "sleep";
 
     // L'aura si muove solo quando pensa o quando un'attenzione allarga la pillola (20 s): allora
-    // un timer a 25 fotogrammi al secondo campiona animation-tick() in `tempo` (dentro un callback
+    // un timer a 20 fotogrammi al secondo campiona animation-tick() in `tempo` (dentro un callback
     // non crea dipendenze). Il bloccante sta fermo; puntino, tranquillo, contento e addormentato
     // non ridisegnano nulla tra un battito di ciglia e l'altro.
     property <bool> in-moto: pensa || (allargata && !ferma);
@@ -212,10 +212,10 @@ export component Pillola inherits Window {
     width: larghezza-finestra;
     height: altezza-finestra;
 
-    // 25 fotogrammi al secondo quando pensa (pillola piccola); 12,5 per la pulsazione della pillola
+    // 20 fotogrammi al secondo quando pensa (pillola piccola); 12,5 per la pulsazione della pillola
     // allargata, che è più del doppio più larga (il costo cresce con l'area ridisegnata).
     Timer {
-        interval: allargata ? 80ms : 40ms;
+        interval: allargata ? 80ms : 50ms;
         running: attiva && !ritirata && in-moto;
         triggered => {
             tempo = animation-tick();
@@ -278,8 +278,9 @@ export component Pillola inherits Window {
             background: iride;
             opacity: opacita-anello;
             // Bagliore sfumato sotto i veli, come il blur della bozza (niente a riposo, e niente
-            // mentre la pillola allargata pulsa: rifarlo a ogni fotogramma costa troppo, bastano i veli).
-            drop-shadow-blur: intensita-aura > 0.2 && !(allargata && in-moto) ? 5px : 0px;
+            // mentre l'aura si muove, che pensi o che pulsi: ricomporlo a ogni fotogramma costa
+            // troppo, bastano i veli).
+            drop-shadow-blur: intensita-aura > 0.2 && !in-moto ? 5px : 0px;
             drop-shadow-color: (blocca ? Tema.bloccante : allerta ? #fb923c : #c084fc).with-alpha(0.55 * intensita-aura);
         }
 

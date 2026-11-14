@@ -51,7 +51,8 @@ use sysinfo::{DiskRefreshKind, Disks, MemoryRefreshKind, Networks, System};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StatPc {
-    pub cpu_pct: f32,
+    /// `None` se la CPU non si è potuta leggere (GetSystemTimes fallito): «—», mai «0%».
+    pub cpu_pct: Option<f32>,
     pub ram_usata: u64,
     pub ram_totale: u64,
     pub disco_usato: u64,
@@ -139,7 +140,7 @@ impl Campionatore {
 
         let ram_totale = self.sistema.total_memory();
         StatPc {
-            cpu_pct,
+            cpu_pct: Some(cpu_pct),
             ram_usata: self.sistema.used_memory().min(ram_totale),
             ram_totale,
             disco_usato: disco_totale.saturating_sub(disco_libero),
@@ -285,7 +286,8 @@ mod test {
         std::thread::sleep(Duration::from_millis(300));
         let s = c.campiona();
         assert!(c.cpu_pronta());
-        assert!((0.0..=100.0).contains(&s.cpu_pct), "cpu {}", s.cpu_pct);
+        let cpu = s.cpu_pct.expect("GetSystemTimes leggibile");
+        assert!((0.0..=100.0).contains(&cpu), "cpu {cpu}");
         assert!(s.ram_totale > 0);
         assert!(s.ram_usata <= s.ram_totale);
         assert!(s.disco_usato <= s.disco_totale);

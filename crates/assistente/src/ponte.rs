@@ -555,6 +555,18 @@ impl Ponte {
         }
     }
 
+    /// L'utente ha chiesto una connessione (Salva, Connetti, Riprova): il tentativo che parte
+    /// adesso fa «pensa» (quelli automatici no, vedi `umore::Cervello`).
+    fn azione_utente(&self) {
+        self.cervello.borrow_mut().ricevi(Segnale::AzioneUtente, Instant::now());
+    }
+
+    /// «Riprova» (voce della casa irraggiungibile, testata della vista Casa).
+    pub fn riprova_casa(&self) {
+        self.azione_utente();
+        self.casa.connetti_attivo();
+    }
+
     fn connesso(&self) -> bool {
         *self.stato.borrow() == StatoConnessione::Connesso
     }
@@ -681,6 +693,7 @@ impl Ponte {
         });
         f.on_connetti_ambiente(|id| {
             if let Some(p) = ponte() {
+                p.azione_utente();
                 p.casa.connetti(&id);
             }
         });
@@ -736,6 +749,7 @@ impl Ponte {
         // Il primo ambiente si connette da solo; quello attivo si riconnette se cambiano URL o token.
         let attivo = config.active_env_id.as_deref();
         if attivo.is_none() || (attivo == Some(a.id.as_str()) && (url_cambiato || a.token.is_some())) {
+            self.azione_utente();
             self.casa.connetti(&a.id);
         }
         self.aggiorna_ambienti();
@@ -954,7 +968,7 @@ impl Ponte {
     /// Un pulsante di una voce (nella pillola o nel pannello).
     pub fn azione(&self, voce: &str, pulsante: &str) {
         if voce == ID_CASA_OFFLINE && pulsante == PULSANTE_RIPROVA {
-            self.casa.connetti_attivo();
+            self.riprova_casa();
         } else if voce == ID_CASA_TOKEN && pulsante == PULSANTE_IMPOSTAZIONI {
             self.chiedi_impostazioni();
         } else if let Some(id) = voce.strip_prefix(PREFISSO_NOTIFICA) {

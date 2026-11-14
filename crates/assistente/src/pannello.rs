@@ -1,5 +1,5 @@
 //! Apertura e chiusura del pannello: la pillola si nasconde e al suo posto scende il pannello,
-//! con gli occhi dove stavano i suoi. L'orologio (timer da 1 s) e il campionamento delle
+//! con gli occhi dove stavano i suoi. L'orologio (un risveglio al minuto) e il campionamento delle
 //! statistiche del PC (un campione ogni 2 s) girano solo a pannello aperto.
 //!
 //! Il pannello nasce a ogni apertura e viene distrutto alla chiusura: da chiuso non restano né
@@ -15,13 +15,18 @@ use crate::{finestra_impostazioni, finestre, orologio, scelte, Pannello, Pillola
 use slint::winit_030::{winit, EventResult, WinitWindowAccessor};
 use slint::{ComponentHandle, Image, ModelRc, VecModel};
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use chrono::Timelike;
 use std::time::Duration;
 
 /// Ogni quanto si campionano le statistiche del PC (solo a pannello aperto).
 const PERIODO_CAMPIONI: Duration = Duration::from_secs(2);
+/// Il secondo campione arriva presto: la CPU (e la velocità della rete) sono differenze tra due
+/// letture, e il «—» della prima apertura deve durare meno dell'apertura stessa.
+const SECONDO_CAMPIONE: Duration = Duration::from_millis(300);
 
 /// Fine dell'apertura (finestra creata + animazione di 200 ms in pannello.slint, con margine):
 /// da qui una perdita del fuoco chiude il pannello.
@@ -50,8 +55,21 @@ pub struct Apertura {
     campionamento: RefCell<Option<(Arc<AtomicBool>, std::thread::Thread)>>,
 }
 
-/// L'icona SVG di un'app del registro (bianca: il colore lo dà l'interfaccia).
+thread_local! {
+    /// Le icone già lette, per nome: l'SVG si analizza una volta sola (`Image` si clona senza
+    /// costo e Slint tiene in cache il rasterizzato per immagine).
+    static ICONE: RefCell<HashMap<&'static str, Image>> = RefCell::new(HashMap::new());
+}
+
+const NOMI_ICONE: [&str; 5] = ["panoramica", "casa", "pc", "impostazioni", "avviso"];
+
+/// L'icona SVG di un'app del registro (bianca: il colore lo dà l'interfaccia), dalla cache.
 pub fn icona(nome: &str) -> Image {
+    let Some(chiave) = NOMI_ICONE.iter().copied().find(|n| *n == nome) else { return Image::default() };
+    ICONE.with(|c| c.borrow_mut().entry(chiave).or_insert_with(|| leggi_icona(chiave)).clone())
+}
+
+fn leggi_icona(nome: &str) -> Image {
     let svg: &[u8] = match nome {
         "panoramica" => include_bytes!("../assets/icone/panoramica.svg"),
         "casa" => include_bytes!("../assets/icone/casa.svg"),
@@ -83,6 +101,16 @@ fn aggiorna_ora(pannello: &Pannello) {
     }
 }
 
+/// Margine dopo lo scatto del minuto: l'orologio si sveglia appena dopo, mai un attimo prima.
+const MARGINE_MINUTO: Duration = Duration::from_millis(20);
+
+/// Fra quanto scatta il prossimo minuto, dato il secondo e il nanosecondo di adesso.
+/// Un secondo intercalare (60) fa scattare subito il minuto dopo.
+fn al_prossimo_minuto(secondo: u32, nano: u32) -> Duration {
+    let passato = Duration::from_secs(u64::from(secondo.min(60))) + Duration::from_nanos(u64::from(nano.min(999_999_999)));
+    Duration::from_secs(60).saturating_sub(passato) + MARGINE_MINUTO
+}
+
 fn percentuale(frazione: f32) -> String {
     format!("{}%", frazione.round() as i32)
 }
@@ -95,17 +123,19 @@ fn frazione(usato: u64, totale: u64) -> f32 {
     }
 }
 
-/// Le statistiche come le vede l'interfaccia. Prima del secondo campione la CPU è "—".
+/// Le statistiche come le vede l'interfaccia. Prima del secondo campione, o se la CPU non si è
+/// potuta leggere, la CPU è "—".
 fn stat_ui(s: &StatPc, cpu_pronta: bool) -> StatPcUi {
+    let cpu = s.cpu_pct.filter(|_| cpu_pronta);
     let ram = frazione(s.ram_usata, s.ram_totale);
     let disco = frazione(s.disco_usato, s.disco_totale);
     let batteria = s.batteria_pct;
     StatPcUi {
-        pronta: cpu_pronta,
-        cpu: s.cpu_pct / 100.0,
+        pronta: cpu.is_some(),
+        cpu: cpu.unwrap_or(0.0) / 100.0,
         ram,
         disco,
-        cpu_testo: if cpu_pronta { percentuale(s.cpu_pct) } else { "—".into() }.into(),
+        cpu_testo: cpu.map(percentuale).unwrap_or_else(|| "—".into()).into(),
         ram_testo: percentuale(ram * 100.0).into(),
         ram_dettaglio: format!("{} di {}", formatta_byte(s.ram_usata), formatta_byte(s.ram_totale)).into(),
         disco_testo: if s.disco_totale == 0 { "—".to_owned() } else { percentuale(disco * 100.0) }.into(),
@@ -170,26 +200,48 @@ impl Apertura {
         let debole = pannello.as_weak();
         let thread = std::thread::Builder::new().name("campioni-pc".into()).spawn(move || {
             let mut campionatore = Campionatore::new();
+            let mut attesa = SECONDO_CAMPIONE;
             while !stop.load(Ordering::Relaxed) {
                 let stat = campionatore.campiona();
                 let pronta = campionatore.cpu_pronta();
                 let debole = debole.clone();
                 let consegnato = slint::invoke_from_event_loop(move || {
                     if let Some(p) = debole.upgrade() {
-                        p.set_pc(stat_ui(&stat, pronta));
+                        // Solo se cambia: `pc` invalida archi, righe e quadranti che lo leggono.
+                        let nuovo = stat_ui(&stat, pronta);
+                        if p.get_pc() != nuovo {
+                            p.set_pc(nuovo);
+                        }
                     }
                 });
                 if consegnato.is_err() {
                     break;
                 }
                 // Svegliato prima del tempo da `ferma_campionamento`.
-                std::thread::park_timeout(PERIODO_CAMPIONI);
+                std::thread::park_timeout(attesa);
+                attesa = PERIODO_CAMPIONI;
             }
         });
         match thread {
             Ok(t) => *self.campionamento.borrow_mut() = Some((ferma, t.thread().clone())),
             Err(e) => eprintln!("statistiche del PC non avviate: {e}"),
         }
+    }
+
+    /// L'orologio si sveglia al prossimo minuto (nessun layout mostra i secondi) e si rifasa a
+    /// ogni scatto: un risveglio al minuto invece di 60. Se un layout mostrerà i secondi, qui
+    /// tornerà un timer da 1 s solo per lui.
+    fn programma_orologio(&self) {
+        let adesso = chrono::Local::now();
+        let tra = al_prossimo_minuto(adesso.second(), adesso.nanosecond());
+        let a = self.io.clone();
+        self.orologio.start(slint::TimerMode::SingleShot, tra, move || {
+            let Some(a) = a.upgrade() else { return };
+            if let Some(p) = a.pannello.borrow().as_ref() {
+                aggiorna_ora(p);
+            }
+            a.programma_orologio();
+        });
     }
 
     /// Ferma il thread senza aspettarlo: finisce da solo appena finito il campione in corso.
@@ -295,12 +347,7 @@ impl Apertura {
         // Parte con l'umore della pillola; il ponte glielo aggiorna appena la pillola è sparita.
         pannello.set_umore(pillola.get_umore());
         aggiorna_ora(&pannello);
-        let debole = pannello.as_weak();
-        self.orologio.start(slint::TimerMode::Repeated, Duration::from_secs(1), move || {
-            if let Some(p) = debole.upgrade() {
-                aggiorna_ora(&p);
-            }
-        });
+        self.programma_orologio();
 
         self.avvia_campionamento(&pannello);
 
@@ -385,6 +432,43 @@ impl Apertura {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    fn stat(cpu: Option<f32>) -> StatPc {
+        StatPc {
+            cpu_pct: cpu,
+            ram_usata: 1,
+            ram_totale: 2,
+            disco_usato: 1,
+            disco_totale: 4,
+            rete_giu_bps: 0,
+            rete_su_bps: 0,
+            batteria_pct: None,
+            in_carica: None,
+        }
+    }
+
+    #[test]
+    fn cpu_illeggibile_e_un_trattino_non_zero() {
+        // GetSystemTimes fallito: «—», non «0%» spacciato per un dato.
+        let ui = stat_ui(&stat(None), true);
+        assert_eq!(ui.cpu_testo, "—");
+        assert!(!ui.pronta);
+        let ui = stat_ui(&stat(Some(12.4)), true);
+        assert_eq!(ui.cpu_testo, "12%");
+        assert!(ui.pronta);
+        // Prima del secondo campione resta «—» anche con un numero.
+        assert_eq!(stat_ui(&stat(Some(12.4)), false).cpu_testo, "—");
+    }
+
+    #[test]
+    fn l_orologio_scatta_al_minuto() {
+        // Alle 10:24:15,250 il prossimo scatto è fra 44,75 s (più il margine): mai prima del minuto.
+        assert_eq!(al_prossimo_minuto(15, 250_000_000), Duration::from_millis(44_750) + MARGINE_MINUTO);
+        assert_eq!(al_prossimo_minuto(0, 0), Duration::from_secs(60) + MARGINE_MINUTO);
+        assert_eq!(al_prossimo_minuto(59, 999_000_000), Duration::from_millis(1) + MARGINE_MINUTO);
+        // Secondo intercalare (60): subito al minuto dopo, mai una durata negativa.
+        assert_eq!(al_prossimo_minuto(60, 0), MARGINE_MINUTO);
+    }
 
     #[test]
     fn ogni_app_del_registro_ha_la_sua_icona() {

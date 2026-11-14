@@ -37,6 +37,8 @@ pub enum Segnale {
     InAttesa(Option<Livello>),
     ComandoRiuscito,
     ComandoFallito,
+    /// L'utente ha chiesto una connessione (Salva, Connetti, Riprova): il prossimo tentativo pensa.
+    AzioneUtente,
     /// Da quanto tempo l'utente è inattivo (il controllo da 5 s dei servizi di sistema).
     Inattivo(Duration),
 }
@@ -46,6 +48,10 @@ pub struct Cervello {
     in_attesa: Option<Livello>,
     contento_da: Option<Instant>,
     inattivo: Duration,
+    /// Il prossimo «in connessione» pensa: vero all'avvio (prima connessione) e dopo un'azione
+    /// dell'utente; falso appena il tentativo finisce. Le riconnessioni automatiche (casa giù per
+    /// ore) restano tranquille: il guasto lo dice la voce «non raggiungibile» dopo 5 minuti.
+    pensa_al_tentativo: bool,
 }
 
 impl Cervello {
@@ -55,23 +61,30 @@ impl Cervello {
             in_attesa: None,
             contento_da: None,
             inattivo: Duration::ZERO,
+            pensa_al_tentativo: true,
         }
     }
 
     pub fn ricevi(&mut self, s: Segnale, ora: Instant) {
         match s {
-            Segnale::Casa(c) => self.connessione = c,
+            Segnale::Casa(c) => {
+                if c != StatoConnessione::InConnessione {
+                    self.pensa_al_tentativo = false;
+                }
+                self.connessione = c;
+            }
             Segnale::InAttesa(l) => self.in_attesa = l,
             Segnale::ComandoRiuscito => self.contento_da = Some(ora),
             Segnale::ComandoFallito => self.contento_da = None,
             Segnale::Inattivo(d) => self.inattivo = d,
+            Segnale::AzioneUtente => self.pensa_al_tentativo = true,
         }
     }
 
     pub fn umore(&self, ora: Instant) -> Umore {
         if matches!(self.in_attesa, Some(Livello::Bloccante | Livello::Attenzione)) {
             Umore::TiCerca
-        } else if matches!(self.connessione, StatoConnessione::InConnessione) {
+        } else if self.connessione == StatoConnessione::InConnessione && self.pensa_al_tentativo {
             Umore::Pensa
         } else if self.contento_da.is_some_and(|t| ora.saturating_duration_since(t) < CONTENTO_PER) {
             Umore::Contento
@@ -112,6 +125,37 @@ mod test {
         c.ricevi(Segnale::Casa(StatoConnessione::InConnessione), t);
         assert_eq!(c.umore(t), Umore::Pensa);
         c.ricevi(Segnale::Casa(StatoConnessione::Connesso), t);
+        assert_eq!(c.umore(t), Umore::Tranquillo);
+    }
+
+    #[test]
+    fn riconnessione_automatica_tranquilla() {
+        // Prima connessione fallita: i tentativi automatici dopo non riaccendono «pensa».
+        let t = Instant::now();
+        let mut c = Cervello::new(t);
+        c.ricevi(Segnale::Casa(StatoConnessione::InConnessione), t);
+        assert_eq!(c.umore(t), Umore::Pensa, "prima connessione dopo l'avvio");
+        c.ricevi(Segnale::Casa(StatoConnessione::Errore("giù".into())), t);
+        c.ricevi(Segnale::Casa(StatoConnessione::InConnessione), t);
+        assert_eq!(c.umore(t), Umore::Tranquillo);
+        // Connessa e poi caduta: anche la riconnessione automatica resta tranquilla.
+        c.ricevi(Segnale::Casa(StatoConnessione::Connesso), t);
+        c.ricevi(Segnale::Casa(StatoConnessione::InConnessione), t);
+        assert_eq!(c.umore(t), Umore::Tranquillo);
+    }
+
+    #[test]
+    fn pensa_dopo_un_azione_dell_utente() {
+        // Salva, Connetti, Riprova: il prossimo tentativo pensa, quelli automatici dopo no.
+        let t = Instant::now();
+        let mut c = Cervello::new(t);
+        c.ricevi(Segnale::Casa(StatoConnessione::InConnessione), t);
+        c.ricevi(Segnale::Casa(StatoConnessione::Errore("giù".into())), t);
+        c.ricevi(Segnale::AzioneUtente, t);
+        c.ricevi(Segnale::Casa(StatoConnessione::InConnessione), t);
+        assert_eq!(c.umore(t), Umore::Pensa);
+        c.ricevi(Segnale::Casa(StatoConnessione::Errore("giù".into())), t);
+        c.ricevi(Segnale::Casa(StatoConnessione::InConnessione), t);
         assert_eq!(c.umore(t), Umore::Tranquillo);
     }
 
