@@ -24,9 +24,35 @@ pub fn misura(area: Rettangolo, scala: f32) -> ((f32, f32), (i32, i32)) {
     ((larghezza, altezza), (x, y))
 }
 
+/// L'area del riquadro web in pixel fisici `(x, y, larghezza, altezza)` dentro una finestra di
+/// `finestra` pixel fisici a scala `scala`: rientrata di `lato` logici a sinistra, a destra e in
+/// basso, e di `alto` logici in cima (testata e linea di separazione). Si ricalcola a ogni cambio
+/// di misura o di scala (FE20): coi pixel fisici di prima, su un monitor con un'altra scala il
+/// riquadro coprirebbe la testata o lascerebbe una fascia vuota.
+pub fn area_web(finestra: (u32, u32), scala: f32, lato: f32, alto: f32) -> (i32, i32, u32, u32) {
+    let scala = if scala > 0.0 { scala } else { 1.0 };
+    let lato = (lato * scala).round() as i32;
+    let alto = (alto * scala).round() as i32;
+    let larghezza = (finestra.0 as i32 - 2 * lato).max(0) as u32;
+    let altezza = (finestra.1 as i32 - alto - lato).max(0) as u32;
+    (lato, alto, larghezza, altezza)
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn area_web_segue_la_scala() {
+        // Cornice: bordo 2 + rientro 8 ai lati e sotto, testata 46 + 7 sotto la linea.
+        assert_eq!(area_web((780, 680), 1.0, 10.0, 53.0), (10, 53, 760, 617));
+        // La stessa finestra logica a 175%: 1365 × 1190 fisici.
+        assert_eq!(area_web((1365, 1190), 1.75, 10.0, 53.0), (18, 93, 1329, 1079));
+        // Passata a un monitor al 125% (WM_DPICHANGED): finestra 975 × 850, l'area si ricalcola.
+        assert_eq!(area_web((975, 850), 1.25, 10.0, 53.0), (13, 66, 949, 771));
+        // Finestra minuscola: mai misure negative.
+        assert_eq!(area_web((10, 10), 1.0, 10.0, 53.0), (10, 53, 0, 0));
+    }
 
     #[test]
     fn a_1080p_con_scala_150_e_175_la_finestra_entra() {

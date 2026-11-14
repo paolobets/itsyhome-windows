@@ -30,7 +30,7 @@ use std::cell::{Cell, RefCell};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::rc::Rc;
-use wry::dpi::{LogicalPosition, LogicalSize};
+use wry::dpi::{PhysicalPosition, PhysicalSize};
 use wry::{NewWindowResponse, PageLoadEvent, PermissionResponse, Rect, WebContext, WebView, WebViewBuilder};
 
 slint::include_modules!();
@@ -92,6 +92,7 @@ fn avvia(dati: PathBuf, senza_web: bool) -> Result<(), slint::PlatformError> {
     cornice.on_chiudi(|| {
         let _ = slint::quit_event_loop();
     });
+    segui_la_scala(&cornice);
     let debole = cornice.as_weak();
     cornice.on_trascina(move || {
         if let Some(c) = debole.upgrade() {
@@ -309,19 +310,54 @@ fn costruisci_web(debole: slint::Weak<Cornice>) {
     });
 }
 
-fn crea_web(cornice: &Cornice, contesto: &mut WebContext, caricato: Rc<Cell<bool>>, html: &str) -> Result<WebView, String> {
-    // Rientrato dentro la cornice, sotto la linea di separazione: non tocca mai la testata.
+/// L'area del riquadro web adesso: rientrato dentro la cornice, sotto la linea di separazione
+/// (non tocca mai la testata), in pixel fisici alla scala attuale della finestra.
+fn area_da(cornice: &Cornice) -> Rect {
     let lato = cornice.get_bordo() + cornice.get_rientro();
     let alto = cornice.get_alto_testata() + cornice.get_sotto_linea();
-    let dimensione = cornice.window().size().to_logical(cornice.window().scale_factor());
-    let area = Rect {
-        position: LogicalPosition::new(lato, alto).into(),
-        size: LogicalSize::new(
-            (dimensione.width - 2.0 * lato).max(0.0),
-            (dimensione.height - alto - lato).max(0.0),
-        )
-        .into(),
-    };
+    let dimensione = cornice.window().size();
+    let (x, y, larghezza, altezza) =
+        misure::area_web((dimensione.width, dimensione.height), cornice.window().scale_factor(), lato, alto);
+    Rect { position: PhysicalPosition::new(x, y).into(), size: PhysicalSize::new(larghezza, altezza).into() }
+}
+
+/// FE20: quando cambia la scala (la finestra passa a un monitor con un'altra scala, o cambia il
+/// DPI) o la misura, la cornice si ridisegna da sé; il riquadro web no, quindi lo si rimette al
+/// suo posto. Rimandato al giro dopo del ciclo: durante l'evento winit applica ancora la misura
+/// suggerita da WM_DPICHANGED. Anche `Tema.scala` (spessori sul pixel) segue.
+fn segui_la_scala(cornice: &Cornice) {
+    use slint::winit_030::{winit::event::WindowEvent, EventResult};
+    let debole = cornice.as_weak();
+    cornice.window().on_winit_window_event(move |_, evento| {
+        if matches!(evento, WindowEvent::ScaleFactorChanged { .. } | WindowEvent::Resized(_)) {
+            let debole = debole.clone();
+            slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+                let Some(cornice) = debole.upgrade() else { return };
+                riposiziona_web(&cornice);
+            });
+        }
+        EventResult::Propagate
+    });
+}
+
+fn riposiziona_web(cornice: &Cornice) {
+    let scala = cornice.window().scale_factor();
+    if cornice.global::<Tema>().get_scala() != scala {
+        cornice.global::<Tema>().set_scala(scala);
+    }
+    let area = area_da(cornice);
+    STATO.with_borrow(|s| {
+        if let Some(web) = s.as_ref().and_then(|s| s.web.as_ref()) {
+            if let Err(e) = web.set_bounds(area) {
+                eprintln!("gestione: riquadro web non riposizionato: {e}");
+            }
+        }
+    });
+}
+
+fn crea_web(cornice: &Cornice, contesto: &mut WebContext, caricato: Rc<Cell<bool>>, html: &str) -> Result<WebView, String> {
+    let area = area_da(cornice);
+    cornice.global::<Tema>().set_scala(cornice.window().scale_factor());
 
     let caricato_nav = caricato.clone();
     let caricato_fine = caricato;

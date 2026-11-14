@@ -15,6 +15,7 @@
 //
 // I token del tema sono quelli dell'assistente (un solo file: stessi colori e caratteri).
 import { Tema } from "../../assistente/ui/tema.slint";
+export { Tema }
 import { Anello, Etichetta } from "../../assistente/ui/componenti.slint";
 
 // Pulsante chiudi della testata: icona a croce nel colore delle icone, rosso tenue al passaggio.
@@ -72,6 +73,12 @@ export component Cornice inherits Window {
     // l'imitazione della cornice (un oggetto «Reinserisci il token») sta dopo un'etichetta fidata
     // fissa, in uno stile diverso.
     in property <string> titolo;
+    // UX23 (milestone Mail): mittente e data, anche loro NON fidati. Il protocollo oggi non li
+    // porta: restano vuoti e non occupano spazio; quando ci saranno stanno a destra del titolo,
+    // nello stesso stile non fidato, e il titolo si accorcia per far loro posto.
+    in property <string> mittente;
+    in property <string> data;
+    property <string> mittente-e-data: mittente == "" ? data : data == "" ? mittente : mittente + " · " + data;
     // Piano B: il contenuto come testo semplice, mostrato al posto del riquadro web.
     in property <bool> piano-b;
     in property <string> testo-semplice;
@@ -163,10 +170,10 @@ export component Cornice inherits Window {
             text: "CONTENUTO ESTERNO";
         }
 
-        Text {
+        titolo-testo := Text {
             x: etichetta.x + etichetta.width + 12px;
             y: bordo;
-            width: max(0px, pulsante-chiudi.x - self.x - 14px);
+            width: max(0px, (mittente-e-data == "" ? pulsante-chiudi.x : meta.x) - self.x - 14px);
             height: alto-testata - bordo;
             text: titolo;
             overflow: elide;
@@ -174,6 +181,20 @@ export component Cornice inherits Window {
             font-size: Tema.testo-medio;
             font-weight: 400;
             color: Tema.testo-ora;
+        }
+
+        // Mittente · data (vuoti finché il protocollo non li porta): larghi al più un terzo.
+        meta := Text {
+            visible: mittente-e-data != "";
+            x: pulsante-chiudi.x - self.width - 14px;
+            y: bordo;
+            width: mittente-e-data == "" ? 0px : min(self.preferred-width, root.width / 3);
+            height: alto-testata - bordo;
+            text: mittente-e-data;
+            overflow: elide;
+            vertical-alignment: center;
+            font-size: Tema.testo-piccolo;
+            color: Tema.testo-tenue;
         }
 
         pulsante-chiudi := Chiudi {
