@@ -14,7 +14,7 @@ use crate::config::{Config, ConfigStore};
 use crate::eventi::{Ascoltatore, CasaEvento, StatoConnessione};
 use crate::ha::client::{self, Client, DalClient, NON_CONNESSO};
 use crate::ha::eventi::{Aggiornamento, EventoWs};
-use crate::ha::mapper::EntityMapper;
+use crate::ha::mapper::{DatiHa, EntityMapper, Preferenze};
 use crate::ha::models::{HaArea, HaConfig, HaDevice, HaEntityEntry, HaNotification, HaState};
 use crate::segreti::Segreti;
 use crate::types::{MenuData, TestConnectionResult};
@@ -467,16 +467,20 @@ impl Motore {
             (c.favorites.clone(), c.hidden_entities.clone(), c.room_order.clone(), c.device_order.clone())
         };
         let dati: MenuData = EntityMapper::new().map(
-            &g.states,
-            &g.areas,
-            &g.devices,
-            &g.entries,
-            g.config.as_ref(),
-            g.notifiche,
-            &favorites,
-            &hidden,
-            &room_order,
-            &device_order,
+            DatiHa {
+                states: &g.states,
+                areas: &g.areas,
+                devices: &g.devices,
+                entries: &g.entries,
+                config: g.config.as_ref(),
+                notification_count: g.notifiche,
+            },
+            Preferenze {
+                favorites_order: &favorites,
+                hidden_entities: &hidden,
+                room_order: &room_order,
+                device_orders: &device_order,
+            },
         );
         self.emetti(CasaEvento::Dati(Arc::new(dati)));
     }

@@ -68,9 +68,11 @@ fn file_v2_assente_da_none() {
 fn salva_e_rileggi_uguale() {
     let d = tempfile::tempdir().unwrap();
     let st = ConfigStore::apri(d.path());
-    let mut c = Config::default();
-    c.favorites = vec!["a".into()];
-    c.ultimo_layout = "isola".into();
+    let mut c = Config {
+        favorites: vec!["a".into()],
+        ultimo_layout: "isola".into(),
+        ..Config::default()
+    };
     st.salva(&c).unwrap();
     assert_eq!(st.leggi(), c);
     c.favorites = vec!["b".into(), "c".into()];

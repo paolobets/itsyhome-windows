@@ -59,6 +59,30 @@ pub struct EntityMapper {
     temp_unit: String,
 }
 
+/// Dati grezzi letti da Home Assistant, da mappare.
+pub struct DatiHa<'a> {
+    pub states: &'a [HaState],
+    pub areas: &'a [HaArea],
+    pub devices: &'a [HaDevice],
+    pub entries: &'a [HaEntityEntry],
+    pub config: Option<&'a HaConfig>,
+    pub notification_count: u32,
+}
+
+/// Preferenze dell'utente che decidono ordine e visibilità.
+pub struct Preferenze<'a> {
+    pub favorites_order: &'a [String],
+    pub hidden_entities: &'a [String],
+    pub room_order: &'a [String],
+    pub device_orders: &'a HashMap<String, Vec<String>>,
+}
+
+impl Default for EntityMapper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EntityMapper {
     pub fn new() -> Self {
         Self {
@@ -77,19 +101,9 @@ impl EntityMapper {
     }
 
     /// Map raw HA API results into a fully-typed `MenuData`.
-    pub fn map(
-        &mut self,
-        states: &[HaState],
-        areas: &[HaArea],
-        devices: &[HaDevice],
-        entries: &[HaEntityEntry],
-        ha_config: Option<&HaConfig>,
-        notification_count: u32,
-        favorites_order: &[String],
-        hidden_entities: &[String],
-        room_order: &[String],
-        device_orders: &HashMap<String, Vec<String>>,
-    ) -> MenuData {
+    pub fn map(&mut self, ha: DatiHa<'_>, preferenze: Preferenze<'_>) -> MenuData {
+        let DatiHa { states, areas, devices, entries, config: ha_config, notification_count } = ha;
+        let Preferenze { favorites_order, hidden_entities, room_order, device_orders } = preferenze;
         if let Some(cfg) = ha_config {
             self.set_temp_unit(&cfg.unit_system.temperature);
         }
@@ -637,9 +651,22 @@ mod tests {
         ordine_stanze: &[&str],
     ) -> MenuData {
         let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let (preferiti, nascosti, ordine_stanze) = (s(preferiti), s(nascosti), s(ordine_stanze));
         EntityMapper::new().map(
-            stati, aree, &[], voci, cfg, 0, &s(preferiti), &s(nascosti), &s(ordine_stanze),
-            &HashMap::new(),
+            DatiHa {
+                states: stati,
+                areas: aree,
+                devices: &[],
+                entries: voci,
+                config: cfg,
+                notification_count: 0,
+            },
+            Preferenze {
+                favorites_order: &preferiti,
+                hidden_entities: &nascosti,
+                room_order: &ordine_stanze,
+                device_orders: &HashMap::new(),
+            },
         )
     }
 
