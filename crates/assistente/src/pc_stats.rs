@@ -140,7 +140,7 @@ impl Campionatore {
 
         let ram_totale = self.sistema.total_memory();
         StatPc {
-            cpu_pct: Some(cpu_pct),
+            cpu_pct,
             ram_usata: self.sistema.used_memory().min(ram_totale),
             ram_totale,
             disco_usato: disco_totale.saturating_sub(disco_libero),
@@ -152,14 +152,12 @@ impl Campionatore {
         }
     }
 
-    /// Percentuale di CPU dall'ultima lettura.
+    /// Percentuale di CPU dall'ultima lettura; `None` se GetSystemTimes non risponde (adesso o
+    /// alla lettura prima): l'interfaccia mostra «—», non uno «0%» inventato (vedi `cpu_da`).
     #[cfg(windows)]
-    fn cpu(&mut self) -> f32 {
+    fn cpu(&mut self) -> Option<f32> {
         let ora = tempi_cpu();
-        let pct = match (self.tempi, ora) {
-            (Some(prima), Some(ora)) => percentuale_cpu(prima, ora),
-            _ => 0.0,
-        };
+        let pct = cpu_da(self.tempi, ora);
         if ora.is_some() {
             self.tempi = ora;
         }
@@ -167,9 +165,9 @@ impl Campionatore {
     }
 
     #[cfg(not(windows))]
-    fn cpu(&mut self) -> f32 {
+    fn cpu(&mut self) -> Option<f32> {
         self.sistema.refresh_cpu_usage();
-        self.sistema.global_cpu_usage().clamp(0.0, 100.0)
+        Some(self.sistema.global_cpu_usage().clamp(0.0, 100.0))
     }
 
     /// La prima batteria del PC; `(None, None)` se il PC non ne ha (desktop) o non si legge.
@@ -193,6 +191,15 @@ struct TempiCpu {
     inattivo: u64,
     kernel: u64,
     utente: u64,
+}
+
+/// La CPU fra la lettura di prima e quella di adesso: `None` se una delle due manca (GetSystemTimes
+/// fallito) o se fra le due non è passato tempo di CPU (nessuna differenza da cui calcolare).
+#[cfg_attr(not(windows), allow(dead_code))]
+fn cpu_da(prima: Option<TempiCpu>, ora: Option<TempiCpu>) -> Option<f32> {
+    let (prima, ora) = (prima?, ora?);
+    let totale = ora.kernel.saturating_sub(prima.kernel) + ora.utente.saturating_sub(prima.utente);
+    (totale > 0).then(|| percentuale_cpu(prima, ora))
 }
 
 /// Percentuale di CPU occupata tra due letture: (kernel + utente − inattivo) / (kernel + utente).
@@ -309,6 +316,18 @@ mod test {
         assert_eq!(percentuale_cpu(prima, tutto_inattivo), 0.0);
         // Contatori che tornano indietro (non dovrebbe succedere): mai fuori da 0..100.
         assert!((0.0..=100.0).contains(&percentuale_cpu(ora, prima)));
+    }
+
+    #[test]
+    fn cpu_illeggibile_e_nessun_valore() {
+        // Il codice che legge i tempi, non la presentazione: con GetSystemTimes fallito niente
+        // numero (l'interfaccia mostra «—»), mai «0%».
+        let prima = TempiCpu { inattivo: 1_000, kernel: 5_000, utente: 3_000 };
+        let ora = TempiCpu { inattivo: 1_600, kernel: 6_000, utente: 4_000 };
+        assert_eq!(cpu_da(Some(prima), Some(ora)), Some(70.0));
+        assert_eq!(cpu_da(Some(prima), None), None, "lettura di adesso fallita");
+        assert_eq!(cpu_da(None, Some(ora)), None, "lettura di prima fallita");
+        assert_eq!(cpu_da(Some(prima), Some(prima)), None, "nessun tempo di CPU passato");
     }
 
     #[test]
