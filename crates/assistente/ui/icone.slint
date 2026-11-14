@@ -38,6 +38,8 @@ export component Icona inherits Image {
     height: 20px;
     colorize: Tema.icona;
     image-rendering: smooth;
+    // Decorativa: il nome lo dice l'elemento che la contiene (Narrator non legge un'immagine vuota).
+    accessible-role: none;
 }
 
 // Card "vetro" leggera dei layout (bordo sottile, riflesso appena accennato).
