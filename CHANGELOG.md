@@ -26,8 +26,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Finestra di gestione: adattata all'area di lavoro (al più 780 × 680), contenuto rientrato sotto una linea fidata con l'etichetta «CONTENUTO ESTERNO», titolo ripulito (controlli, direzione, larghezza zero, 200 caratteri), Tab porta nel contenuto.
 - Scorciatoie: Ctrl+Alt+Maiusc+Spazio (apri) e Ctrl+Alt+Maiusc+I (ritirata), anche nella spec.
 
+### Changed (revisioni UI/UX e frontend, giro 2: struttura dell'interfaccia)
+- Colori solo in `tema.slint`, come token di ruolo (un test fallisce se un `.slint` ne scrive uno a mano); scale fisse di raggi e corpi del testo.
+- Componenti comuni (`componenti.slint`: anello del fuoco, pulsante, etichetta; `faccia.slint`: misure, occhi e battito) ed enum Slint al posto delle stringhe di stato.
+- Un solo stile di pulsante (raggio 10, 8 nella pillola; neutro senza bordo, azione e pericolo col bordo): nelle Impostazioni i pulsanti non sono più a capsula.
+- Misure condivise fra Slint e Rust controllate da `cargo test` (backend di prova di Slint, senza finestre), non più solo all'avvio in debug.
+- Accessibilità: il fuoco da tastiera del pannello è un fuoco vero che Narrator legge (schede, voci, card, pulsanti); dock, puntini e sezioni come schede con lo stato; voci espandibili; quadranti e righe PC con nome e valore; pillola come pulsante.
+- Sensori dei Quadranti a casa non connessa leggibili (circa 7:1 invece di 2,9:1).
+- Vista PC: righe su tutta l'altezza, rete «↓ … · ↑ …» su una riga.
+- Gestione: il riquadro web si rimette al suo posto quando la finestra cambia scala o misura; spazio predisposto per mittente e data.
+- Spessori sottili (filo del pannello, anello della pillola e del fuoco) arrotondati al pixel fisico a 125% e 175%.
+
 ### Fixed
 - Dopo la prima apertura del pannello la pillola restava a 16,5–18,5 MB (budget 15) con ~100 handle in più: la CPU letta da sysinfo passava da PDH, che non libera mai le sue tabelle. Su Windows ora si usa `GetSystemTimes`.
+- «Informazioni» dalla tray non lascia più la sezione in sospeso se le Impostazioni non si aprono; due letture della CPU senza tempo trascorso tengono il valore di prima invece di «—».
 
 ### Misure (14/11/2026, build release, Home Assistant finto, Windows 11, schermo 3840 × 2160 al 175%)
 
@@ -57,6 +69,17 @@ Campioni da 1 s del solo processo dell'assistente; il budget delle animazioni va
 | Pillola ferma | 8,2–8,3 MB | 0,010% | 0,000% | 0,39% | ≤ 15 MB, ≤ 0,1% |
 | Pillola «pensa» (20 fps, senza ombra in moto) | 8,0–8,2 MB | 0,44% | 0,77% | 1,16% | ≤ 1% |
 | Pillola che chiama e pulsa¹ | 9,6–9,7 MB | 0,56% | 0,90% | 1,28% | ≤ 1% |
+
+### Misure dopo il giro 2 delle revisioni (14/11/2026, stesse condizioni, 5 minuti per stato)
+
+| Stato | RAM privata | CPU media | 95° percentile | max | Budget |
+|---|---|---|---|---|---|
+| Pillola ferma | 8,0–8,2 MB | 0,016% | 0,13% | 0,65% | ≤ 15 MB, ≤ 0,1% |
+| Pillola ferma e sveglia (`--umore calm`; giro 1 ricostruito, stessa prova: 0,023% / 0,26% / 0,51%) | 8,0–8,2 MB | 0,019% | 0,13% | 0,52% | ≤ 15 MB, ≤ 0,1% |
+| Pillola «pensa» | 8,2–8,3 MB | 0,45% | 0,77% | 1,15% | ≤ 1% |
+| Pillola che chiama e pulsa¹ | 9,7–9,8 MB | 0,53% | 0,90% | 1,04% | ≤ 1% |
+
+Nel giro 2 la pillola che chiama era salita a 10,6–10,7 MB: i suoi pulsanti usavano il carattere di sistema (un font in più in memoria). Corretto prima di questa misura.
 
 ---
 
