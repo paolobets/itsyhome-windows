@@ -19,7 +19,11 @@ fn main() {
         .map(PathBuf::from)
         .expect("--dati");
     if let Some(su) = dati.parent() {
-        let _ = std::fs::write(su.join("pid.txt"), std::process::id().to_string());
+        // File temporaneo poi rinominato: chi legge vede o nessun file o il PID intero.
+        let provvisorio = su.join("pid.txt.tmp");
+        if std::fs::write(&provvisorio, std::process::id().to_string()).is_ok() {
+            let _ = std::fs::rename(&provvisorio, su.join("pid.txt"));
+        }
     }
     let modo = dati.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_owned();
     let mut uscita = std::io::stdout();

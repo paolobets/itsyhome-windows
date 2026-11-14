@@ -10,6 +10,8 @@
 use crate::finestre::RettangoloFisico;
 
 /// Quel che serve sapere della finestra in primo piano.
+// Fuori da Windows non si guarda il primo piano: tipo e decisione restano per i test.
+#[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PrimoPiano {
     /// Rettangolo della finestra (pixel fisici).
@@ -28,6 +30,7 @@ pub struct PrimoPiano {
 }
 
 /// Decisione pura: la finestra in primo piano è a schermo intero sul monitor della pillola?
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn sul_monitor(primo_piano: Option<PrimoPiano>, monitor_pillola: isize) -> bool {
     let Some(p) = primo_piano else { return false };
     if p.esclusa || p.id_monitor != monitor_pillola {

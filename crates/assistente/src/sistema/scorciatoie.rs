@@ -153,6 +153,8 @@ mod test {
             assert_eq!(windows::descrivi(&h), s.tasti(), "il testo mostrato all'utente è quello registrato");
             ids.push(h.id());
         }
+        // dedup toglie solo i doppioni vicini: prima si ordina.
+        ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), Scorciatoia::TUTTE.len(), "due scorciatoie con gli stessi tasti");
         assert_eq!(Scorciatoia::Apri.tasti(), "Ctrl+Alt+Maiusc+Spazio");

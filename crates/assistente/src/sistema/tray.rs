@@ -14,6 +14,8 @@ pub enum Comando {
 }
 
 /// Testo della voce della ritirata.
+// Fuori da Windows la tray non c'è: resta per i test.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn testo_ritirata(ritirata: bool) -> &'static str {
     if ritirata {
         "Mostra l'isola"

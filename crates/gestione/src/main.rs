@@ -312,14 +312,19 @@ fn tasto_chiude(tasto: u32, premuto: bool) -> bool {
     premuto && tasto == TASTO_ESC
 }
 
+/// Solo KEY_DOWN conta come «premuto»: con Alt premuto arriva SYSTEM_KEY_DOWN, e Alt+Esc resta a
+/// Windows (il rilascio e KEY_UP non chiudono mai).
+#[cfg(windows)]
+fn premuto(tipo: webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_KEY_EVENT_KIND) -> bool {
+    tipo == webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN
+}
+
 /// Col fuoco nel riquadro web i tasti vanno a WebView2, non alla cornice: Esc (che non produce un
 /// carattere) arriva come «tasto acceleratore» anche con le scorciatoie del browser spente.
 #[cfg(windows)]
 fn esc_chiude(web: &WebView) -> Result<(), String> {
     use webview2_com::AcceleratorKeyPressedEventHandler;
-    use webview2_com::Microsoft::Web::WebView2::Win32::{
-        COREWEBVIEW2_KEY_EVENT_KIND, COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN,
-    };
+    use webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_KEY_EVENT_KIND;
     use wry::WebViewExtWindows;
 
     let gestore = AcceleratorKeyPressedEventHandler::create(Box::new(|_, argomenti| {
@@ -331,9 +336,7 @@ fn esc_chiude(web: &WebView) -> Result<(), String> {
             argomenti.KeyEventKind(&mut tipo)?;
             argomenti.VirtualKey(&mut tasto)?;
         }
-        // Solo KEY_DOWN: con Alt premuto arriva SYSTEM_KEY_DOWN, e Alt+Esc resta a Windows.
-        let premuto = tipo == COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN;
-        if tasto_chiude(tasto, premuto) {
+        if tasto_chiude(tasto, premuto(tipo)) {
             // SAFETY: chiamata COM su argomenti validi durante l'evento.
             unsafe { argomenti.SetHandled(true)? };
             eprintln!("gestione: Esc nel riquadro web, chiusura");
@@ -357,5 +360,18 @@ mod test {
         assert!(!tasto_chiude(TASTO_ESC, false), "il rilascio non chiude (niente doppio colpo)");
         assert!(!tasto_chiude(0x0D, true), "Invio no");
         assert!(!tasto_chiude(0x7B, true), "F12 no");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn alt_esc_e_rilascio_non_contano_come_premuto() {
+        use webview2_com::Microsoft::Web::WebView2::Win32::{
+            COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_KEY_UP,
+            COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_UP,
+        };
+        assert!(premuto(COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN));
+        assert!(!premuto(COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN), "Alt+Esc resta a Windows");
+        assert!(!premuto(COREWEBVIEW2_KEY_EVENT_KIND_KEY_UP));
+        assert!(!premuto(COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_UP));
     }
 }

@@ -21,6 +21,7 @@ pub const AUMID: &str = "ItsyHome.Assistente";
 const CODA: usize = 8;
 
 /// L'AUMID registrato con successo (altrimenti i toast usano quello di PowerShell).
+#[cfg(windows)]
 static REGISTRATO: OnceLock<String> = OnceLock::new();
 static INVIO: OnceLock<Option<SyncSender<(String, String)>>> = OnceLock::new();
 
