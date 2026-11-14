@@ -16,6 +16,22 @@ export component LayoutOrologio inherits Rectangle {
     property <string> riga-casa: casa-pronta ? "Casa · " + stato-casa : stato-casa;
     property <string> riga-pc: "PC · CPU " + (pc.pronta ? pc.cpu-testo : "—")
         + " · RAM " + (pc.ram-testo != "" ? pc.ram-testo : "—");
+    // La colonna di stato è larga quanto la sua riga più lunga (fra 160 e 340): con un minimo
+    // fisso di 220 il blocco ora + stato restava spostato a sinistra.
+    property <length> largo-stato: min(340px, max(160px, max(misura-casa.preferred-width, misura-pc.preferred-width)));
+
+    // Solo per misurare le due righe (mai disegnate).
+    misura-casa := Text {
+        visible: false;
+        text: riga-casa;
+        font-size: 13px;
+    }
+
+    misura-pc := Text {
+        visible: false;
+        text: riga-pc;
+        font-size: 13px;
+    }
 
     HorizontalLayout {
         alignment: center;
@@ -46,10 +62,9 @@ export component LayoutOrologio inherits Rectangle {
             spacing: 8px;
 
             Text {
-                // Senza larghezza preferita: una riga lunga si accorcia invece di spingere l'ora.
-                preferred-width: 0px;
-                min-width: 220px;
-                max-width: 340px;
+                // Larghezza fissa della colonna: una riga lunga si accorcia invece di spingere l'ora.
+                min-width: largo-stato;
+                max-width: largo-stato;
                 text: riga-casa;
                 overflow: elide;
                 font-size: 13px;
@@ -57,8 +72,8 @@ export component LayoutOrologio inherits Rectangle {
             }
 
             Text {
-                min-width: 220px;
-                max-width: 340px;
+                min-width: largo-stato;
+                max-width: largo-stato;
                 text: riga-pc;
                 overflow: elide;
                 font-size: 13px;

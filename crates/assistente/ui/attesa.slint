@@ -150,10 +150,27 @@ export component VoceEspansa inherits Rectangle {
     in property <int> totale;
     // Pulsante col fuoco da tastiera (-1 = nessuno; -2 = la voce stessa).
     in property <int> fuoco: -1;
+    // Scorrimento del testo da tastiera: il pannello incrementa uno dei due contatori a ogni ↑/↓.
+    in property <int> scorri-su;
+    in property <int> scorri-giu;
     callback riduci();
     callback precedente();
     callback successiva();
     callback azione(string);
+    // Il testo è (o non è più) in fondo: ↓ passa ai pulsanti solo da lì.
+    callback fondo(bool);
+
+    // Passo di scorrimento da tastiera: circa due righe.
+    property <length> passo: 36px;
+    property <length> scorrimento-minimo: min(0px, testo.height - testo.content-height);
+    property <bool> a-fondo: testo.content-y <= scorrimento-minimo + 0.5px;
+    property <string> id-voce: voce.id;
+    changed scorri-giu => { testo.content-y = max(scorrimento-minimo, testo.content-y - passo); }
+    changed scorri-su => { testo.content-y = min(0px, testo.content-y + passo); }
+    changed a-fondo => { root.fondo(self.a-fondo); }
+    // Un'altra voce riparte dall'inizio del suo testo.
+    changed id-voce => { testo.content-y = 0px; }
+    init => { root.fondo(self.a-fondo); }
 
     border-radius: 16px;
     background: rgba(255, 255, 255, 0.05);
@@ -258,17 +275,32 @@ export component VoceEspansa inherits Rectangle {
         }
     }
 
-    // Il testo completo (va a capo; se è lunghissimo si accorcia).
-    Text {
+    // Il testo completo: va a capo e, se è più lungo dell'area, si scorre (rotella, o ↑/↓ col
+    // fuoco sulla voce). Una sfumatura in basso dice che c'è altro da leggere.
+    testo := Flickable {
         x: 54px;
         y: 58px;
         width: parent.width - self.x - 18px;
         height: parent.height - self.y - (voce.pulsanti.length > 0 ? 52px : 14px);
-        text: voce.dettaglio;
-        wrap: word-wrap;
-        overflow: elide;
-        font-size: 13px;
-        color: Tema.testo-ora;
+        content-height: max(self.height, dettaglio.preferred-height);
+
+        dettaglio := Text {
+            width: parent.width;
+            text: voce.dettaglio;
+            wrap: word-wrap;
+            vertical-alignment: top;
+            font-size: 13px;
+            color: Tema.testo-ora;
+        }
+    }
+
+    if !a-fondo: Rectangle {
+        x: testo.x;
+        y: testo.y + testo.height - self.height;
+        width: testo.width;
+        height: 16px;
+        // Dal trasparente al fondo della voce (vetro al 5% sul corpo del pannello).
+        background: @linear-gradient(180deg, rgba(19, 15, 27, 0) 0%, rgba(19, 15, 27, 1) 100%);
     }
 
     // Col fuoco da tastiera su un consenso: Invio da solo non fa nulla, lo si dice accanto.

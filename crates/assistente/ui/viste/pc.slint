@@ -24,10 +24,13 @@ component Riga inherits Rectangle {
         color: Tema.testo-etichetta;
     }
 
+    // Il dettaglio si ferma prima della colonna del valore e della barra.
     Text {
         x: 14px;
         y: 24px;
+        width: max(0px, parent.width - 14px - 150px - 22px);
         text: dettaglio;
+        overflow: elide;
         font-size: 12px;
         color: Tema.testo-tenue;
     }
@@ -73,34 +76,37 @@ export component VistaPc inherits Rectangle {
             VerticalLayout {
                 alignment: start;
 
+                // Prima del primo campione i testi sono vuoti: «—» e niente barra, come nei
+                // Quadranti e nell'Orologio.
                 Riga {
                     etichetta: "CPU";
-                    valore: stat.cpu-testo;
+                    valore: stat.cpu-testo != "" ? stat.cpu-testo : "—";
                     frazione: stat.pronta ? stat.cpu : 0;
                 }
 
                 Riga {
                     etichetta: "RAM";
-                    valore: stat.ram-testo;
+                    valore: stat.ram-testo != "" ? stat.ram-testo : "—";
                     dettaglio: stat.ram-dettaglio;
-                    frazione: stat.ram;
+                    frazione: stat.ram-testo != "" ? stat.ram : -1;
                 }
 
                 Riga {
                     etichetta: "DISCO";
-                    valore: stat.disco-testo;
+                    valore: stat.disco-testo != "" ? stat.disco-testo : "—";
                     dettaglio: stat.disco-dettaglio;
-                    frazione: stat.disco;
+                    frazione: stat.disco-testo != "" ? stat.disco : -1;
                 }
             }
 
             VerticalLayout {
                 alignment: start;
 
+                // Frecce solo con un valore accanto (mai «↓ » orfano).
                 Riga {
                     etichetta: "RETE";
-                    valore: "↓ " + stat.rete-giu;
-                    dettaglio: "↑ " + stat.rete-su;
+                    valore: stat.rete-giu != "" ? "↓ " + stat.rete-giu : "—";
+                    dettaglio: stat.rete-su != "" ? "↑ " + stat.rete-su : "";
                 }
 
                 if stat.ha-batteria: Riga {
