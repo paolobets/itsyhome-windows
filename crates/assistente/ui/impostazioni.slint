@@ -15,68 +15,15 @@
 import { Tema, Movimento } from "tema.slint";
 import { AmbienteUi } from "voci.slint";
 import { AboutSlint, Palette } from "std-widgets.slint";
+import { Anello, Pulsante, TipoPulsante, Etichetta } from "componenti.slint";
 
 export { AmbienteUi }
 
-component Anello inherits Rectangle {
-    border-width: 2px;
-    border-color: Tema.anello;
-}
-
-// Pulsante di testo alto 30, raggiungibile con Tab. `tipo`: "normale", "primario" (verde acqua)
-// o "pericolo" (rosso). Il clic non gli dà il fuoco: l'anello si vede solo arrivandoci da tastiera.
-component Bottone inherits FocusScope {
-    in property <string> testo;
-    in property <string> tipo: "normale";
-    callback premuto();
-    // Ha appena preso il fuoco (Tab): chi lo contiene lo porta in vista.
-    callback fuoco-preso();
-    changed has-focus => {
-        if (self.has-focus) {
-            root.fuoco-preso();
-        }
-    }
-
-    height: 30px;
-    width: max(72px, etichetta.preferred-width + 28px);
-    focus-on-click: false;
-    accessible-role: button;
-    accessible-label: testo;
-    accessible-action-default => { root.premuto(); }
-    key-pressed(evento) => {
-        if (evento.text == Key.Return || evento.text == Key.Space) {
-            root.premuto();
-            return accept;
-        }
-        return reject;
-    }
-
-    fondo := Rectangle {
-        border-radius: 15px;
-        border-width: 1px;
-        border-color: tipo == "primario" ? Tema.azione-bordo
-            : tipo == "pericolo" ? Tema.pericolo-bordo
-            : Tema.vetro-bordo;
-        background: tipo == "primario"
-            ? (area.has-hover ? Tema.azione-sopra : Tema.azione-fondo)
-            : tipo == "pericolo"
-                ? (area.has-hover ? Tema.pericolo-sopra : Tema.pericolo-fondo)
-                : (area.has-hover ? Tema.neutro-sopra : Tema.neutro-fondo);
-
-        etichetta := Text {
-            text: testo;
-            font-weight: 500;
-            font-size: 13px;
-            color: Tema.testo;
-        }
-    }
-
-    area := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.premuto(); }
-    }
-
-    if root.has-focus: Anello { x: -4px; y: -4px; width: root.width + 8px; height: root.height + 8px; border-radius: 19px; }
+// Pulsante di testo delle Impostazioni: il pulsante comune (componenti.slint), raggiungibile
+// con Tab, con le larghezze di questa finestra.
+component Bottone inherits Pulsante {
+    largo-min: 72px;
+    margine-testo: 28px;
 }
 
 // Un campo del modulo: etichetta sempre visibile a sinistra, casella a destra. Il suggerimento
@@ -102,7 +49,7 @@ component Campo inherits Rectangle {
         height: parent.height;
         text: etichetta;
         vertical-alignment: center;
-        font-size: 13px;
+        font-size: Tema.testo-corpo;
         color: Tema.testo-etichetta;
     }
 
@@ -110,7 +57,7 @@ component Campo inherits Rectangle {
         x: 100px;
         width: parent.width - self.x;
         height: parent.height;
-        border-radius: 9px;
+        border-radius: Tema.raggio-m;
         border-width: input.has-focus ? 2px : 1px;
         border-color: input.has-focus ? Tema.petalo-4 : Tema.vetro-bordo;
         background: Tema.riquadro-fondo;
@@ -123,7 +70,7 @@ component Campo inherits Rectangle {
             text: input.text == "" ? suggerimento : "";
             vertical-alignment: center;
             overflow: elide;
-            font-size: 13px;
+            font-size: Tema.testo-corpo;
             color: Tema.segnaposto;
         }
 
@@ -134,7 +81,7 @@ component Campo inherits Rectangle {
             single-line: true;
             vertical-alignment: center;
             input-type: password ? InputType.password : InputType.text;
-            font-size: 14px;
+            font-size: Tema.testo-medio;
             color: Tema.testo;
             selection-background-color: Tema.selezione;
             selection-foreground-color: Tema.testo;
@@ -175,7 +122,7 @@ component Sezione inherits FocusScope {
     }
 
     Rectangle {
-        border-radius: 18px;
+        border-radius: self.height / 2;
         background: attiva ? Tema.scheda-attiva : area.has-hover ? Tema.scheda-sopra : transparent;
 
         Text {
@@ -185,7 +132,7 @@ component Sezione inherits FocusScope {
             vertical-alignment: center;
             height: parent.height;
             overflow: elide;
-            font-size: 14px;
+            font-size: Tema.testo-medio;
             font-weight: attiva ? 500 : 400;
             color: attiva ? Tema.testo : Tema.testo-ora;
         }
@@ -196,7 +143,7 @@ component Sezione inherits FocusScope {
         clicked => { root.scelta(); }
     }
 
-    if root.has-focus: Anello { x: -4px; y: -4px; width: root.width + 8px; height: root.height + 8px; border-radius: 22px; }
+    if root.has-focus: Anello { raggio: self.height / 2; }
 }
 
 // Pallino + parola dello stato (il colore non basta mai da solo). Largo quanto il suo testo
@@ -210,7 +157,7 @@ component Stato inherits Rectangle {
         x: 0;
         width: 8px;
         height: 8px;
-        border-radius: 4px;
+        border-radius: self.height / 2;
         background: tono == "ok" ? Tema.presa-accesa
             : tono == "attesa" ? Tema.attenzione
             : tono == "errore" ? Tema.bloccante
@@ -223,7 +170,7 @@ component Stato inherits Rectangle {
         text: testo;
         vertical-alignment: center;
         overflow: elide;
-        font-size: 13px;
+        font-size: Tema.testo-corpo;
         color: Tema.testo-ora;
     }
 }
@@ -250,7 +197,7 @@ component Interruttore inherits FocusScope {
     }
 
     Rectangle {
-        border-radius: 12px;
+        border-radius: self.height / 2;
         background: acceso ? Tema.interruttore-acceso : Tema.interruttore-spento;
 
         Rectangle {
@@ -258,7 +205,7 @@ component Interruttore inherits FocusScope {
             y: 3px;
             width: 18px;
             height: 18px;
-            border-radius: 9px;
+            border-radius: self.height / 2;
             background: acceso ? Tema.pomello-acceso : Tema.testo-ora;
             animate x { duration: Movimento.ridotto ? 0ms : 120ms; easing: ease-out; }
         }
@@ -269,16 +216,7 @@ component Interruttore inherits FocusScope {
         clicked => { root.commutato(); }
     }
 
-    if root.has-focus: Anello { x: -4px; y: -4px; width: root.width + 8px; height: root.height + 8px; border-radius: 16px; }
-}
-
-// Etichetta di sezione in maiuscoletto mono.
-component Titoletto inherits Text {
-    font-family: Tema.carattere-mono;
-    font-size: 12px;
-    letter-spacing: 0.6px;
-    color: Tema.testo-etichetta;
-    vertical-alignment: center;
+    if root.has-focus: Anello { raggio: self.height / 2; }
 }
 
 export component FinestraImpostazioni inherits Window {
@@ -447,7 +385,7 @@ export component FinestraImpostazioni inherits Window {
             text: "Impostazioni";
             vertical-alignment: center;
             font-weight: 500;
-            font-size: 20px;
+            font-size: Tema.testo-intestazione;
             color: Tema.testo;
         }
 
@@ -476,7 +414,7 @@ export component FinestraImpostazioni inherits Window {
             width: parent.width - self.x - margine;
             height: parent.height - self.y - 24px;
 
-            Titoletto {
+            Etichetta {
                 x: 0;
                 y: 0;
                 height: 30px;
@@ -491,7 +429,7 @@ export component FinestraImpostazioni inherits Window {
                 text: errore-elenco;
                 vertical-alignment: center;
                 overflow: elide;
-                font-size: 13px;
+                font-size: Tema.testo-corpo;
                 color: Tema.caldo-2;
             }
 
@@ -499,7 +437,7 @@ export component FinestraImpostazioni inherits Window {
                 x: parent.width - self.width;
                 y: 0;
                 testo: "Aggiungi ambiente";
-                tipo: ambienti.length == 0 ? "primario" : "normale";
+                tipo: ambienti.length == 0 ? TipoPulsante.azione : TipoPulsante.neutro;
                 premuto => { apri-modulo(-1); }
             }
 
@@ -513,7 +451,7 @@ export component FinestraImpostazioni inherits Window {
                     text: "Nessun ambiente configurato";
                     horizontal-alignment: center;
                     font-weight: 500;
-                    font-size: 16px;
+                    font-size: Tema.testo-vuoto;
                     color: Tema.testo;
                 }
 
@@ -521,7 +459,7 @@ export component FinestraImpostazioni inherits Window {
                     text: "Aggiungi l'indirizzo e il token di accesso del tuo Home Assistant.";
                     horizontal-alignment: center;
                     wrap: word-wrap;
-                    font-size: 13px;
+                    font-size: Tema.testo-corpo;
                     color: Tema.testo-tenue;
                 }
             }
@@ -544,7 +482,7 @@ export component FinestraImpostazioni inherits Window {
                     property <bool> conferma: conferma-id == amb.id;
                     y: i * passo-riga;
                     height: alto-riga;
-                    border-radius: 14px;
+                    border-radius: Tema.raggio-xl;
                     background: conferma ? Tema.pericolo-velo : Tema.card-fondo;
                     border-width: 1px;
                     border-color: conferma ? Tema.pericolo-filo : Tema.vetro-bordo;
@@ -558,7 +496,7 @@ export component FinestraImpostazioni inherits Window {
                         text: conferma ? "Rimuovere «" + amb.nome + "»?" : amb.nome;
                         overflow: elide;
                         font-weight: 500;
-                        font-size: 14px;
+                        font-size: Tema.testo-medio;
                         color: conferma ? Tema.caldo-1 : Tema.testo;
                     }
 
@@ -578,7 +516,7 @@ export component FinestraImpostazioni inherits Window {
                         width: parent.width - 32px;
                         text: conferma ? "Si cancella anche il token. Conferma entro 4 s." : amb.url;
                         overflow: elide;
-                        font-size: 12px;
+                        font-size: Tema.testo-piccolo;
                         color: Tema.testo-tenue;
                     }
 
@@ -590,7 +528,7 @@ export component FinestraImpostazioni inherits Window {
 
                         if !conferma: Bottone {
                             testo: amb.collegato ? "Disconnetti" : "Connetti";
-                            tipo: amb.collegato ? "normale" : "primario";
+                            tipo: amb.collegato ? TipoPulsante.neutro : TipoPulsante.azione;
                             fuoco-preso => { elenco.porta-in-vista(i); }
                             premuto => {
                                 if (amb.collegato) {
@@ -615,7 +553,7 @@ export component FinestraImpostazioni inherits Window {
 
                         Bottone {
                             testo: conferma ? "Conferma" : "Rimuovi";
-                            tipo: conferma ? "pericolo" : "normale";
+                            tipo: conferma ? TipoPulsante.pericolo : TipoPulsante.neutro;
                             accessible-label: conferma ? "Conferma la rimozione di " + amb.nome : "Rimuovi " + amb.nome;
                             fuoco-preso => { elenco.porta-in-vista(i); }
                             premuto => { rimuovi(amb.id); }
@@ -630,7 +568,7 @@ export component FinestraImpostazioni inherits Window {
                 y: elenco.y + (-elenco.content-y / elenco.content-height) * elenco.height;
                 width: 4px;
                 height: elenco.height * elenco.height / elenco.content-height;
-                border-radius: 2px;
+                border-radius: self.width / 2;
                 background: Tema.vetro-bordo;
             }
         }
@@ -644,7 +582,7 @@ export component FinestraImpostazioni inherits Window {
             // Il modulo nasce col fuoco nel primo campo.
             init => { nome.prendi(); }
 
-            Titoletto {
+            Etichetta {
                 x: 0;
                 y: 0;
                 width: parent.width;
@@ -698,7 +636,7 @@ export component FinestraImpostazioni inherits Window {
 
                 Bottone {
                     testo: "Salva";
-                    tipo: "primario";
+                    tipo: TipoPulsante.azione;
                     premuto => { salva(); }
                 }
 
@@ -715,7 +653,7 @@ export component FinestraImpostazioni inherits Window {
                 width: parent.width - self.x;
                 text: errore-modulo != "" ? errore-modulo : esito-prova;
                 wrap: word-wrap;
-                font-size: 13px;
+                font-size: Tema.testo-corpo;
                 color: errore-modulo != "" || tono-prova == "errore" ? Tema.caldo-2
                     : tono-prova == "ok" ? Tema.presa-accesa
                     : Tema.testo-tenue;
@@ -730,7 +668,7 @@ export component FinestraImpostazioni inherits Window {
             width: parent.width - self.x - margine;
             height: parent.height - self.y - 24px;
 
-            Titoletto {
+            Etichetta {
                 x: 0;
                 y: 0;
                 height: 30px;
@@ -740,7 +678,7 @@ export component FinestraImpostazioni inherits Window {
             Rectangle {
                 y: 44px;
                 height: 64px;
-                border-radius: 14px;
+                border-radius: Tema.raggio-xl;
                 background: Tema.card-fondo;
                 border-width: 1px;
                 border-color: Tema.vetro-bordo;
@@ -750,7 +688,7 @@ export component FinestraImpostazioni inherits Window {
                     y: 12px;
                     text: "Avvia con il sistema";
                     font-weight: 500;
-                    font-size: 14px;
+                    font-size: Tema.testo-medio;
                     color: Tema.testo;
                 }
 
@@ -760,7 +698,7 @@ export component FinestraImpostazioni inherits Window {
                     width: interruttore.x - self.x - 12px;
                     text: "Apre l'assistente quando accedi al computer.";
                     overflow: elide;
-                    font-size: 12px;
+                    font-size: Tema.testo-piccolo;
                     color: Tema.testo-tenue;
                 }
 
@@ -778,7 +716,7 @@ export component FinestraImpostazioni inherits Window {
                 width: parent.width;
                 text: "Le impostazioni non sono state salvate su disco: il dettaglio è in Informazioni.";
                 wrap: word-wrap;
-                font-size: 13px;
+                font-size: Tema.testo-corpo;
                 color: Tema.caldo-1;
             }
         }
@@ -797,7 +735,7 @@ export component FinestraImpostazioni inherits Window {
                 text: "ItsyHome assistente · versione " + versione;
                 vertical-alignment: center;
                 font-weight: 500;
-                font-size: 15px;
+                font-size: Tema.testo-titolo;
                 color: Tema.testo;
             }
 
@@ -807,7 +745,7 @@ export component FinestraImpostazioni inherits Window {
                 height: 22px;
                 text: "© Paolo Bets";
                 vertical-alignment: center;
-                font-size: 13px;
+                font-size: Tema.testo-corpo;
                 color: Tema.testo-ora;
             }
 
@@ -821,7 +759,7 @@ export component FinestraImpostazioni inherits Window {
                 height: 96px;
             }
 
-            Titoletto {
+            Etichetta {
                 x: 0;
                 y: 164px;
                 height: 24px;
@@ -833,7 +771,7 @@ export component FinestraImpostazioni inherits Window {
                 x: 0;
                 y: 194px;
                 text: "Nessun errore registrato.";
-                font-size: 13px;
+                font-size: Tema.testo-corpo;
                 color: Tema.testo-tenue;
             }
 
@@ -850,7 +788,7 @@ export component FinestraImpostazioni inherits Window {
                     wrap: word-wrap;
                     vertical-alignment: top;
                     font-family: Tema.carattere-mono;
-                    font-size: 12px;
+                    font-size: Tema.testo-piccolo;
                     color: Tema.testo-tenue;
                 }
             }

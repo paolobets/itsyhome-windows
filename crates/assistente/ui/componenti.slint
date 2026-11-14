@@ -1,0 +1,118 @@
+// Componenti comuni dell'assistente e della cornice della gestione (FE8): un solo anello del
+// fuoco, un solo pulsante di testo, una sola etichetta maiuscola. Gli occhi stanno in faccia.slint.
+import { Tema } from "tema.slint";
+
+// Tipo di un pulsante: neutro (bianco tenue), azione (verde acqua, con il bordo), pericolo (rosso).
+export enum TipoPulsante { neutro, azione, pericolo }
+
+// Anello del fuoco da tastiera: 2 px, a `distanza` dall'elemento che lo contiene. Si mette dentro
+// l'elemento (`if …: Anello { raggio: parent.border-radius; }`) e ne prende le misure: senza
+// larghezza e altezza un elemento fuori da un layout riempie il genitore.
+export component Anello inherits Rectangle {
+    // Raggio dell'elemento circondato: l'anello lo segue, più largo di quanto sta fuori.
+    in property <length> raggio;
+    // Spazio fra l'elemento e l'anello (negativo meno di 2 = dentro l'elemento).
+    in property <length> distanza: 2px;
+    in property <length> distanza-y: distanza;
+    in property <length> raggio-anello: raggio + distanza + spessore;
+    property <length> spessore: 2px;
+
+    Rectangle {
+        x: -(distanza + spessore);
+        y: -(distanza-y + spessore);
+        width: root.width + 2 * (distanza + spessore);
+        height: root.height + 2 * (distanza-y + spessore);
+        border-radius: raggio-anello;
+        border-width: spessore;
+        border-color: Tema.anello;
+    }
+}
+
+// Il pulsante di testo (UX16: una sola forma). Alto 30 e raggio 10 (nella pillola 26/28 e 8);
+// neutro bianco al 9%, azione verde acqua al 20% con il bordo, pericolo rosso con il bordo. Fra
+// due pulsanti affiancati ha la tinta d'azione l'ultimo. Il clic non gli dà il fuoco: l'anello
+// si vede solo da tastiera (`anello`, di norma quando ha il fuoco).
+export component Pulsante inherits FocusScope {
+    in property <string> testo;
+    in property <TipoPulsante> tipo: TipoPulsante.neutro;
+    in property <length> altezza: 30px;
+    in property <length> raggio: Tema.raggio-m;
+    // Larghezza: il testo più `margine-testo`, fra `largo-min` e `largo-max` (oltre si accorcia).
+    in property <length> largo-min: 84px;
+    in property <length> largo-max: 360px;
+    in property <length> margine-testo: 24px;
+    in property <length> corpo-testo: Tema.testo-corpo;
+    in property <bool> anello: root.has-focus;
+    // Il pannello decide da sé dove sta il fuoco (FE13): vero = questo pulsante lo prende.
+    in property <bool> chiede-fuoco;
+    callback premuto();
+    // Ha appena preso il fuoco (Tab): chi lo contiene lo porta in vista.
+    callback fuoco-preso();
+    changed has-focus => {
+        if (self.has-focus) {
+            root.fuoco-preso();
+        }
+    }
+    changed chiede-fuoco => {
+        if (self.chiede-fuoco) {
+            self.focus();
+        }
+    }
+    init => {
+        if (self.chiede-fuoco) {
+            self.focus();
+        }
+    }
+
+    height: altezza;
+    width: min(largo-max, max(largo-min, etichetta.preferred-width + margine-testo));
+    focus-on-click: false;
+    accessible-role: button;
+    accessible-label: testo;
+    accessible-action-default => { root.premuto(); }
+    key-pressed(evento) => {
+        if (evento.text == Key.Return || evento.text == Key.Space) {
+            root.premuto();
+            return accept;
+        }
+        return reject;
+    }
+
+    fondo := Rectangle {
+        border-radius: raggio;
+        border-width: tipo == TipoPulsante.neutro ? 0px : 1px;
+        border-color: tipo == TipoPulsante.azione ? Tema.azione-bordo : Tema.pericolo-bordo;
+        background: tipo == TipoPulsante.azione
+            ? (area.has-hover ? Tema.azione-sopra : Tema.azione-fondo)
+            : tipo == TipoPulsante.pericolo
+                ? (area.has-hover ? Tema.pericolo-sopra : Tema.pericolo-fondo)
+                : (area.has-hover ? Tema.neutro-sopra : Tema.neutro-fondo);
+
+        etichetta := Text {
+            width: min(self.preferred-width, root.width - 12px);
+            text: testo;
+            horizontal-alignment: center;
+            overflow: elide;
+            font-weight: 500;
+            font-size: corpo-testo;
+            color: Tema.testo;
+            accessible-role: none;
+        }
+    }
+
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.premuto(); }
+    }
+
+    if root.anello: Anello { raggio: root.raggio; }
+}
+
+// Etichetta di sezione in maiuscoletto mono (12 px, spaziata).
+export component Etichetta inherits Text {
+    font-family: Tema.carattere-mono;
+    font-size: Tema.testo-piccolo;
+    letter-spacing: 0.6px;
+    color: Tema.testo-etichetta;
+    vertical-alignment: center;
+}

@@ -5,6 +5,7 @@
 import { Tema } from "../tema.slint";
 import { Icone, Icona } from "../icone.slint";
 import { PreferitoUi } from "../voci.slint";
+import { Anello, Pulsante, TipoPulsante, Etichetta } from "../componenti.slint";
 
 // Una card dispositivo: icona in alto, nome e stato in basso.
 export component Dispositivo inherits Rectangle {
@@ -24,7 +25,7 @@ export component Dispositivo inherits Rectangle {
     // (A 0,78 era 4,9 / 4,5:1: al limite.)
     property <float> velatura: voce.tenue ? 0.85 : 1.0;
 
-    border-radius: 16px;
+    border-radius: Tema.raggio-xl;
     border-width: 1px;
     border-color: !colorata ? Tema.vetro-bordo : luce ? Tema.luce-bordo : Tema.presa-bordo;
     background: voce.tenue ? Tema.card-fondo
@@ -54,7 +55,7 @@ export component Dispositivo inherits Rectangle {
         text: voce.nome;
         overflow: elide;
         font-weight: 500;
-        font-size: 12.5px;
+        font-size: Tema.testo-corpo;
         color: Tema.testo.with-alpha(velatura);
     }
 
@@ -64,7 +65,7 @@ export component Dispositivo inherits Rectangle {
         width: parent.width - 22px;
         text: voce.stato;
         overflow: elide;
-        font-size: 12px;
+        font-size: Tema.testo-piccolo;
         color: voce.errore != "" ? Tema.caldo-2 : Tema.testo-tenue.with-alpha(velatura);
     }
 
@@ -74,57 +75,7 @@ export component Dispositivo inherits Rectangle {
         clicked => { root.tocca(); }
     }
 
-    if anello: Rectangle {
-        x: -4px;
-        y: -4px;
-        width: parent.width + 8px;
-        height: parent.height + 8px;
-        border-radius: parent.border-radius + 4px;
-        border-width: 2px;
-        border-color: Tema.anello;
-    }
-}
-
-// Pulsante di testo della vista Casa (alto 28 nella testata, 30 sotto la frase della vista vuota).
-component PulsanteCasa inherits Rectangle {
-    in property <string> testo;
-    in property <bool> primario;
-    in property <bool> anello;
-    callback premuto();
-
-    height: 28px;
-    width: max(84px, etichetta.preferred-width + 24px);
-    border-radius: 10px;
-    border-width: primario ? 1px : 0px;
-    border-color: Tema.azione-bordo;
-    background: primario
-        ? (area.has-hover ? Tema.azione-sopra : Tema.azione-fondo)
-        : (area.has-hover ? Tema.neutro-sopra : Tema.neutro-fondo);
-    accessible-role: button;
-    accessible-label: testo;
-    accessible-action-default => { root.premuto(); }
-
-    etichetta := Text {
-        text: testo;
-        font-weight: 500;
-        font-size: 13px;
-        color: Tema.testo;
-    }
-
-    area := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.premuto(); }
-    }
-
-    if anello: Rectangle {
-        x: -4px;
-        y: -4px;
-        width: parent.width + 8px;
-        height: parent.height + 8px;
-        border-radius: parent.border-radius + 4px;
-        border-width: 2px;
-        border-color: Tema.anello;
-    }
+    if anello: Anello { raggio: parent.border-radius; }
 }
 
 export component VistaCasa inherits Rectangle {
@@ -153,16 +104,11 @@ export component VistaCasa inherits Rectangle {
     property <string> riga-testata: casa-pronta || dati-delle == "" ? stato-casa : stato-casa + " · dati delle " + dati-delle;
 
     // Testata: titolo a sinistra, stato della casa (e «Riprova») a destra.
-    Text {
+    Etichetta {
         x: 2px;
         y: 0;
         height: 28px;
         text: "PREFERITI";
-        vertical-alignment: center;
-        font-family: Tema.carattere-mono;
-        font-size: 12px;
-        letter-spacing: 0.6px;
-        color: Tema.testo-etichetta;
     }
 
     Text {
@@ -174,14 +120,16 @@ export component VistaCasa inherits Rectangle {
         horizontal-alignment: right;
         vertical-alignment: center;
         overflow: elide;
-        font-size: 12px;
+        font-size: Tema.testo-piccolo;
         color: Tema.testo-tenue;
     }
 
-    pulsante-riprova := PulsanteCasa {
+    // Alto 28 come la testata.
+    pulsante-riprova := Pulsante {
         visible: riprova;
         x: parent.width - self.width - 2px;
         y: 0;
+        altezza: 28px;
         testo: "Riprova";
         anello: fuoco-riprova;
         premuto => { root.riprova-casa(); }
@@ -218,7 +166,7 @@ export component VistaCasa inherits Rectangle {
             text: casa-pronta ? "Nessun dispositivo da mostrare" : stato-casa;
             horizontal-alignment: center;
             font-weight: 500;
-            font-size: 15px;
+            font-size: Tema.testo-titolo;
             color: Tema.testo;
         }
 
@@ -227,7 +175,7 @@ export component VistaCasa inherits Rectangle {
                 ? "Aggiungi dei preferiti o delle stanze in Home Assistant."
                 : "La connessione si configura nelle Impostazioni.";
             horizontal-alignment: center;
-            font-size: 12px;
+            font-size: Tema.testo-piccolo;
             color: Tema.testo-tenue;
         }
 
@@ -236,10 +184,9 @@ export component VistaCasa inherits Rectangle {
             alignment: center;
             padding-top: 4px;
 
-            PulsanteCasa {
-                height: 30px;
+            Pulsante {
                 testo: "Apri Impostazioni";
-                primario: true;
+                tipo: TipoPulsante.azione;
                 anello: fuoco-impostazioni;
                 premuto => { root.apri-impostazioni(); }
             }

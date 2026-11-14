@@ -14,6 +14,7 @@
 // zona scelta.
 import { Tema, Movimento } from "tema.slint";
 import { Faccia, Occhio } from "pillola.slint";
+import { Anello } from "componenti.slint";
 import { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi } from "voci.slint";
 import { RigaAttesa, VoceEspansa } from "attesa.slint";
 import { VistaPc } from "viste/pc.slint";
@@ -67,29 +68,21 @@ component Scheda inherits Rectangle {
         triggered => { root.sosta = true; }
     }
 
-    if anello: Rectangle {
-        x: -4px;
-        y: -4px;
-        width: parent.width + 8px;
-        height: parent.height + 8px;
-        border-radius: parent.border-radius + 4px;
-        border-width: 2px;
-        border-color: Tema.anello;
-    }
+    if anello: Anello { raggio: parent.border-radius; }
 
     if (sosta && area.has-hover) || anello: Rectangle {
         y: -32px;
         height: 24px;
         width: suggerimento.preferred-width + 18px;
         x: (parent.width - self.width) / 2;
-        border-radius: 8px;
+        border-radius: Tema.raggio-s;
         background: Tema.suggerimento;
         border-width: 1px;
         border-color: Tema.vetro-bordo;
 
         suggerimento := Text {
             text: root.nome;
-            font-size: 12px;
+            font-size: Tema.testo-piccolo;
             color: Tema.testo;
         }
     }
@@ -513,7 +506,7 @@ export component Pannello inherits Window {
         opacity: aperto ? 1 : 0;
         animate height { duration: Movimento.ridotto ? 0ms : 200ms; easing: ease-out; }
         animate opacity { duration: Movimento.ridotto ? 120ms : 200ms; easing: ease-out; }
-        border-radius: 22px;
+        border-radius: Tema.raggio-pannello;
         clip: true;
         // Anello sottile con i colori dei petali, come il bordo dell'isola nella bozza (fermo).
         background: Tema.petali;
@@ -596,7 +589,7 @@ export component Pannello inherits Window {
             horizontal-alignment: right;
             vertical-alignment: center;
             font-family: Tema.carattere-mono;
-            font-size: 13px;
+            font-size: Tema.testo-corpo;
             color: Tema.testo-ora;
         }
 
@@ -616,7 +609,7 @@ export component Pannello inherits Window {
 
             etichetta-indietro := Text {
                 text: "‹ Indietro";
-                font-size: 13px;
+                font-size: Tema.testo-corpo;
                 color: Tema.testo-ora;
             }
 
@@ -630,10 +623,9 @@ export component Pannello inherits Window {
 
             // Anello del fuoco sul contorno del pulsante (dentro, non fuori): fuori sarebbe
             // tagliato dal bordo alto del pannello, che ha `clip`.
-            if da-tastiera && zona == "indietro": Rectangle {
-                border-radius: parent.border-radius;
-                border-width: 2px;
-                border-color: Tema.anello;
+            if da-tastiera && zona == "indietro": Anello {
+                raggio: parent.border-radius;
+                distanza: -2px;
             }
         }
 
@@ -785,7 +777,7 @@ export component Pannello inherits Window {
                     text: voce.nome;
                     horizontal-alignment: center;
                     font-weight: 500;
-                    font-size: 17px;
+                    font-size: Tema.testo-vuoto;
                     color: Tema.testo;
                 }
             }
@@ -814,7 +806,7 @@ export component Pannello inherits Window {
                         Rectangle {
                             width: attivo ? 14px : 6px;
                             height: 6px;
-                            border-radius: 3px;
+                            border-radius: self.height / 2;
                             background: attivo ? Tema.testo : Tema.puntino;
                         }
 
@@ -831,14 +823,10 @@ export component Pannello inherits Window {
                     }
                 }
 
-                if da-tastiera && zona == "contenuto": Rectangle {
-                    x: -4px;
-                    y: 0px;
-                    width: parent.width + 8px;
-                    height: parent.height;
-                    border-radius: self.height / 2;
-                    border-width: 2px;
-                    border-color: Tema.anello;
+                // Solo ai lati: sopra e sotto c'è appena posto fra layout e dock.
+                if da-tastiera && zona == "contenuto": Anello {
+                    distanza-y: -2px;
+                    raggio-anello: self.height / 2;
                 }
             }
         }

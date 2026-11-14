@@ -3,6 +3,7 @@
 // Umori: "calm" | "think" | "alert" | "happy" | "sleep". Aspetti: "riposo" | "puntino" | "allargata".
 import { Tema, Movimento } from "tema.slint";
 import { PulsanteUi } from "voci.slint";
+import { Pulsante, TipoPulsante } from "componenti.slint";
 
 // Le misure della faccia, in un solo punto: la pillola a riposo e la riga degli occhi del
 // pannello, che è alta quanto lei (gli occhi del pannello cadono su quelli della pillola).
@@ -64,43 +65,6 @@ component Velo inherits Rectangle {
     width: sagoma-larghezza + 2 * espansione;
     height: sagoma-altezza + 2 * espansione;
     border-radius: self.height / 2;
-}
-
-// Un pulsante della pillola che chiama: risolve la voce senza aprire il pannello. Alto 26
-// nell'attenzione e 28 nel bloccante (come TwoCode), largo da 64 a 120 px: un testo lungo si
-// accorcia invece di spingere la riga fin sopra gli occhi.
-component PulsantePillola inherits Rectangle {
-    in property <string> testo;
-    in property <bool> primo;
-    in property <length> altezza: 26px;
-    callback scelto();
-
-    height: altezza;
-    width: min(120px, max(64px, etichetta.preferred-width + 16px));
-    border-radius: 8px;
-    // Il secondo pulsante (es. «Consenti») ha la tinta verde acqua della bozza.
-    background: primo
-        ? (area.has-hover ? Tema.neutro-sopra : Tema.neutro-fondo)
-        : (area.has-hover ? Tema.azione-sopra : Tema.azione-fondo);
-    accessible-role: button;
-    accessible-label: testo;
-    accessible-action-default => { root.scelto(); }
-
-    etichetta := Text {
-        width: parent.width - 12px;
-        text: testo;
-        horizontal-alignment: center;
-        overflow: elide;
-        font-family: Tema.carattere;
-        font-weight: 500;
-        font-size: 12px;
-        color: Tema.testo;
-    }
-
-    area := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.scelto(); }
-    }
 }
 
 export component Pillola inherits Window {
@@ -384,7 +348,7 @@ export component Pillola inherits Window {
                 y: parent.height - 8px;
                 width: 5px;
                 height: 5px;
-                border-radius: 2.5px;
+                border-radius: self.height / 2;
                 background: livello == "informazione" ? transparent : Tema.colore-livello(livello);
                 border-width: livello == "informazione" ? 1.5px : 0px;
                 border-color: Tema.colore-livello(livello);
@@ -404,7 +368,7 @@ export component Pillola inherits Window {
             vertical-alignment: center;
             font-family: Tema.carattere;
             font-weight: 500;
-            font-size: 12px;
+            font-size: Tema.testo-piccolo;
             color: Tema.testo;
         }
 
@@ -418,11 +382,19 @@ export component Pillola inherits Window {
             spacing: 10px;
             visible: allargata;
 
-            for p[i] in pulsanti: PulsantePillola {
+            // Alti 26 nell'attenzione e 28 nel bloccante (come TwoCode), larghi da 64 a 120 px:
+            // un testo lungo si accorcia invece di spingere la riga fin sopra gli occhi. La tinta
+            // d'azione va all'ultimo (es. «Consenti»).
+            for p[i] in pulsanti: Pulsante {
                 altezza: blocca ? 28px : 26px;
+                raggio: Tema.raggio-s;
+                largo-min: 64px;
+                largo-max: 120px;
+                margine-testo: 16px;
+                corpo-testo: Tema.testo-piccolo;
                 testo: p.testo;
-                primo: i == 0 && pulsanti.length > 1;
-                scelto => { root.azione(p.id); }
+                tipo: i == pulsanti.length - 1 ? TipoPulsante.azione : TipoPulsante.neutro;
+                premuto => { root.azione(p.id); }
             }
         }
     }

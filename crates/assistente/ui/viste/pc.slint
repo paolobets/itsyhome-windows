@@ -2,6 +2,7 @@
 import { Tema } from "../tema.slint";
 import { Icone, Icona, Vetro } from "../icone.slint";
 import { StatPcUi } from "../voci.slint";
+import { Etichetta } from "../componenti.slint";
 
 // Una riga: etichetta, valore e (se serve) una barra sottile con la frazione usata.
 component Riga inherits Rectangle {
@@ -14,14 +15,10 @@ component Riga inherits Rectangle {
     in property <bool> invertita: false;
     height: 44px;
 
-    Text {
+    Etichetta {
         x: 14px;
         y: 7px;
         text: etichetta;
-        font-family: Tema.carattere-mono;
-        font-size: 12px;
-        letter-spacing: 0.6px;
-        color: Tema.testo-etichetta;
     }
 
     // Il dettaglio si ferma prima della colonna del valore e della barra.
@@ -31,7 +28,7 @@ component Riga inherits Rectangle {
         width: max(0px, parent.width - 14px - 150px - 22px);
         text: dettaglio;
         overflow: elide;
-        font-size: 12px;
+        font-size: Tema.testo-piccolo;
         color: Tema.testo-tenue;
     }
 
@@ -42,7 +39,7 @@ component Riga inherits Rectangle {
         text: valore;
         horizontal-alignment: right;
         font-weight: 500;
-        font-size: 15px;
+        font-size: Tema.testo-titolo;
         color: Tema.testo;
     }
 
@@ -51,13 +48,13 @@ component Riga inherits Rectangle {
         y: 29px;
         width: 150px;
         height: 4px;
-        border-radius: 2px;
+        border-radius: self.height / 2;
         background: Tema.traccia;
 
         Rectangle {
             x: 0;
             width: parent.width * min(max(frazione, 0), 1);
-            border-radius: 2px;
+            border-radius: self.height / 2;
             background: (invertita ? frazione < 0.15 : frazione > 0.85) ? Tema.caldo-2 : colore;
         }
     }

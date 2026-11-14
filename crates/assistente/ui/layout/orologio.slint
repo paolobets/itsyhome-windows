@@ -24,13 +24,13 @@ export component LayoutOrologio inherits Rectangle {
     misura-casa := Text {
         visible: false;
         text: riga-casa;
-        font-size: 13px;
+        font-size: Tema.testo-corpo;
     }
 
     misura-pc := Text {
         visible: false;
         text: riga-pc;
-        font-size: 13px;
+        font-size: Tema.testo-corpo;
     }
 
     HorizontalLayout {
@@ -45,14 +45,14 @@ export component LayoutOrologio inherits Rectangle {
                 text: ora;
                 font-family: Tema.carattere;
                 font-weight: 500;
-                font-size: 68px;
+                font-size: Tema.testo-ora-grande;
                 letter-spacing: -1.5px;
                 color: Tema.ora-grande;
             }
 
             Text {
                 text: data;
-                font-size: 13px;
+                font-size: Tema.testo-corpo;
                 color: Tema.testo-tenue;
             }
         }
@@ -67,7 +67,7 @@ export component LayoutOrologio inherits Rectangle {
                 max-width: largo-stato;
                 text: riga-casa;
                 overflow: elide;
-                font-size: 13px;
+                font-size: Tema.testo-corpo;
                 color: Tema.testo-ora;
             }
 
@@ -76,7 +76,7 @@ export component LayoutOrologio inherits Rectangle {
                 max-width: largo-stato;
                 text: riga-pc;
                 overflow: elide;
-                font-size: 13px;
+                font-size: Tema.testo-corpo;
                 color: Tema.testo-ora;
             }
         }

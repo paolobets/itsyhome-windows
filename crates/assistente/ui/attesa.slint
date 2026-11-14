@@ -4,12 +4,7 @@
 // Clic su una voce = si espande sul posto (testo completo e pulsanti), senza viste nuove.
 import { Tema } from "tema.slint";
 import { VoceAttesaUi, PulsanteUi } from "voci.slint";
-
-// Anello del fuoco da tastiera (2 px, a 2 px dall'elemento): chi lo usa gli dà posto e misure.
-component Anello inherits Rectangle {
-    border-width: 2px;
-    border-color: Tema.anello;
-}
+import { Anello, Pulsante, TipoPulsante } from "componenti.slint";
 
 // Una voce chiusa: barretta, titolo, «livello · fonte».
 component VoceChiusa inherits Rectangle {
@@ -17,7 +12,7 @@ component VoceChiusa inherits Rectangle {
     in property <bool> anello;
     callback scelta();
 
-    border-radius: 12px;
+    border-radius: Tema.raggio-l;
     background: area.has-hover ? Tema.scheda-sopra : Tema.card-fondo;
     accessible-role: button;
     accessible-label: voce.titolo + ", " + voce.sotto;
@@ -28,7 +23,7 @@ component VoceChiusa inherits Rectangle {
         y: 8px;
         width: 3px;
         height: parent.height - 16px;
-        border-radius: 1.5px;
+        border-radius: self.width / 2;
         background: Tema.colore-livello(voce.livello);
     }
 
@@ -38,7 +33,7 @@ component VoceChiusa inherits Rectangle {
         width: parent.width - self.x - 10px;
         text: voce.titolo;
         overflow: elide;
-        font-size: 13px;
+        font-size: Tema.testo-corpo;
         color: Tema.testo;
     }
 
@@ -48,7 +43,7 @@ component VoceChiusa inherits Rectangle {
         width: parent.width - self.x - 10px;
         text: voce.sotto;
         overflow: elide;
-        font-size: 12px;
+        font-size: Tema.testo-piccolo;
         color: Tema.testo-tenue;
     }
 
@@ -57,7 +52,7 @@ component VoceChiusa inherits Rectangle {
         clicked => { root.scelta(); }
     }
 
-    if anello: Anello { x: -4px; y: -4px; width: parent.width + 8px; height: parent.height + 8px; border-radius: parent.border-radius + 4px; }
+    if anello: Anello { raggio: parent.border-radius; }
 }
 
 export component RigaAttesa inherits Rectangle {
@@ -87,7 +82,7 @@ export component RigaAttesa inherits Rectangle {
         x: root.width - largo-altre;
         width: largo-altre;
         height: root.height;
-        border-radius: 12px;
+        border-radius: Tema.raggio-l;
         background: area-altre.has-hover ? Tema.scheda-sopra : Tema.card-fondo;
         accessible-role: button;
         accessible-label: "Altre " + altre + " voci in attesa";
@@ -95,7 +90,7 @@ export component RigaAttesa inherits Rectangle {
 
         Text {
             text: "+" + altre;
-            font-size: 13px;
+            font-size: Tema.testo-corpo;
             font-weight: 500;
             color: Tema.testo-ora;
         }
@@ -105,40 +100,8 @@ export component RigaAttesa inherits Rectangle {
             clicked => { root.scelta(3); }
         }
 
-        if root.fuoco == 3: Anello { x: -4px; y: -4px; width: parent.width + 8px; height: parent.height + 8px; border-radius: parent.border-radius + 4px; }
+        if root.fuoco == 3: Anello { raggio: parent.border-radius; }
     }
-}
-
-// Pulsante di una voce espansa (bersaglio 30 di altezza).
-component PulsanteVoce inherits Rectangle {
-    in property <string> testo;
-    in property <bool> tinta;
-    in property <bool> anello;
-    callback scelto();
-
-    height: 30px;
-    width: max(84px, etichetta.preferred-width + 24px);
-    border-radius: 10px;
-    background: tinta
-        ? (area.has-hover ? Tema.azione-sopra : Tema.azione-fondo)
-        : (area.has-hover ? Tema.neutro-sopra : Tema.neutro-fondo);
-    accessible-role: button;
-    accessible-label: testo;
-    accessible-action-default => { root.scelto(); }
-
-    etichetta := Text {
-        text: testo;
-        font-weight: 500;
-        font-size: 13px;
-        color: Tema.testo;
-    }
-
-    area := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.scelto(); }
-    }
-
-    if anello: Anello { x: -4px; y: -4px; width: parent.width + 8px; height: parent.height + 8px; border-radius: parent.border-radius + 4px; }
 }
 
 // Una voce espansa sul posto: copre la riga e il centro della Panoramica. Titolo, livello e
@@ -172,7 +135,7 @@ export component VoceEspansa inherits Rectangle {
     changed id-voce => { testo.content-y = 0px; }
     init => { root.fondo(self.a-fondo); }
 
-    border-radius: 16px;
+    border-radius: Tema.raggio-xl;
     background: Tema.riquadro-fondo;
     border-width: 1px;
     border-color: Tema.vetro-bordo;
@@ -190,7 +153,7 @@ export component VoceEspansa inherits Rectangle {
         y: 14px;
         width: 4px;
         height: parent.height - 28px;
-        border-radius: 2px;
+        border-radius: self.width / 2;
         background: Tema.colore-livello(voce.livello);
     }
 
@@ -211,7 +174,7 @@ export component VoceEspansa inherits Rectangle {
         text: voce.titolo;
         overflow: elide;
         font-weight: 500;
-        font-size: 15px;
+        font-size: Tema.testo-titolo;
         color: Tema.testo;
     }
 
@@ -221,7 +184,7 @@ export component VoceEspansa inherits Rectangle {
         width: naviga.x - self.x - 12px;
         text: voce.sotto;
         overflow: elide;
-        font-size: 12px;
+        font-size: Tema.testo-piccolo;
         color: Tema.testo-tenue;
     }
 
@@ -235,43 +198,43 @@ export component VoceEspansa inherits Rectangle {
 
         if totale > 1: Rectangle {
             width: 30px;
-            border-radius: 10px;
+            border-radius: Tema.raggio-m;
             background: area-prec.has-hover ? Tema.scheda-sopra : transparent;
             accessible-role: button;
             accessible-label: "Voce precedente";
             accessible-action-default => { root.precedente(); }
-            Text { text: "‹"; font-size: 16px; color: Tema.testo-ora; }
+            Text { text: "‹"; font-size: Tema.testo-vuoto; color: Tema.testo-ora; }
             area-prec := TouchArea { mouse-cursor: pointer; clicked => { root.precedente(); } }
         }
 
         if totale > 1: Text {
             text: (posizione + 1) + " di " + totale;
             vertical-alignment: center;
-            font-size: 12px;
+            font-size: Tema.testo-piccolo;
             color: Tema.testo-tenue;
         }
 
         if totale > 1: Rectangle {
             width: 30px;
-            border-radius: 10px;
+            border-radius: Tema.raggio-m;
             background: area-succ.has-hover ? Tema.scheda-sopra : transparent;
             accessible-role: button;
             accessible-label: "Voce successiva";
             accessible-action-default => { root.successiva(); }
-            Text { text: "›"; font-size: 16px; color: Tema.testo-ora; }
+            Text { text: "›"; font-size: Tema.testo-vuoto; color: Tema.testo-ora; }
             area-succ := TouchArea { mouse-cursor: pointer; clicked => { root.successiva(); } }
         }
 
         Rectangle {
             width: riduci-testo.preferred-width + 20px;
-            border-radius: 10px;
+            border-radius: Tema.raggio-m;
             background: area-riduci.has-hover ? Tema.scheda-sopra : transparent;
             accessible-role: button;
             accessible-label: "Riduci";
             accessible-action-default => { root.riduci(); }
-            riduci-testo := Text { text: "Riduci"; font-size: 12px; color: Tema.testo-ora; }
+            riduci-testo := Text { text: "Riduci"; font-size: Tema.testo-piccolo; color: Tema.testo-ora; }
             area-riduci := TouchArea { mouse-cursor: pointer; clicked => { root.riduci(); } }
-            if root.fuoco == -2: Anello { x: -4px; y: -4px; width: parent.width + 8px; height: parent.height + 8px; border-radius: parent.border-radius + 4px; }
+            if root.fuoco == -2: Anello { raggio: parent.border-radius; }
         }
     }
 
@@ -292,7 +255,7 @@ export component VoceEspansa inherits Rectangle {
             text: voce.dettaglio;
             wrap: word-wrap;
             vertical-alignment: top;
-            font-size: 13px;
+            font-size: Tema.testo-corpo;
             color: Tema.testo-ora;
         }
     }
@@ -316,7 +279,7 @@ export component VoceEspansa inherits Rectangle {
         horizontal-alignment: right;
         vertical-alignment: center;
         overflow: elide;
-        font-size: 12px;
+        font-size: Tema.testo-piccolo;
         color: Tema.testo-tenue;
     }
 
@@ -327,11 +290,12 @@ export component VoceEspansa inherits Rectangle {
         height: 30px;
         spacing: 8px;
 
-        for p[i] in voce.pulsanti: PulsanteVoce {
+        // La tinta d'azione va all'ultimo (es. «Consenti»), come nella pillola.
+        for p[i] in voce.pulsanti: Pulsante {
             testo: p.testo;
-            tinta: i == voce.pulsanti.length - 1;
+            tipo: i == voce.pulsanti.length - 1 ? TipoPulsante.azione : TipoPulsante.neutro;
             anello: i == root.fuoco;
-            scelto => { root.azione(p.id); }
+            premuto => { root.azione(p.id); }
         }
     }
 }

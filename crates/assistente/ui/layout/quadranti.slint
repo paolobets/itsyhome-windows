@@ -4,6 +4,7 @@
 import { Tema } from "../tema.slint";
 import { Icone, Icona, Vetro } from "../icone.slint";
 import { StatPcUi, SensoreUi } from "../voci.slint";
+import { Etichetta } from "../componenti.slint";
 
 component Quadrante inherits Vetro {
     in property <string> etichetta;
@@ -64,7 +65,7 @@ component Quadrante inherits Vetro {
                 vertical-alignment: center;
                 overflow: elide;
                 font-weight: 500;
-                font-size: arco < 90px || valore.character-count > 5 ? 15px : 20px;
+                font-size: arco < 90px || valore.character-count > 5 ? Tema.testo-titolo : Tema.testo-intestazione;
                 color: Tema.testo;
             }
         }
@@ -80,13 +81,8 @@ component Quadrante inherits Vetro {
                 y: (parent.height - self.height) / 2;
             }
 
-            Text {
+            Etichetta {
                 text: etichetta;
-                vertical-alignment: center;
-                font-family: Tema.carattere-mono;
-                font-size: 12px;
-                letter-spacing: 0.6px;
-                color: Tema.testo-etichetta;
             }
         }
 
@@ -96,7 +92,7 @@ component Quadrante inherits Vetro {
             text: dettaglio;
             horizontal-alignment: center;
             overflow: elide;
-            font-size: 12px;
+            font-size: Tema.testo-piccolo;
             color: Tema.testo-tenue;
         }
     }
