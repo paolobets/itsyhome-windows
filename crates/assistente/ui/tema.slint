@@ -37,6 +37,8 @@ export global Tema {
     out property <brush> fondo-finestra: @linear-gradient(160deg, fondo-alto 0%, fondo-basso 55%);
     out property <color> corpo: #07030f;
     out property <color> occhio: #f5efff;
+    // L'occhio che dorme (trattino): più tenue.
+    out property <color> occhio-dorme: occhio.with-alpha(0.6);
     out property <color> bagliore-occhio: #c084fc;
     out property <color> testo: #f3eefc;
     out property <color> icona: rgba(236, 230, 250, 0.62);
@@ -63,6 +65,7 @@ export global Tema {
     // Il colore pieno del riquadro sul corpo del pannello (corpo + bianco al 5%): la sfumatura in
     // fondo al testo lungo svanisce in questo.
     out property <color> riquadro-pieno: #130f1b;
+    out property <color> riquadro-svanito: riquadro-pieno.with-alpha(0);
     // Card "vetro" dei layout: riflesso appena accennato (e un po' di più sotto il mouse).
     out property <brush> card-vetro: @linear-gradient(160deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.02) 100%);
     out property <brush> card-vetro-sopra: @linear-gradient(160deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.04) 100%);
@@ -136,11 +139,13 @@ export global Tema {
     out property <length> raggio-xl: 16px;
     out property <length> raggio-pannello: 22px;
     // Corpi del testo: etichette e righe piccole 12, testo 13, campi e nomi 14, titoli 15,
-    // titoli di una schermata vuota 17, intestazione di finestra 20, ora grande 68.
+    // frecce e titolo di un elenco vuoto 16, vista vuota di un'app 17, intestazione di finestra
+    // 20, ora grande 68.
     out property <length> testo-piccolo: 12px;
     out property <length> testo-corpo: 13px;
     out property <length> testo-medio: 14px;
     out property <length> testo-titolo: 15px;
+    out property <length> testo-sottotitolo: 16px;
     out property <length> testo-vuoto: 17px;
     out property <length> testo-intestazione: 20px;
     out property <length> testo-ora-grande: 68px;
@@ -148,7 +153,8 @@ export global Tema {
     // ─── Pixel fisici (FE27) ───
     // Scala della finestra (1, 1,25, 1,75…): la scrive Rust per ogni finestra, all'avvio e quando
     // cambia (monitor o DPI). `sul-pixel` arrotonda uno spessore al pixel fisico più vicino (almeno
-    // uno): un filo di 1,5 px a 1,75 diventa 3 px fisici netti invece di 2,625 sfocati.
+    // uno): un filo di 1,5 px a 1,75 diventa 3 px fisici netti invece di 2,625 sfocati. Solo per
+    // spessori da 1 px in su: uno più sottile diventerebbe 1 px pieno anche a scala 1.
     in property <float> scala: 1;
     public pure function sul-pixel(spessore: length) -> length {
         return max(1, round(spessore / 1px * scala)) / scala * 1px;

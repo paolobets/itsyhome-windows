@@ -33,8 +33,13 @@ fn alla_sezione(sezione: i32) {
 pub fn apri_alla_sezione(sezione: i32, apri: impl FnOnce() -> bool) {
     alla_sezione(sezione);
     if !apri() {
-        SEZIONE.with(|s| s.set(None));
+        dimentica_sezione();
     }
+}
+
+/// La finestra non si è aperta: la sezione chiesta non resta in sospeso.
+fn dimentica_sezione() {
+    SEZIONE.with(|s| s.set(None));
 }
 
 fn mostra_sezione_chiesta(f: &FinestraImpostazioni) {
@@ -59,6 +64,7 @@ pub fn apri_impostazioni() {
         Ok(f) => f,
         Err(e) => {
             eprintln!("impostazioni non aperte: {e}");
+            dimentica_sezione();
             return;
         }
     };
@@ -74,6 +80,7 @@ pub fn apri_impostazioni() {
     });
     if let Err(e) = finestra.show() {
         eprintln!("impostazioni non mostrate: {e}");
+        dimentica_sezione();
         return;
     }
     // Spessori sul pixel fisico: la scala di adesso e, se la finestra cambia monitor, la nuova.

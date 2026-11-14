@@ -742,6 +742,7 @@ export component Pannello inherits Window {
 
                         Image {
                             source: app[indice-vista].icona;
+                            accessible-role: none;
                             width: 38px;
                             height: 38px;
                             colorize: Tema.icona;
@@ -830,7 +831,8 @@ export component Pannello inherits Window {
                     background: Tema.capsula;
                     accessible-role: tab-list;
                     accessible-label: "App";
-                    border-width: Tema.sul-pixel(0.5px);
+                    // Mezzo pixel come prima: `sul-pixel` lo porterebbe a 1 px pieno a scala 1.
+                    border-width: 0.5px;
                     border-color: Tema.vetro-bordo;
 
                     HorizontalLayout {

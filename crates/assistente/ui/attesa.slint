@@ -221,7 +221,7 @@ export component VoceEspansa inherits Rectangle {
             accessible-role: button;
             accessible-label: "Voce precedente";
             accessible-action-default => { root.precedente(); }
-            Text { text: "‹"; font-size: Tema.testo-vuoto; color: Tema.testo-ora; }
+            Text { text: "‹"; font-size: Tema.testo-sottotitolo; color: Tema.testo-ora; }
             area-prec := TouchArea { mouse-cursor: pointer; clicked => { root.precedente(); } }
         }
 
@@ -239,7 +239,7 @@ export component VoceEspansa inherits Rectangle {
             accessible-role: button;
             accessible-label: "Voce successiva";
             accessible-action-default => { root.successiva(); }
-            Text { text: "›"; font-size: Tema.testo-vuoto; color: Tema.testo-ora; }
+            Text { text: "›"; font-size: Tema.testo-sottotitolo; color: Tema.testo-ora; }
             area-succ := TouchArea { mouse-cursor: pointer; clicked => { root.successiva(); } }
         }
 
@@ -284,7 +284,7 @@ export component VoceEspansa inherits Rectangle {
         width: testo.width;
         height: 16px;
         // Dal trasparente al fondo della voce (vetro al 5% sul corpo del pannello).
-        background: @linear-gradient(180deg, Tema.riquadro-pieno.with-alpha(0) 0%, Tema.riquadro-pieno 100%);
+        background: @linear-gradient(180deg, Tema.riquadro-svanito 0%, Tema.riquadro-pieno 100%);
     }
 
     // Col fuoco da tastiera su un consenso: Invio da solo non fa nulla, lo si dice accanto.

@@ -37,14 +37,26 @@ fn file_slint() -> Vec<PathBuf> {
     file
 }
 
-/// Il codice di una riga senza il commento `//` (le stringhe dell'interfaccia non contengono `//`).
+/// Il codice di una riga senza il commento `//`, tagliato solo fuori dalle stringhe (un URL in un
+/// `text:` non è un commento).
 fn senza_commento(riga: &str) -> &str {
-    riga.split("//").next().unwrap_or("")
+    let mut in_stringa = false;
+    let mut prima = ' ';
+    for (i, c) in riga.char_indices() {
+        if c == '"' && prima != '\\' {
+            in_stringa = !in_stringa;
+        } else if !in_stringa && c == '/' && prima == '/' {
+            return &riga[..i - 1];
+        }
+        prima = c;
+    }
+    riga
 }
 
-/// Un letterale di colore nel codice: `#` seguito da 3–8 cifre esadecimali, o `rgb(` / `rgba(`.
+/// Un colore scritto a mano nel codice: `#` seguito da 3–8 cifre esadecimali, `rgb(` / `rgba(`,
+/// `hsv(` o i colori per nome di Slint (`Colors.red`).
 fn colore_a_mano(codice: &str) -> bool {
-    if codice.contains("rgb(") || codice.contains("rgba(") {
+    if ["rgb(", "rgba(", "hsv(", "Colors."].iter().any(|m| codice.contains(m)) {
         return true;
     }
     codice.match_indices('#').any(|(i, _)| {
@@ -57,8 +69,13 @@ fn colore_a_mano(codice: &str) -> bool {
 fn riconosce_i_colori_a_mano() {
     assert!(colore_a_mano("background: #fb923c;"));
     assert!(colore_a_mano("color: rgba(255, 255, 255, 0.04);"));
+    assert!(colore_a_mano("color: Colors.red;"));
+    assert!(colore_a_mano("color: Colors.hsv(120, 0.5, 0.5);"));
     assert!(!colore_a_mano("background: Tema.card-fondo;"));
     assert!(!colore_a_mano("text: \"+\" + altre;"));
+    // Il commento si toglie solo fuori dalle stringhe.
+    assert!(colore_a_mano(senza_commento("text: \"https://slint.dev\"; color: #fff;")));
+    assert!(!colore_a_mano(senza_commento("color: Tema.testo; // era #fff")));
 }
 
 #[test]
@@ -225,6 +242,10 @@ mod accessibilita {
         let cpu = elemento(&p, "CPU");
         assert_eq!(cpu.accessible_role(), Some(AccessibleRole::ProgressIndicator));
         assert_eq!(cpu.accessible_value().as_deref(), Some("12%"));
+        // Nella vista PC la rete è una velocità (testo), CPU un indicatore.
+        p.set_vista("pc".into());
+        assert_eq!(elemento(&p, "RETE").accessible_role(), Some(AccessibleRole::Text));
+        p.set_vista("panoramica".into());
         // Senza sensori, il quadrante CASA dice lo stato della casa.
         p.set_stato_casa("Casa non connessa".into());
         assert_eq!(elemento(&p, "CASA, Casa non connessa").accessible_role(), Some(AccessibleRole::ProgressIndicator));

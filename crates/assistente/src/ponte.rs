@@ -699,7 +699,8 @@ impl Ponte {
     }
 
     /// Icona del dock o pulsante di una voce: la finestra delle Impostazioni. Falso se nessuno sa
-    /// aprirla (nessuna finestra aperta).
+    /// aprirla. Vero vuol dire solo «chiesta»: se poi la finestra non nasce, la sezione in sospeso
+    /// la dimentica `finestra_impostazioni::apri_impostazioni`.
     pub fn chiedi_impostazioni(&self) -> bool {
         if let Some(apri) = self.apri_impostazioni.borrow().as_ref() {
             apri();

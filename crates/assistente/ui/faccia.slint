@@ -42,7 +42,7 @@ export component Occhio inherits Rectangle {
         visible: forma != FormaOcchio.arco;
         border-radius: Faccia.raggio-occhio;
         // Trasparenza nel colore, non `opacity` (che disegnerebbe un livello a parte).
-        background: forma == FormaOcchio.trattino ? Tema.occhio.with-alpha(0.6) : Tema.occhio;
+        background: forma == FormaOcchio.trattino ? Tema.occhio-dorme : Tema.occhio;
         drop-shadow-blur: forma == FormaOcchio.aperto ? 5px : 0px;
         drop-shadow-color: bagliore;
     }

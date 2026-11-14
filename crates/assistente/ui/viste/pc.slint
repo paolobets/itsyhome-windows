@@ -113,6 +113,8 @@ export component VistaPc inherits Rectangle {
                 // accanto (mai «↓ » orfano).
                 Riga {
                     etichetta: "RETE";
+                    // Una velocità, non un avanzamento: per Narrator è testo.
+                    accessible-role: text;
                     valore: stat.rete-giu == "" ? "—"
                         : stat.rete-su == "" ? "↓ " + stat.rete-giu
                         : "↓ " + stat.rete-giu + " · ↑ " + stat.rete-su;
