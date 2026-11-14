@@ -128,3 +128,199 @@ fn misure_slint_e_rust() {
     assert_eq!(pannello.get_numero_layout() as usize, layout::TUTTI.len(), "layout della Panoramica");
     drop((pillola, pannello));
 }
+
+mod accessibilita {
+    //! FE13/FE16: ruoli, nomi e stati che Narrator legge (UI Automation li riceve da AccessKit).
+    use super::piattaforma_di_prova;
+    use crate::{
+        AspettoPillolaUi, FinestraImpostazioni, LivelloUi, Pannello, Pillola, PulsanteUi, StatPcUi, VoceAppUi,
+        VoceAttesaUi,
+    };
+    use i_slint_backend_testing::{AccessibleRole, ElementHandle};
+    use slint::{ComponentHandle, ModelRc, VecModel};
+
+    fn elemento(radice: &impl i_slint_backend_testing::ElementRoot, nome: &str) -> ElementHandle {
+        ElementHandle::find_by_accessible_label(radice, nome)
+            .next()
+            .unwrap_or_else(|| panic!("nessun elemento accessibile «{nome}»"))
+    }
+
+    /// Un pannello aperto nel backend di prova (finestra finta): le parti create con `if` e `for`
+    /// esistono solo in una finestra mostrata.
+    fn pannello() -> Pannello {
+        let p = Pannello::new().expect("pannello");
+        p.set_aperto(true);
+        p.show().expect("pannello mostrato nel backend di prova");
+        p
+    }
+
+    fn app() -> ModelRc<VoceAppUi> {
+        let voce = |id: &str, nome: &str| VoceAppUi { id: id.into(), nome: nome.into(), icona: Default::default() };
+        ModelRc::new(VecModel::from(vec![
+            voce("panoramica", "Panoramica"),
+            voce("casa", "Casa"),
+            voce("pc", "PC"),
+            voce("impostazioni", "Impostazioni"),
+        ]))
+    }
+
+    #[test]
+    fn dock_e_puntini_sono_schede_con_lo_stato() {
+        piattaforma_di_prova();
+        let p = pannello();
+        p.set_app(app());
+        let panoramica = elemento(&p, "Panoramica");
+        assert_eq!(panoramica.accessible_role(), Some(AccessibleRole::Tab));
+        assert_eq!(panoramica.accessible_item_selected(), Some(true));
+        assert_eq!((panoramica.accessible_item_index(), panoramica.accessible_item_count()), (Some(0), Some(4)));
+        let casa = elemento(&p, "Casa");
+        assert_eq!(casa.accessible_item_selected(), Some(false));
+        assert_eq!(casa.accessible_item_index(), Some(1));
+
+        let orologio = elemento(&p, "Layout Orologio");
+        assert_eq!(orologio.accessible_role(), Some(AccessibleRole::Tab));
+        assert_eq!(orologio.accessible_item_selected(), Some(true));
+        p.set_layout(1);
+        assert_eq!(elemento(&p, "Layout Orologio").accessible_item_selected(), Some(false));
+        assert_eq!(elemento(&p, "Layout Quadranti").accessible_item_selected(), Some(true));
+        assert_eq!(elemento(&p, "Pannello di ItsyHome").accessible_role(), Some(AccessibleRole::Groupbox));
+    }
+
+    #[test]
+    fn voce_chiusa_ed_espansa() {
+        piattaforma_di_prova();
+        let p = pannello();
+        let pulsanti = ModelRc::new(VecModel::from(vec![
+            PulsanteUi { id: "nega".into(), testo: "Nega".into(), delicato: false },
+            PulsanteUi { id: "consenti".into(), testo: "Consenti".into(), delicato: true },
+        ]));
+        p.set_attese(ModelRc::new(VecModel::from(vec![VoceAttesaUi {
+            id: "v".into(),
+            livello: LivelloUi::Bloccante,
+            titolo: "Avviso di prova".into(),
+            sotto: "Aspetta te · prova".into(),
+            dettaglio: "Il testo completo".into(),
+            icona: Default::default(),
+            pulsanti,
+        }])));
+        let chiusa = elemento(&p, "Avviso di prova, Aspetta te · prova");
+        assert_eq!(chiusa.accessible_role(), Some(AccessibleRole::Button));
+        assert_eq!((chiusa.accessible_expandable(), chiusa.accessible_expanded()), (Some(true), Some(false)));
+
+        p.invoke_espandi(0);
+        let espansa = elemento(&p, "Avviso di prova, Aspetta te · prova, voce 1 di 1");
+        assert_eq!(espansa.accessible_role(), Some(AccessibleRole::Groupbox));
+        assert_eq!(espansa.accessible_expanded(), Some(true));
+        assert_eq!(espansa.accessible_description().as_deref(), Some("Il testo completo"));
+        assert_eq!(elemento(&p, "Nega").accessible_role(), Some(AccessibleRole::Button));
+        assert_eq!(elemento(&p, "Consenti").accessible_role(), Some(AccessibleRole::Button));
+    }
+
+    #[test]
+    fn quadranti_dicono_nome_e_valore() {
+        piattaforma_di_prova();
+        let p = pannello();
+        p.set_layout(1);
+        p.set_pc(StatPcUi { pronta: true, cpu: 0.12, cpu_testo: "12%".into(), ..Default::default() });
+        let cpu = elemento(&p, "CPU");
+        assert_eq!(cpu.accessible_role(), Some(AccessibleRole::ProgressIndicator));
+        assert_eq!(cpu.accessible_value().as_deref(), Some("12%"));
+        // Senza sensori, il quadrante CASA dice lo stato della casa.
+        p.set_stato_casa("Casa non connessa".into());
+        assert_eq!(elemento(&p, "CASA, Casa non connessa").accessible_role(), Some(AccessibleRole::ProgressIndicator));
+    }
+
+    #[test]
+    fn pillola_e_un_pulsante_col_nome_giusto() {
+        piattaforma_di_prova();
+        let p = Pillola::new().expect("pillola");
+        assert_eq!(elemento(&p, "ItsyHome").accessible_role(), Some(AccessibleRole::Button));
+        p.set_aspetto(AspettoPillolaUi::Puntino);
+        assert_eq!(elemento(&p, "ItsyHome, una voce in attesa").accessible_role(), Some(AccessibleRole::Button));
+        p.set_aspetto(AspettoPillolaUi::Allargata);
+        p.set_messaggio("La casa chiede di te".into());
+        assert_eq!(elemento(&p, "La casa chiede di te").accessible_role(), Some(AccessibleRole::Button));
+    }
+
+    #[test]
+    fn sezioni_delle_impostazioni_selezionate() {
+        piattaforma_di_prova();
+        let f = FinestraImpostazioni::new().expect("impostazioni");
+        let ha = elemento(&f, "Home Assistant");
+        assert_eq!(ha.accessible_role(), Some(AccessibleRole::Tab));
+        assert_eq!((ha.accessible_item_selected(), ha.accessible_item_count()), (Some(true), Some(3)));
+        f.set_sezione(2);
+        assert_eq!(elemento(&f, "Informazioni").accessible_item_selected(), Some(true));
+        assert_eq!(elemento(&f, "Home Assistant").accessible_item_selected(), Some(false));
+    }
+
+    fn tasto(p: &Pannello, testo: impl Into<slint::SharedString> + Clone) {
+        use slint::platform::WindowEvent;
+        p.window().dispatch_event(WindowEvent::KeyPressed { text: testo.clone().into() });
+        p.window().dispatch_event(WindowEvent::KeyReleased { text: testo.into() });
+    }
+
+    #[test]
+    fn la_tastiera_regge_col_fuoco_sugli_elementi() {
+        // FE13: `tasti` avvolge il pannello e intercetta i tasti prima degli elementi che hanno il
+        // fuoco vero; Tab, frecce, Invio ed Esc fanno quello che facevano.
+        use slint::platform::Key;
+        piattaforma_di_prova();
+        let p = pannello();
+        p.set_app(app());
+        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        // Apertura finita (nel backend di prova il timer non gira): il fuoco vero va sugli elementi.
+        p.global::<crate::Fuochi>().set_pronti(true);
+        let chiuso = std::rc::Rc::new(std::cell::Cell::new(false));
+        let c = chiuso.clone();
+        p.on_chiudi(move || c.set(true));
+        // Contenuto (puntini) → Tab al dock → → su «Casa» → Invio: si apre la vista Casa.
+        tasto(&p, Key::Tab);
+        tasto(&p, Key::RightArrow);
+        tasto(&p, Key::Return);
+        assert_eq!(p.get_vista(), "casa");
+        // Backspace torna alla Panoramica; Esc chiude.
+        tasto(&p, Key::Backspace);
+        assert_eq!(p.get_vista(), "panoramica");
+        tasto(&p, Key::Escape);
+        assert!(chiuso.get(), "Esc chiude il pannello");
+    }
+
+    #[test]
+    fn invio_non_consente_anche_col_fuoco_sul_pulsante() {
+        // Il pulsante «Consenti» ha il fuoco vero (e sa premersi con Invio da solo), ma `tasti`
+        // intercetta prima: Invio da solo non concede, Ctrl+Invio sì (UX3/FE15).
+        use slint::platform::Key;
+        piattaforma_di_prova();
+        let p = pannello();
+        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        p.global::<crate::Fuochi>().set_pronti(true);
+        let pulsanti = ModelRc::new(VecModel::from(vec![
+            PulsanteUi { id: "nega".into(), testo: "Nega".into(), delicato: false },
+            PulsanteUi { id: "consenti".into(), testo: "Consenti".into(), delicato: true },
+        ]));
+        p.set_attese(ModelRc::new(VecModel::from(vec![VoceAttesaUi {
+            id: "v".into(),
+            livello: LivelloUi::Bloccante,
+            titolo: "Permesso".into(),
+            sotto: "Aspetta te · prova".into(),
+            dettaglio: "Posso?".into(),
+            icona: Default::default(),
+            pulsanti,
+        }])));
+        let azioni = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let a = azioni.clone();
+        p.on_azione(move |_, id| a.borrow_mut().push(id.to_string()));
+        p.invoke_espandi(0);
+        // Il fuoco parte da «Nega»: → su «Consenti», poi Invio da solo.
+        tasto(&p, Key::RightArrow);
+        tasto(&p, Key::Return);
+        assert!(azioni.borrow().is_empty(), "Invio da solo ha consentito: {:?}", azioni.borrow());
+        // Ctrl+Invio sì.
+        use slint::platform::WindowEvent;
+        p.window().dispatch_event(WindowEvent::KeyPressed { text: Key::Control.into() });
+        tasto(&p, Key::Return);
+        p.window().dispatch_event(WindowEvent::KeyReleased { text: Key::Control.into() });
+        assert_eq!(*azioni.borrow(), ["consenti"]);
+    }
+}

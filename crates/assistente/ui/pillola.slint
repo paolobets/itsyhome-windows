@@ -127,7 +127,8 @@ export component Pillola inherits Window {
     // A riposo l'anello al 45% (decisione E): la pillola resta trovabile anche su una barra scura.
     property <float> opacita-anello: dorme ? 0.25 : tranquillo ? 0.45 : 1.0;
     // Bloccante: anello da 4 px contro 2, distinto per forma anche col movimento ridotto.
-    property <length> spessore-anello: blocca ? 4px : 2px;
+    // Sul pixel fisico (FE27): a 1,25 e 1,75 i lati non hanno spessori diversi.
+    property <length> spessore-anello: Tema.sul-pixel(blocca ? 4px : 2px);
     property <color> bagliore-occhi: blocca ? Tema.bloccante : allerta ? Tema.caldo-2 : Tema.bagliore-occhio;
 
     // La riga del messaggio e se il testo non ci sta tutto. Calcolato sulle larghezze finali
@@ -161,12 +162,13 @@ export component Pillola inherits Window {
         width: larghezza-linea;
         height: altezza-linea;
         background: Tema.colore-livello(livello-linea);
-        border-width: 1px;
+        border-width: Tema.sul-pixel(1px);
         border-color: Tema.corpo;
     }
 
     pillola := Rectangle {
         visible: !ritirata;
+
         // Centrata: mentre la larghezza si anima resta ferma attorno al centro della finestra.
         x: (root.width - self.width) / 2;
         y: margine-aura;
@@ -213,6 +215,12 @@ export component Pillola inherits Window {
         // Clic sulla pillola (fuori dai pulsanti): apre il pannello, sulla voce se è allargata.
         TouchArea {
             mouse-cursor: pointer;
+            // Per Narrator (FE16): un pulsante che apre il pannello, col messaggio se chiama (i
+            // pulsanti della pillola allargata gli stanno accanto, non dentro).
+            accessible-role: button;
+            accessible-label: allargata ? messaggio
+                : aspetto == AspettoPillolaUi.puntino ? "ItsyHome, una voce in attesa" : "ItsyHome";
+            accessible-action-default => { root.cliccata(); }
             clicked => {
                 root.cliccata();
             }

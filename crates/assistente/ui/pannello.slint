@@ -14,7 +14,7 @@
 // zona scelta.
 import { Tema, Movimento } from "tema.slint";
 import { Faccia, Occhi } from "faccia.slint";
-import { Anello } from "componenti.slint";
+import { Anello, Fuoco, Fuochi } from "componenti.slint";
 import { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, UmoreUi } from "voci.slint";
 import { RigaAttesa, VoceEspansa } from "attesa.slint";
 import { VistaPc } from "viste/pc.slint";
@@ -32,6 +32,9 @@ component Scheda inherits Rectangle {
     in property <string> nome;
     in property <bool> attiva;
     in property <bool> anello;
+    // Posizione nel dock (per Narrator: «scheda 2 di 4»).
+    in property <int> indice;
+    in property <int> quante;
     callback scelta();
     property <bool> sosta: false;
 
@@ -39,9 +42,15 @@ component Scheda inherits Rectangle {
     height: 32px;
     border-radius: self.height / 2;
     background: attiva ? Tema.scheda-attiva : area.has-hover ? Tema.scheda-sopra : transparent;
-    accessible-role: button;
+    accessible-role: tab;
     accessible-label: nome;
+    accessible-item-selectable: true;
+    accessible-item-selected: attiva;
+    accessible-item-index: indice;
+    accessible-item-count: quante;
     accessible-action-default => { root.scelta(); }
+
+    Fuoco { chiede: anello; }
 
     Image {
         source: icona;
@@ -98,8 +107,14 @@ export component Pannello inherits Window {
     // Layout della Panoramica (indice del puntino: 0 Orologio, 1 Quadranti, come `layout.rs`).
     in-out property <int> layout: 0;
     out property <int> numero-layout: 2;
-    // L'app mostrata al centro; "panoramica" è la schermata principale.
+    // L'app mostrata al centro; "panoramica" è la schermata principale. È l'id di un'app del
+    // registro (un dato, non uno stato con un nome: resta una stringa).
     in-out property <string> vista: "panoramica";
+    // L'app aperta per ultima dal dock (indice in `app`) e se non ha una vista sua (oggi nessuna:
+    // le Impostazioni hanno una finestra loro).
+    property <int> indice-vista: 0;
+    property <bool> vista-vuota: vista != "panoramica" && vista != "casa" && vista != "pc"
+        && indice-vista >= 0 && indice-vista < app.length && app[indice-vista].id == vista;
     in property <[VoceAppUi]> app;
     // Statistiche del PC, aggiornate ogni 2 s solo a pannello aperto.
     in property <StatPcUi> pc;
@@ -297,6 +312,7 @@ export component Pannello inherits Window {
 
     function apri(i: int, id: string) {
         fuoco-dock = i;
+        indice-vista = i;
         // «Impostazioni» non è una vista: apre la sua finestra (e il pannello si chiude).
         if (id != "impostazioni") {
             vai(id);
@@ -406,8 +422,14 @@ export component Pannello inherits Window {
         }
     }
 
+    // Tiene la tastiera di tutto il pannello: intercetta ogni tasto prima dell'elemento col fuoco
+    // (`capture-key-pressed`), che sia lui o un elemento dentro. Il fuoco vero va sull'elemento
+    // scelto da tastiera (FE13: Narrator ne legge ruolo e nome); col mouse, o se quell'elemento
+    // non c'è più, torna qui.
     tasti := FocusScope {
-        key-pressed(evento) => {
+        accessible-role: groupbox;
+        accessible-label: "Pannello di ItsyHome";
+        capture-key-pressed(evento) => {
             // Un livello alla volta: con una voce espansa il primo Esc la riduce, il secondo chiude.
             if (evento.text == Key.Escape) {
                 if (espansa) {
@@ -451,6 +473,379 @@ export component Pannello inherits Window {
             }
             return reject;
         }
+
+        // Apertura: il pannello scende dalla riga degli occhi e compare (opacità + altezza, 200 ms).
+        // Con il movimento ridotto non scende: compare soltanto, in dissolvenza (120 ms).
+        corpo := Rectangle {
+            y: 0;
+            height: aperto ? root.height : altezza-riga;
+            opacity: aperto ? 1 : 0;
+            animate height { duration: Movimento.ridotto ? 0ms : 200ms; easing: ease-out; }
+            animate opacity { duration: Movimento.ridotto ? 120ms : 200ms; easing: ease-out; }
+            border-radius: Tema.raggio-pannello;
+            clip: true;
+            // Anello sottile con i colori dei petali, come il bordo dell'isola nella bozza (fermo).
+            background: Tema.petali;
+
+            // Filo di 1,5 px arrotondato al pixel fisico (FE27): a 1,25 e 1,75 non si sfoca.
+            Rectangle {
+                property <length> filo: Tema.sul-pixel(1.5px);
+                x: filo;
+                y: filo;
+                width: parent.width - 2 * filo;
+                height: parent.height - 2 * filo;
+                border-radius: parent.border-radius - filo;
+                clip: true;
+                background: Tema.corpo;
+
+                // Due bagliori appena percettibili (indaco in alto a sinistra, verde acqua in basso a destra).
+                // Quadrati con la sfumatura che svanisce prima dei lati: nessun bordo visibile.
+                Rectangle {
+                    x: -100px;
+                    y: -220px;
+                    width: 440px;
+                    height: 440px;
+                    background: @radial-gradient(circle, Tema.bagliore-indaco 0%, transparent 60%);
+                }
+
+                Rectangle {
+                    x: parent.width - 230px;
+                    y: parent.height - 190px;
+                    width: 400px;
+                    height: 400px;
+                    background: @radial-gradient(circle, Tema.bagliore-acqua 0%, transparent 60%);
+                }
+            }
+
+            // Riga alta: occhi al centro, ora a destra («Indietro» a sinistra è più sotto).
+            // Il battito di ciglia (dentro Occhi) solo a pannello aperto.
+            occhi := Occhi {
+                umore: root.umore;
+                attivo: aperto;
+                // Restano sugli occhi della pillola mentre il pannello compare, poi vanno al centro
+                // (solo lo scarto è animato: un cambio d'umore li ricentra subito).
+                property <length> scarto: occhi-al-centro ? 0px : partenza-occhi;
+                property <length> scarto-y: occhi-al-centro ? 0px : partenza-occhi-y;
+                animate scarto, scarto-y { duration: Movimento.ridotto ? 0ms : 240ms; easing: ease-in-out; }
+                x: (parent.width - self.ingombro) / 2 + self.scarto;
+                y: self.scarto-y;
+                width: self.ingombro;
+                height: altezza-riga;
+                accessible-role: button;
+                accessible-label: "Chiudi il pannello";
+                accessible-action-default => { root.chiudi(); }
+
+                TouchArea {
+                    // Un po' più larga degli occhi, per non doverli centrare al pixel.
+                    x: -12px;
+                    width: parent.width + 24px;
+                    mouse-cursor: pointer;
+                    clicked => { root.chiudi(); }
+                }
+            }
+
+            Text {
+                x: 0;
+                y: 0;
+                width: parent.width - margine;
+                height: altezza-riga;
+                text: ora;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+                font-family: Tema.carattere-mono;
+                font-size: Tema.testo-corpo;
+                color: Tema.testo-ora;
+            }
+
+            // «‹ Indietro» a sinistra della riga alta, solo dentro un'app: torna alla Panoramica.
+            // Alto 28 nella riga da 32: 2 px sopra e sotto, così né lo sfondo dell'hover né l'anello
+            // del fuoco toccano il filo colorato del bordo (1,5 px) o la curva dell'angolo.
+            if vista != "panoramica": Rectangle {
+                x: margine - 8px;
+                y: (altezza-riga - self.height) / 2;
+                height: 28px;
+                width: etichetta-indietro.preferred-width + 20px;
+                border-radius: self.height / 2;
+                background: area-indietro.has-hover ? Tema.scheda-sopra : transparent;
+                accessible-role: button;
+                accessible-label: "Indietro";
+                accessible-action-default => { indietro(); }
+
+                Fuoco { chiede: da-tastiera && zona == Zona.indietro; }
+
+                etichetta-indietro := Text {
+                    text: "‹ Indietro";
+                    font-size: Tema.testo-corpo;
+                    color: Tema.testo-ora;
+                }
+
+                area-indietro := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        da-tastiera = false;
+                        indietro();
+                    }
+                }
+
+                // Anello del fuoco sul contorno del pulsante (dentro, non fuori): fuori sarebbe
+                // tagliato dal bordo alto del pannello, che ha `clip`.
+                if da-tastiera && zona == Zona.indietro: Anello {
+                    raggio: parent.border-radius;
+                    distanza: -2px;
+                }
+            }
+
+            // «In attesa»: in cima alla Panoramica, solo se c'è qualcosa.
+            if con-attese && !espansa: RigaAttesa {
+                x: centro-x;
+                y: centro-y;
+                width: centro-l;
+                height: altezza-attese;
+                voci: root.attese;
+                fuoco: da-tastiera && zona == Zona.attesa ? fuoco-attesa : -1;
+                scelta(i) => {
+                    da-tastiera = false;
+                    apri-voce(i);
+                }
+            }
+
+            // Una voce espansa sul posto: copre la riga e il layout (nessuna vista nuova).
+            if espansa: VoceEspansa {
+                x: centro-x;
+                y: centro-y;
+                width: centro-l;
+                height: centro-a;
+                voce: root.attese[indice-aperta];
+                posizione: indice-aperta;
+                totale: root.attese.length;
+                fuoco: !(da-tastiera && zona == Zona.attesa) ? -1 : fuoco-pulsante >= 0 ? fuoco-pulsante : -2;
+                scorri-su: root.testo-su;
+                scorri-giu: root.testo-giu;
+                fondo(a-fondo) => { root.testo-a-fondo = a-fondo; }
+                riduci => {
+                    da-tastiera = false;
+                    riduci-voce();
+                }
+                precedente => {
+                    da-tastiera = false;
+                    apri-voce(indice-aperta > 0 ? indice-aperta - 1 : root.attese.length - 1);
+                }
+                successiva => {
+                    da-tastiera = false;
+                    apri-voce(indice-aperta < root.attese.length - 1 ? indice-aperta + 1 : 0);
+                }
+                azione(p) => {
+                    da-tastiera = false;
+                    root.azione(voce-aperta, p);
+                }
+            }
+
+            // Centro: la Panoramica (solo sintesi, nessun comando) o la vista dell'app.
+            Rectangle {
+                x: centro-x;
+                y: centro-y + sotto-attese;
+                width: centro-l;
+                height: centro-a - sotto-attese;
+                visible: !espansa;
+
+                if vista == "panoramica" && layout == 0: LayoutOrologio {
+                    width: parent.width;
+                    height: parent.height;
+                    ora: root.ora;
+                    data: root.data;
+                    stato-casa: root.stato-casa;
+                    casa-pronta: root.casa-pronta;
+                    pc: root.pc;
+                }
+                if vista == "panoramica" && layout == 1: LayoutQuadranti {
+                    width: parent.width;
+                    height: parent.height;
+                    stat: root.pc;
+                    sensori: root.sensori;
+                    stato-casa: root.stato-casa;
+                    casa-pronta: root.casa-pronta;
+                }
+
+                // La rotella sulla Panoramica cambia layout (in giù il successivo).
+                if vista == "panoramica": TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    scroll-event(evento) => {
+                        if (rotella-ferma) {
+                            return accept;
+                        }
+                        rotella += abs(evento.delta-x) > abs(evento.delta-y) ? evento.delta-x : evento.delta-y;
+                        silenzio-rotella.running = true;
+                        silenzio-rotella.restart();
+                        if (abs(rotella) >= 24px) {
+                            root.scorri-layout(rotella < 0 ? 1 : -1);
+                            rotella = 0px;
+                            rotella-ferma = true;
+                        }
+                        return accept;
+                    }
+                }
+
+                if vista == "casa": VistaCasa {
+                    width: parent.width;
+                    height: parent.height;
+                    preferiti: root.preferiti;
+                    stato-casa: root.stato-casa;
+                    casa-pronta: root.casa-pronta;
+                    dati-delle: root.dati-delle;
+                    riprova: riprova-visibile;
+                    colonne: root.colonne-casa;
+                    fuoco: da-tastiera && zona == Zona.contenuto ? fuoco-casa-valido : -1;
+                    fuoco-riprova: da-tastiera && zona == Zona.contenuto && fuoco-casa < 0;
+                    fuoco-impostazioni: da-tastiera && zona == Zona.contenuto;
+                    tocca(id) => {
+                        da-tastiera = false;
+                        root.tocca(id);
+                    }
+                    riprova-casa => {
+                        da-tastiera = false;
+                        root.riprova-casa();
+                    }
+                    apri-impostazioni => {
+                        da-tastiera = false;
+                        root.apri-app("impostazioni");
+                    }
+                }
+
+                if vista == "pc": VistaPc {
+                    width: parent.width;
+                    height: parent.height;
+                    stat: root.pc;
+                }
+
+                // Vista di un'app senza contenuti propri: solo il titolo (oggi nessuna; le Impostazioni
+                // hanno una finestra loro).
+                // Una sola, e creata solo se serve (FE4): l'app è quella scelta per ultima nel dock.
+                if vista-vuota: VerticalLayout {
+                    width: parent.width;
+                    height: parent.height;
+                    alignment: center;
+                    spacing: 10px;
+
+                    HorizontalLayout {
+                        alignment: center;
+
+                        Image {
+                            source: app[indice-vista].icona;
+                            width: 38px;
+                            height: 38px;
+                            colorize: Tema.icona;
+                            image-rendering: smooth;
+                        }
+                    }
+
+                    Text {
+                        text: app[indice-vista].nome;
+                        horizontal-alignment: center;
+                        font-weight: 500;
+                        font-size: Tema.testo-vuoto;
+                        color: Tema.testo;
+                    }
+                }
+            }
+
+            // Puntini dei layout, solo nella Panoramica e non sotto una voce espansa (il layout è
+            // coperto): quello attivo è allungato. Bersagli 24 × 24 (WCAG 2.2), disegno invariato.
+            if vista == "panoramica" && !espansa: HorizontalLayout {
+                x: 0;
+                width: parent.width;
+                y: puntini-y;
+                height: altezza-puntini;
+                alignment: center;
+
+                Rectangle {
+                    // Gruppo dei puntini: l'anello del fuoco li circonda tutti.
+                    accessible-role: tab-list;
+                    accessible-label: "Layout della Panoramica";
+
+                    HorizontalLayout {
+                        for nome[i] in ["Orologio", "Quadranti"]: Rectangle {
+                            property <bool> attivo: i == layout;
+                            width: max(24px, (attivo ? 14px : 6px) + 8px);
+                            height: altezza-puntini;
+                            accessible-role: tab;
+                            accessible-label: "Layout " + nome;
+                            accessible-item-selectable: true;
+                            accessible-item-selected: attivo;
+                            accessible-item-index: i;
+                            accessible-item-count: 2;
+                            accessible-action-default => { scegli(i); }
+
+                            // Il fuoco vero sul layout attivo: ←/→ lo cambiano e il fuoco lo segue.
+                            Fuoco { chiede: attivo && da-tastiera && zona == Zona.contenuto; }
+
+                            Rectangle {
+                                width: attivo ? 14px : 6px;
+                                height: 6px;
+                                border-radius: self.height / 2;
+                                background: attivo ? Tema.testo : Tema.puntino;
+                            }
+
+                            // Più alta della riga (20): 24 × 24 senza spostare dock e layout.
+                            TouchArea {
+                                y: (parent.height - self.height) / 2;
+                                height: 24px;
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    da-tastiera = false;
+                                    scegli(i);
+                                }
+                            }
+                        }
+                    }
+
+                    // Solo ai lati: sopra e sotto c'è appena posto fra layout e dock.
+                    if da-tastiera && zona == Zona.contenuto: Anello {
+                        distanza-y: -2px;
+                        raggio-anello: self.height / 2;
+                    }
+                }
+            }
+
+            // Dock centrato: solo le app del registro, solo icone (il nome nel suggerimento).
+            HorizontalLayout {
+                x: 0;
+                width: parent.width;
+                y: dock-y;
+                height: altezza-dock;
+                alignment: center;
+
+                Rectangle {
+                    border-radius: altezza-dock / 2;
+                    background: Tema.capsula;
+                    accessible-role: tab-list;
+                    accessible-label: "App";
+                    border-width: Tema.sul-pixel(0.5px);
+                    border-color: Tema.vetro-bordo;
+
+                    HorizontalLayout {
+                        padding-left: 6px;
+                        padding-right: 6px;
+                        padding-top: 3px;
+                        padding-bottom: 3px;
+                        spacing: 4px;
+
+                        for voce[i] in app: Scheda {
+                            icona: voce.icona;
+                            nome: voce.nome;
+                            indice: i;
+                            quante: app.length;
+                            attiva: vista == voce.id;
+                            anello: da-tastiera && zona == Zona.dock && fuoco-dock == i;
+                            scelta => {
+                                da-tastiera = false;
+                                apri(i, voce.id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     Timer {
@@ -473,6 +868,28 @@ export component Pannello inherits Window {
         }
     }
 
+    // Il fuoco vero sugli elementi solo a pannello sceso (vedi `Fuochi`): l'apertura dura 200 ms.
+    init => { Fuochi.pronti = false; }
+    Timer {
+        interval: 220ms;
+        running: aperto && !Fuochi.pronti;
+        triggered => { Fuochi.pronti = true; }
+    }
+
+    // C'è un elemento per la zona e l'indice col fuoco da tastiera? Se no (clic col mouse, voce
+    // sparita, Casa svuotata) il fuoco torna a `tasti`, che tiene comunque la tastiera.
+    property <bool> bersaglio: zona == Zona.indietro ? vista != "panoramica"
+        : zona == Zona.attesa ? (espansa || (con-attese && (fuoco-attesa < min(3, attese.length) || (fuoco-attesa == 3 && attese.length > 3))))
+        : zona == Zona.contenuto ? ha-zona(Zona.contenuto) && (vista == "panoramica"
+            || (preferiti.length > 0 ? (fuoco-casa >= 0 || riprova-visibile) : !casa-pronta))
+        : true;
+    property <bool> fuoco-su-elemento: da-tastiera && bersaglio;
+    changed fuoco-su-elemento => {
+        if (!self.fuoco-su-elemento) {
+            tasti.focus();
+        }
+    }
+
     Timer {
         interval: 160ms;
         running: aperto && !occhi-al-centro;
@@ -481,358 +898,4 @@ export component Pannello inherits Window {
         }
     }
 
-    // Apertura: il pannello scende dalla riga degli occhi e compare (opacità + altezza, 200 ms).
-    // Con il movimento ridotto non scende: compare soltanto, in dissolvenza (120 ms).
-    corpo := Rectangle {
-        y: 0;
-        height: aperto ? root.height : altezza-riga;
-        opacity: aperto ? 1 : 0;
-        animate height { duration: Movimento.ridotto ? 0ms : 200ms; easing: ease-out; }
-        animate opacity { duration: Movimento.ridotto ? 120ms : 200ms; easing: ease-out; }
-        border-radius: Tema.raggio-pannello;
-        clip: true;
-        // Anello sottile con i colori dei petali, come il bordo dell'isola nella bozza (fermo).
-        background: Tema.petali;
-
-        Rectangle {
-            x: 1.5px;
-            y: 1.5px;
-            width: parent.width - 3px;
-            height: parent.height - 3px;
-            border-radius: parent.border-radius - 1.5px;
-            clip: true;
-            background: Tema.corpo;
-
-            // Due bagliori appena percettibili (indaco in alto a sinistra, verde acqua in basso a destra).
-            // Quadrati con la sfumatura che svanisce prima dei lati: nessun bordo visibile.
-            Rectangle {
-                x: -100px;
-                y: -220px;
-                width: 440px;
-                height: 440px;
-                background: @radial-gradient(circle, Tema.bagliore-indaco 0%, transparent 60%);
-            }
-
-            Rectangle {
-                x: parent.width - 230px;
-                y: parent.height - 190px;
-                width: 400px;
-                height: 400px;
-                background: @radial-gradient(circle, Tema.bagliore-acqua 0%, transparent 60%);
-            }
-        }
-
-        // Riga alta: occhi al centro, ora a destra («Indietro» a sinistra è più sotto).
-        // Il battito di ciglia (dentro Occhi) solo a pannello aperto.
-        occhi := Occhi {
-            umore: root.umore;
-            attivo: aperto;
-            // Restano sugli occhi della pillola mentre il pannello compare, poi vanno al centro
-            // (solo lo scarto è animato: un cambio d'umore li ricentra subito).
-            property <length> scarto: occhi-al-centro ? 0px : partenza-occhi;
-            property <length> scarto-y: occhi-al-centro ? 0px : partenza-occhi-y;
-            animate scarto, scarto-y { duration: Movimento.ridotto ? 0ms : 240ms; easing: ease-in-out; }
-            x: (parent.width - self.ingombro) / 2 + self.scarto;
-            y: self.scarto-y;
-            width: self.ingombro;
-            height: altezza-riga;
-            accessible-role: button;
-            accessible-label: "Chiudi il pannello";
-            accessible-action-default => { root.chiudi(); }
-
-            TouchArea {
-                // Un po' più larga degli occhi, per non doverli centrare al pixel.
-                x: -12px;
-                width: parent.width + 24px;
-                mouse-cursor: pointer;
-                clicked => { root.chiudi(); }
-            }
-        }
-
-        Text {
-            x: 0;
-            y: 0;
-            width: parent.width - margine;
-            height: altezza-riga;
-            text: ora;
-            horizontal-alignment: right;
-            vertical-alignment: center;
-            font-family: Tema.carattere-mono;
-            font-size: Tema.testo-corpo;
-            color: Tema.testo-ora;
-        }
-
-        // «‹ Indietro» a sinistra della riga alta, solo dentro un'app: torna alla Panoramica.
-        // Alto 28 nella riga da 32: 2 px sopra e sotto, così né lo sfondo dell'hover né l'anello
-        // del fuoco toccano il filo colorato del bordo (1,5 px) o la curva dell'angolo.
-        if vista != "panoramica": Rectangle {
-            x: margine - 8px;
-            y: (altezza-riga - self.height) / 2;
-            height: 28px;
-            width: etichetta-indietro.preferred-width + 20px;
-            border-radius: self.height / 2;
-            background: area-indietro.has-hover ? Tema.scheda-sopra : transparent;
-            accessible-role: button;
-            accessible-label: "Indietro";
-            accessible-action-default => { indietro(); }
-
-            etichetta-indietro := Text {
-                text: "‹ Indietro";
-                font-size: Tema.testo-corpo;
-                color: Tema.testo-ora;
-            }
-
-            area-indietro := TouchArea {
-                mouse-cursor: pointer;
-                clicked => {
-                    da-tastiera = false;
-                    indietro();
-                }
-            }
-
-            // Anello del fuoco sul contorno del pulsante (dentro, non fuori): fuori sarebbe
-            // tagliato dal bordo alto del pannello, che ha `clip`.
-            if da-tastiera && zona == Zona.indietro: Anello {
-                raggio: parent.border-radius;
-                distanza: -2px;
-            }
-        }
-
-        // «In attesa»: in cima alla Panoramica, solo se c'è qualcosa.
-        if con-attese && !espansa: RigaAttesa {
-            x: centro-x;
-            y: centro-y;
-            width: centro-l;
-            height: altezza-attese;
-            voci: root.attese;
-            fuoco: da-tastiera && zona == Zona.attesa ? fuoco-attesa : -1;
-            scelta(i) => {
-                da-tastiera = false;
-                apri-voce(i);
-            }
-        }
-
-        // Una voce espansa sul posto: copre la riga e il layout (nessuna vista nuova).
-        if espansa: VoceEspansa {
-            x: centro-x;
-            y: centro-y;
-            width: centro-l;
-            height: centro-a;
-            voce: root.attese[indice-aperta];
-            posizione: indice-aperta;
-            totale: root.attese.length;
-            fuoco: !(da-tastiera && zona == Zona.attesa) ? -1 : fuoco-pulsante >= 0 ? fuoco-pulsante : -2;
-            scorri-su: root.testo-su;
-            scorri-giu: root.testo-giu;
-            fondo(a-fondo) => { root.testo-a-fondo = a-fondo; }
-            riduci => {
-                da-tastiera = false;
-                riduci-voce();
-            }
-            precedente => {
-                da-tastiera = false;
-                apri-voce(indice-aperta > 0 ? indice-aperta - 1 : root.attese.length - 1);
-            }
-            successiva => {
-                da-tastiera = false;
-                apri-voce(indice-aperta < root.attese.length - 1 ? indice-aperta + 1 : 0);
-            }
-            azione(p) => {
-                da-tastiera = false;
-                root.azione(voce-aperta, p);
-            }
-        }
-
-        // Centro: la Panoramica (solo sintesi, nessun comando) o la vista dell'app.
-        Rectangle {
-            x: centro-x;
-            y: centro-y + sotto-attese;
-            width: centro-l;
-            height: centro-a - sotto-attese;
-            visible: !espansa;
-
-            if vista == "panoramica" && layout == 0: LayoutOrologio {
-                width: parent.width;
-                height: parent.height;
-                ora: root.ora;
-                data: root.data;
-                stato-casa: root.stato-casa;
-                casa-pronta: root.casa-pronta;
-                pc: root.pc;
-            }
-            if vista == "panoramica" && layout == 1: LayoutQuadranti {
-                width: parent.width;
-                height: parent.height;
-                stat: root.pc;
-                sensori: root.sensori;
-                stato-casa: root.stato-casa;
-                casa-pronta: root.casa-pronta;
-            }
-
-            // La rotella sulla Panoramica cambia layout (in giù il successivo).
-            if vista == "panoramica": TouchArea {
-                width: parent.width;
-                height: parent.height;
-                scroll-event(evento) => {
-                    if (rotella-ferma) {
-                        return accept;
-                    }
-                    rotella += abs(evento.delta-x) > abs(evento.delta-y) ? evento.delta-x : evento.delta-y;
-                    silenzio-rotella.running = true;
-                    silenzio-rotella.restart();
-                    if (abs(rotella) >= 24px) {
-                        root.scorri-layout(rotella < 0 ? 1 : -1);
-                        rotella = 0px;
-                        rotella-ferma = true;
-                    }
-                    return accept;
-                }
-            }
-
-            if vista == "casa": VistaCasa {
-                width: parent.width;
-                height: parent.height;
-                preferiti: root.preferiti;
-                stato-casa: root.stato-casa;
-                casa-pronta: root.casa-pronta;
-                dati-delle: root.dati-delle;
-                riprova: riprova-visibile;
-                colonne: root.colonne-casa;
-                fuoco: da-tastiera && zona == Zona.contenuto ? fuoco-casa-valido : -1;
-                fuoco-riprova: da-tastiera && zona == Zona.contenuto && fuoco-casa < 0;
-                fuoco-impostazioni: da-tastiera && zona == Zona.contenuto;
-                tocca(id) => {
-                    da-tastiera = false;
-                    root.tocca(id);
-                }
-                riprova-casa => {
-                    da-tastiera = false;
-                    root.riprova-casa();
-                }
-                apri-impostazioni => {
-                    da-tastiera = false;
-                    root.apri-app("impostazioni");
-                }
-            }
-
-            if vista == "pc": VistaPc {
-                width: parent.width;
-                height: parent.height;
-                stat: root.pc;
-            }
-
-            // Vista di un'app senza contenuti propri: solo il titolo (oggi nessuna; le Impostazioni
-            // hanno una finestra loro).
-            for voce in app: VerticalLayout {
-                width: parent.width;
-                height: parent.height;
-                visible: vista == voce.id && voce.id != "panoramica" && voce.id != "pc" && voce.id != "casa";
-                alignment: center;
-                spacing: 10px;
-
-                HorizontalLayout {
-                    alignment: center;
-
-                    Image {
-                        source: voce.icona;
-                        width: 38px;
-                        height: 38px;
-                        colorize: Tema.icona;
-                        image-rendering: smooth;
-                    }
-                }
-
-                Text {
-                    text: voce.nome;
-                    horizontal-alignment: center;
-                    font-weight: 500;
-                    font-size: Tema.testo-vuoto;
-                    color: Tema.testo;
-                }
-            }
-        }
-
-        // Puntini dei layout, solo nella Panoramica e non sotto una voce espansa (il layout è
-        // coperto): quello attivo è allungato. Bersagli 24 × 24 (WCAG 2.2), disegno invariato.
-        if vista == "panoramica" && !espansa: HorizontalLayout {
-            x: 0;
-            width: parent.width;
-            y: puntini-y;
-            height: altezza-puntini;
-            alignment: center;
-
-            Rectangle {
-                // Gruppo dei puntini: l'anello del fuoco li circonda tutti.
-                HorizontalLayout {
-                    for nome[i] in ["Orologio", "Quadranti"]: Rectangle {
-                        property <bool> attivo: i == layout;
-                        width: max(24px, (attivo ? 14px : 6px) + 8px);
-                        height: altezza-puntini;
-                        accessible-role: button;
-                        accessible-label: "Layout " + nome;
-                        accessible-action-default => { scegli(i); }
-
-                        Rectangle {
-                            width: attivo ? 14px : 6px;
-                            height: 6px;
-                            border-radius: self.height / 2;
-                            background: attivo ? Tema.testo : Tema.puntino;
-                        }
-
-                        // Più alta della riga (20): 24 × 24 senza spostare dock e layout.
-                        TouchArea {
-                            y: (parent.height - self.height) / 2;
-                            height: 24px;
-                            mouse-cursor: pointer;
-                            clicked => {
-                                da-tastiera = false;
-                                scegli(i);
-                            }
-                        }
-                    }
-                }
-
-                // Solo ai lati: sopra e sotto c'è appena posto fra layout e dock.
-                if da-tastiera && zona == Zona.contenuto: Anello {
-                    distanza-y: -2px;
-                    raggio-anello: self.height / 2;
-                }
-            }
-        }
-
-        // Dock centrato: solo le app del registro, solo icone (il nome nel suggerimento).
-        HorizontalLayout {
-            x: 0;
-            width: parent.width;
-            y: dock-y;
-            height: altezza-dock;
-            alignment: center;
-
-            Rectangle {
-                border-radius: altezza-dock / 2;
-                background: Tema.capsula;
-                border-width: 0.5px;
-                border-color: Tema.vetro-bordo;
-
-                HorizontalLayout {
-                    padding-left: 6px;
-                    padding-right: 6px;
-                    padding-top: 3px;
-                    padding-bottom: 3px;
-                    spacing: 4px;
-
-                    for voce[i] in app: Scheda {
-                        icona: voce.icona;
-                        nome: voce.nome;
-                        attiva: vista == voce.id;
-                        anello: da-tastiera && zona == Zona.dock && fuoco-dock == i;
-                        scelta => {
-                            da-tastiera = false;
-                            apri(i, voce.id);
-                        }
-                    }
-                }
-            }
-        }
-    }
 }

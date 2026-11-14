@@ -235,6 +235,7 @@ fn ritagli(prima: (f32, f32), dopo: (f32, f32)) -> ((f32, f32), Option<(f32, f32
 
 /// Finestra appena nata, spostata, DPI o monitor cambiati: posizione e ritaglio di nuovo.
 pub fn al_cambio_schermo(ui: &Pillola) {
+    finestre::scrivi_scala(&ui.global::<crate::Tema>(), ui.window().scale_factor());
     finestre::posiziona_pillola(ui.window());
     applica_ritaglio(ui);
 }

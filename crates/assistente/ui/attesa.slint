@@ -4,7 +4,7 @@
 // Clic su una voce = si espande sul posto (testo completo e pulsanti), senza viste nuove.
 import { Tema } from "tema.slint";
 import { VoceAttesaUi, PulsanteUi } from "voci.slint";
-import { Anello, Pulsante, TipoPulsante } from "componenti.slint";
+import { Anello, Fuoco, Pulsante, TipoPulsante } from "componenti.slint";
 
 // Una voce chiusa: barretta, titolo, «livello · fonte».
 component VoceChiusa inherits Rectangle {
@@ -14,9 +14,15 @@ component VoceChiusa inherits Rectangle {
 
     border-radius: Tema.raggio-l;
     background: area.has-hover ? Tema.scheda-sopra : Tema.card-fondo;
+    // Per Narrator: un pulsante che si espande (chiuso), col fuoco vero quando l'anello c'è.
     accessible-role: button;
     accessible-label: voce.titolo + ", " + voce.sotto;
+    accessible-expandable: true;
+    accessible-expanded: false;
     accessible-action-default => { root.scelta(); }
+    accessible-action-expand => { root.scelta(); }
+
+    Fuoco { chiede: anello; }
 
     Rectangle {
         x: 10px;
@@ -68,12 +74,12 @@ export component RigaAttesa inherits Rectangle {
     property <length> largo-altre: altre > 0 ? 48px : 0px;
     property <length> largo-voce: (self.width - largo-altre - (altre > 0 ? spazio : 0px) - (visibili - 1) * spazio) / max(1, visibili);
 
-    for v[i] in voci: VoceChiusa {
-        visible: i < 3;
+    // Solo le voci visibili, create una per una (FE4): le altre stanno in «+N».
+    for i in visibili: VoceChiusa {
         x: i * (largo-voce + spazio);
         width: largo-voce;
         height: root.height;
-        voce: v;
+        voce: root.voci[i];
         anello: i == root.fuoco;
         scelta => { root.scelta(i); }
     }
@@ -87,6 +93,8 @@ export component RigaAttesa inherits Rectangle {
         accessible-role: button;
         accessible-label: "Altre " + altre + " voci in attesa";
         accessible-action-default => { root.scelta(3); }
+
+        Fuoco { chiede: root.fuoco == 3; }
 
         Text {
             text: "+" + altre;
@@ -139,6 +147,15 @@ export component VoceEspansa inherits Rectangle {
     background: Tema.riquadro-fondo;
     border-width: 1px;
     border-color: Tema.vetro-bordo;
+    // Per Narrator: la voce espansa, col titolo come nome e il testo completo come descrizione; col
+    // fuoco sulla voce stessa (non su un pulsante) è lei a riceverlo.
+    accessible-role: groupbox;
+    accessible-label: voce.titolo + ", " + voce.sotto + ", voce " + (posizione + 1) + " di " + totale;
+    accessible-description: voce.dettaglio;
+    accessible-expandable: true;
+    accessible-expanded: true;
+
+    Fuoco { chiede: root.fuoco == -2; }
 
     // Testata cliccabile: richiude la voce.
     TouchArea {
@@ -295,6 +312,7 @@ export component VoceEspansa inherits Rectangle {
             testo: p.testo;
             tipo: i == voce.pulsanti.length - 1 ? TipoPulsante.azione : TipoPulsante.neutro;
             anello: i == root.fuoco;
+            chiede-fuoco: i == root.fuoco;
             premuto => { root.azione(p.id); }
         }
     }

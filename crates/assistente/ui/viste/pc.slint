@@ -14,6 +14,11 @@ component Riga inherits Rectangle {
     // Batteria: l'avviso scatta quando è quasi scarica, non quando è piena.
     in property <bool> invertita: false;
     height: 44px;
+    // Per Narrator: nome, valore e dettaglio (FE16).
+    accessible-role: progress-indicator;
+    accessible-label: etichetta;
+    accessible-value: valore;
+    accessible-description: dettaglio;
 
     Etichetta {
         x: 14px;

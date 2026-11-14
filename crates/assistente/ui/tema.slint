@@ -145,6 +145,15 @@ export global Tema {
     out property <length> testo-intestazione: 20px;
     out property <length> testo-ora-grande: 68px;
 
+    // ─── Pixel fisici (FE27) ───
+    // Scala della finestra (1, 1,25, 1,75…): la scrive Rust per ogni finestra, all'avvio e quando
+    // cambia (monitor o DPI). `sul-pixel` arrotonda uno spessore al pixel fisico più vicino (almeno
+    // uno): un filo di 1,5 px a 1,75 diventa 3 px fisici netti invece di 2,625 sfocati.
+    in property <float> scala: 1;
+    public pure function sul-pixel(spessore: length) -> length {
+        return max(1, round(spessore / 1px * scala)) / scala * 1px;
+    }
+
     out property <string> carattere: "Inter Tight";
     out property <string> carattere-mono: "JetBrains Mono";
 }

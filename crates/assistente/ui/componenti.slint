@@ -2,6 +2,34 @@
 // fuoco, un solo pulsante di testo, una sola etichetta maiuscola. Gli occhi stanno in faccia.slint.
 import { Tema } from "tema.slint";
 
+// Il pannello tiene i tasti in un solo FocusScope (`tasti`, che li intercetta tutti) ma porta il
+// fuoco vero sull'elemento scelto da tastiera, perché Narrator lo legga (FE13). Falso nei primi
+// istanti dell'apertura: mentre il pannello scende il contenuto è fuori dal ritaglio e Slint
+// toglierebbe il fuoco a un elemento non visibile. Fuori dal pannello resta vero.
+export global Fuochi {
+    in-out property <bool> pronti: true;
+}
+
+// Prende il fuoco vero quando `chiede` diventa vero (o nasce già vero): va dentro l'elemento che lo
+// riceve (pulsante, card, scheda), così Narrator legge ruolo e nome di quell'elemento. Non prende
+// tasti né clic: li gestisce chi tiene la tastiera.
+export component Fuoco inherits FocusScope {
+    in property <bool> chiede;
+    property <bool> vuole: chiede && Fuochi.pronti;
+    changed vuole => {
+        if (self.vuole) {
+            self.focus();
+        }
+    }
+    init => {
+        if (self.vuole) {
+            self.focus();
+        }
+    }
+    focus-on-click: false;
+    focus-on-tab-navigation: false;
+}
+
 // Tipo di un pulsante: neutro (bianco tenue), azione (verde acqua, con il bordo), pericolo (rosso).
 export enum TipoPulsante { neutro, azione, pericolo }
 
@@ -15,7 +43,7 @@ export component Anello inherits Rectangle {
     in property <length> distanza: 2px;
     in property <length> distanza-y: distanza;
     in property <length> raggio-anello: raggio + distanza + spessore;
-    property <length> spessore: 2px;
+    property <length> spessore: Tema.sul-pixel(2px);
 
     Rectangle {
         x: -(distanza + spessore);
@@ -45,6 +73,7 @@ export component Pulsante inherits FocusScope {
     in property <bool> anello: root.has-focus;
     // Il pannello decide da sé dove sta il fuoco (FE13): vero = questo pulsante lo prende.
     in property <bool> chiede-fuoco;
+    property <bool> vuole-fuoco: chiede-fuoco && Fuochi.pronti;
     callback premuto();
     // Ha appena preso il fuoco (Tab): chi lo contiene lo porta in vista.
     callback fuoco-preso();
@@ -53,13 +82,13 @@ export component Pulsante inherits FocusScope {
             root.fuoco-preso();
         }
     }
-    changed chiede-fuoco => {
-        if (self.chiede-fuoco) {
+    changed vuole-fuoco => {
+        if (self.vuole-fuoco) {
             self.focus();
         }
     }
     init => {
-        if (self.chiede-fuoco) {
+        if (self.vuole-fuoco) {
             self.focus();
         }
     }

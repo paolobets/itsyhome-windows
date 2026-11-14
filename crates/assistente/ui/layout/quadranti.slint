@@ -16,6 +16,15 @@ component Quadrante inherits Vetro {
     in property <float> frazione: -1;
     // Lato dell'arco: 96 px, meno quando sopra c'è la riga «In attesa».
     in property <length> arco: 96px;
+    // Valore vecchio (casa non connessa): colori tenui ma leggibili (FE18: il valore in
+    // testo-tenue pieno, circa 7:1 sulla card, invece di `opacity` 0,55 che dava 2,9:1).
+    in property <bool> tenue;
+
+    // Per Narrator: un indicatore col nome (etichetta e dettaglio) e il valore (FE16).
+    accessible-role: progress-indicator;
+    accessible-label: dettaglio == "" ? etichetta : etichetta + ", " + dettaglio;
+    accessible-value: valore;
+    accessible-description: tenue ? "non aggiornato" : "";
 
     // Arco di 270° aperto in basso (raggio 44, centro 55,55 nel riquadro 110 × 110, disegnato a
     // `arco` px): parte da 135° e gira in senso orario.
@@ -50,7 +59,7 @@ component Quadrante inherits Vetro {
                 viewbox-width: 110;
                 viewbox-height: 110;
                 commands: "M 23.89 86.11 A 44 44 0 " + (frazione > 0.6667 ? 1 : 0) + " 1 " + (55 + 44 * cos(fine)) + " " + (55 + 44 * sin(fine));
-                stroke: frazione > 0.85 ? Tema.caldo-2 : Tema.petalo-2;
+                stroke: tenue ? Tema.icona-spenta : frazione > 0.85 ? Tema.caldo-2 : Tema.petalo-2;
                 stroke-width: arco < 90px ? 7px : 8px;
                 stroke-line-cap: round;
             }
@@ -66,7 +75,7 @@ component Quadrante inherits Vetro {
                 overflow: elide;
                 font-weight: 500;
                 font-size: arco < 90px || valore.character-count > 5 ? Tema.testo-titolo : Tema.testo-intestazione;
-                color: Tema.testo;
+                color: tenue ? Tema.testo-tenue : Tema.testo;
             }
         }
 
@@ -78,6 +87,7 @@ component Quadrante inherits Vetro {
                 source: icona;
                 width: 16px;
                 height: 16px;
+                colorize: tenue ? Tema.icona-spenta : Tema.icona;
                 y: (parent.height - self.height) / 2;
             }
 
@@ -147,7 +157,7 @@ export component LayoutQuadranti inherits Rectangle {
         for s in sensori: Quadrante {
             width: root.lato;
             arco: root.arco;
-            opacity: casa-pronta ? 1 : 0.55;
+            tenue: !casa-pronta;
             etichetta: "CASA";
             icona: Icone.di-genere(s.voce.genere);
             valore: s.voce.stato;

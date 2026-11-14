@@ -76,6 +76,17 @@ pub fn apri_impostazioni() {
         eprintln!("impostazioni non mostrate: {e}");
         return;
     }
+    // Spessori sul pixel fisico: la scala di adesso e, se la finestra cambia monitor, la nuova.
+    crate::finestre::scrivi_scala(&finestra.global::<crate::Tema>(), finestra.window().scale_factor());
+    let debole = finestra.as_weak();
+    finestra.window().on_winit_window_event(move |_, evento| {
+        if let slint::winit_030::winit::event::WindowEvent::ScaleFactorChanged { scale_factor, .. } = evento {
+            if let Some(f) = debole.upgrade() {
+                crate::finestre::scrivi_scala(&f.global::<crate::Tema>(), *scale_factor as f32);
+            }
+        }
+        slint::winit_030::EventResult::Propagate
+    });
     FINESTRA.with(|f| *f.borrow_mut() = Some(finestra));
 }
 

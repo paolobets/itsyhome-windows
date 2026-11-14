@@ -23,12 +23,14 @@ export component LayoutOrologio inherits Rectangle {
     // Solo per misurare le due righe (mai disegnate).
     misura-casa := Text {
         visible: false;
+        accessible-role: none;
         text: riga-casa;
         font-size: Tema.testo-corpo;
     }
 
     misura-pc := Text {
         visible: false;
+        accessible-role: none;
         text: riga-pc;
         font-size: Tema.testo-corpo;
     }

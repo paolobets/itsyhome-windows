@@ -336,6 +336,7 @@ impl Apertura {
         let schermo = finestre::schermo_di(pillola.window());
         if let Some((area, scala)) = schermo {
             finestre::sposta(pannello.window(), finestre::posizione_pannello(area, scala));
+            finestre::scrivi_scala(&pannello.global::<crate::Tema>(), scala);
         }
 
         // Aprendo dalla pillola allargata (che chiama) gli occhi del pannello partono da dove

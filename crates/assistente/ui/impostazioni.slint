@@ -90,6 +90,7 @@ component Campo inherits Rectangle {
             selection-foreground-color: Tema.testo;
             accessible-role: text-input;
             accessible-label: etichetta;
+            accessible-placeholder-text: suggerimento;
             key-pressed(evento) => {
                 if (evento.text == Key.Escape) {
                     root.esci();
@@ -109,12 +110,19 @@ component Campo inherits Rectangle {
 component Sezione inherits FocusScope {
     in property <string> nome;
     in property <bool> attiva;
+    // Posizione fra le sezioni (per Narrator: «scheda 2 di 3», quella scelta è selezionata).
+    in property <int> indice;
+    in property <int> quante;
     callback scelta();
 
     height: 36px;
     focus-on-click: false;
     accessible-role: tab;
     accessible-label: nome;
+    accessible-item-selectable: true;
+    accessible-item-selected: attiva;
+    accessible-item-index: indice;
+    accessible-item-count: quante;
     accessible-action-default => { root.scelta(); }
     key-pressed(evento) => {
         if (evento.text == Key.Return || evento.text == Key.Space) {
@@ -399,6 +407,8 @@ export component FinestraImpostazioni inherits Window {
             width: largo-sezioni;
             nome: nome;
             attiva: sezione == i;
+            indice: i;
+            quante: 3;
             scelta => { sezione = i; }
         }
 
