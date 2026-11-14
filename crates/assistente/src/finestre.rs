@@ -35,18 +35,24 @@ pub fn posizione_pillola(
 /// Margine logico dell'aura attorno alla pillola (`margine-aura` in pillola.slint).
 pub const MARGINE_AURA: f32 = 8.0;
 /// Pillola a riposo (`Faccia.larghezza-pillola` × `Faccia.altezza-pillola` in pillola.slint).
+#[cfg_attr(not(test), allow(dead_code))] // confrontata con Slint in `test_ui`
 pub const LARGHEZZA_PILLOLA: f32 = 124.0;
+#[cfg_attr(not(test), allow(dead_code))] // confrontata con Slint in `test_ui`
 pub const ALTEZZA_PILLOLA: f32 = 32.0;
 /// Pillola che chiama (*attenzione*): icona della fonte, occhi, una riga, fino a 2 pulsanti.
+#[cfg_attr(not(test), allow(dead_code))] // confrontata con Slint in `test_ui`
 pub const LARGHEZZA_ATTENZIONE: f32 = 400.0;
+#[cfg_attr(not(test), allow(dead_code))] // confrontata con Slint in `test_ui`
 pub const ALTEZZA_ATTENZIONE: f32 = 36.0;
 /// Pillola *bloccante*: più larga e più alta di quella che chiama, ferma, bordo più spesso.
 pub const LARGHEZZA_BLOCCANTE: f32 = 440.0;
+#[cfg_attr(not(test), allow(dead_code))] // confrontata con Slint in `test_ui`
 pub const ALTEZZA_BLOCCANTE: f32 = 40.0;
 /// Finestra della pillola (`larghezza-finestra` × `altezza-finestra` in pillola.slint): la
 /// pillola più grande (bloccante) più l'aura tutt'intorno. Fissa: cambiando aspetto la pillola
 /// cresce o cala attorno al centro (in larghezza) e verso il basso (in altezza).
 pub const LARGHEZZA_FINESTRA_PILLOLA: f32 = LARGHEZZA_BLOCCANTE + 2.0 * MARGINE_AURA;
+#[cfg_attr(not(test), allow(dead_code))] // confrontata con Slint in `test_ui`
 pub const ALTEZZA_FINESTRA_PILLOLA: f32 = ALTEZZA_BLOCCANTE + 2.0 * MARGINE_AURA;
 /// Centro degli occhi della pillola che chiama rispetto a quello degli occhi del pannello appena
 /// aperto, `(x, y)` logici (`scarto-occhi-attenzione` / `scarto-occhi-bloccante` in
@@ -54,10 +60,13 @@ pub const ALTEZZA_FINESTRA_PILLOLA: f32 = ALTEZZA_BLOCCANTE + 2.0 * MARGINE_AURA
 /// pannello. Il pannello aperto da lì fa partire gli occhi da qui. Occhi a 36 dal bordo sinistro
 /// della pillola (dopo l'icona della fonte), ingombro 21: x = -larghezza/2 + 46,5; y = metà
 /// della pillola meno metà della riga del pannello.
+#[cfg_attr(not(test), allow(dead_code))] // confrontata con Slint in `test_ui`
 pub const SCARTO_OCCHI_ATTENZIONE: (f32, f32) = (-153.5, 2.0);
+#[cfg_attr(not(test), allow(dead_code))] // confrontata con Slint in `test_ui`
 pub const SCARTO_OCCHI_BLOCCANTE: (f32, f32) = (-173.5, 4.0);
 /// Altezza della riga alta del pannello (`altezza-riga` in pannello.slint): quanto la pillola a
 /// riposo, così gli occhi del pannello cadono sui suoi.
+#[cfg_attr(not(test), allow(dead_code))] // confrontata con Slint in `test_ui`
 pub const ALTEZZA_RIGA_PANNELLO: f32 = ALTEZZA_PILLOLA;
 /// Larghezza logica del pannello (`width` di pannello.slint).
 pub const LARGHEZZA_PANNELLO: f32 = 800.0;
@@ -81,6 +90,14 @@ pub fn schermo_di(finestra: &slint::Window) -> Option<(RettangoloFisico, f32)> {
             Some((area_di_lavoro(&monitor), monitor.scale_factor() as f32))
         })
         .flatten()
+}
+
+/// Scrive la scala della finestra nel tema (`Tema.scala`, per gli spessori sul pixel fisico),
+/// solo se cambia.
+pub fn scrivi_scala(tema: &crate::Tema<'_>, scala: f32) {
+    if tema.get_scala() != scala {
+        tema.set_scala(scala);
+    }
 }
 
 /// Sposta la finestra in `(x, y)` solo se non è già lì: spostarla genera un altro `Moved`.
