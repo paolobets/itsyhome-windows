@@ -6,7 +6,7 @@
 //! la sua finestra né i suoi buffer né animazioni in sospeso, e la pillola torna al suo peso.
 //! I dati della casa e l'umore arrivano dal `Ponte`, che il pannello riprende a ogni apertura.
 
-use crate::layout::{self, Layout};
+use crate::layout::Layout;
 use crate::registro::app_disponibili;
 use crate::pc_stats::{formatta_byte, formatta_velocita, Campionatore, StatPc};
 use crate::ponte::Ponte;
@@ -254,9 +254,6 @@ impl Apertura {
     fn crea(&self) -> Result<Pannello, slint::PlatformError> {
         let pannello = Pannello::new()?;
         pannello.global::<Movimento>().set_ridotto(servizi::movimento_ridotto());
-        debug_assert_eq!(pannello.get_larghezza_pannello(), finestre::LARGHEZZA_PANNELLO);
-        debug_assert_eq!(pannello.get_altezza_riga(), finestre::ALTEZZA_RIGA_PANNELLO);
-        debug_assert_eq!(pannello.get_numero_layout() as usize, layout::TUTTI.len());
         pannello.set_app(voci_app());
         pannello.set_layout(self.layout.get());
         self.ponte.riempi(&pannello);

@@ -13,7 +13,7 @@
 // Un unico FocusScope tiene il fuoco e l'anello (visibile solo da tastiera) segue la
 // zona scelta.
 import { Tema, Movimento } from "tema.slint";
-import { Faccia, Occhio, FormaOcchio } from "pillola.slint";
+import { Faccia, Occhi } from "faccia.slint";
 import { Anello } from "componenti.slint";
 import { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, UmoreUi } from "voci.slint";
 import { RigaAttesa, VoceEspansa } from "attesa.slint";
@@ -157,7 +157,6 @@ export component Pannello inherits Window {
     property <length> sotto-attese: con-attese ? altezza-attese + 6px : 0px;
     property <bool> espansa: con-attese && indice-aperta >= 0 && indice-aperta < attese.length;
 
-    property <bool> palpebra: false;
     // Diventa vero poco dopo l'apertura, quando i primi fotogrammi hanno già disegnato gli occhi
     // al punto di partenza: solo allora lo scarto si anima (le proprietà si calcolano solo
     // quando servono, quindi un cambio nello stesso istante dell'apertura non si vedrebbe).
@@ -474,30 +473,11 @@ export component Pannello inherits Window {
         }
     }
 
-    // Battito di ciglia come la pillola, solo a pannello aperto.
-    Timer {
-        interval: 4600ms;
-        running: aperto && umore != UmoreUi.dorme && umore != UmoreUi.contento;
-        triggered => {
-            palpebra = true;
-            riapri.running = true;
-        }
-    }
-
     Timer {
         interval: 160ms;
         running: aperto && !occhi-al-centro;
         triggered => {
             occhi-al-centro = true;
-        }
-    }
-
-    riapri := Timer {
-        interval: 110ms;
-        running: false;
-        triggered => {
-            palpebra = false;
-            self.running = false;
         }
     }
 
@@ -543,10 +523,10 @@ export component Pannello inherits Window {
         }
 
         // Riga alta: occhi al centro, ora a destra («Indietro» a sinistra è più sotto).
-        occhi := Rectangle {
-            property <bool> contento: umore == UmoreUi.contento;
-            property <bool> dorme: umore == UmoreUi.dorme;
-            property <length> ingombro: 2 * (contento ? Faccia.larghezza-arco : Faccia.larghezza-occhio) + Faccia.spazio-occhi;
+        // Il battito di ciglia (dentro Occhi) solo a pannello aperto.
+        occhi := Occhi {
+            umore: root.umore;
+            attivo: aperto;
             // Restano sugli occhi della pillola mentre il pannello compare, poi vanno al centro
             // (solo lo scarto è animato: un cambio d'umore li ricentra subito).
             property <length> scarto: occhi-al-centro ? 0px : partenza-occhi;
@@ -559,20 +539,6 @@ export component Pannello inherits Window {
             accessible-role: button;
             accessible-label: "Chiudi il pannello";
             accessible-action-default => { root.chiudi(); }
-
-            Occhio {
-                x: 0;
-                y: (parent.height - self.height) / 2;
-                forma: parent.contento ? FormaOcchio.arco : parent.dorme ? FormaOcchio.trattino : FormaOcchio.aperto;
-                chiuso: palpebra;
-            }
-
-            Occhio {
-                x: parent.width - self.width;
-                y: (parent.height - self.height) / 2;
-                forma: parent.contento ? FormaOcchio.arco : parent.dorme ? FormaOcchio.trattino : FormaOcchio.aperto;
-                chiuso: palpebra;
-            }
 
             TouchArea {
                 // Un po' più larga degli occhi, per non doverli centrare al pixel.

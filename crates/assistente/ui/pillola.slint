@@ -3,59 +3,7 @@
 import { Tema, Movimento } from "tema.slint";
 import { PulsanteUi, UmoreUi, AspettoPillolaUi, LivelloUi } from "voci.slint";
 import { Pulsante, TipoPulsante } from "componenti.slint";
-
-// Forma di un occhio: aperto (rettangolo di luce), ad arco (contento), trattino (dorme).
-export enum FormaOcchio { aperto, arco, trattino }
-
-// Le misure della faccia, in un solo punto: la pillola a riposo e la riga degli occhi del
-// pannello, che è alta quanto lei (gli occhi del pannello cadono su quelli della pillola).
-// Proporzioni di TwoCode (decisione del 13/11): pillola 124 × 32, occhi 6 × 10; il resto è
-// scalato di 6/9 rispetto alla pillola di prima (200 × 48, occhi 9 × 15) e arrotondato al px.
-// Le stesse misure stanno in Rust in finestre.rs (con i test), controllate all'avvio.
-export global Faccia {
-    out property <length> larghezza-pillola: 124px;
-    out property <length> altezza-pillola: 32px;
-    out property <length> larghezza-occhio: 6px;
-    out property <length> altezza-occhio: 10px;
-    // Distanza tra gli occhi (18 × 6/9).
-    out property <length> spazio-occhi: 12px;
-    // Occhio ad arco quando è contento (13 × 10 × 6/9).
-    out property <length> larghezza-arco: 9px;
-    out property <length> altezza-arco: 7px;
-}
-
-// Un occhio: rettangolo di luce, arco quando è contento, trattino quando dorme.
-export component Occhio inherits Rectangle {
-    in property <FormaOcchio> forma: FormaOcchio.aperto;
-    in property <bool> chiuso;            // battito di ciglia
-    in property <length> larghezza-occhio: Faccia.larghezza-occhio;
-    in property <length> altezza-occhio: Faccia.altezza-occhio;
-    in property <color> bagliore: Tema.bagliore-occhio;
-
-    width: forma == FormaOcchio.arco ? Faccia.larghezza-arco : larghezza-occhio;
-    height: forma == FormaOcchio.arco ? Faccia.altezza-arco : forma == FormaOcchio.trattino ? 2px : (chiuso ? 1px : altezza-occhio);
-    animate height { duration: 60ms; }
-
-    luce := Rectangle {
-        visible: forma != FormaOcchio.arco;
-        border-radius: 3px;
-        // Trasparenza nel colore, non `opacity` (che disegnerebbe un livello a parte).
-        background: forma == FormaOcchio.trattino ? Tema.occhio.with-alpha(0.6) : Tema.occhio;
-        drop-shadow-blur: forma == FormaOcchio.aperto ? 5px : 0px;
-        drop-shadow-color: bagliore;
-    }
-
-    Path {
-        visible: forma == FormaOcchio.arco;
-        viewbox-width: 13;
-        viewbox-height: 10;
-        // Arco a "∩" come nella bozza: lati dritti e cima tonda.
-        commands: "M 1.5 10 L 1.5 6.5 A 5 5 0 0 1 11.5 6.5 L 11.5 10";
-        stroke: Tema.occhio;
-        stroke-width: 2px;
-        stroke-line-cap: round;
-    }
-}
+import { Faccia, Occhi } from "faccia.slint";
 
 // Uno strato dell'aura: la sagoma della pillola allargata di `espansione`.
 component Velo inherits Rectangle {
@@ -105,6 +53,9 @@ export component Pillola inherits Window {
     // dell'anello 5 px) deve stare sotto `margine-aura`: il ritaglio della finestra
     // (`regione_pillola`) taglia di netto a un margine dalla pillola, anche in basso.
     out property <length> margine-aura: 8px;
+    // La linea della ritirata (300 × 5 come TwoCode).
+    out property <length> larghezza-linea: 300px;
+    out property <length> altezza-linea: 5px;
     out property <length> larghezza-riposo: Faccia.larghezza-pillola;
     out property <length> altezza-riposo: Faccia.altezza-pillola;
     // Che chiama (attenzione): icona della fonte + occhi + una riga + fino a 2 pulsanti.
@@ -179,8 +130,6 @@ export component Pillola inherits Window {
     property <length> spessore-anello: blocca ? 4px : 2px;
     property <color> bagliore-occhi: blocca ? Tema.bloccante : allerta ? Tema.caldo-2 : Tema.bagliore-occhio;
 
-    property <bool> palpebra: false;
-
     // La riga del messaggio e se il testo non ci sta tutto. Calcolato sulle larghezze finali
     // (`larghezza-pillola`, pulsanti di adesso), non su quelle animate: Rust lo legge appena
     // impostati messaggio e pulsanti e, se è vero, mette «Apri» al posto di un consenso.
@@ -204,31 +153,13 @@ export component Pillola inherits Window {
         }
     }
 
-    Timer {
-        interval: 4600ms;
-        running: attiva && !ritirata && !dorme && !contento;
-        triggered => {
-            palpebra = true;
-            riapri.running = true;
-        }
-    }
-
-    riapri := Timer {
-        interval: 110ms;
-        running: false;
-        triggered => {
-            palpebra = false;
-            self.running = false;
-        }
-    }
-
     // 300 × 5 come TwoCode, con un filo scuro di 1 px tutt'intorno: si vede anche sopra una barra
     // chiara (il grigio neutro da solo era 2,6:1 sul bianco), e il colore del livello resta.
     if ritirata: Rectangle {
         x: (root.width - self.width) / 2;
         y: margine-aura;
-        width: 300px;
-        height: 5px;
+        width: larghezza-linea;
+        height: altezza-linea;
         background: Tema.colore-livello(livello-linea);
         border-width: 1px;
         border-color: Tema.corpo;
@@ -303,44 +234,26 @@ export component Pillola inherits Window {
             image-rendering: smooth;
         }
 
-        occhi := Rectangle {
-            property <length> spazio: allerta ? spazio-allerta : Faccia.spazio-occhi;
-            property <length> larghezza-occhio: allerta ? occhio-allerta : Faccia.larghezza-occhio;
-            property <length> altezza-occhio: allerta ? altezza-occhio-allerta : Faccia.altezza-occhio;
-            property <length> ingombro: 2 * (contento ? Faccia.larghezza-arco : larghezza-occhio) + spazio;
+        occhi := Occhi {
+            umore: root.umore;
+            attivo: attiva && !ritirata;
+            spazio: allerta ? spazio-allerta : Faccia.spazio-occhi;
+            larghezza-occhio: allerta ? occhio-allerta : Faccia.larghezza-occhio;
+            altezza-occhio: allerta ? altezza-occhio-allerta : Faccia.altezza-occhio;
+            bagliore: bagliore-occhi;
             // Distanza dal bordo sinistro della pillola a fine animazione, animata anch'essa:
             // allargandosi gli occhi scivolano a sinistra insieme al bordo, senza salti.
             // Allargata: il centro degli occhi è fisso (occhi-allerta-dal-bordo +
             // mezzo-ingombro-allerta) con qualunque umore, così il pannello aperto da lì li fa
             // partire dal punto giusto (`scarto-occhi-…`) anche se gli occhi sono più larghi.
             property <length> dal-bordo: allargata
-                ? occhi-allerta-dal-bordo + mezzo-ingombro-allerta - ingombro / 2
-                : (larghezza-pillola - ingombro) / 2;
+                ? occhi-allerta-dal-bordo + mezzo-ingombro-allerta - self.ingombro / 2
+                : (larghezza-pillola - self.ingombro) / 2;
             animate dal-bordo { duration: Movimento.ridotto ? 0ms : 220ms; easing: ease-out; }
             x: dal-bordo + sguardo-x;
             y: sguardo-y;
-            width: ingombro;
+            width: self.ingombro;
             height: parent.height;
-
-            Occhio {
-                x: 0;
-                y: (parent.height - self.height) / 2;
-                forma: contento ? FormaOcchio.arco : dorme ? FormaOcchio.trattino : FormaOcchio.aperto;
-                chiuso: palpebra;
-                larghezza-occhio: parent.larghezza-occhio;
-                altezza-occhio: parent.altezza-occhio;
-                bagliore: bagliore-occhi;
-            }
-
-            Occhio {
-                x: parent.width - self.width;
-                y: (parent.height - self.height) / 2;
-                forma: contento ? FormaOcchio.arco : dorme ? FormaOcchio.trattino : FormaOcchio.aperto;
-                chiuso: palpebra;
-                larghezza-occhio: parent.larghezza-occhio;
-                altezza-occhio: parent.altezza-occhio;
-                bagliore: bagliore-occhi;
-            }
 
             // Il puntino: qualcosa è in attesa. Fermo, sotto gli occhi, 5 × 5 con un leggero
             // bagliore; il livello si legge anche dalla forma, non solo dal colore: attenzione =

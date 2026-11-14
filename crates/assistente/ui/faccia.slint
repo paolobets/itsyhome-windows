@@ -1,0 +1,115 @@
+// La faccia dell'assistente (FE10): le misure in un solo punto, un occhio, la coppia di occhi col
+// battito di ciglia. La usano la pillola e la riga alta del pannello, che è alta quanto la
+// pillola: gli occhi del pannello cadono su quelli della pillola.
+//
+// Le misure che Rust deve conoscere (finestre.rs: posizione, ritaglio, scarti degli occhi)
+// stanno anche lì come costanti; un test di `cargo test` crea pillola e pannello col backend di
+// prova di Slint, senza finestre, e fallisce se un numero non coincide (`misure_slint_e_rust`).
+import { Tema } from "tema.slint";
+import { UmoreUi } from "voci.slint";
+
+// Proporzioni di TwoCode (decisione del 13/11): pillola 124 × 32, occhi 6 × 10; il resto è
+// scalato di 6/9 rispetto alla pillola di prima (200 × 48, occhi 9 × 15) e arrotondato al px.
+export global Faccia {
+    out property <length> larghezza-pillola: 124px;
+    out property <length> altezza-pillola: 32px;
+    out property <length> larghezza-occhio: 6px;
+    out property <length> altezza-occhio: 10px;
+    out property <length> raggio-occhio: 3px;
+    // Distanza tra gli occhi (18 × 6/9).
+    out property <length> spazio-occhi: 12px;
+    // Occhio ad arco quando è contento (13 × 10 × 6/9).
+    out property <length> larghezza-arco: 9px;
+    out property <length> altezza-arco: 7px;
+}
+
+// Forma di un occhio: aperto (rettangolo di luce), ad arco (contento), trattino (dorme).
+export enum FormaOcchio { aperto, arco, trattino }
+
+// Un occhio: rettangolo di luce, arco quando è contento, trattino quando dorme.
+export component Occhio inherits Rectangle {
+    in property <FormaOcchio> forma: FormaOcchio.aperto;
+    in property <bool> chiuso;            // battito di ciglia
+    in property <length> larghezza-occhio: Faccia.larghezza-occhio;
+    in property <length> altezza-occhio: Faccia.altezza-occhio;
+    in property <color> bagliore: Tema.bagliore-occhio;
+
+    width: forma == FormaOcchio.arco ? Faccia.larghezza-arco : larghezza-occhio;
+    height: forma == FormaOcchio.arco ? Faccia.altezza-arco : forma == FormaOcchio.trattino ? 2px : (chiuso ? 1px : altezza-occhio);
+    animate height { duration: 60ms; }
+
+    luce := Rectangle {
+        visible: forma != FormaOcchio.arco;
+        border-radius: Faccia.raggio-occhio;
+        // Trasparenza nel colore, non `opacity` (che disegnerebbe un livello a parte).
+        background: forma == FormaOcchio.trattino ? Tema.occhio.with-alpha(0.6) : Tema.occhio;
+        drop-shadow-blur: forma == FormaOcchio.aperto ? 5px : 0px;
+        drop-shadow-color: bagliore;
+    }
+
+    Path {
+        visible: forma == FormaOcchio.arco;
+        viewbox-width: 13;
+        viewbox-height: 10;
+        // Arco a "∩" come nella bozza: lati dritti e cima tonda.
+        commands: "M 1.5 10 L 1.5 6.5 A 5 5 0 0 1 11.5 6.5 L 11.5 10";
+        stroke: Tema.occhio;
+        stroke-width: 2px;
+        stroke-line-cap: round;
+    }
+}
+
+// La coppia di occhi, larga `ingombro` (chi la usa le dà `width: self.ingombro`), con il battito
+// di ciglia: ogni 4,6 s una chiusura di 110 ms, solo se `attivo` e mai da contento o addormentato
+// (fermi anche i timer, così una faccia nascosta non ridisegna nulla).
+export component Occhi inherits Rectangle {
+    in property <UmoreUi> umore: UmoreUi.tranquillo;
+    in property <bool> attivo;
+    in property <length> larghezza-occhio: Faccia.larghezza-occhio;
+    in property <length> altezza-occhio: Faccia.altezza-occhio;
+    in property <length> spazio: Faccia.spazio-occhi;
+    in property <color> bagliore: Tema.bagliore-occhio;
+    property <bool> contento: umore == UmoreUi.contento;
+    property <bool> dorme: umore == UmoreUi.dorme;
+    out property <length> ingombro: 2 * (contento ? Faccia.larghezza-arco : larghezza-occhio) + spazio;
+    property <FormaOcchio> forma: contento ? FormaOcchio.arco : dorme ? FormaOcchio.trattino : FormaOcchio.aperto;
+    property <bool> palpebra: false;
+
+    Timer {
+        interval: 4600ms;
+        running: attivo && !dorme && !contento;
+        triggered => {
+            palpebra = true;
+            riapri.running = true;
+        }
+    }
+
+    riapri := Timer {
+        interval: 110ms;
+        running: false;
+        triggered => {
+            palpebra = false;
+            self.running = false;
+        }
+    }
+
+    Occhio {
+        x: 0;
+        y: (parent.height - self.height) / 2;
+        forma: root.forma;
+        chiuso: palpebra;
+        larghezza-occhio: root.larghezza-occhio;
+        altezza-occhio: root.altezza-occhio;
+        bagliore: root.bagliore;
+    }
+
+    Occhio {
+        x: parent.width - self.width;
+        y: (parent.height - self.height) / 2;
+        forma: root.forma;
+        chiuso: palpebra;
+        larghezza-occhio: root.larghezza-occhio;
+        altezza-occhio: root.altezza-occhio;
+        bagliore: root.bagliore;
+    }
+}

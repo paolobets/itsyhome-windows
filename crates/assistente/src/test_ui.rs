@@ -1,6 +1,21 @@
-//! Controlli sui sorgenti dell'interfaccia (`.slint`) che girano in `cargo test`, senza finestre.
+//! Controlli sull'interfaccia (`.slint`) che girano in `cargo test`, senza finestre: i sorgenti
+//! (colori a mano) e i componenti creati col backend di prova di Slint (misure, accessibilità).
 
+use crate::{finestre, layout, sistema, Pannello, Pillola};
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
+
+thread_local! {
+    static PIATTAFORMA: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Il backend di prova di Slint per questo thread (ogni test ha il suo): nessuna finestra, nessun
+/// ciclo di eventi, il tempo delle animazioni è finto.
+pub fn piattaforma_di_prova() {
+    if !PIATTAFORMA.with(|p| p.replace(true)) {
+        i_slint_backend_testing::init_no_event_loop();
+    }
+}
 
 /// Tutti i file `.slint` dell'assistente e della cornice della gestione.
 fn file_slint() -> Vec<PathBuf> {
@@ -62,4 +77,54 @@ fn ui_senza_colori_a_mano() {
         }
     }
     assert!(trovati.is_empty(), "colori scritti a mano fuori da tema.slint:\n{}", trovati.join("\n"));
+}
+
+#[test]
+fn misure_slint_e_rust() {
+    // FE10: le misure che Rust usa per posizione, ritaglio e scarti degli occhi coincidono con
+    // quelle di faccia.slint, pillola.slint e pannello.slint (prima: solo debug_assert all'avvio).
+    piattaforma_di_prova();
+    let pillola = Pillola::new().expect("pillola creata col backend di prova");
+    assert_eq!(pillola.get_margine_aura(), finestre::MARGINE_AURA, "margine dell'aura");
+    assert_eq!(
+        (pillola.get_larghezza_riposo(), pillola.get_altezza_riposo()),
+        (finestre::LARGHEZZA_PILLOLA, finestre::ALTEZZA_PILLOLA),
+        "pillola a riposo"
+    );
+    assert_eq!(
+        (pillola.get_larghezza_attenzione(), pillola.get_altezza_attenzione()),
+        (finestre::LARGHEZZA_ATTENZIONE, finestre::ALTEZZA_ATTENZIONE),
+        "pillola che chiama"
+    );
+    assert_eq!(
+        (pillola.get_larghezza_bloccante(), pillola.get_altezza_bloccante()),
+        (finestre::LARGHEZZA_BLOCCANTE, finestre::ALTEZZA_BLOCCANTE),
+        "pillola bloccante"
+    );
+    assert_eq!(
+        (pillola.get_larghezza_finestra(), pillola.get_altezza_finestra()),
+        (finestre::LARGHEZZA_FINESTRA_PILLOLA, finestre::ALTEZZA_FINESTRA_PILLOLA),
+        "finestra della pillola"
+    );
+    assert_eq!(
+        (pillola.get_scarto_occhi_attenzione(), pillola.get_scarto_occhi_attenzione_y()),
+        finestre::SCARTO_OCCHI_ATTENZIONE,
+        "occhi della pillola che chiama"
+    );
+    assert_eq!(
+        (pillola.get_scarto_occhi_bloccante(), pillola.get_scarto_occhi_bloccante_y()),
+        finestre::SCARTO_OCCHI_BLOCCANTE,
+        "occhi della pillola bloccante"
+    );
+    assert_eq!(
+        (pillola.get_larghezza_linea(), pillola.get_altezza_linea()),
+        (sistema::ritirata::LARGHEZZA_LINEA, sistema::ritirata::ALTEZZA_LINEA),
+        "linea della ritirata"
+    );
+
+    let pannello = Pannello::new().expect("pannello creato col backend di prova");
+    assert_eq!(pannello.get_larghezza_pannello(), finestre::LARGHEZZA_PANNELLO, "larghezza del pannello");
+    assert_eq!(pannello.get_altezza_riga(), finestre::ALTEZZA_RIGA_PANNELLO, "riga alta del pannello");
+    assert_eq!(pannello.get_numero_layout() as usize, layout::TUTTI.len(), "layout della Panoramica");
+    drop((pillola, pannello));
 }
