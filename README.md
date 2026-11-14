@@ -11,6 +11,29 @@ Controlla luci, termostati, cover, scene e molto altro direttamente dalla barra 
 
 ---
 
+## v3 in sviluppo
+
+Sul ramo `v3-assistente` nasce la v3: un assistente «isola» sempre presente in alto al centro dello schermo, al posto del menu nella tray. **Non è ancora una versione da installare.**
+
+- **Pillola** di 124 × 32 con due occhi che cambiano umore; si allarga quando qualcosa chiede attenzione e si può ritirare in una linea sottile.
+- **Pannello** 800 × 300 al bordo alto: riga «In attesa», layout Orologio e Quadranti, app Casa e PC, Impostazioni in una finestra dedicata.
+- **Finestra di gestione** in un processo separato (`itsyhome-gestione`), con riquadro web senza JavaScript e senza risorse remote.
+- Home Assistant solo via eventi WebSocket (nessun polling); token nel portachiavi del sistema, mai nel file di configurazione.
+- Rust + [Slint](https://slint.dev) (renderer Skia software) e wry; workspace in `crates/` (`casa-core`, `assistente`, `gestione`, `gestione-protocollo`). La v2 in `src-tauri/` resta fuori dal workspace.
+
+```powershell
+cargo test --workspace
+cargo build --release -p assistente -p gestione
+# Prove senza la casa vera: Home Assistant finto e cartella di prova
+.\target\release\examples\finto_ha.exe prepara "$env:TEMP\itsyhome-prova" 18161
+Start-Process .\target\release\examples\finto_ha.exe -ArgumentList '18161'
+$env:ITSYHOME_ASSISTENTE_DIR = "$env:TEMP\itsyhome-prova"; .\target\release\assistente.exe
+```
+
+Gli esempi si costruiscono con `cargo build --release -p casa-core --examples`. Misure di memoria e CPU nel [CHANGELOG](CHANGELOG.md).
+
+---
+
 ## Funzionalità
 
 ### System Tray
