@@ -3,6 +3,10 @@
 //! Il campionatore nasce all'apertura del pannello e muore alla chiusura: fuori da lì non si
 //! misura nulla, salvo la batteria (`sorveglia_batteria`, ogni 60 s). Refresh sempre mirati (mai
 //! `refresh_all`, mai l'elenco dei processi).
+//!
+//! CPU su Windows da `GetSystemTimes`, non da sysinfo: sysinfo la legge con PDH (contatori delle
+//! prestazioni), che al primo uso carica le sue tabelle e non le libera più, nemmeno chiudendo la
+//! query. Restavano ~7 MB e ~100 handle dopo la prima apertura del pannello (misura del Task 14a).
 
 use starship_battery::units::ratio::ratio;
 use starship_battery::{Manager, State};
@@ -60,6 +64,9 @@ pub struct StatPc {
 
 pub struct Campionatore {
     sistema: System,
+    /// Ultima lettura dei tempi di sistema (CPU su Windows).
+    #[cfg(windows)]
+    tempi: Option<TempiCpu>,
     dischi: Disks,
     reti: Networks,
     batterie: Option<Manager>,
@@ -75,11 +82,15 @@ impl Default for Campionatore {
 
 impl Campionatore {
     pub fn new() -> Self {
+        #[cfg_attr(windows, allow(unused_mut))]
         let mut sistema = System::new();
         // Base di partenza per la CPU: la percentuale è la differenza tra due letture.
+        #[cfg(not(windows))]
         sistema.refresh_cpu_usage();
         Campionatore {
             sistema,
+            #[cfg(windows)]
+            tempi: tempi_cpu(),
             dischi: Disks::new_with_refreshed_list_specifics(disco_mirato()),
             reti: Networks::new_with_refreshed_list(),
             batterie: Manager::new().ok(),
@@ -94,7 +105,7 @@ impl Campionatore {
     }
 
     pub fn campiona(&mut self) -> StatPc {
-        self.sistema.refresh_cpu_usage();
+        let cpu_pct = self.cpu();
         self.sistema.refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
         self.dischi.refresh_specifics(true, disco_mirato());
         self.reti.refresh(true);
@@ -128,7 +139,7 @@ impl Campionatore {
 
         let ram_totale = self.sistema.total_memory();
         StatPc {
-            cpu_pct: self.sistema.global_cpu_usage().clamp(0.0, 100.0),
+            cpu_pct,
             ram_usata: self.sistema.used_memory().min(ram_totale),
             ram_totale,
             disco_usato: disco_totale.saturating_sub(disco_libero),
@@ -138,6 +149,26 @@ impl Campionatore {
             batteria_pct,
             in_carica,
         }
+    }
+
+    /// Percentuale di CPU dall'ultima lettura.
+    #[cfg(windows)]
+    fn cpu(&mut self) -> f32 {
+        let ora = tempi_cpu();
+        let pct = match (self.tempi, ora) {
+            (Some(prima), Some(ora)) => percentuale_cpu(prima, ora),
+            _ => 0.0,
+        };
+        if ora.is_some() {
+            self.tempi = ora;
+        }
+        pct
+    }
+
+    #[cfg(not(windows))]
+    fn cpu(&mut self) -> f32 {
+        self.sistema.refresh_cpu_usage();
+        self.sistema.global_cpu_usage().clamp(0.0, 100.0)
     }
 
     /// La prima batteria del PC; `(None, None)` se il PC non ne ha (desktop) o non si legge.
@@ -152,6 +183,40 @@ impl Campionatore {
             _ => (None, None),
         }
     }
+}
+
+/// Tempi cumulativi del sistema (unità di 100 ns): inattivo, kernel (inattivo compreso), utente.
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TempiCpu {
+    inattivo: u64,
+    kernel: u64,
+    utente: u64,
+}
+
+/// Percentuale di CPU occupata tra due letture: (kernel + utente − inattivo) / (kernel + utente).
+#[cfg_attr(not(windows), allow(dead_code))]
+fn percentuale_cpu(prima: TempiCpu, ora: TempiCpu) -> f32 {
+    let totale = ora.kernel.saturating_sub(prima.kernel) + ora.utente.saturating_sub(prima.utente);
+    if totale == 0 {
+        return 0.0;
+    }
+    let inattivo = ora.inattivo.saturating_sub(prima.inattivo).min(totale);
+    ((totale - inattivo) as f64 / totale as f64 * 100.0) as f32
+}
+
+#[cfg(windows)]
+fn tempi_cpu() -> Option<TempiCpu> {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::Threading::GetSystemTimes;
+    let zero = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+    let (mut inattivo, mut kernel, mut utente) = (zero, zero, zero);
+    // SAFETY: tre FILETIME locali, validi per tutta la chiamata.
+    if unsafe { GetSystemTimes(&mut inattivo, &mut kernel, &mut utente) } == 0 {
+        return None;
+    }
+    let valore = |f: FILETIME| (u64::from(f.dwHighDateTime) << 32) | u64::from(f.dwLowDateTime);
+    Some(TempiCpu { inattivo: valore(inattivo), kernel: valore(kernel), utente: valore(utente) })
 }
 
 fn disco_mirato() -> DiskRefreshKind {
@@ -228,6 +293,20 @@ mod test {
             assert!((0.0..=100.0).contains(&p));
             assert!(s.in_carica.is_some());
         }
+    }
+
+    #[test]
+    fn cpu_dai_tempi_di_sistema() {
+        // Il tempo del kernel comprende l'inattività: 1000 di kernel di cui 600 inattivi + 1000
+        // di utente = 1400 occupati su 2000.
+        let prima = TempiCpu { inattivo: 1_000, kernel: 5_000, utente: 3_000 };
+        let ora = TempiCpu { inattivo: 1_600, kernel: 6_000, utente: 4_000 };
+        assert_eq!(percentuale_cpu(prima, ora), 70.0);
+        assert_eq!(percentuale_cpu(prima, prima), 0.0, "nessun tempo passato: 0, non NaN");
+        let tutto_inattivo = TempiCpu { inattivo: 2_000, kernel: 6_000, utente: 3_000 };
+        assert_eq!(percentuale_cpu(prima, tutto_inattivo), 0.0);
+        // Contatori che tornano indietro (non dovrebbe succedere): mai fuori da 0..100.
+        assert!((0.0..=100.0).contains(&percentuale_cpu(ora, prima)));
     }
 
     #[test]
