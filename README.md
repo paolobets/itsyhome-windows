@@ -24,13 +24,15 @@ Sul ramo `v3-assistente` nasce la v3: un assistente «isola» sempre presente in
 ```powershell
 cargo test --workspace
 cargo build --release -p assistente -p gestione
-# Prove senza la casa vera: Home Assistant finto e cartella di prova
+# Prove senza la casa vera: prima si costruisce il Home Assistant finto (un esempio di casa-core)...
+cargo build --release -p casa-core --examples
+# ...poi la cartella di prova, il finto HA in ascolto e l'assistente che lo usa
 .\target\release\examples\finto_ha.exe prepara "$env:TEMP\itsyhome-prova" 18161
 Start-Process .\target\release\examples\finto_ha.exe -ArgumentList '18161'
 $env:ITSYHOME_ASSISTENTE_DIR = "$env:TEMP\itsyhome-prova"; .\target\release\assistente.exe
 ```
 
-Gli esempi si costruiscono con `cargo build --release -p casa-core --examples`. Misure di memoria e CPU nel [CHANGELOG](CHANGELOG.md).
+Scorciatoie: **Ctrl+Alt+Maiusc+Spazio** apre il pannello, **Ctrl+Alt+Maiusc+I** ritira o rimette la pillola. Misure di memoria e CPU nel [CHANGELOG](CHANGELOG.md).
 
 ---
 
