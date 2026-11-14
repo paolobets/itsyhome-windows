@@ -18,7 +18,7 @@ component VoceChiusa inherits Rectangle {
     callback scelta();
 
     border-radius: 12px;
-    background: area.has-hover ? Tema.scheda-sopra : rgba(255, 255, 255, 0.04);
+    background: area.has-hover ? Tema.scheda-sopra : Tema.card-fondo;
     accessible-role: button;
     accessible-label: voce.titolo + ", " + voce.sotto;
     accessible-action-default => { root.scelta(); }
@@ -88,7 +88,7 @@ export component RigaAttesa inherits Rectangle {
         width: largo-altre;
         height: root.height;
         border-radius: 12px;
-        background: area-altre.has-hover ? Tema.scheda-sopra : rgba(255, 255, 255, 0.04);
+        background: area-altre.has-hover ? Tema.scheda-sopra : Tema.card-fondo;
         accessible-role: button;
         accessible-label: "Altre " + altre + " voci in attesa";
         accessible-action-default => { root.scelta(3); }
@@ -120,8 +120,8 @@ component PulsanteVoce inherits Rectangle {
     width: max(84px, etichetta.preferred-width + 24px);
     border-radius: 10px;
     background: tinta
-        ? (area.has-hover ? rgba(45, 212, 191, 0.30) : rgba(45, 212, 191, 0.20))
-        : (area.has-hover ? rgba(255, 255, 255, 0.16) : rgba(255, 255, 255, 0.09));
+        ? (area.has-hover ? Tema.azione-sopra : Tema.azione-fondo)
+        : (area.has-hover ? Tema.neutro-sopra : Tema.neutro-fondo);
     accessible-role: button;
     accessible-label: testo;
     accessible-action-default => { root.scelto(); }
@@ -173,7 +173,7 @@ export component VoceEspansa inherits Rectangle {
     init => { root.fondo(self.a-fondo); }
 
     border-radius: 16px;
-    background: rgba(255, 255, 255, 0.05);
+    background: Tema.riquadro-fondo;
     border-width: 1px;
     border-color: Tema.vetro-bordo;
 
@@ -303,7 +303,7 @@ export component VoceEspansa inherits Rectangle {
         width: testo.width;
         height: 16px;
         // Dal trasparente al fondo della voce (vetro al 5% sul corpo del pannello).
-        background: @linear-gradient(180deg, rgba(19, 15, 27, 0) 0%, rgba(19, 15, 27, 1) 100%);
+        background: @linear-gradient(180deg, Tema.riquadro-pieno.with-alpha(0) 0%, Tema.riquadro-pieno 100%);
     }
 
     // Col fuoco da tastiera su un consenso: Invio da solo non fa nulla, lo si dice accanto.

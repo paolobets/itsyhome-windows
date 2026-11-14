@@ -47,8 +47,8 @@ component Chiudi inherits FocusScope {
 
     Rectangle {
         border-radius: 8px;
-        background: area.pressed ? rgba(248, 113, 113, 0.40)
-            : area.has-hover ? rgba(248, 113, 113, 0.26) : transparent;
+        background: area.pressed ? Tema.pericolo-premuto
+            : area.has-hover ? Tema.chiudi-sopra : transparent;
     }
 
     Path {
@@ -110,8 +110,7 @@ export component Cornice inherits Window {
 
     // Bordo: i sei petali in fila, sotto il fondo.
     Rectangle {
-        background: @linear-gradient(120deg, Tema.petalo-1 0%, Tema.petalo-2 20%, Tema.petalo-3 40%,
-            Tema.petalo-4 60%, Tema.petalo-5 80%, Tema.petalo-6 100%);
+        background: Tema.petali;
     }
 
     Rectangle {
@@ -119,7 +118,7 @@ export component Cornice inherits Window {
         y: bordo;
         width: root.width - 2 * bordo;
         height: root.height - 2 * bordo;
-        background: @linear-gradient(160deg, Tema.fondo-alto 0%, Tema.fondo-basso 55%);
+        background: Tema.fondo-finestra;
     }
 
     radice := FocusScope {

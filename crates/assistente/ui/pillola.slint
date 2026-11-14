@@ -36,8 +36,8 @@ export component Occhio inherits Rectangle {
     luce := Rectangle {
         visible: forma != "arco";
         border-radius: 3px;
-        background: Tema.occhio;
-        opacity: forma == "trattino" ? 0.6 : 1.0;
+        // Trasparenza nel colore, non `opacity` (che disegnerebbe un livello a parte).
+        background: forma == "trattino" ? Tema.occhio.with-alpha(0.6) : Tema.occhio;
         drop-shadow-blur: forma == "aperto" ? 5px : 0px;
         drop-shadow-color: bagliore;
     }
@@ -80,8 +80,8 @@ component PulsantePillola inherits Rectangle {
     border-radius: 8px;
     // Il secondo pulsante (es. «Consenti») ha la tinta verde acqua della bozza.
     background: primo
-        ? (area.has-hover ? rgba(255, 255, 255, 0.16) : rgba(255, 255, 255, 0.09))
-        : (area.has-hover ? rgba(45, 212, 191, 0.30) : rgba(45, 212, 191, 0.20));
+        ? (area.has-hover ? Tema.neutro-sopra : Tema.neutro-fondo)
+        : (area.has-hover ? Tema.azione-sopra : Tema.azione-fondo);
     accessible-role: button;
     accessible-label: testo;
     accessible-action-default => { root.scelto(); }
@@ -211,7 +211,7 @@ export component Pillola inherits Window {
     property <float> opacita-anello: dorme ? 0.25 : tranquillo ? 0.45 : 1.0;
     // Bloccante: anello da 4 px contro 2, distinto per forma anche col movimento ridotto.
     property <length> spessore-anello: blocca ? 4px : 2px;
-    property <color> bagliore-occhi: blocca ? Tema.bloccante : allerta ? #fb923c : Tema.bagliore-occhio;
+    property <color> bagliore-occhi: blocca ? Tema.bloccante : allerta ? Tema.caldo-2 : Tema.bagliore-occhio;
 
     property <bool> palpebra: false;
 
@@ -295,14 +295,13 @@ export component Pillola inherits Window {
         // Anello: il bordo colorato (2 px; 4 px, fermo, per il bloccante), sul pixel.
         Rectangle {
             border-radius: self.height / 2;
-            background: iride;
-            opacity: opacita-anello;
+            background: opacita-anello < 1 ? iride.with-alpha(opacita-anello) : iride;
             // Bagliore sfumato sotto i veli, come il blur della bozza (niente a riposo, e niente
             // mentre l'aura si muove, che pensi o che pulsi: ricomporlo a ogni fotogramma costa
             // troppo, bastano i veli).
             // Bloccante: bagliore da 4 px, così anello e bagliore stanno sotto il margine dell'aura.
             drop-shadow-blur: intensita-aura > 0.2 && !in-moto ? (blocca ? 4px : 5px) : 0px;
-            drop-shadow-color: (blocca ? Tema.bloccante : allerta ? #fb923c : #c084fc).with-alpha(0.55 * intensita-aura);
+            drop-shadow-color: bagliore-occhi.with-alpha(0.55 * intensita-aura);
         }
 
         corpo := Rectangle {

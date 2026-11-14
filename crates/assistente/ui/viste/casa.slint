@@ -19,24 +19,17 @@ export component Dispositivo inherits Rectangle {
     // valore vecchio e resta neutra, come una non disponibile.
     property <bool> colorata: voce.acceso && !voce.tenue;
     // Tenue = colori con trasparenza (non opacity, che disegna in uno strato a parte). A 0,85 il
-    // testo dello stato (testo-tenue) sulla card tenue (bianco al 4%) è 5,6:1 sul corpo #07030f e
+    // testo dello stato (testo-tenue) sulla card tenue (bianco al 4%) è 5,6:1 sul corpo (Tema.corpo) e
     // 5,0:1 nel punto peggiore, sotto il bagliore indaco del pannello (+10%); il nome 11:1.
     // (A 0,78 era 4,9 / 4,5:1: al limite.)
     property <float> velatura: voce.tenue ? 0.85 : 1.0;
 
     border-radius: 16px;
     border-width: 1px;
-    border-color: !colorata ? Tema.vetro-bordo
-        : luce ? rgba(253, 230, 138, 0.35) : rgba(94, 234, 212, 0.32);
-    background: voce.tenue
-        ? rgba(255, 255, 255, 0.04)
-        : !colorata
-            ? (sopra
-                ? @linear-gradient(160deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.04) 100%)
-                : @linear-gradient(160deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.02) 100%))
-            : luce
-                ? @linear-gradient(160deg, rgba(253, 230, 138, 0.28) 0%, rgba(251, 191, 36, 0.10) 100%)
-                : @linear-gradient(160deg, rgba(94, 234, 212, 0.24) 0%, rgba(45, 212, 191, 0.08) 100%);
+    border-color: !colorata ? Tema.vetro-bordo : luce ? Tema.luce-bordo : Tema.presa-bordo;
+    background: voce.tenue ? Tema.card-fondo
+        : !colorata ? (sopra ? Tema.card-vetro-sopra : Tema.card-vetro)
+        : luce ? Tema.luce-card : Tema.presa-card;
     accessible-role: button;
     accessible-enabled: voce.toccabile;
     accessible-label: voce.nome + ", " + voce.stato;
@@ -103,10 +96,10 @@ component PulsanteCasa inherits Rectangle {
     width: max(84px, etichetta.preferred-width + 24px);
     border-radius: 10px;
     border-width: primario ? 1px : 0px;
-    border-color: rgba(45, 212, 191, 0.45);
+    border-color: Tema.azione-bordo;
     background: primario
-        ? (area.has-hover ? rgba(45, 212, 191, 0.30) : rgba(45, 212, 191, 0.20))
-        : (area.has-hover ? rgba(255, 255, 255, 0.16) : rgba(255, 255, 255, 0.09));
+        ? (area.has-hover ? Tema.azione-sopra : Tema.azione-fondo)
+        : (area.has-hover ? Tema.neutro-sopra : Tema.neutro-fondo);
     accessible-role: button;
     accessible-label: testo;
     accessible-action-default => { root.premuto(); }

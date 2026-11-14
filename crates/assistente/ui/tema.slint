@@ -1,4 +1,7 @@
 // Tema condiviso: colori del marchio HIRIS e caratteri (Inter Tight, JetBrains Mono — SIL OFL).
+// Unico posto dei colori: fuori da questo file nessun letterale di colore (`#…`, `rgb(…)`,
+// `rgba(…)`), solo token di ruolo; lo controlla un test (`ui_senza_colori_a_mano`). Una tinta
+// cambiata qui cambia ovunque.
 import "../assets/font/InterTight-Regular.ttf";
 import "../assets/font/InterTight-Medium.ttf";
 import "../assets/font/JetBrainsMono-Regular.ttf";
@@ -18,6 +21,8 @@ export global Tema {
     out property <color> petalo-4: #22d3ee;
     out property <color> petalo-5: #2dd4bf;
     out property <color> petalo-6: #e879f9;
+    // I petali in fila (bordo del pannello, filo delle Impostazioni, bordo della cornice).
+    out property <brush> petali: @linear-gradient(90deg, petalo-1 0%, petalo-2 20%, petalo-3 40%, petalo-4 60%, petalo-5 80%, petalo-6 100%);
 
     // Aura calda di "ti cerca".
     out property <color> caldo-1: #fbbf24;
@@ -27,6 +32,8 @@ export global Tema {
 
     out property <color> fondo-alto: #2a0a4e;
     out property <color> fondo-basso: #0a0015;
+    // Fondo delle finestre (Impostazioni, cornice): dal viola al quasi nero.
+    out property <brush> fondo-finestra: @linear-gradient(160deg, fondo-alto 0%, fondo-basso 55%);
     out property <color> corpo: #07030f;
     out property <color> occhio: #f5efff;
     out property <color> bagliore-occhio: #c084fc;
@@ -38,6 +45,9 @@ export global Tema {
     out property <color> testo-ora: #d9d0ee;
     out property <color> testo-tenue: #a49cb8;
     out property <color> testo-etichetta: #cfc6e6;
+    // Suggerimento di un campo vuoto: più tenue del testo vero (circa 4,5:1 contro 15:1), non
+    // sembra un valore già scritto.
+    out property <color> segnaposto: rgba(236, 230, 250, 0.40);
     // Traccia degli archi e delle barre: circa 1,9:1 sulle card, la scala si legge anche con
     // un valore piccolo (#24183a era 1,15:1).
     out property <color> traccia: rgba(236, 230, 250, 0.16);
@@ -45,10 +55,54 @@ export global Tema {
     out property <color> capsula: rgba(255, 255, 255, 0.035);
     out property <color> scheda-sopra: rgba(255, 255, 255, 0.06);
     out property <color> scheda-attiva: rgba(255, 255, 255, 0.09);
+    // Fondo delle card (voci chiuse, righe delle Impostazioni, card tenui della Casa).
+    out property <color> card-fondo: rgba(255, 255, 255, 0.04);
+    // Fondo di un riquadro più chiaro (voce espansa, casella di un campo).
+    out property <color> riquadro-fondo: rgba(255, 255, 255, 0.05);
+    // Il colore pieno del riquadro sul corpo del pannello (corpo + bianco al 5%): la sfumatura in
+    // fondo al testo lungo svanisce in questo.
+    out property <color> riquadro-pieno: #130f1b;
+    // Card "vetro" dei layout: riflesso appena accennato (e un po' di più sotto il mouse).
+    out property <brush> card-vetro: @linear-gradient(160deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.02) 100%);
+    out property <brush> card-vetro-sopra: @linear-gradient(160deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.04) 100%);
+
+    // Pulsanti (un solo stile, vedi componenti.slint): neutro, azione (verde acqua), pericolo.
+    out property <color> neutro-fondo: rgba(255, 255, 255, 0.09);
+    out property <color> neutro-sopra: rgba(255, 255, 255, 0.16);
+    out property <color> azione-fondo: petalo-5.with-alpha(0.20);
+    out property <color> azione-sopra: petalo-5.with-alpha(0.30);
+    // Il bordo del primario: se ne vede il contorno (1,4:1 contro 1,2:1 del neutro).
+    out property <color> azione-bordo: petalo-5.with-alpha(0.45);
+    out property <color> pericolo-fondo: bloccante.with-alpha(0.22);
+    out property <color> pericolo-sopra: bloccante.with-alpha(0.34);
+    out property <color> pericolo-premuto: bloccante.with-alpha(0.40);
+    out property <color> pericolo-bordo: bloccante.with-alpha(0.55);
+    // Riga in attesa di conferma della rimozione (Impostazioni).
+    out property <color> pericolo-velo: bloccante.with-alpha(0.08);
+    out property <color> pericolo-filo: bloccante.with-alpha(0.35);
+    // Pulsante chiudi della cornice al passaggio del mouse.
+    out property <color> chiudi-sopra: bloccante.with-alpha(0.26);
+    // Interruttore delle Impostazioni.
+    out property <color> interruttore-acceso: petalo-5.with-alpha(0.55);
+    out property <color> interruttore-spento: rgba(255, 255, 255, 0.14);
+    out property <color> pomello-acceso: #ffffff;
+    // Testo selezionato in un campo.
+    out property <color> selezione: petalo-2.with-alpha(0.45);
+
+    // Bagliori del fondo del pannello (indaco in alto a sinistra, verde acqua in basso a destra).
+    out property <color> bagliore-indaco: petalo-2.with-alpha(0.10);
+    out property <color> bagliore-acqua: petalo-5.with-alpha(0.07);
+    // Ora grande del layout Orologio.
+    out property <brush> ora-grande: @linear-gradient(90deg, #e9d5ff 0%, #a5b4fc 50%, #67e8f9 100%);
 
     // Stato dei dispositivi: il colore compare solo quando sono accesi.
     out property <color> luce-accesa: #fcd34d;
     out property <color> presa-accesa: #5eead4;
+    // Card di una luce o di una presa accesa: bordo e fondo nella loro tinta.
+    out property <color> luce-bordo: rgba(253, 230, 138, 0.35);
+    out property <brush> luce-card: @linear-gradient(160deg, rgba(253, 230, 138, 0.28) 0%, rgba(251, 191, 36, 0.10) 100%);
+    out property <color> presa-bordo: rgba(94, 234, 212, 0.32);
+    out property <brush> presa-card: @linear-gradient(160deg, rgba(94, 234, 212, 0.24) 0%, rgba(45, 212, 191, 0.08) 100%);
     // Icona di un dispositivo spento: .45 dà almeno 3:1 sul fondo e sulle card (.32 era 2,3:1).
     out property <color> icona-spenta: rgba(236, 230, 250, 0.45);
     // Puntini dei layout: quello spento.
@@ -69,6 +123,24 @@ export global Tema {
         if (livello == "attenzione") { return attenzione; }
         return informazione;
     }
+
+    // ─── Scale (FE11): raggi e corpi del testo, pochi valori e sempre gli stessi ───
+    // Raggi: pulsanti della pillola e suggerimenti 8, pulsanti 10, voci e card piccole 12, card
+    // e riquadri 16, il pannello 22. Le forme a capsula usano metà dell'altezza.
+    out property <length> raggio-s: 8px;
+    out property <length> raggio-m: 10px;
+    out property <length> raggio-l: 12px;
+    out property <length> raggio-xl: 16px;
+    out property <length> raggio-pannello: 22px;
+    // Corpi del testo: etichette e righe piccole 12, testo 13, campi e nomi 14, titoli 15,
+    // titoli di una schermata vuota 17, intestazione di finestra 20, ora grande 68.
+    out property <length> testo-piccolo: 12px;
+    out property <length> testo-corpo: 13px;
+    out property <length> testo-medio: 14px;
+    out property <length> testo-titolo: 15px;
+    out property <length> testo-vuoto: 17px;
+    out property <length> testo-intestazione: 20px;
+    out property <length> testo-ora-grande: 68px;
 
     out property <string> carattere: "Inter Tight";
     out property <string> carattere-mono: "JetBrains Mono";

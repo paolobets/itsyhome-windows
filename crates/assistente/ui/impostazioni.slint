@@ -54,14 +54,14 @@ component Bottone inherits FocusScope {
     fondo := Rectangle {
         border-radius: 15px;
         border-width: 1px;
-        border-color: tipo == "primario" ? rgba(94, 234, 212, 0.40)
-            : tipo == "pericolo" ? rgba(248, 113, 113, 0.55)
+        border-color: tipo == "primario" ? Tema.azione-bordo
+            : tipo == "pericolo" ? Tema.pericolo-bordo
             : Tema.vetro-bordo;
         background: tipo == "primario"
-            ? (area.has-hover ? rgba(45, 212, 191, 0.30) : rgba(45, 212, 191, 0.18))
+            ? (area.has-hover ? Tema.azione-sopra : Tema.azione-fondo)
             : tipo == "pericolo"
-                ? (area.has-hover ? rgba(248, 113, 113, 0.34) : rgba(248, 113, 113, 0.22))
-                : (area.has-hover ? rgba(255, 255, 255, 0.13) : rgba(255, 255, 255, 0.07));
+                ? (area.has-hover ? Tema.pericolo-sopra : Tema.pericolo-fondo)
+                : (area.has-hover ? Tema.neutro-sopra : Tema.neutro-fondo);
 
         etichetta := Text {
             text: testo;
@@ -113,10 +113,9 @@ component Campo inherits Rectangle {
         border-radius: 9px;
         border-width: input.has-focus ? 2px : 1px;
         border-color: input.has-focus ? Tema.petalo-4 : Tema.vetro-bordo;
-        background: rgba(255, 255, 255, 0.05);
+        background: Tema.riquadro-fondo;
 
-        // Il suggerimento è più tenue del testo vero (circa 4,5:1 contro 15:1): non sembra un
-        // valore già scritto.
+        // Il suggerimento è più tenue del testo vero: non sembra un valore già scritto.
         Text {
             x: 12px;
             width: parent.width - 24px;
@@ -125,7 +124,7 @@ component Campo inherits Rectangle {
             vertical-alignment: center;
             overflow: elide;
             font-size: 13px;
-            color: rgba(236, 230, 250, 0.40);
+            color: Tema.segnaposto;
         }
 
         input := TextInput {
@@ -137,7 +136,7 @@ component Campo inherits Rectangle {
             input-type: password ? InputType.password : InputType.text;
             font-size: 14px;
             color: Tema.testo;
-            selection-background-color: rgba(129, 140, 248, 0.45);
+            selection-background-color: Tema.selezione;
             selection-foreground-color: Tema.testo;
             accessible-role: text-input;
             accessible-label: etichetta;
@@ -252,7 +251,7 @@ component Interruttore inherits FocusScope {
 
     Rectangle {
         border-radius: 12px;
-        background: acceso ? rgba(45, 212, 191, 0.55) : rgba(255, 255, 255, 0.14);
+        background: acceso ? Tema.interruttore-acceso : Tema.interruttore-spento;
 
         Rectangle {
             x: acceso ? parent.width - self.width - 3px : 3px;
@@ -260,7 +259,7 @@ component Interruttore inherits FocusScope {
             width: 18px;
             height: 18px;
             border-radius: 9px;
-            background: acceso ? #ffffff : Tema.testo-ora;
+            background: acceso ? Tema.pomello-acceso : Tema.testo-ora;
             animate x { duration: Movimento.ridotto ? 0ms : 120ms; easing: ease-out; }
         }
     }
@@ -335,7 +334,7 @@ export component FinestraImpostazioni inherits Window {
     min-width: 600px;
     min-height: 420px;
     default-font-family: Tema.carattere;
-    background: @linear-gradient(160deg, Tema.fondo-alto 0%, Tema.fondo-basso 55%);
+    background: Tema.fondo-finestra;
     forward-focus: radice;
     // Il riquadro AboutSlint segue la tavolozza dei widget standard: logo e testo chiari sul
     // fondo scuro, qualunque sia il tema di Windows.
@@ -438,7 +437,7 @@ export component FinestraImpostazioni inherits Window {
         Rectangle {
             y: 0;
             height: 2px;
-            background: @linear-gradient(90deg, Tema.petalo-1 0%, Tema.petalo-2 20%, Tema.petalo-3 40%, Tema.petalo-4 60%, Tema.petalo-5 80%, Tema.petalo-6 100%);
+            background: Tema.petali;
         }
 
         Text {
@@ -546,9 +545,9 @@ export component FinestraImpostazioni inherits Window {
                     y: i * passo-riga;
                     height: alto-riga;
                     border-radius: 14px;
-                    background: conferma ? rgba(248, 113, 113, 0.08) : rgba(255, 255, 255, 0.04);
+                    background: conferma ? Tema.pericolo-velo : Tema.card-fondo;
                     border-width: 1px;
-                    border-color: conferma ? rgba(248, 113, 113, 0.35) : Tema.vetro-bordo;
+                    border-color: conferma ? Tema.pericolo-filo : Tema.vetro-bordo;
 
                     // Riga 1: nome e stato (oppure la domanda che nomina l'ambiente); riga 2:
                     // indirizzo (o cosa succede); riga 3: i pulsanti. Così ci sta anche stretta.
@@ -742,7 +741,7 @@ export component FinestraImpostazioni inherits Window {
                 y: 44px;
                 height: 64px;
                 border-radius: 14px;
-                background: rgba(255, 255, 255, 0.04);
+                background: Tema.card-fondo;
                 border-width: 1px;
                 border-color: Tema.vetro-bordo;
 

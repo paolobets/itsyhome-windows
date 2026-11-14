@@ -17,6 +17,8 @@ mod registro;
 mod scelte;
 mod sistema;
 mod umore;
+#[cfg(test)]
+mod test_ui;
 
 use casa_core::config::ConfigStore;
 use casa_core::segreti::{KeyringSegreti, Segreti};

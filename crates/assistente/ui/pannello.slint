@@ -516,7 +516,7 @@ export component Pannello inherits Window {
         border-radius: 22px;
         clip: true;
         // Anello sottile con i colori dei petali, come il bordo dell'isola nella bozza (fermo).
-        background: @linear-gradient(90deg, Tema.petalo-1 0%, Tema.petalo-2 20%, Tema.petalo-3 40%, Tema.petalo-4 60%, Tema.petalo-5 80%, Tema.petalo-6 100%);
+        background: Tema.petali;
 
         Rectangle {
             x: 1.5px;
@@ -534,7 +534,7 @@ export component Pannello inherits Window {
                 y: -220px;
                 width: 440px;
                 height: 440px;
-                background: @radial-gradient(circle, rgba(129, 140, 248, 0.10) 0%, transparent 60%);
+                background: @radial-gradient(circle, Tema.bagliore-indaco 0%, transparent 60%);
             }
 
             Rectangle {
@@ -542,7 +542,7 @@ export component Pannello inherits Window {
                 y: parent.height - 190px;
                 width: 400px;
                 height: 400px;
-                background: @radial-gradient(circle, rgba(45, 212, 191, 0.07) 0%, transparent 60%);
+                background: @radial-gradient(circle, Tema.bagliore-acqua 0%, transparent 60%);
             }
         }
 
