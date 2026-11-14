@@ -141,6 +141,9 @@ export component Pillola inherits Window {
     always-on-top: true;
     background: transparent;
     title: "ItsyHome";
+    // Il carattere dell'assistente anche per i testi che non lo dicono (senza, Slint userebbe quello
+    // di sistema: un font in più in memoria).
+    default-font-family: Tema.carattere;
     width: larghezza-finestra;
     height: altezza-finestra;
 

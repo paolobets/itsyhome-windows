@@ -122,6 +122,9 @@ export component Pulsante inherits FocusScope {
             text: testo;
             horizontal-alignment: center;
             overflow: elide;
+            // Esplicito: la pillola non ha un carattere predefinito, e senza questo il testo dei suoi
+            // pulsanti andava nel carattere di sistema (un font in più caricato, circa 1 MB).
+            font-family: Tema.carattere;
             font-weight: 500;
             font-size: corpo-testo;
             color: Tema.testo;
