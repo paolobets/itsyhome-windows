@@ -249,8 +249,20 @@ export component Pannello inherits Window {
             || (attese[i].pulsanti.length > 1 && attese[i].pulsanti[1].delicato);
     }
 
+    // Il primo pulsante non delicato della voce `i` («Nega»), qualunque sia l'ordine scelto dalla
+    // fonte; -1 se sono tutti delicati (allora il fuoco resta sulla voce).
+    pure function primo-non-delicato(i: int) -> int {
+        if (attese[i].pulsanti.length > 0 && !attese[i].pulsanti[0].delicato) {
+            return 0;
+        }
+        if (attese[i].pulsanti.length > 1 && !attese[i].pulsanti[1].delicato) {
+            return 1;
+        }
+        return -1;
+    }
+
     // Espande la voce `i`: il fuoco da tastiera va su «In attesa» (il layout sotto è coperto).
-    // Se la voce chiede un permesso il fuoco parte da «Nega» (il primo pulsante): Invio lì nega,
+    // Se la voce chiede un permesso il fuoco parte da «Nega» (il pulsante non delicato): Invio lì nega,
     // e «Consenti» vuole Ctrl+Invio.
     function apri-voce(i: int) {
         if (i >= 0 && i < attese.length) {
@@ -258,7 +270,7 @@ export component Pannello inherits Window {
             indice-aperta = i;
             zona = "attesa";
             fuoco-attesa = min(i, 3);
-            fuoco-pulsante = chiede-permesso(i) ? 0 : -1;
+            fuoco-pulsante = chiede-permesso(i) ? primo-non-delicato(i) : -1;
         }
     }
 
