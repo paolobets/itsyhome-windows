@@ -1,5 +1,7 @@
-//! L'icona nella tray (area di notifica) con il suo menu: «Apri», «Impostazioni», «Ritira
-//! l'isola» / «Mostra l'isola», «Esci». Clic sinistro sull'icona = «Apri». Va creata dal ciclo
+//! L'icona nella tray (area di notifica) con il suo menu: «Apri», «Impostazioni»,
+//! «Informazioni» (la schermata «About» con AboutSlint, richiesta dalla licenza Slint
+//! royalty-free 2.0, §2(a), «accessible from the top level menu»), «Ritira l'isola» / «Mostra
+//! l'isola», «Esci». Clic sinistro sull'icona = «Apri». Va creata dal ciclo
 //! eventi (thread dell'interfaccia); gli eventi arrivano da `tray-icon` e si inoltrano al ciclo
 //! eventi con `invoke_from_event_loop`.
 
@@ -8,6 +10,8 @@
 pub enum Comando {
     Apri,
     Impostazioni,
+    /// Le Impostazioni sulla sezione «Informazioni».
+    Informazioni,
     /// Ritira la pillola o la rimette (secondo lo stato).
     Ritirata,
     Esci,
@@ -60,16 +64,18 @@ mod windows {
     pub fn crea(al_comando: fn(Comando), ritirata: bool) -> Result<Tray, String> {
         let apri = MenuItem::with_id("apri", "Apri", true, None);
         let impostazioni = MenuItem::with_id("impostazioni", "Impostazioni", true, None);
+        let informazioni = MenuItem::with_id("informazioni", "Informazioni", true, None);
         let ritira = MenuItem::with_id("ritirata", testo_ritirata(ritirata), true, None);
         let esci = MenuItem::with_id("esci", "Esci", true, None);
         let menu = Menu::new();
-        menu.append_items(&[&apri, &impostazioni, &ritira, &PredefinedMenuItem::separator(), &esci])
+        menu.append_items(&[&apri, &impostazioni, &informazioni, &ritira, &PredefinedMenuItem::separator(), &esci])
             .map_err(|e| e.to_string())?;
 
         MenuEvent::set_event_handler(Some(move |e: MenuEvent| {
             let comando = match e.id().as_ref() {
                 "apri" => Comando::Apri,
                 "impostazioni" => Comando::Impostazioni,
+                "informazioni" => Comando::Informazioni,
                 "ritirata" => Comando::Ritirata,
                 "esci" => Comando::Esci,
                 _ => return,

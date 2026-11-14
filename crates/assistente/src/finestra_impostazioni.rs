@@ -5,7 +5,7 @@
 use crate::{ponte, FinestraImpostazioni, Movimento};
 use slint::winit_030::WinitWindowAccessor;
 use slint::ComponentHandle;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::time::Duration;
 
 /// Titolo della finestra: il gancio di winit in `main` la lascia nella barra delle applicazioni
@@ -14,6 +14,23 @@ pub const TITOLO: &str = "ItsyHome — Impostazioni";
 
 thread_local! {
     static FINESTRA: RefCell<Option<FinestraImpostazioni>> = const { RefCell::new(None) };
+    /// Sezione da mostrare alla prossima apertura (voce «Informazioni» della tray).
+    static SEZIONE: Cell<Option<i32>> = const { Cell::new(None) };
+}
+
+/// Sezione «Informazioni» delle Impostazioni (0 Home Assistant, 1 Sistema, 2 Informazioni).
+pub const SEZIONE_INFORMAZIONI: i32 = 2;
+
+/// La prossima `apri_impostazioni` mostra questa sezione (la si chiede dalla tray, prima che il
+/// pannello si chiuda e la finestra si apra).
+pub fn alla_sezione(sezione: i32) {
+    SEZIONE.with(|s| s.set(Some(sezione)));
+}
+
+fn mostra_sezione_chiesta(f: &FinestraImpostazioni) {
+    if let Some(s) = SEZIONE.with(Cell::take) {
+        f.set_sezione(s);
+    }
 }
 
 /// Apre la finestra delle Impostazioni, o porta davanti quella già aperta. Va chiamata dal ciclo
@@ -23,6 +40,7 @@ pub fn apri_impostazioni() {
     if let Some(w) = aperta.and_then(|w| w.upgrade()) {
         // Ridotta a icona: prima la si rimette su, poi davanti.
         w.window().set_minimized(false);
+        mostra_sezione_chiesta(&w);
         let _ = w.show();
         w.window().with_winit_window(|w| w.focus_window());
         return;
@@ -38,6 +56,7 @@ pub fn apri_impostazioni() {
     if let Some(p) = ponte::ponte() {
         p.collega_finestra(&finestra);
     }
+    mostra_sezione_chiesta(&finestra);
     finestra.on_chiudi(chiudi_dopo);
     finestra.window().on_close_requested(|| {
         chiudi_dopo();

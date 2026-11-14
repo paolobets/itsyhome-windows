@@ -116,6 +116,12 @@ fn al_comando_tray(c: Comando) {
                 s.ponte.chiedi_impostazioni();
             }
         }
+        Comando::Informazioni => {
+            crate::finestra_impostazioni::alla_sezione(crate::finestra_impostazioni::SEZIONE_INFORMAZIONI);
+            if let Some(s) = servizi() {
+                s.ponte.chiedi_impostazioni();
+            }
+        }
         Comando::Ritirata => commuta_ritirata(),
         Comando::Esci => {
             let _ = slint::quit_event_loop();
