@@ -6,7 +6,8 @@
 // Tastiera: Tab / Maiusc+Tab fra «Indietro», «In attesa», contenuto e dock; frecce dentro la zona
 // (in «In attesa» ←/→ fra le voci e, a voce espansa, ↓ ai pulsanti e ↑ di nuovo alla voce; nella
 // Panoramica ←/→ cambiano layout, nel dock cambiano icona, in Casa si muovono fra le card);
-// Invio o Spazio attivano (su una voce: la espande o la riduce); Backspace o Alt+← = Indietro;
+// Invio o Spazio attivano (su una voce: la espande o la riduce; un permesso, «Consenti», solo con
+// Ctrl+Invio, e la voce che lo chiede si apre col fuoco su «Nega»); Backspace o Alt+← = Indietro;
 // Esc chiude. Un unico FocusScope tiene il fuoco e l'anello (visibile solo da tastiera) segue la
 // zona scelta.
 import { Tema } from "tema.slint";
@@ -224,14 +225,25 @@ export component Pannello inherits Window {
         fuoco-pulsante = -1;
     }
 
+    // La voce `i` chiede un permesso (ha un pulsante delicato; al massimo 2 pulsanti per voce).
+    pure function chiede-permesso(i: int) -> bool {
+        if (i < 0 || i >= attese.length) {
+            return false;
+        }
+        return (attese[i].pulsanti.length > 0 && attese[i].pulsanti[0].delicato)
+            || (attese[i].pulsanti.length > 1 && attese[i].pulsanti[1].delicato);
+    }
+
     // Espande la voce `i`: il fuoco da tastiera va su «In attesa» (il layout sotto è coperto).
+    // Se la voce chiede un permesso il fuoco parte da «Nega» (il primo pulsante): Invio lì nega,
+    // e «Consenti» vuole Ctrl+Invio.
     function apri-voce(i: int) {
         if (i >= 0 && i < attese.length) {
             voce-aperta = attese[i].id;
             indice-aperta = i;
             zona = "attesa";
             fuoco-attesa = min(i, 3);
-            fuoco-pulsante = -1;
+            fuoco-pulsante = chiede-permesso(i) ? 0 : -1;
         }
     }
 
@@ -323,13 +335,23 @@ export component Pannello inherits Window {
         }
     }
 
-    // Invio / Spazio sulla zona col fuoco.
-    function attiva() {
+    // Invio / Spazio sulla zona col fuoco; `ctrl`: Ctrl+Invio, l'unico tasto che concede un
+    // permesso (su un pulsante delicato Invio e Spazio da soli non fanno nulla).
+    function attiva(ctrl: bool) {
+        if (ctrl) {
+            if (zona == "attesa" && espansa && fuoco-pulsante >= 0 && indice-aperta >= 0
+                    && attese[indice-aperta].pulsanti[fuoco-pulsante].delicato) {
+                root.azione(voce-aperta, attese[indice-aperta].pulsanti[fuoco-pulsante].id);
+            }
+            return;
+        }
         if (zona == "indietro") {
             indietro();
         } else if (zona == "attesa" && espansa) {
             if (fuoco-pulsante >= 0 && indice-aperta >= 0) {
-                root.azione(voce-aperta, attese[indice-aperta].pulsanti[fuoco-pulsante].id);
+                if (!attese[indice-aperta].pulsanti[fuoco-pulsante].delicato) {
+                    root.azione(voce-aperta, attese[indice-aperta].pulsanti[fuoco-pulsante].id);
+                }
             } else {
                 riduci-voce();
             }
@@ -363,6 +385,12 @@ export component Pannello inherits Window {
                 indietro();
                 return accept;
             }
+            // Ctrl+Invio prima del rifiuto dei modificatori: concede il permesso col fuoco.
+            if (evento.text == Key.Return && evento.modifiers.control && !evento.modifiers.alt && !evento.modifiers.meta) {
+                da-tastiera = true;
+                attiva(true);
+                return accept;
+            }
             if (evento.modifiers.alt || evento.modifiers.control || evento.modifiers.meta) {
                 return reject;
             }
@@ -373,7 +401,7 @@ export component Pannello inherits Window {
             }
             if (evento.text == Key.Return || evento.text == Key.Space) {
                 da-tastiera = true;
-                attiva();
+                attiva(false);
                 return accept;
             }
             return reject;

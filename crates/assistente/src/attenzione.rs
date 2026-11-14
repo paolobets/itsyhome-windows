@@ -74,11 +74,18 @@ impl Fonte {
 pub struct Pulsante {
     pub id: String,
     pub testo: String,
+    /// Concede un permesso («Consenti»): nel pannello mai con Invio da solo, solo Ctrl+Invio o
+    /// clic; nella pillola solo se il testo della richiesta si legge tutto (decisione A).
+    pub delicato: bool,
 }
 
 impl Pulsante {
     pub fn new(id: &str, testo: &str) -> Pulsante {
-        Pulsante { id: id.into(), testo: testo.into() }
+        Pulsante { id: id.into(), testo: testo.into(), delicato: false }
+    }
+
+    pub fn delicato(id: &str, testo: &str) -> Pulsante {
+        Pulsante { delicato: true, ..Pulsante::new(id, testo) }
     }
 }
 
@@ -209,6 +216,8 @@ pub const PULSANTE_ARCHIVIA: &str = "archivia";
 /// Prefisso delle voci delle notifiche persistenti di HA: `casa.notifica.<notification_id>`.
 pub const PREFISSO_NOTIFICA: &str = "casa.notifica.";
 pub const ID_PROVA: &str = "prova.avviso";
+/// Pulsante della pillola al posto di un consenso col testo tagliato: apre il pannello sulla voce.
+pub const PULSANTE_APRI: &str = "apri";
 /// Voci dei servizi di sistema (scorciatoia occupata): «Ho capito» le toglie.
 pub const PREFISSO_SISTEMA: &str = "sistema.";
 pub const PULSANTE_HO_CAPITO: &str = "ho-capito";
@@ -354,15 +363,28 @@ pub fn voce_notifica(id: &str, titolo: &str, messaggio: &str, ora: Instant) -> V
     }
 }
 
-/// `--prova-avviso <livello>`: una voce finta con 2 pulsanti finti (entrambi la tolgono).
-pub fn voce_di_prova(livello: Livello, ora: Instant) -> Voce {
+/// `--prova-avviso <livello> [--lungo]`: una voce finta che chiede un permesso con 2 pulsanti
+/// finti (entrambi la tolgono). `lungo`: titolo che non sta nella pillola (lì «Nega» + «Apri») e
+/// testo più lungo dell'area della voce espansa (si scorre).
+pub fn voce_di_prova(livello: Livello, lungo: bool, ora: Instant) -> Voce {
+    let (titolo, dettaglio) = if lungo {
+        (
+            format!("Avviso di prova ({}): consentire a un programma di prova di cancellare la cartella dist e tutto il suo contenuto?", livello.come_stringa()),
+            "Questo è un avviso di prova lungo, creato con --prova-avviso e --lungo. I due pulsanti non fanno nulla: lo tolgono soltanto.\n\nServe a provare che un testo più lungo dello spazio della voce espansa si legge tutto: con la rotella del mouse o con le frecce ↑ e ↓ quando il fuoco è sulla voce, il testo scorre.\n\nNella pillola il titolo è tagliato: per questo al posto di «Consenti» c'è «Apri», che porta qui, dove il testo si legge intero e si decide.\n\nRiga in più per lo scorrimento.\n\nUltima riga dell'avviso di prova.".to_owned(),
+        )
+    } else {
+        (
+            format!("Avviso di prova: {}", livello.come_stringa()),
+            "Questo è un avviso di prova creato con --prova-avviso. I due pulsanti non fanno nulla: lo tolgono soltanto.".to_owned(),
+        )
+    };
     Voce {
         id: ID_PROVA.into(),
         livello,
         fonte: Fonte::Prova,
-        titolo: format!("Avviso di prova: {}", livello.come_stringa()),
-        dettaglio: "Questo è un avviso di prova creato con --prova-avviso. I due pulsanti non fanno nulla: lo tolgono soltanto.".into(),
-        pulsanti: vec![Pulsante::new("nega", "Nega"), Pulsante::new("consenti", "Consenti")],
+        titolo,
+        dettaglio,
+        pulsanti: vec![Pulsante::new("nega", "Nega"), Pulsante::delicato("consenti", "Consenti")],
         creata: ora,
     }
 }
@@ -509,7 +531,7 @@ pub(crate) mod test {
         let mut v = voce("p", Livello::Bloccante, t);
         v.pulsanti = ["Uno", "Due", "Tre"]
             .iter()
-            .map(|s| Pulsante { id: s.to_lowercase(), testo: (*s).into() })
+            .map(|s| Pulsante::new(&s.to_lowercase(), s))
             .collect();
         let mut a = Attese::default();
         a.metti(v);

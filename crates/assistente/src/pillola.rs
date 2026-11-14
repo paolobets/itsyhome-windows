@@ -5,7 +5,7 @@
 //! rubare clic, la finestra è ritagliata alla pillola con la sua aura (pulsanti compresi): il
 //! ritaglio cresce subito quando la pillola cresce e cala solo a fine animazione.
 
-use crate::attenzione::{aspetto_pillola, Attese, AspettoPillola, Fonte, Livello, Pulsante};
+use crate::attenzione::{aspetto_pillola, Attese, AspettoPillola, Fonte, Livello, Pulsante, PULSANTE_APRI};
 use crate::umore::Umore;
 use crate::{finestre, pannello, Pillola, PulsanteUi};
 use slint::{ComponentHandle, Image, ModelRc, VecModel};
@@ -89,9 +89,20 @@ pub fn icona_fonte(f: Fonte) -> Image {
     })
 }
 
+/// I pulsanti della pillola allargata: quelli della voce, ma con il testo tagliato un consenso
+/// (pulsante delicato) diventa «Apri» (pannello su quella voce, testo intero, lì si decide).
+pub fn pulsanti_pillola(pulsanti: &[Pulsante], testo_tagliato: bool) -> Vec<Pulsante> {
+    pulsanti
+        .iter()
+        .map(|p| if p.delicato && testo_tagliato { Pulsante::new(PULSANTE_APRI, "Apri") } else { p.clone() })
+        .collect()
+}
+
 pub fn pulsanti_ui(p: &[Pulsante]) -> ModelRc<PulsanteUi> {
-    let voci: Vec<PulsanteUi> =
-        p.iter().map(|p| PulsanteUi { id: p.id.as_str().into(), testo: p.testo.as_str().into() }).collect();
+    let voci: Vec<PulsanteUi> = p
+        .iter()
+        .map(|p| PulsanteUi { id: p.id.as_str().into(), testo: p.testo.as_str().into(), delicato: p.delicato })
+        .collect();
     ModelRc::new(VecModel::from(voci))
 }
 
@@ -159,6 +170,14 @@ pub fn imposta(ui: &Pillola, v: &VistaPillola) {
         ui.set_icona_fonte(icona_fonte(v.fonte));
     }
     ui.set_pulsanti(pulsanti_ui(&v.pulsanti));
+    // Con i pulsanti della voce la riga sa se il testo ci sta (misura sulle larghezze finali, non
+    // su quelle animate): se no, il consenso diventa «Apri».
+    if aspetto == "allargata" {
+        let finali = pulsanti_pillola(&v.pulsanti, ui.get_testo_tagliato());
+        if finali != v.pulsanti {
+            ui.set_pulsanti(pulsanti_ui(&finali));
+        }
+    }
 
     let dopo = visibile(ui);
     let giro = GIRO.with(|g| {
@@ -224,6 +243,21 @@ mod test {
         assert_eq!(vp.livello, Livello::Informazione);
         assert!(vp.testo.is_empty() && vp.pulsanti.is_empty());
         assert_eq!(vista(Umore::Tranquillo, &Attese::default(), t), VistaPillola::riposo(Umore::Tranquillo));
+    }
+
+    #[test]
+    fn permesso_col_testo_tagliato_nega_e_apri() {
+        // Decisione A di Paolo: se il testo non si legge tutto, dalla pillola non si consente.
+        let permesso = vec![Pulsante::new("nega", "Nega"), Pulsante::delicato("consenti", "Consenti")];
+        let tagliato = pulsanti_pillola(&permesso, true);
+        assert_eq!(tagliato, vec![Pulsante::new("nega", "Nega"), Pulsante::new(PULSANTE_APRI, "Apri")]);
+        assert!(tagliato.iter().all(|p| !p.delicato), "nessun consenso possibile dalla pillola");
+        // Il testo ci sta: «Nega» / «Consenti» come sono.
+        assert_eq!(pulsanti_pillola(&permesso, false), permesso);
+        // Senza un pulsante delicato (Riprova, Archivia…) nulla cambia, tagliato o no.
+        let riprova = vec![Pulsante::new("riprova", "Riprova")];
+        assert_eq!(pulsanti_pillola(&riprova, true), riprova);
+        assert!(pulsanti_pillola(&[], true).is_empty());
     }
 
     #[test]

@@ -49,9 +49,11 @@ export struct SensoreUi {
 }
 
 // Un pulsante di una voce «In attesa» (al massimo 2 per voce, anche nella pillola).
+// `delicato`: concede un permesso; nel pannello mai con Invio da solo, solo Ctrl+Invio o clic.
 export struct PulsanteUi {
     id: string,
     testo: string,
+    delicato: bool,
 }
 
 // Una voce «In attesa» per la riga in cima alla Panoramica (vedi `attenzione.rs`).

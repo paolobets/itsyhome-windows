@@ -142,16 +142,18 @@ fn main() -> Result<(), slint::PlatformError> {
     let cervello = Rc::new(RefCell::new(Cervello::new(Instant::now())));
     let ponte = ponte::collega(casa.clone(), segreti, &pillola, cervello, forzato, errore_import);
     let ponte_servizi = ponte.clone();
-    // `--prova-avviso <bloccante|attenzione|informazione> [--dopo <s>]`: una voce finta con 2
-    // pulsanti finti, subito o dopo `s` secondi (per provarla mentre la pillola è ritirata).
+    // `--prova-avviso <bloccante|attenzione|informazione> [--dopo <s>] [--lungo]`: una voce finta
+    // con 2 pulsanti finti, subito o dopo `s` secondi (per provarla mentre la pillola è ritirata);
+    // `--lungo`: titolo tagliato nella pillola e testo da scorrere nel pannello.
     if let Some(livello) = attenzione::avviso_di_prova(argomenti.iter().cloned()) {
+        let lungo = argomenti.iter().any(|a| a == "--lungo");
         match attenzione::secondi_dopo(argomenti.iter().cloned()) {
             Some(s) => slint::Timer::single_shot(std::time::Duration::from_secs(s), move || {
                 if let Some(p) = ponte::ponte() {
-                    p.prova_avviso(livello);
+                    p.prova_avviso(livello, lungo);
                 }
             }),
-            None => ponte.prova_avviso(livello),
+            None => ponte.prova_avviso(livello, lungo),
         }
     }
     // La batteria si controlla ogni 60 s anche a pannello chiuso (unica eccezione al campionamento

@@ -205,6 +205,12 @@ export component Pillola inherits Window {
 
     property <bool> palpebra: false;
 
+    // La riga del messaggio e se il testo non ci sta tutto. Calcolato sulle larghezze finali
+    // (`larghezza-pillola`, pulsanti di adesso), non su quelle animate: Rust lo legge appena
+    // impostati messaggio e pulsanti e, se è vero, mette «Apri» al posto di un consenso.
+    property <length> x-riga: occhi-allerta-dal-bordo + 2 * mezzo-ingombro-allerta + 10px;
+    out property <bool> testo-tagliato: riga.preferred-width > larghezza-pillola - 8px - bottoni.preferred-width - 8px - x-riga;
+
     no-frame: true;
     always-on-top: true;
     background: transparent;
@@ -367,9 +373,11 @@ export component Pillola inherits Window {
             }
         }
 
-        if allargata: Text {
-            x: occhi-allerta-dal-bordo + 2 * mezzo-ingombro-allerta + 10px;
-            width: bottoni.x - self.x - 8px;
+        // La riga: sempre presente (nascosta da piccola) perché Rust ne legge `testo-tagliato`.
+        riga := Text {
+            visible: allargata;
+            x: x-riga;
+            width: max(0px, bottoni.x - self.x - 8px);
             height: parent.height;
             text: messaggio;
             overflow: elide;
@@ -386,7 +394,8 @@ export component Pillola inherits Window {
             x: parent.width - self.width - 8px;
             y: (parent.height - self.height) / 2;
             height: self.preferred-height;
-            spacing: 4px;
+            // 10 px fra «Nega» e «Consenti»: un clic impreciso non concede un permesso.
+            spacing: 10px;
             visible: allargata;
 
             for p[i] in pulsanti: PulsantePillola {

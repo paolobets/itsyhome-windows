@@ -5,7 +5,7 @@
 use crate::attenzione::{
     self, livello_massimo, notifica_sistema, prossimo_cambio_aspetto, Attese, Fonte, Livello, SorveglianzaCasa,
     Voce, ID_BATTERIA, ID_CASA_OFFLINE, ID_CASA_TOKEN, PREFISSO_NOTIFICA, PREFISSO_SISTEMA, PULSANTE_ARCHIVIA,
-    PULSANTE_IMPOSTAZIONI, PULSANTE_RIPROVA,
+    PULSANTE_APRI, PULSANTE_IMPOSTAZIONI, PULSANTE_RIPROVA,
 };
 use crate::sistema::{autoavvio, servizi};
 use crate::impostazioni::{self, Modulo, Tono};
@@ -400,8 +400,15 @@ pub fn collega(
         apri_impostazioni: RefCell::new(None),
     });
     PONTE.with(|p| *p.borrow_mut() = Some(ponte.clone()));
-    // I pulsanti della pillola allargata agiscono sulla voce che sta chiamando.
+    // I pulsanti della pillola allargata agiscono sulla voce che sta chiamando; «Apri» (un
+    // consenso col testo tagliato) apre il pannello su quella voce, come un clic sulla pillola.
     pillola.on_azione(|pulsante| {
+        if pulsante == PULSANTE_APRI {
+            if let Some(pl) = self::ponte().and_then(|p| p.pillola.upgrade()) {
+                pl.invoke_cliccata();
+            }
+            return;
+        }
         if let Some(p) = self::ponte() {
             let voce = p.mostrato.borrow().as_ref().and_then(|v| v.voce_allargata().map(str::to_owned));
             if let Some(voce) = voce {
@@ -1030,8 +1037,8 @@ impl Ponte {
     }
 
     /// `--prova-avviso <livello>`.
-    pub fn prova_avviso(&self, livello: Livello) {
-        self.metti_voce(attenzione::voce_di_prova(livello, Instant::now()), true);
+    pub fn prova_avviso(&self, livello: Livello, lungo: bool) {
+        self.metti_voce(attenzione::voce_di_prova(livello, lungo, Instant::now()), true);
     }
 }
 
