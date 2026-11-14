@@ -11,7 +11,7 @@ use crate::registro::app_disponibili;
 use crate::pc_stats::{formatta_byte, formatta_velocita, Campionatore, StatPc};
 use crate::ponte::Ponte;
 use crate::sistema::servizi;
-use crate::{finestra_impostazioni, finestre, orologio, scelte, Pannello, Pillola, StatPcUi, VoceAppUi};
+use crate::{finestra_impostazioni, finestre, orologio, scelte, Movimento, Pannello, Pillola, StatPcUi, VoceAppUi};
 use slint::winit_030::{winit, EventResult, WinitWindowAccessor};
 use slint::{ComponentHandle, Image, ModelRc, VecModel};
 use std::cell::{Cell, RefCell};
@@ -255,6 +255,7 @@ impl Apertura {
     /// Crea il pannello e ne collega i callback.
     fn crea(&self) -> Result<Pannello, slint::PlatformError> {
         let pannello = Pannello::new()?;
+        pannello.global::<Movimento>().set_ridotto(servizi::movimento_ridotto());
         debug_assert_eq!(pannello.get_larghezza_pannello(), finestre::LARGHEZZA_PANNELLO);
         debug_assert_eq!(pannello.get_altezza_riga(), finestre::ALTEZZA_RIGA_PANNELLO);
         debug_assert_eq!(pannello.get_numero_layout() as usize, layout::TUTTI.len());

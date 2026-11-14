@@ -110,6 +110,7 @@ fn main() -> Result<(), slint::PlatformError> {
     sincronizza_avvio(&casa);
 
     let pillola = Pillola::new()?;
+    pillola.global::<Movimento>().set_ridotto(sistema::movimento::ridotto());
     // Le misure della pillola in Rust (finestre.rs, con i test) e in pillola.slint coincidono.
     debug_assert_eq!(pillola.get_margine_aura(), finestre::MARGINE_AURA);
     debug_assert_eq!(

@@ -10,7 +10,7 @@
 // Tastiera: Tab / Maiusc+Tab nell'ordine naturale (sezioni, pulsanti, campi), Invio o Spazio
 // premono il pulsante col fuoco. In un campo si scrive come in ogni casella (frecce, Backspace,
 // selezione); Esc esce dal campo, Esc fuori da un campo chiude la finestra; Invio in un campo salva.
-import { Tema } from "tema.slint";
+import { Tema, Movimento } from "tema.slint";
 import { AmbienteUi } from "voci.slint";
 
 export { AmbienteUi }
@@ -247,7 +247,7 @@ component Interruttore inherits FocusScope {
             height: 18px;
             border-radius: 9px;
             background: acceso ? #ffffff : Tema.testo-ora;
-            animate x { duration: 120ms; easing: ease-out; }
+            animate x { duration: Movimento.ridotto ? 0ms : 120ms; easing: ease-out; }
         }
     }
 

@@ -3,6 +3,13 @@ import "../assets/font/InterTight-Regular.ttf";
 import "../assets/font/InterTight-Medium.ttf";
 import "../assets/font/JetBrainsMono-Regular.ttf";
 
+// Movimento ridotto (impostazione di Windows «Effetti di animazione», scritta da Rust in ogni
+// finestra: vedi `sistema::movimento`). Vero: niente pulsazioni né scivolamenti, solo cambi
+// istantanei o dissolvenze brevi.
+export global Movimento {
+    in property <bool> ridotto: false;
+}
+
 export global Tema {
     // I sei colori dei petali, nell'ordine dell'aura.
     out property <color> petalo-1: #c084fc;

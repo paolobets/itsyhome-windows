@@ -8,6 +8,7 @@
 pub mod autoavvio;
 pub mod inattivita;
 pub mod istanza;
+pub mod movimento;
 pub mod notifiche;
 pub mod ritirata;
 pub mod schermo_intero;

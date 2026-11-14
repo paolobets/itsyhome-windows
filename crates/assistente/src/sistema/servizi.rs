@@ -15,7 +15,7 @@ use crate::attenzione::Livello;
 use crate::finestre::{self, RettangoloFisico};
 use crate::pannello::Apertura;
 use crate::ponte::Ponte;
-use crate::{pillola, Pillola};
+use crate::{pillola, Movimento, Pillola};
 use slint::ComponentHandle;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -43,6 +43,11 @@ pub struct Servizi {
 
 thread_local! {
     static SERVIZI: RefCell<Option<Rc<Servizi>>> = const { RefCell::new(None) };
+}
+
+/// Il movimento ridotto chiesto dal sistema adesso (vedi `sistema::movimento`).
+pub fn movimento_ridotto() -> bool {
+    super::movimento::ridotto()
 }
 
 fn servizi() -> Option<Rc<Servizi>> {
@@ -191,6 +196,12 @@ impl Servizi {
     fn controlla(&self) {
         self.controlla_schermo_intero();
         if let Some(p) = self.pillola.upgrade() {
+            // «Effetti di animazione» cambiato mentre l'app gira: la pillola lo prende qui (il
+            // pannello e le Impostazioni lo leggono quando nascono).
+            let ridotto = movimento_ridotto();
+            if p.global::<Movimento>().get_ridotto() != ridotto {
+                p.global::<Movimento>().set_ridotto(ridotto);
+            }
             if self.mostrata.get() != Visibilita::Nascosta {
                 finestre::metti_sopra(p.window());
                 pillola::al_cambio_schermo(&p);

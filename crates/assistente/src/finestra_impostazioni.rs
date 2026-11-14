@@ -2,7 +2,7 @@
 //! chiusa non tiene né finestra né buffer). Una sola alla volta: riaprirla la riporta davanti.
 //! Dati e azioni li collega il `Ponte`; qui solo la vita della finestra.
 
-use crate::{ponte, FinestraImpostazioni};
+use crate::{ponte, FinestraImpostazioni, Movimento};
 use slint::winit_030::WinitWindowAccessor;
 use slint::ComponentHandle;
 use std::cell::RefCell;
@@ -34,6 +34,7 @@ pub fn apri_impostazioni() {
             return;
         }
     };
+    finestra.global::<Movimento>().set_ridotto(crate::sistema::servizi::movimento_ridotto());
     if let Some(p) = ponte::ponte() {
         p.collega_finestra(&finestra);
     }

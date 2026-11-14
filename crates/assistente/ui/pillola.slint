@@ -1,7 +1,7 @@
 // La pillola: la faccia dell'assistente, sempre in alto al centro.
 // Pillola nera, due occhi di luce, aura con i colori dei petali lungo il bordo.
 // Umori: "calm" | "think" | "alert" | "happy" | "sleep". Aspetti: "riposo" | "puntino" | "allargata".
-import { Tema } from "tema.slint";
+import { Tema, Movimento } from "tema.slint";
 import { PulsanteUi } from "voci.slint";
 
 // Le misure della faccia, in un solo punto: la pillola a riposo e la riga degli occhi del
@@ -181,7 +181,9 @@ export component Pillola inherits Window {
     // un timer a 20 fotogrammi al secondo campiona animation-tick() in `tempo` (dentro un callback
     // non crea dipendenze). Il bloccante sta fermo; puntino, tranquillo, contento e addormentato
     // non ridisegnano nulla tra un battito di ciglia e l'altro.
-    property <bool> in-moto: pensa || (allargata && !ferma);
+    // Con il movimento ridotto l'aura sta ferma: «pensa» è l'anello acceso fermo con gli occhi
+    // alzati, «ti cerca» l'aura calda ferma (il bloccante resta distinto per colore, misura e bordo).
+    property <bool> in-moto: !Movimento.ridotto && (pensa || (allargata && !ferma));
     property <duration> tempo: 0ms;
     property <duration> giro: allerta ? 1200ms : 1600ms;
     property <angle> rotazione: in-moto ? 90deg + (tempo / giro) * 360deg : 90deg;
@@ -261,7 +263,7 @@ export component Pillola inherits Window {
         y: margine-aura;
         width: larghezza-pillola;
         height: altezza-pillola;
-        animate width, height { duration: 220ms; easing: ease-out; }
+        animate width, height { duration: Movimento.ridotto ? 0ms : 220ms; easing: ease-out; }
 
         // Aura: due veli più larghi e tenui con gli stessi colori del bordo (trasparenza nel
         // colore invece di `opacity`, per non comporre livelli a parte). Spenti a riposo.
@@ -336,7 +338,7 @@ export component Pillola inherits Window {
             property <length> dal-bordo: allargata
                 ? occhi-allerta-dal-bordo + mezzo-ingombro-allerta - ingombro / 2
                 : (larghezza-pillola - ingombro) / 2;
-            animate dal-bordo { duration: 220ms; easing: ease-out; }
+            animate dal-bordo { duration: Movimento.ridotto ? 0ms : 220ms; easing: ease-out; }
             x: dal-bordo + sguardo-x;
             y: sguardo-y;
             width: ingombro;
