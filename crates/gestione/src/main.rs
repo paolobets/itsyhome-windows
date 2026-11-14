@@ -23,7 +23,7 @@ mod misure;
 mod sicurezza;
 mod testo;
 
-use gestione_protocollo::{messaggio_da_riga, riga_da_messaggio, Messaggio};
+use gestione_protocollo::{messaggio_da_riga, riga_da_messaggio, titolo_pulito, Messaggio};
 use slint::winit_030::WinitWindowAccessor;
 use slint::ComponentHandle;
 use std::cell::{Cell, RefCell};
@@ -170,7 +170,8 @@ fn gestisci(m: Messaggio) {
 fn apri(titolo: String, html: String) {
     STATO.with_borrow_mut(|s| {
         let Some(stato) = s.as_mut() else { return };
-        stato.cornice.set_titolo(titolo.into());
+        // Seconda difesa: lo ripulisce già l'assistente, ma la finestra non si fida.
+        stato.cornice.set_titolo(titolo_pulito(&titolo).into());
         if !stato.misurata {
             stato.misurata = true;
             misura_sull_area_di_lavoro(&stato.cornice);
