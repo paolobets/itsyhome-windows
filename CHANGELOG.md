@@ -124,6 +124,16 @@ Tocco su una casa lenta (`--lenta 800`): l'icona cambia sullo schermo 32–51 ms
 - Riconnessione con lettura fallita: si riprova con l'attesa crescente anche se ci sono i dati di prima, e intanto ci si iscrive agli stati.
 - Iscrizione agli stati rifiutata da HA scritta nel log; catalogo in un `Arc` (non si copia a ogni cambio); scelta dell'icona chiusa da un clic fuori; le scene con le scintille (come il «✨» della v2), la stella solo per i preferiti.
 
+### Added (Task 14f: collegamenti veloci, 15/11/2026)
+- App «Collegamenti» nel dock (icona a catena, Lucide): le pagine web delle gestioni in una griglia di card (nome e indirizzo accorciato), nell'ordine salvato. Un tocco o Invio apre la pagina nel browser predefinito del sistema (Windows `ShellExecuteW` «open», macOS `open`, Linux `xdg-open`), mai nella finestra di gestione; il pannello poi si chiude. Se il browser non parte il pannello resta aperto e lo dice, il dettaglio va in Impostazioni › Informazioni. Stato vuoto con «Aggiungi un collegamento»; «Modifica» nella testata. Entrambi aprono le Impostazioni sulla scheda Collegamenti.
+- Impostazioni › Collegamenti (fra Dispositivi e Sistema): aggiungi, modifica, elimina con una conferma dentro la finestra che nomina il collegamento («Eliminare “Proxmox”?», fuoco su «Annulla», Esc annulla), ordine con le frecce su/giù. Nome obbligatorio (al più 60 caratteri, ripulito da controlli e caratteri invisibili); indirizzo solo `http://` o `https://` (senza schema si aggiunge `https://`; schema e host in minuscolo), rifiutati altri schemi (`file:`, `javascript:`, `data:`…), spazi, controlli, caratteri invisibili o di direzione, virgolette e credenziali nell'indirizzo. Controllo al blur sui campi già toccati, errore che sparisce appena corretto. Ogni modifica è salvata subito (`collegamenti` in `assistente.json`, un file senza la chiave si legge) e si vede subito nel pannello; l'indirizzo si ricontrolla anche quando si apre.
+
+Riposo non rimisurato a schermo libero: durante tutta la prova lo schermo era bloccato (pillola nascosta dalla schermata di blocco), la misura di 5 minuti fatta allora (0,0004%, 7,9–8,0 MB) non si confronta con lo 0,019% del 14e. A pannello chiuso il codice nuovo non fa nulla (nessun timer, la vista nasce solo aperta); misura, raffica anti-glitch e foto restano da fare a schermo sbloccato.
+
+### Fixed (Task 14f, minori del 14e)
+- La scelta dell'icona di una stanza non si chiude più con un clic dentro il riquadro ma fuori da un'icona.
+- Test di HA in avvio non più instabile.
+
 ---
 
 ## [2.1.2] - 2026-03-24
