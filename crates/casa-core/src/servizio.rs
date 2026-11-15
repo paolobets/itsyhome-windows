@@ -2,11 +2,19 @@
 //! connessione a Home Assistant, tiene in memoria stati e registri e consegna `CasaEvento`
 //! all'`Ascoltatore`, sempre da quel thread.
 //!
-//! Alla connessione si legge tutto una volta (stati, registri, configurazione). Poi ogni
-//! `state_changed` aggiorna in memoria solo la sua entità (dal `new_state` dell'evento) e si
-//! pubblica solo se cambia qualcosa che l'app mostra; i registri si rileggono solo sui loro
-//! eventi `*_registry_updated`. Così una casa vera, dove i sensori cambiano di continuo, non
-//! costa letture né mappature.
+//! Alla connessione si legge tutto una volta (stati, registri, configurazione). Poi ci si
+//! iscrive con `subscribe_entities` alle sole entità che l'app mostra (preferiti, stanze, scene,
+//! telecamere, più gli `update.*` che contano gli aggiornamenti): HA manda subito i loro stati
+//! interi e poi solo i loro cambi, in forma compressa. Ogni cambio aggiorna in memoria solo la sua
+//! entità e si pubblica solo se cambia qualcosa che l'app mostra; i registri si rileggono solo sui
+//! loro eventi `*_registry_updated`. Così una casa vera, dove i sensori cambiano di continuo, non
+//! manda nemmeno i messaggi delle entità che l'app non mostra.
+//!
+//! L'iscrizione si rifà dopo ogni lettura completa (il suo primo evento porta gli stati di
+//! adesso: niente cambi persi fra la lettura e l'iscrizione) e quando cambia l'insieme mostrato
+//! (entità nascoste, preferiti, entità nuove o tolte). Un'entità che diventa mostrabile solo per
+//! il suo stato (un sensore che diventa di temperatura) non arriva finché non si rilegge: non è
+//! fra quelle seguite.
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
@@ -19,7 +27,7 @@ use tokio::time::{sleep_until, Instant};
 use crate::config::{Config, ConfigStore};
 use crate::eventi::{Ascoltatore, CasaEvento, StatoConnessione};
 use crate::ha::client::{self, Client, DalClient, NON_CONNESSO};
-use crate::ha::eventi::{Aggiornamento, EventoWs};
+use crate::ha::eventi::{applica_diff, Aggiornamento, EventoWs};
 use crate::ha::mapper::{aggiornamento_disponibile, sostituisci_in_menu, EntityMapper, Indici, Preferenze};
 use crate::ha::models::{HaArea, HaConfig, HaDevice, HaEntityEntry, HaState};
 use crate::segreti::Segreti;
@@ -320,10 +328,14 @@ struct Motore {
     casa: Option<Casa>,
     /// L'ultimo `MenuData` consegnato all'applicazione (non si riconsegna uguale).
     consegnato: Option<Arc<MenuData>>,
-    /// Una lettura completa è in volo: gli `state_changed` che arrivano intanto si tengono qui e
-    /// si riapplicano ai dati nuovi (un evento può arrivare dopo la risposta di `get_states` ma
-    /// prima che le altre letture finiscano).
-    in_lettura: Option<Vec<(String, Option<HaState>)>>,
+    /// Una lettura completa è in volo. I cambi che arrivano intanto non servono ai dati nuovi:
+    /// dopo la lettura ci si riscrive e il primo evento dell'iscrizione porta gli stati di adesso.
+    in_lettura: bool,
+    /// Numero dell'ultima iscrizione `subscribe_entities` chiesta: gli eventi di quelle superate
+    /// si scartano. Cresce sempre, anche fra una connessione e l'altra.
+    iscrizione: u64,
+    /// Le entità seguite dall'iscrizione della connessione corrente (`None`: nessuna ancora).
+    seguite: Option<BTreeSet<String>>,
     /// Un'altra lettura completa è stata chiesta mentre una era in volo.
     rileggi_dopo: bool,
     /// Pubblicazione dei cambi visibili, raccolti in una raffica.
@@ -363,7 +375,9 @@ impl Motore {
             mapper: EntityMapper::new(),
             casa: None,
             consegnato: None,
-            in_lettura: None,
+            in_lettura: false,
+            iscrizione: 0,
+            seguite: None,
             rileggi_dopo: false,
             pubblica: Attesa::default(),
             rimappa: false,
@@ -390,6 +404,7 @@ impl Motore {
                     self.pubblica.annulla();
                     if std::mem::take(&mut self.rimappa) {
                         self.mappa_tutto();
+                        self.segui(false);
                     }
                     self.consegna();
                 }
@@ -463,6 +478,8 @@ impl Motore {
                 self.salva(&config);
                 if rimappa {
                     self.mappa_tutto();
+                    // Un'entità nascosta o mostrata cambia quelle da seguire.
+                    self.segui(false);
                     self.consegna();
                 }
             }
@@ -537,7 +554,8 @@ impl Motore {
         self.generazione += 1;
         self.casa = None;
         self.consegnato = None;
-        self.in_lettura = None;
+        self.in_lettura = false;
+        self.seguite = None;
         self.rileggi_dopo = false;
         self.ferma_attese();
     }
@@ -595,8 +613,10 @@ impl Motore {
                     self.rileggi();
                 }
             }
-            Interno::Client(_, DalClient::Evento(EventoWs::StatoCambiato { entity_id, nuovo })) => {
-                self.stato_cambiato(entity_id, nuovo);
+            Interno::Client(_, DalClient::Evento(EventoWs::Entita { iscrizione, aggiunte, cambiate, tolte })) => {
+                if iscrizione == self.iscrizione {
+                    self.entita_cambiate(aggiunte, cambiate, tolte);
+                }
             }
             Interno::Client(_, DalClient::Evento(EventoWs::StatoIlleggibile)) => self.rileggi(),
             Interno::Client(_, DalClient::Evento(EventoWs::DaRileggere)) => {
@@ -609,34 +629,80 @@ impl Motore {
         }
     }
 
-    /// Un `state_changed`: aggiorna in memoria solo quell'entità; se il cambio si vede, la
-    /// pubblicazione parte alla fine della raffica.
-    fn stato_cambiato(&mut self, entity_id: String, nuovo: Option<HaState>) {
-        if let Some(attesi) = &mut self.in_lettura {
-            attesi.push((entity_id.clone(), nuovo.clone()));
-        }
-        let Some(casa) = &mut self.casa else { return };
-        match casa.applica(&self.mapper, &entity_id, nuovo) {
-            Effetto::Niente => return,
-            Effetto::Sostituisci(e) => {
-                if !sostituisci_in_menu(Arc::make_mut(&mut casa.menu), &e) {
-                    return; // mostrabile ma nascosta dall'utente
-                }
+    /// Un evento dell'iscrizione alle entità: stati interi (`aggiunte`, il primo evento li porta
+    /// tutti), cambi compressi da applicare allo stato in memoria, entità tolte. Si aggiorna in
+    /// memoria solo ciò che arriva; se qualcosa si vede, la pubblicazione parte alla fine della
+    /// raffica. Un cambio che non si applica (entità sconosciuta, diff illeggibile) fa rileggere.
+    fn entita_cambiate(&mut self, aggiunte: Vec<HaState>, cambiate: Vec<(String, Value)>, tolte: Vec<String>) {
+        let Some(casa) = &self.casa else { return };
+        let mut nuovi: Vec<(String, Option<HaState>)> =
+            aggiunte.into_iter().map(|s| (s.entity_id.clone(), Some(s))).collect();
+        for (id, diff) in cambiate {
+            match casa.stato(&id).and_then(|vecchio| applica_diff(vecchio, &diff)) {
+                Some(s) => nuovi.push((id, Some(s))),
+                None => return self.rileggi(),
             }
-            Effetto::Rimappa => self.rimappa = true,
         }
-        self.pubblica.rinvia(Instant::now(), RAFFICA, TETTO_RAFFICA);
+        nuovi.extend(tolte.into_iter().map(|id| (id, None)));
+        let mut visibile = false;
+        for (id, nuovo) in nuovi {
+            visibile |= self.stato_cambiato(&id, nuovo);
+        }
+        if visibile {
+            self.pubblica.rinvia(Instant::now(), RAFFICA, TETTO_RAFFICA);
+        }
+    }
+
+    /// Lo stato nuovo di un'entità (`None`: tolta) in memoria. Vero se cambia qualcosa che si vede.
+    fn stato_cambiato(&mut self, entity_id: &str, nuovo: Option<HaState>) -> bool {
+        let Some(casa) = &mut self.casa else { return false };
+        match casa.applica(&self.mapper, entity_id, nuovo) {
+            Effetto::Niente => false,
+            // Falso se è mostrabile ma nascosta dall'utente.
+            Effetto::Sostituisci(e) => sostituisci_in_menu(Arc::make_mut(&mut casa.menu), &e),
+            Effetto::Rimappa => {
+                self.rimappa = true;
+                true
+            }
+        }
+    }
+
+    /// Le entità da seguire: quelle che l'app mostra (preferiti, stanze, scene, telecamere) e gli
+    /// `update.*`, che contano gli aggiornamenti in `MenuData`.
+    fn da_seguire(casa: &Casa) -> BTreeSet<String> {
+        let m = &casa.menu;
+        m.favorites
+            .iter()
+            .chain(m.rooms.iter().flat_map(|r| &r.entities))
+            .chain(&m.cameras)
+            .map(|e| e.entity_id().to_owned())
+            .chain(m.scenes.iter().map(|s| s.base.entity_id.clone()))
+            .chain(casa.stati.iter().filter(|s| s.entity_id.starts_with("update.")).map(|s| s.entity_id.clone()))
+            .collect()
+    }
+
+    /// Rifà l'iscrizione `subscribe_entities` se cambiano le entità da seguire, o sempre se
+    /// `sempre` (dopo una lettura completa: il primo evento porta gli stati di adesso).
+    fn segui(&mut self, sempre: bool) {
+        let (Some(casa), Some((client, _))) = (&self.casa, &self.client) else { return };
+        let ids = Self::da_seguire(casa);
+        if !sempre && self.seguite.as_ref() == Some(&ids) {
+            return;
+        }
+        self.iscrizione += 1;
+        client.iscrivi_entita(self.iscrizione, ids.iter().cloned().collect());
+        self.seguite = Some(ids);
     }
 
     /// La lettura completa (`trigger_refresh` di v2): stati, registri e configurazione in
     /// parallelo. Solo alla connessione, dopo un cambio dei registri o con uno stato illeggibile.
     fn rileggi(&mut self) {
         let Some((client, _)) = &self.client else { return };
-        if self.in_lettura.is_some() {
+        if self.in_lettura {
             self.rileggi_dopo = true;
             return;
         }
-        self.in_lettura = Some(Vec::new());
+        self.in_lettura = true;
         let (client, tx, g) = (client.clone(), self.interni_tx.clone(), self.generazione);
         tokio::spawn(async move {
             let (states, areas, devices, entries, config) = tokio::join!(
@@ -657,10 +723,11 @@ impl Motore {
         });
     }
 
-    /// La lettura completa è arrivata: dati nuovi, con sopra gli `state_changed` arrivati intanto
-    /// (solo quelli non più vecchi dello stato letto), mappati e consegnati subito.
+    /// La lettura completa è arrivata: dati nuovi, mappati e consegnati subito; poi l'iscrizione
+    /// alle entità da seguire, rifatta: il suo primo evento porta gli stati di adesso, anche di
+    /// ciò che è cambiato mentre la lettura era in volo.
     fn letti(&mut self, esito: Result<Box<Grezzi>, String>) {
-        let attesi = self.in_lettura.take().unwrap_or_default();
+        self.in_lettura = false;
         match esito {
             // Senza gli stati si tengono i dati precedenti.
             Err(e) => {
@@ -677,22 +744,12 @@ impl Motore {
                 // Riuscita (anche da una riconnessione): il tentativo in sospeso non serve più.
                 self.riprova.annulla();
                 self.attesa_riprova = RIPROVA_LETTURA;
-                let mut casa = Casa::new(*g, &mut self.mapper);
-                for (entity_id, nuovo) in attesi {
-                    let piu_vecchio = match (&nuovo, casa.stato(&entity_id)) {
-                        // Stessa forma ISO di HA: il confronto fra testi segue il tempo.
-                        (Some(n), Some(letto)) => n.last_updated < letto.last_updated,
-                        _ => false,
-                    };
-                    if !piu_vecchio {
-                        casa.applica(&self.mapper, &entity_id, nuovo);
-                    }
-                }
-                self.casa = Some(casa);
+                self.casa = Some(Casa::new(*g, &mut self.mapper));
                 self.pubblica.annulla();
                 self.rimappa = false;
                 self.mappa_tutto();
                 self.consegna();
+                self.segui(true);
             }
         }
         if std::mem::take(&mut self.rileggi_dopo) {
@@ -857,6 +914,41 @@ mod test {
         m.letti(Ok(grezzi_vuoti()));
         assert_eq!(m.riprova.scadenza(), None, "nessuna lettura in più dopo quella riuscita");
         assert!(m.registri.scadenza().is_some(), "la rilettura dei registri non si perde");
+    }
+
+    /// Gli eventi di un'iscrizione alle entità già sostituita (arrivati dopo che il servizio ne
+    /// ha chiesta un'altra) si scartano: il primo evento della nuova porta gli stati di adesso.
+    #[test]
+    fn eventi_di_un_iscrizione_superata_scartati() {
+        let (mut m, _c) = motore();
+        m.letti(Ok(grezzi_vuoti()));
+        m.iscrizione = 2;
+        let evento = |iscrizione| {
+            Interno::Client(m.generazione, DalClient::Evento(EventoWs::Entita {
+                iscrizione,
+                aggiunte: vec![luce("on")],
+                cambiate: vec![],
+                tolte: vec![],
+            }))
+        };
+        let (vecchio, nuovo) = (evento(1), evento(2));
+        m.interno(vecchio);
+        assert_eq!(m.casa.as_ref().unwrap().stato("light.cucina").unwrap().state, "off");
+        m.interno(nuovo);
+        assert_eq!(m.casa.as_ref().unwrap().stato("light.cucina").unwrap().state, "on");
+    }
+
+    /// Un cambio compresso per un'entità che non c'è in memoria non si può applicare: si rilegge.
+    #[test]
+    fn diff_senza_stato_di_partenza_fa_rileggere() {
+        let (mut m, _c) = motore();
+        m.letti(Ok(grezzi_vuoti()));
+        m.entita_cambiate(vec![], vec![("light.sconosciuta".into(), json!({ "+": { "s": "on" } }))], vec![]);
+        // Senza client la lettura non parte, ma la luce nota non è cambiata e nulla è in pubblicazione.
+        assert_eq!(m.pubblica.scadenza(), None);
+        m.entita_cambiate(vec![], vec![("light.cucina".into(), json!({ "+": { "s": "on" } }))], vec![]);
+        assert_eq!(m.casa.as_ref().unwrap().stato("light.cucina").unwrap().state, "on");
+        assert!(m.pubblica.scadenza().is_some(), "cambio visibile in pubblicazione");
     }
 
     #[test]

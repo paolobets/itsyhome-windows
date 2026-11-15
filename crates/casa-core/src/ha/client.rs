@@ -1,9 +1,11 @@
 //! Connessione WebSocket a Home Assistant (port di `src-tauri/src/ha/client.rs`).
 //!
-//! Un attore tokio per ambiente: si autentica, si iscrive a `state_changed`, agli eventi dei
-//! registri (stanze, dispositivi, entità) e alle notifiche
-//! persistenti (`persistent_notification/subscribe`), risponde alle richieste e si riconnette
-//! con i ritardi di v2. Gli eventi escono da una callback (`DalClient`), mai dal token.
+//! Un attore tokio per ambiente: si autentica, si iscrive agli eventi dei registri (stanze,
+//! dispositivi, entità) e della configurazione e alle notifiche persistenti
+//! (`persistent_notification/subscribe`), risponde alle richieste e si riconnette con i ritardi
+//! di v2. Gli stati arrivano da `subscribe_entities`, chiesta dal servizio con le sole entità che
+//! l'app mostra (`Client::iscrivi_entita`). Gli eventi escono da una callback (`DalClient`), mai
+//! dal token.
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -14,7 +16,7 @@ use tokio::task::JoinHandle;
 use tokio::time::{sleep_until, timeout, timeout_at, Instant, MissedTickBehavior};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
-use super::eventi::{interpreta, interpreta_notifiche, EventoWs, EVENTI_RILETTURA};
+use super::eventi::{interpreta, interpreta_entita, interpreta_notifiche, EventoWs, EVENTI_RILETTURA};
 use crate::eventi::StatoConnessione;
 use crate::types::TestConnectionResult;
 
@@ -50,10 +52,17 @@ struct Richiesta {
     risposta: oneshot::Sender<Result<Value, String>>,
 }
 
+/// Ciò che il servizio chiede all'attore.
+enum Verso {
+    Richiesta(Richiesta),
+    /// Sostituisce l'iscrizione agli stati con una sulle sole `entity_ids` (vedi `iscrivi_entita`).
+    IscriviEntita { numero: u64, entity_ids: Vec<String> },
+}
+
 /// Maniglia economica da clonare verso l'attore.
 #[derive(Clone)]
 pub(crate) struct Client {
-    tx: mpsc::UnboundedSender<Richiesta>,
+    tx: mpsc::UnboundedSender<Verso>,
 }
 
 impl Client {
@@ -61,9 +70,20 @@ impl Client {
     pub(crate) async fn richiesta(&self, tipo: &str, extra: Value) -> Result<Value, String> {
         let (risposta, rx) = oneshot::channel();
         self.tx
-            .send(Richiesta { tipo: tipo.to_owned(), extra, risposta })
+            .send(Verso::Richiesta(Richiesta { tipo: tipo.to_owned(), extra, risposta }))
             .map_err(|_| NON_CONNESSO.to_owned())?;
         rx.await.map_err(|_| NON_CONNESSO.to_owned())?
+    }
+
+    /// Segue gli stati delle sole `entity_ids` (`subscribe_entities`), al posto dell'iscrizione
+    /// di prima, che si chiude (`unsubscribe_events`). I suoi eventi escono come
+    /// `EventoWs::Entita` col `numero` scelto dal servizio; quelli di un'iscrizione superata non
+    /// escono più. Con `entity_ids` vuoto si chiude soltanto: HA leggerebbe un elenco vuoto come
+    /// «tutte le entità» (`set(msg.get("entity_ids", [])) or None`).
+    /// Senza connessione non fa nulla: alla prossima connessione il servizio rilegge e si
+    /// riscrive.
+    pub(crate) fn iscrivi_entita(&self, numero: u64, entity_ids: Vec<String>) {
+        let _ = self.tx.send(Verso::IscriviEntita { numero, entity_ids });
     }
 
     pub(crate) async fn call_service(&self, dominio: &str, servizio: &str, entity_id: &str) -> Result<(), String> {
@@ -105,7 +125,7 @@ async fn attore(
     url: String,
     token: String,
     ritardi: Vec<Duration>,
-    mut rx: mpsc::UnboundedReceiver<Richiesta>,
+    mut rx: mpsc::UnboundedReceiver<Verso>,
     uscita: Uscita,
 ) {
     let mut tentativo: usize = 0;
@@ -128,7 +148,8 @@ async fn attore(
             tokio::select! {
                 _ = sleep_until(attesa) => break,
                 r = rx.recv() => match r {
-                    Some(r) => { let _ = r.risposta.send(Err(NON_CONNESSO.to_owned())); }
+                    Some(Verso::Richiesta(r)) => { let _ = r.risposta.send(Err(NON_CONNESSO.to_owned())); }
+                    Some(Verso::IscriviEntita { .. }) => {}
                     None => return,
                 },
             }
@@ -139,7 +160,7 @@ async fn attore(
 async fn sessione(
     url: &str,
     token: &str,
-    rx: &mut mpsc::UnboundedReceiver<Richiesta>,
+    rx: &mut mpsc::UnboundedReceiver<Verso>,
     uscita: &Uscita,
     tentativo: &mut usize,
 ) -> Fine {
@@ -156,6 +177,8 @@ async fn sessione(
     let mut autenticato = false;
     // Id della richiesta `persistent_notification/subscribe`: i suoi eventi portano quell'id.
     let mut iscrizione_notifiche: Option<u64> = None;
+    // L'iscrizione `subscribe_entities` in corso: (id della richiesta, numero del servizio).
+    let mut iscrizione_entita: Option<(u64, u64)> = None;
     let mut ping = tokio::time::interval_at(Instant::now() + PING_OGNI, PING_OGNI);
     ping.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut attesa_pong: Option<Instant> = None;
@@ -181,8 +204,9 @@ async fn sessione(
                     Some("auth_ok") => {
                         *tentativo = 0;
                         autenticato = true;
-                        // Gli stati e, per rileggere i registri solo quando cambiano, i loro eventi.
-                        for tipo in std::iter::once("state_changed").chain(EVENTI_RILETTURA) {
+                        // Per rileggere registri e configurazione solo quando cambiano, i loro eventi.
+                        // Gli stati no: li porta `subscribe_entities`, solo delle entità mostrate.
+                        for tipo in EVENTI_RILETTURA {
                             uscenti.push(json!({ "type": "subscribe_events", "event_type": tipo, "id": prossimo_id }));
                             prossimo_id += 1;
                         }
@@ -200,10 +224,13 @@ async fn sessione(
                     }
                     Some("pong") => attesa_pong = None,
                     Some("event") if autenticato => {
-                        let e = if v["id"].as_u64().is_some() && v["id"].as_u64() == iscrizione_notifiche {
-                            interpreta_notifiche(&v)
-                        } else {
-                            interpreta(&mut v)
+                        let id = v["id"].as_u64();
+                        let e = match iscrizione_entita {
+                            Some((ws, numero)) if id == Some(ws) => Some(interpreta_entita(&mut v, numero)),
+                            _ if id.is_some() && id == iscrizione_notifiche => interpreta_notifiche(&v),
+                            // Gli eventi di un'iscrizione alle entità già chiusa non hanno
+                            // `event_type`: `interpreta` li scarta.
+                            _ => interpreta(&v),
                         };
                         if let Some(e) = e {
                             uscita(DalClient::Evento(e));
@@ -212,22 +239,37 @@ async fn sessione(
                     _ => {}
                 }
             }
-            r = rx.recv() => {
-                let Some(r) = r else { break 'sessione Fine::Chiusa };
-                if !autenticato {
-                    let _ = r.risposta.send(Err(NON_CONNESSO.to_owned()));
-                    continue;
-                }
-                let mut msg = json!({ "type": r.tipo, "id": prossimo_id });
-                if let (Some(m), Value::Object(extra)) = (msg.as_object_mut(), r.extra) {
-                    for (k, v) in extra {
-                        m.entry(k).or_insert(v);
+            r = rx.recv() => match r {
+                None => break 'sessione Fine::Chiusa,
+                // Prima dell'autenticazione non c'è nulla da seguire: dopo l'autenticazione il
+                // servizio rilegge tutto e si riscrive.
+                Some(Verso::IscriviEntita { .. }) if !autenticato => {}
+                Some(Verso::IscriviEntita { numero, entity_ids }) => {
+                    if let Some((vecchia, _)) = iscrizione_entita.take() {
+                        uscenti.push(json!({ "type": "unsubscribe_events", "subscription": vecchia, "id": prossimo_id }));
+                        prossimo_id += 1;
+                    }
+                    if !entity_ids.is_empty() {
+                        uscenti.push(json!({ "type": "subscribe_entities", "entity_ids": entity_ids, "id": prossimo_id }));
+                        iscrizione_entita = Some((prossimo_id, numero));
+                        prossimo_id += 1;
                     }
                 }
-                pendenti.insert(prossimo_id, r.risposta);
-                prossimo_id += 1;
-                uscenti.push(msg);
-            }
+                Some(Verso::Richiesta(r)) if !autenticato => {
+                    let _ = r.risposta.send(Err(NON_CONNESSO.to_owned()));
+                }
+                Some(Verso::Richiesta(r)) => {
+                    let mut msg = json!({ "type": r.tipo, "id": prossimo_id });
+                    if let (Some(m), Value::Object(extra)) = (msg.as_object_mut(), r.extra) {
+                        for (k, v) in extra {
+                            m.entry(k).or_insert(v);
+                        }
+                    }
+                    pendenti.insert(prossimo_id, r.risposta);
+                    prossimo_id += 1;
+                    uscenti.push(msg);
+                }
+            },
             _ = ping.tick(), if autenticato => {
                 uscenti.push(json!({ "type": "ping", "id": prossimo_id }));
                 prossimo_id += 1;

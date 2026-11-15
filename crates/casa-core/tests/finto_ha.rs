@@ -1,4 +1,5 @@
 //! `CasaService` contro un Home Assistant finto (WebSocket locale su 127.0.0.1:0).
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -30,8 +31,18 @@ struct Contatori {
     archiviate: Mutex<Vec<String>>,
     /// Le notifiche presenti, mandate come "current" a ogni iscrizione.
     presenti: Mutex<Value>,
-    /// Un evento da mandare subito dopo la risposta a `get_states` (una volta).
-    evento_dopo_stati: Mutex<Option<String>>,
+    /// Un cambio di stato (`data` di `state_changed`) che avviene subito dopo la risposta a
+    /// `get_states` (una volta).
+    cambio_dopo_stati: Mutex<Option<Value>>,
+    /// Gli stati di adesso: `get_states` e il primo evento di `subscribe_entities` li leggono,
+    /// `state_changed` li cambia.
+    stati: Mutex<BTreeMap<String, Value>>,
+    /// Gli `entity_ids` di ogni `subscribe_entities` ricevuta, in ordine.
+    iscrizioni_entita: Mutex<Vec<Vec<String>>>,
+    /// Quante `unsubscribe_events` ricevute.
+    disiscrizioni: AtomicUsize,
+    /// Qualcuno si è iscritto a `state_changed` (non deve più succedere).
+    iscritto_state_changed: AtomicBool,
     /// Ritardo della risposta al registro delle stanze (le altre letture restano in volo).
     ritardo_aree_ms: AtomicU64,
     letture_registri: AtomicUsize,
@@ -52,6 +63,10 @@ impl FintoHa {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let contatori = Arc::new(Contatori::default());
+        *contatori.stati.lock().unwrap() = [stato("light.cucina", "on", "Luce cucina"), stato("switch.presa", "off", "Presa")]
+            .into_iter()
+            .map(|s| (s["entity_id"].as_str().unwrap().to_owned(), s))
+            .collect();
         let (eventi, _) = broadcast::channel(512);
         let (c, e) = (contatori.clone(), eventi.clone());
         tokio::spawn(async move {
@@ -63,9 +78,23 @@ impl FintoHa {
         FintoHa { url, contatori, eventi }
     }
 
-    fn manda_evento(&self, tipo: &str, data: Value) {
+    /// Un evento del bus di HA. `state_changed` cambia anche gli stati di adesso (`old_state` lo
+    /// prende da lì) e ogni client lo riceve come lo chiede: intero se iscritto a `state_changed`,
+    /// compresso se l'entità è fra quelle del suo `subscribe_entities`.
+    fn manda_evento(&self, tipo: &str, mut data: Value) {
+        if tipo == "state_changed" {
+            data = cambia_stato(&self.contatori, data);
+        }
         let v = json!({ "id": 1, "type": "event", "event": { "event_type": tipo, "data": data } });
         let _ = self.eventi.send(v.to_string());
+    }
+
+    fn iscrizioni_entita(&self) -> Vec<Vec<String>> {
+        self.contatori.iscrizioni_entita.lock().unwrap().clone()
+    }
+
+    fn disiscrizioni(&self) -> usize {
+        self.contatori.disiscrizioni.load(Ordering::SeqCst)
     }
 
     /// Evento della iscrizione `persistent_notification/subscribe`, come lo manda HA
@@ -123,6 +152,64 @@ fn stato(entity_id: &str, state: &str, nome: &str) -> Value {
     })
 }
 
+/// Mette `data.new_state` negli stati di adesso (lo toglie se null) e restituisce `data` con
+/// l'`old_state` vero. Uno stato senza `state` testuale (illeggibile) non entra negli stati.
+fn cambia_stato(contatori: &Contatori, mut data: Value) -> Value {
+    let id = data["entity_id"].as_str().unwrap_or_default().to_owned();
+    let mut stati = contatori.stati.lock().unwrap();
+    let vecchio = stati.get(&id).cloned().unwrap_or(Value::Null);
+    let nuovo = &data["new_state"];
+    if nuovo.is_null() {
+        stati.remove(&id);
+    } else if nuovo["state"].is_string() {
+        stati.insert(id, nuovo.clone());
+    }
+    data["old_state"] = vecchio;
+    data
+}
+
+/// Uno stato in forma compressa (`s`, `a`, `c`, `lc`, `lu`), come lo manda `subscribe_entities`.
+fn compresso(s: &Value) -> Value {
+    json!({ "s": s["state"], "a": s["attributes"], "c": "contesto", "lc": 1763028000.0, "lu": 1763028005.25 })
+}
+
+/// Il corpo dell'evento compresso di `subscribe_entities` per un `state_changed` (come
+/// `_state_diff_event` di HA): `r` se lo stato è tolto, `a` se è nuovo, altrimenti `c` con sotto
+/// `+` lo stato e gli attributi cambiati e sotto `-` quelli tolti.
+fn diff_compresso(data: &Value) -> Value {
+    let id = data["entity_id"].as_str().unwrap_or_default();
+    let (vecchio, nuovo) = (&data["old_state"], &data["new_state"]);
+    if nuovo.is_null() {
+        return json!({ "r": [id] });
+    }
+    if vecchio.is_null() {
+        return json!({ "a": { id: compresso(nuovo) } });
+    }
+    let mut piu = serde_json::Map::new();
+    if nuovo["state"] != vecchio["state"] {
+        piu.insert("s".into(), nuovo["state"].clone());
+        piu.insert("lc".into(), json!(1763028010.0));
+    } else {
+        piu.insert("lu".into(), json!(1763028010.5));
+    }
+    let (va, na) = (vecchio["attributes"].as_object(), nuovo["attributes"].as_object());
+    let cambiati: serde_json::Map<String, Value> = na
+        .into_iter()
+        .flatten()
+        .filter(|(k, v)| va.and_then(|va| va.get(*k)) != Some(*v))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    if !cambiati.is_empty() {
+        piu.insert("a".into(), Value::Object(cambiati));
+    }
+    let tolti: Vec<&String> = va.into_iter().flatten().map(|(k, _)| k).filter(|k| na.is_none_or(|na| !na.contains_key(*k))).collect();
+    let mut diff = json!({ "+": piu });
+    if !tolti.is_empty() {
+        diff["-"] = json!({ "a": tolti });
+    }
+    json!({ "c": { id: diff } })
+}
+
 fn risposta(v: &Value, contatori: &Contatori) -> Value {
     let id = v["id"].clone();
     let ok = |r: Value| json!({ "id": id, "type": "result", "success": true, "result": r });
@@ -134,7 +221,7 @@ fn risposta(v: &Value, contatori: &Contatori) -> Value {
                 return json!({ "id": id, "type": "result", "success": false,
                                "error": { "code": "unknown_error", "message": "Errore finto" } });
             }
-            ok(json!([stato("light.cucina", "on", "Luce cucina"), stato("switch.presa", "off", "Presa")]))
+            ok(Value::Array(contatori.stati.lock().unwrap().values().cloned().collect()))
         }
         "config/area_registry/list" => ok(json!([{ "area_id": "cucina", "name": "Cucina" }])),
         "config/device_registry/list" => ok(json!([])),
@@ -148,7 +235,16 @@ fn risposta(v: &Value, contatori: &Contatori) -> Value {
         }
         "get_config" => ok(json!({ "unit_system": { "temperature": "°C" }, "location_name": "Casa" })),
         "persistent_notification/get" => ok(json!([])),
-        "subscribe_events" => ok(Value::Null),
+        "subscribe_events" => {
+            if v["event_type"] == "state_changed" {
+                contatori.iscritto_state_changed.store(true, Ordering::SeqCst);
+            }
+            ok(Value::Null)
+        }
+        "unsubscribe_events" => {
+            contatori.disiscrizioni.fetch_add(1, Ordering::SeqCst);
+            ok(Value::Null)
+        }
         "ping" => json!({ "id": id, "type": "pong" }),
         "call_service" if v["domain"] == "persistent_notification" && v["service"] == "dismiss" => {
             let id = v["service_data"]["notification_id"].as_str().unwrap_or_default().to_owned();
@@ -189,12 +285,44 @@ async fn servi(tcp: tokio::net::TcpStream, contatori: Arc<Contatori>, mut eventi
             return;
         }
     }
+    // Iscrizioni di questo client: `state_changed` intero, `subscribe_entities` (id, entità).
+    let mut con_state_changed = false;
+    let mut entita: Option<(u64, BTreeSet<String>)> = None;
     loop {
         tokio::select! {
             m = rx.next() => {
                 let Some(Ok(m)) = m else { return };
                 let Message::Text(t) = m else { continue };
                 let v: Value = serde_json::from_str(&t).unwrap();
+                if v["type"] == "subscribe_entities" {
+                    // Come HA: prima il risultato, poi un evento con gli stati interi delle entità chieste.
+                    let id = v["id"].as_u64().unwrap();
+                    let ids: Vec<String> =
+                        v["entity_ids"].as_array().unwrap().iter().map(|x| x.as_str().unwrap().to_owned()).collect();
+                    contatori.iscrizioni_entita.lock().unwrap().push(ids.clone());
+                    let ids: BTreeSet<String> = ids.into_iter().collect();
+                    let a: serde_json::Map<String, Value> = contatori
+                        .stati
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .filter(|(k, _)| ids.contains(*k))
+                        .map(|(k, s)| (k.clone(), compresso(s)))
+                        .collect();
+                    let risultato = json!({ "id": id, "type": "result", "success": true, "result": null });
+                    let primo = json!({ "id": id, "type": "event", "event": { "a": a } });
+                    if tx.send(testo(risultato)).await.is_err() || tx.send(testo(primo)).await.is_err() {
+                        return;
+                    }
+                    entita = Some((id, ids));
+                    continue;
+                }
+                if v["type"] == "unsubscribe_events" && entita.as_ref().map(|(id, _)| *id) == v["subscription"].as_u64() {
+                    entita = None;
+                }
+                if v["type"] == "subscribe_events" && v["event_type"] == "state_changed" {
+                    con_state_changed = true;
+                }
                 if v["type"] == "persistent_notification/subscribe" {
                     // Come HA: prima il risultato, poi subito l'elenco "current" (qui vuoto).
                     let id = v["id"].as_u64().unwrap();
@@ -214,15 +342,29 @@ async fn servi(tcp: tokio::net::TcpStream, contatori: Arc<Contatori>, mut eventi
                 }
                 if tx.send(testo(risposta(&v, &contatori))).await.is_err() { return; }
                 if v["type"] == "get_states" {
-                    let evento = contatori.evento_dopo_stati.lock().unwrap().take();
-                    if let Some(e) = evento {
-                        if tx.send(Message::Text(e.into())).await.is_err() { return; }
+                    let cambio = contatori.cambio_dopo_stati.lock().unwrap().take();
+                    if let Some(data) = cambio {
+                        cambia_stato(&contatori, data);
                     }
                 }
             }
             e = eventi.recv() => {
                 let Ok(e) = e else { return };
-                if tx.send(Message::Text(e.into())).await.is_err() { return; }
+                let v: Value = serde_json::from_str(&e).unwrap();
+                if v["event"]["event_type"] != "state_changed" {
+                    if tx.send(Message::Text(e.into())).await.is_err() { return; }
+                    continue;
+                }
+                if con_state_changed && tx.send(Message::Text(e.clone().into())).await.is_err() {
+                    return;
+                }
+                let data = &v["event"]["data"];
+                if let Some((id, ids)) = &entita {
+                    if ids.contains(data["entity_id"].as_str().unwrap_or_default()) {
+                        let compresso = json!({ "id": id, "type": "event", "event": diff_compresso(data) });
+                        if tx.send(testo(compresso)).await.is_err() { return; }
+                    }
+                }
             }
         }
     }
@@ -395,7 +537,7 @@ async fn server_spento_riprova() {
 }
 
 
-/// Uno stato come lo porta `state_changed` (con `last_updated` dopo quello di `get_states`).
+/// Uno stato nuovo come lo porta `state_changed` (con `last_updated` dopo quello di `get_states`).
 fn stato_nuovo(entity_id: &str, state: &str, nome: &str) -> Value {
     let mut s = stato(entity_id, state, nome);
     s["last_updated"] = json!("2026-11-13T10:00:05.250000+00:00");
@@ -426,13 +568,53 @@ async fn dati_entro(p: &mut Prova, per: Duration) -> Vec<Arc<MenuData>> {
     dati
 }
 
+/// Aspetta la prima iscrizione alle entità (l'iscrizione parte dopo la prima lettura).
+async fn aspetta_iscrizione(ha: &FintoHa, quante: usize) {
+    aspetta(|| ha.iscrizioni_entita().len() >= quante, "iscrizione alle entità").await;
+    // Il primo evento dell'iscrizione è già partito col risultato: lascia che arrivi.
+    sleep(Duration::from_millis(100)).await;
+}
+
+/// Task 14e: gli stati arrivano da `subscribe_entities` con le sole entità mostrate, non più da
+/// `state_changed` di tutta la casa. L'iscrizione si rifà quando cambia ciò che si mostra, e con
+/// nulla da mostrare si chiude soltanto (HA leggerebbe un elenco vuoto come «tutte»).
 #[tokio::test]
-async fn state_changed_aggiorna_solo_quell_entita_senza_rileggere() {
+async fn si_seguono_solo_le_entita_mostrate() {
+    let ha = FintoHa::avvia().await;
+    let mut p = prepara(&ha.url, Some(TOKEN));
+    p.servizio.connetti_attivo();
+    aspetta_dati(&mut p).await;
+    aspetta_iscrizione(&ha, 1).await;
+    assert_eq!(ha.iscrizioni_entita(), [vec!["light.cucina".to_string(), "switch.presa".to_string()]]);
+    assert!(!ha.contatori.iscritto_state_changed.load(Ordering::SeqCst), "niente più state_changed di tutta la casa");
+
+    // Preferiti: stesse entità, nessuna nuova iscrizione.
+    p.servizio.aggiorna_config(|c| c.favorites = vec!["light.cucina".into()]);
+    aspetta_dati(&mut p).await;
+    // Presa nascosta: si segue solo la luce, al posto dell'iscrizione di prima.
+    p.servizio.aggiorna_config(|c| c.hidden_entities = vec!["switch.presa".into()]);
+    aspetta(|| ha.iscrizioni_entita().len() == 2, "nuova iscrizione").await;
+    assert_eq!(ha.iscrizioni_entita()[1], ["light.cucina"]);
+    aspetta(|| ha.disiscrizioni() == 1, "vecchia iscrizione chiusa").await;
+    // Tutto nascosto: si chiude e basta.
+    p.servizio.aggiorna_config(|c| c.hidden_entities = vec!["switch.presa".into(), "light.cucina".into()]);
+    aspetta(|| ha.disiscrizioni() == 2, "iscrizione chiusa").await;
+    sleep(Duration::from_millis(200)).await;
+    assert_eq!(ha.iscrizioni_entita().len(), 2, "mai un subscribe_entities con l'elenco vuoto");
+    // Di nuovo visibile: si torna a seguirla, e il primo evento porta lo stato di adesso.
+    p.servizio.aggiorna_config(|c| c.hidden_entities.clear());
+    aspetta(|| ha.iscrizioni_entita().len() == 3, "di nuovo seguite").await;
+    assert_eq!(ha.get_states(), 1, "nessuna rilettura per seguire altre entità");
+}
+
+#[tokio::test]
+async fn un_cambio_compresso_aggiorna_solo_quell_entita_senza_rileggere() {
     let ha = FintoHa::avvia().await;
     let mut p = prepara(&ha.url, Some(TOKEN));
     p.servizio.connetti_attivo();
     let d = aspetta_dati(&mut p).await;
     assert_eq!(acceso(&d, "light.cucina"), Some(true));
+    aspetta_iscrizione(&ha, 1).await;
 
     cambio(&ha, "light.cucina", stato_nuovo("light.cucina", "off", "Luce cucina"));
     let d = aspetta_dati(&mut p).await;
@@ -449,6 +631,7 @@ async fn cambi_che_non_si_vedono_non_pubblicano() {
     let mut p = prepara(&ha.url, Some(TOKEN));
     p.servizio.connetti_attivo();
     aspetta_dati(&mut p).await;
+    aspetta_iscrizione(&ha, 1).await;
 
     let inizio = Instant::now();
     for i in 0..60u64 {
@@ -473,6 +656,7 @@ async fn una_raffica_visibile_si_pubblica_una_volta() {
     let mut p = prepara(&ha.url, Some(TOKEN));
     p.servizio.connetti_attivo();
     aspetta_dati(&mut p).await;
+    aspetta_iscrizione(&ha, 1).await;
 
     // 10 cambi in 18 ms (una scena): luce e presa accese/spente, alla fine luce spenta e presa accesa.
     for i in 0..10 {
@@ -494,6 +678,7 @@ async fn un_flusso_visibile_continuo_si_pubblica_almeno_ogni_300_ms() {
     let mut p = prepara(&ha.url, Some(TOKEN));
     p.servizio.connetti_attivo();
     aspetta_dati(&mut p).await;
+    aspetta_iscrizione(&ha, 1).await;
 
     // Un cambio visibile ogni 30 ms per 1,5 s: il riposo di 50 ms da solo non scatterebbe mai.
     let raccolta = tokio::spawn(async move {
@@ -511,20 +696,27 @@ async fn un_flusso_visibile_continuo_si_pubblica_almeno_ogni_300_ms() {
     assert!((4..=7).contains(&dati.len()), "pubblicazioni durante il flusso: {}", dati.len());
 }
 
+/// Un'entità seguita che esce arriva con `r`; un'entità nuova non è fra quelle seguite: arriva
+/// con l'evento del registro che la crea (rilettura) e da lì è seguita.
 #[tokio::test]
-async fn entita_tolta_esce_e_nuova_entra() {
+async fn entita_tolta_esce_e_nuova_entra_col_registro() {
     let ha = FintoHa::avvia().await;
     let mut p = prepara(&ha.url, Some(TOKEN));
     p.servizio.connetti_attivo();
     assert_eq!(conta_entita(&*aspetta_dati(&mut p).await), 2);
+    aspetta_iscrizione(&ha, 1).await;
 
-    ha.manda_evento("state_changed", json!({ "entity_id": "switch.presa", "old_state": stato("switch.presa", "off", "Presa"), "new_state": null }));
+    ha.manda_evento("state_changed", json!({ "entity_id": "switch.presa", "new_state": null }));
     assert_eq!(conta_entita(&*aspetta_dati(&mut p).await), 1);
     cambio(&ha, "switch.nuova", stato_nuovo("switch.nuova", "on", "Nuova"));
+    ha.manda_evento("entity_registry_updated", json!({ "action": "create", "entity_id": "switch.nuova" }));
     let d = aspetta_dati(&mut p).await;
     assert_eq!(conta_entita(&d), 2);
     assert_eq!(acceso(&d, "switch.nuova"), Some(true));
-    assert_eq!(ha.get_states(), 1);
+    assert_eq!(ha.get_states(), 2);
+    // Riscritta senza la presa (tolta), poi con la nuova (dopo la rilettura).
+    let attese = [vec!["light.cucina".to_string()], vec!["light.cucina".to_string(), "switch.nuova".to_string()]];
+    aspetta(|| ha.iscrizioni_entita()[1..] == attese, "riscritta senza la presa e poi con la nuova").await;
 }
 
 #[tokio::test]
@@ -585,35 +777,27 @@ async fn entita_nascosta_nel_registro_torna_con_gli_attributi() {
     assert_eq!(presa.name(), "Presa", "attributi interi, non lo stato alleggerito");
 }
 
+/// Un cambio avvenuto mentre la lettura completa è in volo non si perde: l'iscrizione parte dopo
+/// la lettura e il suo primo evento porta gli stati di adesso (prima lo garantivano un buffer
+/// degli `state_changed` e il confronto di `last_updated`).
 #[tokio::test]
-async fn evento_arrivato_durante_la_lettura_non_si_perde() {
+async fn cambio_durante_la_lettura_arriva_con_l_iscrizione() {
     let ha = FintoHa::avvia().await;
     // Subito dopo la risposta di `get_states` la luce si spegne; il registro delle stanze arriva
-    // 300 ms dopo, quindi l'evento raggiunge il servizio prima che la lettura sia completa.
-    let evento = json!({ "id": 1, "type": "event", "event": { "event_type": "state_changed",
-        "data": { "entity_id": "light.cucina", "old_state": stato("light.cucina", "on", "Luce cucina"),
-                  "new_state": stato_nuovo("light.cucina", "off", "Luce cucina") } } });
-    *ha.contatori.evento_dopo_stati.lock().unwrap() = Some(evento.to_string());
+    // 300 ms dopo.
+    *ha.contatori.cambio_dopo_stati.lock().unwrap() =
+        Some(json!({ "entity_id": "light.cucina", "new_state": stato_nuovo("light.cucina", "off", "Luce cucina") }));
     ha.contatori.ritardo_aree_ms.store(300, Ordering::SeqCst);
     let mut p = prepara(&ha.url, Some(TOKEN));
     p.servizio.connetti_attivo();
-    let d = aspetta_dati(&mut p).await;
-    assert_eq!(acceso(&d, "light.cucina"), Some(false), "l'evento dopo get_states vale");
-}
-
-#[tokio::test]
-async fn evento_piu_vecchio_della_lettura_non_la_sovrascrive() {
-    let ha = FintoHa::avvia().await;
-    let mut vecchio = stato("light.cucina", "off", "Luce cucina");
-    vecchio["last_updated"] = json!("2026-11-13T09:59:00+00:00");
-    let evento = json!({ "id": 1, "type": "event", "event": { "event_type": "state_changed",
-        "data": { "entity_id": "light.cucina", "old_state": null, "new_state": vecchio } } });
-    *ha.contatori.evento_dopo_stati.lock().unwrap() = Some(evento.to_string());
-    ha.contatori.ritardo_aree_ms.store(300, Ordering::SeqCst);
-    let mut p = prepara(&ha.url, Some(TOKEN));
-    p.servizio.connetti_attivo();
-    let d = aspetta_dati(&mut p).await;
-    assert_eq!(acceso(&d, "light.cucina"), Some(true));
+    let fine = Instant::now() + Duration::from_secs(5);
+    loop {
+        let d = timeout_at(fine, aspetta_dati(&mut p)).await.expect("la luce spenta non è mai arrivata");
+        if acceso(&d, "light.cucina") == Some(false) {
+            break;
+        }
+    }
+    assert_eq!(ha.get_states(), 1);
 }
 
 #[tokio::test]
@@ -622,6 +806,7 @@ async fn stato_illeggibile_rilegge_tutto() {
     let mut p = prepara(&ha.url, Some(TOKEN));
     p.servizio.connetti_attivo();
     aspetta_dati(&mut p).await;
+    aspetta_iscrizione(&ha, 1).await;
     ha.manda_evento("state_changed", json!({ "entity_id": "light.cucina", "new_state": { "state": 3 } }));
     sleep(Duration::from_millis(300)).await;
     assert_eq!(ha.get_states(), 2);

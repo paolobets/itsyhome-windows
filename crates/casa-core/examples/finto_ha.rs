@@ -20,12 +20,15 @@
 //! Poi: `ITSYHOME_ASSISTENTE_DIR=<cartella>` per l'assistente (niente import dalla v2).
 //!
 //! Entità: 2 luci (una accesa), 1 interruttore, 1 scena, 1 sensore di temperatura, una luce non
-//! disponibile senza stanza (→ "Altro") e un interruttore che rifiuta ogni comando. `call_service`
-//! cambia lo stato finto e manda `state_changed`, come l'HA vero. Stessa logica del server finto
-//! dei test d'integrazione (`tests/finto_ha.rs`), con uno stato che cambia. Notifiche persistenti
-//! come `persistent_notification/subscribe` di HA: "current" all'iscrizione, poi "added" e
-//! "removed" con l'id della richiesta d'iscrizione.
-use std::collections::BTreeMap;
+//! disponibile senza stanza (→ "Altro") e un interruttore che rifiuta ogni comando; in più sei
+//! stanze (camera, cameretta, bagno, studio, ingresso, terrazzo) con luci, prese, sensori, una
+//! tapparella, un termostato e una serratura, per provare stanze, ordine, nascoste e icone.
+//! `call_service` cambia lo stato finto e manda il cambio come l'HA vero: `state_changed` a chi
+//! è iscritto a quell'evento, e in forma compressa (`subscribe_entities`, `a`/`c`/`r`) a chi segue
+//! quell'entità. Stessa logica del server finto dei test d'integrazione (`tests/finto_ha.rs`), con
+//! uno stato che cambia. Notifiche persistenti come `persistent_notification/subscribe` di HA:
+//! "current" all'iscrizione, poi "added" e "removed" con l'id della richiesta d'iscrizione.
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -127,8 +130,61 @@ fn entita_iniziali() -> BTreeMap<String, Entita> {
         Some("soggiorno"),
         json!({ "device_class": "temperature", "unit_of_measurement": "°C" }),
     );
+    // Le altre stanze (Task 14e: stanze nella vista Casa e gestione nelle Impostazioni).
+    let luce = json!({ "supported_color_modes": ["brightness"], "color_mode": "brightness", "brightness": 150 });
+    let temperatura = |v: &str| (v.to_owned(), json!({ "device_class": "temperature", "unit_of_measurement": "°C" }));
+    e("light.camera", "off", "Luce camera", Some("camera"), luce.clone());
+    e("light.abat_jour", "on", "Abat-jour", Some("camera"), luce.clone());
+    e("switch.coperta", "off", "Coperta elettrica", Some("camera"), json!({}));
+    e(
+        "cover.tapparella_camera",
+        "open",
+        "Tapparella camera",
+        Some("camera"),
+        json!({ "current_position": 100, "supported_features": 15, "device_class": "shutter" }),
+    );
+    e("light.cameretta", "off", "Luce cameretta", Some("cameretta"), luce.clone());
+    e("switch.lucina", "on", "Lucina notturna", Some("cameretta"), json!({}));
+    let (v, a) = temperatura("20.1");
+    e("sensor.temperatura_cameretta", &v, "Temperatura cameretta", Some("cameretta"), a);
+    e("light.bagno", "off", "Luce bagno", Some("bagno"), luce.clone());
+    e("switch.scaldasalviette", "on", "Scaldasalviette", Some("bagno"), json!({}));
+    e(
+        "sensor.umidita_bagno",
+        "64",
+        "Umidità bagno",
+        Some("bagno"),
+        json!({ "device_class": "humidity", "unit_of_measurement": "%" }),
+    );
+    e("light.studio", "on", "Luce studio", Some("studio"), luce.clone());
+    e("switch.monitor", "on", "Monitor", Some("studio"), json!({}));
+    e(
+        "climate.studio",
+        "heat",
+        "Termostato studio",
+        Some("studio"),
+        json!({ "hvac_modes": ["off", "heat"], "current_temperature": 20.5, "temperature": 21, "hvac_action": "heating" }),
+    );
+    e("light.ingresso", "off", "Luce ingresso", Some("ingresso"), luce.clone());
+    e("lock.porta", "locked", "Porta d'ingresso", Some("ingresso"), json!({}));
+    e("light.terrazzo", "off", "Luce terrazzo", Some("terrazzo"), luce);
+    let (v, a) = temperatura("9.4");
+    e("sensor.temperatura_esterna", &v, "Temperatura esterna", Some("terrazzo"), a);
+    e("scene.notte", "2026-11-13T10:00:00+00:00", "Notte", None, json!({}));
     m
 }
+
+/// Le stanze della casa finta (`config/area_registry/list`).
+const STANZE: [(&str, &str); 8] = [
+    ("soggiorno", "Soggiorno"),
+    ("cucina", "Cucina"),
+    ("camera", "Camera da letto"),
+    ("cameretta", "Cameretta"),
+    ("bagno", "Bagno"),
+    ("studio", "Studio"),
+    ("ingresso", "Ingresso"),
+    ("terrazzo", "Terrazzo"),
+];
 
 fn stato_json(id: &str, e: &Entita) -> Value {
     let mut attributi = e.attributi.clone();
@@ -156,6 +212,58 @@ fn evento_cambio(id: &str, vecchio: Value, e: &Entita) -> Value {
         "event": { "event_type": "state_changed",
                    "data": { "entity_id": id, "old_state": vecchio, "new_state": stato_json(id, e) } }
     })
+}
+
+/// I secondi dall'epoca di un `last_updated` finto (`2026-11-DDTHH:MM:SS+00:00`), per gli stati
+/// compressi. Non serve esatto: solo crescente.
+fn epoca(quando: &Value) -> f64 {
+    let t = quando.as_str().unwrap_or_default();
+    let n = |a: usize, b: usize| t.get(a..b).and_then(|x| x.parse::<f64>().ok()).unwrap_or(0.0);
+    1_762_992_000.0 + (n(8, 10) - 13.0) * 86_400.0 + n(11, 13) * 3600.0 + n(14, 16) * 60.0 + n(17, 19)
+}
+
+/// Uno stato in forma compressa di `subscribe_entities` (`s`, `a`, `c`, `lc`, `lu`).
+fn compresso(s: &Value) -> Value {
+    json!({ "s": s["state"], "a": s["attributes"], "c": "contesto-finto",
+            "lc": epoca(&s["last_changed"]), "lu": epoca(&s["last_updated"]) })
+}
+
+/// Il corpo compresso di `subscribe_entities` per un `state_changed`, come `_state_diff_event` di
+/// HA (`websocket_api/messages.py`): `r` se lo stato è tolto, `a` se è nuovo, altrimenti `c` con
+/// sotto `+` lo stato (se cambia), gli attributi cambiati e il tempo, e sotto `-` gli attributi tolti.
+fn diff_compresso(data: &Value) -> Value {
+    let id = data["entity_id"].as_str().unwrap_or_default();
+    let (vecchio, nuovo) = (&data["old_state"], &data["new_state"]);
+    if nuovo.is_null() {
+        return json!({ "r": [id] });
+    }
+    if vecchio.is_null() {
+        return json!({ "a": { id: compresso(nuovo) } });
+    }
+    let mut piu = serde_json::Map::new();
+    if nuovo["state"] != vecchio["state"] {
+        piu.insert("s".into(), nuovo["state"].clone());
+        piu.insert("lc".into(), json!(epoca(&nuovo["last_updated"])));
+    } else {
+        piu.insert("lu".into(), json!(epoca(&nuovo["last_updated"])));
+    }
+    let (va, na) = (vecchio["attributes"].as_object(), nuovo["attributes"].as_object());
+    let cambiati: serde_json::Map<String, Value> = na
+        .into_iter()
+        .flatten()
+        .filter(|(k, v)| va.and_then(|va| va.get(*k)) != Some(*v))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    if !cambiati.is_empty() {
+        piu.insert("a".into(), Value::Object(cambiati));
+    }
+    let tolti: Vec<&String> =
+        va.into_iter().flatten().map(|(k, _)| k).filter(|k| na.is_none_or(|na| !na.contains_key(*k))).collect();
+    let mut diff = json!({ "+": piu });
+    if !tolti.is_empty() {
+        diff["-"] = json!({ "a": tolti });
+    }
+    json!({ "c": { id: diff } })
 }
 
 /// `--casa-grande <n>`: `n` entità in più con attributi come quelli di una casa vera (luci a
@@ -288,8 +396,7 @@ fn risposta(v: &Value, stati: &Stati) -> (Value, Option<Value>) {
     match v["type"].as_str().unwrap_or("") {
         "get_states" => (ok(stati_ora.iter().map(|(id, e)| stato_json(id, e)).collect()), None),
         "config/area_registry/list" => {
-            let mut aree =
-                vec![json!({ "area_id": "soggiorno", "name": "Soggiorno" }), json!({ "area_id": "cucina", "name": "Cucina" })];
+            let mut aree: Vec<Value> = STANZE.iter().map(|(id, nome)| json!({ "area_id": id, "name": nome })).collect();
             // Le stanze della casa grande (vedi `casa_grande`).
             if stati_ora.keys().any(|k| k.contains("_grande_") || k.contains(".potenza_") || k.contains(".segnale_")) {
                 aree.extend((0..10).map(|i| json!({ "area_id": format!("stanza_{i}"), "name": format!("Stanza {i}") })));
@@ -312,7 +419,7 @@ fn risposta(v: &Value, stati: &Stati) -> (Value, Option<Value>) {
         ),
         "get_config" => (ok(json!({ "unit_system": { "temperature": "°C" }, "location_name": "Casa finta" })), None),
         "persistent_notification/get" => (ok(json!([])), None),
-        "subscribe_events" => (ok(Value::Null), None),
+        "subscribe_events" | "unsubscribe_events" => (ok(Value::Null), None),
         "ping" => (json!({ "id": id, "type": "pong" }), None),
         "call_service" => {
             drop(stati_ora);
@@ -371,6 +478,9 @@ async fn servi(
     let mut aggiornamenti = notifiche_tx.subscribe();
     // Id della richiesta `persistent_notification/subscribe` di questo client.
     let mut iscrizione: Option<Value> = None;
+    // Le altre iscrizioni: `state_changed` intero e `subscribe_entities` (id, entità seguite).
+    let mut con_state_changed = false;
+    let mut seguite: Option<(Value, BTreeSet<String>)> = None;
     let Ok(ws) = tokio_tungstenite::accept_async(tcp).await else { return };
     let (mut tx, mut rx) = ws.split();
     let testo = |v: Value| Message::Text(v.to_string().into());
@@ -398,6 +508,33 @@ async fn servi(
                 let Some(Ok(m)) = m else { return };
                 let Message::Text(t) = m else { continue };
                 let Ok(v) = serde_json::from_str::<Value>(&t) else { continue };
+                if v["type"] == "subscribe_entities" {
+                    // Come HA: il risultato, poi un evento con gli stati interi delle entità chieste.
+                    let id = v["id"].clone();
+                    let ids: BTreeSet<String> = v["entity_ids"]
+                        .as_array()
+                        .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect())
+                        .unwrap_or_default();
+                    let a: serde_json::Map<String, Value> = stati
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .filter(|(k, _)| ids.is_empty() || ids.contains(*k))
+                        .map(|(k, e)| (k.clone(), compresso(&stato_json(k, e))))
+                        .collect();
+                    println!("subscribe_entities: {} entità seguite", a.len());
+                    let ok = json!({ "id": id, "type": "result", "success": true, "result": null });
+                    let primo = json!({ "id": id, "type": "event", "event": { "a": a } });
+                    if tx.send(testo(ok)).await.is_err() || tx.send(testo(primo)).await.is_err() { return; }
+                    seguite = Some((id, ids));
+                    continue;
+                }
+                if v["type"] == "unsubscribe_events" && seguite.as_ref().is_some_and(|(id, _)| *id == v["subscription"]) {
+                    seguite = None;
+                }
+                if v["type"] == "subscribe_events" && v["event_type"] == "state_changed" {
+                    con_state_changed = true;
+                }
                 if v["type"] == "persistent_notification/subscribe" {
                     let id = v["id"].clone();
                     let attuali = corpo_notifiche("current", &notifiche.lock().unwrap());
@@ -429,7 +566,15 @@ async fn servi(
                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(_) => return,
                 };
-                if tx.send(Message::Text(e.into())).await.is_err() { return; }
+                // Come HA: a ognuno solo ciò a cui è iscritto. Le entità che non segue non gli arrivano.
+                let Ok(v) = serde_json::from_str::<Value>(&e) else { continue };
+                if con_state_changed && tx.send(Message::Text(e.into())).await.is_err() { return; }
+                let data = &v["event"]["data"];
+                let Some((id, ids)) = &seguite else { continue };
+                if ids.is_empty() || ids.contains(data["entity_id"].as_str().unwrap_or_default()) {
+                    let compresso = json!({ "id": id, "type": "event", "event": diff_compresso(data) });
+                    if tx.send(testo(compresso)).await.is_err() { return; }
+                }
             }
             n = aggiornamenti.recv() => {
                 let Ok(corpo) = n else { return };
