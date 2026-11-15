@@ -23,6 +23,20 @@ pub struct Config {
     pub mostra_icona_barra: bool,
     pub ultimo_layout: String,
     pub importata_da_v2: bool,
+    /// I collegamenti veloci (Task 14f): pagine web delle gestioni, nell'ordine scelto. Un file di
+    /// prima, senza la chiave, si legge con l'elenco vuoto.
+    #[serde(default)]
+    pub collegamenti: Vec<Collegamento>,
+}
+
+/// Un collegamento veloce: si apre nel browser predefinito. `url` è già controllato e
+/// normalizzato dalle Impostazioni (solo http/https), ma chi lo apre lo ricontrolla: il file si
+/// può scrivere anche a mano.
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq, Eq)]
+pub struct Collegamento {
+    pub id: String,
+    pub nome: String,
+    pub url: String,
 }
 
 pub struct ConfigStore {
@@ -155,5 +169,7 @@ pub fn importa_v2(v2: &Path, segreti: &dyn Segreti) -> Result<Option<Config>, St
         mostra_icona_barra: false,
         ultimo_layout: String::new(),
         importata_da_v2: true,
+        // La v2 non aveva collegamenti.
+        collegamenti: Vec::new(),
     }))
 }

@@ -135,3 +135,37 @@ fn portachiavi_guasto_a_meta_annulla_e_non_scrive_nulla() {
     assert_eq!(std::fs::read_dir(d.path()).unwrap().count(), 0);
     assert!(ConfigStore::apri(d.path()).leggi() == Config::default());
 }
+/// Task 14f: i collegamenti (preferiti di pagine web) si salvano e si rileggono nell'ordine.
+#[test]
+fn collegamenti_salvati_e_riletti_nell_ordine() {
+    let d = tempfile::tempdir().unwrap();
+    let st = ConfigStore::apri(d.path());
+    let c = Config {
+        collegamenti: vec![
+            Collegamento { id: "proxmox".into(), nome: "Proxmox".into(), url: "https://esempio.lan:8006".into() },
+            Collegamento { id: "nas".into(), nome: "NAS".into(), url: "http://nas.esempio.lan/admin?x=1".into() },
+        ],
+        ..Config::default()
+    };
+    st.salva(&c).unwrap();
+    let testo = std::fs::read_to_string(d.path().join("assistente.json")).unwrap();
+    assert!(testo.contains("\"collegamenti\""), "{testo}");
+    assert!(testo.contains("\"url\": \"https://esempio.lan:8006\""), "{testo}");
+    assert_eq!(st.leggi(), c);
+}
+
+/// Task 14f: un file di prima (senza `collegamenti`) si legge tutto, con l'elenco vuoto.
+#[test]
+fn file_senza_collegamenti_si_legge() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(
+        d.path().join("assistente.json"),
+        r#"{ "favorites": ["light.a"], "mostraIconaBarra": true, "ultimoLayout": "quadranti" }"#,
+    )
+    .unwrap();
+    let c = ConfigStore::apri(d.path()).leggi();
+    assert!(c.collegamenti.is_empty());
+    assert_eq!(c.favorites, vec!["light.a"]);
+    assert!(c.mostra_icona_barra);
+    assert_eq!(c.ultimo_layout, "quadranti");
+}
