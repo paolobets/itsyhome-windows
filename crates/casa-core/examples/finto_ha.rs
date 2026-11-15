@@ -4,7 +4,7 @@
 //! cargo run -p casa-core --example finto_ha -- prepara <cartella> <porta> [--preferiti]
 //!     scrive <cartella>/assistente.json con l'ambiente "prova-locale" su ws://127.0.0.1:<porta>
 //!     e mette un token FINTO nel portachiavi sotto "prova-locale"
-//! cargo run -p casa-core --example finto_ha -- <porta> [--con-notifica] [--notifica-dopo <s>] [--rimuovi-dopo <s>] [--raffica <n>] [--casa-grande <n>]
+//! cargo run -p casa-core --example finto_ha -- <porta> [--con-notifica] [--notifica-dopo <s>] [--rimuovi-dopo <s>] [--raffica <n>] [--casa-grande <n>] [--lenta <ms>]
 //!     avvia il server (Ctrl+C o chiusura del processo per fermarlo).
 //!     --con-notifica: una notifica persistente c'è già all'avvio ("aggiornamento");
 //!     --notifica-dopo: dopo <s> secondi compare la notifica "lavatrice";
@@ -13,6 +13,7 @@
 //!     --raffica <n>: casa che si muove sempre, <n> state_changed al secondo su entità non mostrate
 //!         più qualche cambio su entità mostrate (vedi `raffica`);
 //!     --casa-grande <n>: <n> entità in più con attributi da casa vera (vedi `casa_grande`).
+//!     --lenta <ms>: ogni comando risponde (e manda il suo state_changed) dopo <ms> millisecondi.
 //! cargo run -p casa-core --example finto_ha -- pulisci
 //!     cancella il token finto dal portachiavi
 //! ```
@@ -349,6 +350,7 @@ async fn servi(
     eventi_tx: broadcast::Sender<String>,
     notifiche: Notifiche,
     notifiche_tx: broadcast::Sender<Value>,
+    lenta: Duration,
 ) {
     let mut eventi = eventi_tx.subscribe();
     let mut aggiornamenti = notifiche_tx.subscribe();
@@ -394,6 +396,10 @@ async fn servi(
                     let r = archivia(&v, &notifiche, &notifiche_tx);
                     if tx.send(testo(r)).await.is_err() { return; }
                     continue;
+                }
+                if v["type"] == "call_service" && !lenta.is_zero() {
+                    // Una casa lenta: risposta e state_changed arrivano dopo `lenta`.
+                    tokio::time::sleep(lenta).await;
                 }
                 let (r, evento) = risposta(&v, &stati);
                 if tx.send(testo(r)).await.is_err() { return; }
@@ -473,6 +479,7 @@ fn main() -> Result<(), String> {
                 argomenti.get(i + 1).and_then(|s| s.parse().ok())
             };
             let raffica_al_secondo = numero("--raffica");
+            let lenta = Duration::from_millis(numero("--lenta").unwrap_or(0).into());
             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
             rt.block_on(async move {
                 let listener = TcpListener::bind(("127.0.0.1", porta)).await.map_err(|e| e.to_string())?;
@@ -512,10 +519,10 @@ fn main() -> Result<(), String> {
                 }
                 loop {
                     let (tcp, _) = listener.accept().await.map_err(|e| e.to_string())?;
-                    tokio::spawn(servi(tcp, stati.clone(), eventi.clone(), notifiche.clone(), notifiche_tx.clone()));
+                    tokio::spawn(servi(tcp, stati.clone(), eventi.clone(), notifiche.clone(), notifiche_tx.clone(), lenta));
                 }
             })
         }
-        None => Err("uso: finto_ha <porta> [--con-notifica] [--notifica-dopo <s>] [--rimuovi-dopo <s>] [--raffica <n>] [--casa-grande <n>] | prepara <cartella> <porta> [--preferiti] | pulisci".into()),
+        None => Err("uso: finto_ha <porta> [--con-notifica] [--notifica-dopo <s>] [--rimuovi-dopo <s>] [--raffica <n>] [--casa-grande <n>] [--lenta <ms>] | prepara <cartella> <porta> [--preferiti] | pulisci".into()),
     }
 }
