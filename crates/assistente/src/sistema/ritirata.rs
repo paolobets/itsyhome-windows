@@ -1,7 +1,8 @@
 //! La ritirata: la pillola diventa una linea 300 × 5 al bordo alto, con clic passanti. Entra e
-//! esce con il clic destro sulla pillola, la tray o Ctrl+Alt+Maiusc+I; esce anche tenendo il
-//! mouse sulla linea per 450 ms (TwoCode) e da sola all'arrivo di un bloccante. Non si ricorda al
-//! riavvio. Logica pura: il tempo e la posizione del mouse arrivano dal chiamante.
+//! esce dal menu del clic destro sulla pillola (o dell'icona nella barra, se accesa) o con
+//! Ctrl+Alt+Maiusc+I; esce anche tenendo il mouse sulla linea per 450 ms (TwoCode) e da sola
+//! all'arrivo di un bloccante. Non si ricorda al riavvio. Logica pura: il tempo e la posizione del
+//! mouse arrivano dal chiamante.
 
 use crate::attenzione::Livello;
 use crate::finestre::RettangoloFisico;
@@ -32,13 +33,13 @@ impl Ritirata {
         self.attiva
     }
 
-    /// Clic destro, tray o scorciatoia.
+    /// Menu (pillola o icona) o scorciatoia.
     pub fn commuta(&mut self) {
         self.attiva = !self.attiva;
         self.sopra_da = None;
     }
 
-    /// La pillola torna (scorciatoia «apri», tray «Apri»).
+    /// La pillola torna (scorciatoia «apri», «Apri» del menu).
     pub fn esci(&mut self) {
         self.attiva = false;
         self.sopra_da = None;

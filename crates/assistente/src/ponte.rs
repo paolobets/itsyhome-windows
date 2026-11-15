@@ -731,6 +731,9 @@ impl Ponte {
         if p.get_avvio_con_sistema() != config.launch_at_login {
             p.set_avvio_con_sistema(config.launch_at_login);
         }
+        if p.get_icona_barra() != config.mostra_icona_barra {
+            p.set_icona_barra(config.mostra_icona_barra);
+        }
         p.set_config_non_salvata(self.errore_config.borrow().is_some());
         let dettagli = impostazioni::dettagli_tecnici(
             self.errore_connessione.borrow().as_deref(),
@@ -773,6 +776,7 @@ impl Ponte {
         self.aggiorna_ambienti();
         f.set_ambienti(ModelRc::from(self.modello_ambienti.clone()));
         f.set_versione(env!("CARGO_PKG_VERSION").into());
+        f.set_icona_barra_disponibile(cfg!(windows));
         self.riempi_impostazioni(f);
         f.on_salva_ambiente(|id, nome, url, token| {
             let Some(ponte) = ponte() else { return "".into() };
@@ -800,6 +804,12 @@ impl Ponte {
             if let Some(p) = ponte() {
                 p.casa.disconnetti();
             }
+        });
+        // L'icona nella barra: salvata e accesa o spenta subito, senza riavvio.
+        f.on_cambia_icona_barra(|si| {
+            let Some(p) = ponte() else { return };
+            p.casa.aggiorna_config(|c| c.mostra_icona_barra = si);
+            servizi::mostra_icona(si);
         });
         f.on_cambia_avvio(|attivo| {
             let Some(p) = ponte() else { return };

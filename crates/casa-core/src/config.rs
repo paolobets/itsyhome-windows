@@ -19,6 +19,8 @@ pub struct Config {
     pub area_icons: HashMap<String, String>,
     pub cameras_enabled: bool,
     pub launch_at_login: bool,
+    /// L'icona nell'area di notifica (spenta di serie: il menu sta sul clic destro della pillola).
+    pub mostra_icona_barra: bool,
     pub ultimo_layout: String,
     pub importata_da_v2: bool,
 }
@@ -149,6 +151,8 @@ pub fn importa_v2(v2: &Path, segreti: &dyn Segreti) -> Result<Option<Config>, St
         area_icons: mappa(&v, "areaIcons", |x| x.as_str().map(str::to_owned)),
         cameras_enabled: v.get("camerasEnabled").and_then(Value::as_bool).unwrap_or(false),
         launch_at_login: v.get("launchAtLogin").and_then(Value::as_bool).unwrap_or(false),
+        // La v2 viveva nella barra; la v3 di serie no (decisione di Paolo del 15/11).
+        mostra_icona_barra: false,
         ultimo_layout: String::new(),
         importata_da_v2: true,
     }))

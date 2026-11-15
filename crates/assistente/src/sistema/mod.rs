@@ -1,5 +1,5 @@
-//! Servizi di sistema: istanza unica, tray, scorciatoie globali, avvio con il sistema, notifiche,
-//! schermo intero, inattività e modalità «ritirata» (spec §3bis).
+//! Servizi di sistema: istanza unica, menu dell'isola e icona nella barra, scorciatoie globali,
+//! avvio con il sistema, notifiche, schermo intero, inattività e modalità «ritirata» (spec §3bis).
 //!
 //! Qui le decisioni pure (tempo e osservazioni arrivano dal chiamante); `servizi` le applica alla
 //! pillola con un solo timer da 5 s più sveglie singole, e un sondaggio del mouse (100 ms) solo
@@ -8,6 +8,7 @@
 pub mod autoavvio;
 pub mod inattivita;
 pub mod istanza;
+pub mod menu;
 pub mod movimento;
 pub mod notifiche;
 pub mod ritirata;

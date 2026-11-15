@@ -4,7 +4,7 @@
 // - Home Assistant: elenco degli ambienti (nome, indirizzo, stato) con Connetti/Disconnetti,
 //   Modifica e Rimuovi (conferma sul pulsante stesso per 4 s, che nomina l'ambiente); il modulo
 //   aggiungi/modifica (nome, indirizzo, token in un campo password) prende il posto dell'elenco.
-// - Sistema: «Avvia con il sistema».
+// - Sistema: «Avvia con il sistema» e «Mostra icona nella barra» (spenta di serie).
 // - Informazioni: nome, versione, «© Paolo Bets», il riquadro AboutSlint (la licenza Slint
 //   royalty-free 2.0, punto 2(a), chiede proprio quel widget in una schermata «Informazioni») e
 //   il dettaglio tecnico degli errori.
@@ -233,6 +233,9 @@ component Interruttore inherits FocusScope {
 export component FinestraImpostazioni inherits Window {
     in property <[AmbienteUi]> ambienti;
     in-out property <bool> avvio-con-sistema;
+    // L'icona nell'area di notifica (fuori da Windows non c'è: l'interruttore non si mostra).
+    in-out property <bool> icona-barra;
+    in property <bool> icona-barra-disponibile: true;
     in property <bool> config-non-salvata;
     in property <string> versione;
     in property <string> dettagli-tecnici;
@@ -248,6 +251,7 @@ export component FinestraImpostazioni inherits Window {
     callback connetti-ambiente(string);
     callback disconnetti-casa();
     callback cambia-avvio(bool);
+    callback cambia-icona-barra(bool);
     callback annulla-prova();
     // Esc fuori da un campo: Rust chiude (e distrugge) la finestra.
     callback chiudi();
@@ -355,6 +359,11 @@ export component FinestraImpostazioni inherits Window {
     function cambia-avvio-ora() {
         avvio-con-sistema = !avvio-con-sistema;
         root.cambia-avvio(avvio-con-sistema);
+    }
+
+    function cambia-icona-barra-ora() {
+        icona-barra = !icona-barra;
+        root.cambia-icona-barra(icona-barra);
     }
 
     // Conferma della rimozione: si arma dopo 400 ms e scade dopo 4 s (timer solo in quei momenti).
@@ -724,8 +733,44 @@ export component FinestraImpostazioni inherits Window {
                 }
             }
 
-            if config-non-salvata: Text {
+            if icona-barra-disponibile: Rectangle {
                 y: 120px;
+                height: 64px;
+                border-radius: Tema.raggio-xl;
+                background: Tema.card-fondo;
+                border-width: 1px;
+                border-color: Tema.vetro-bordo;
+
+                Text {
+                    x: 16px;
+                    y: 12px;
+                    text: "Mostra icona nella barra";
+                    font-weight: 500;
+                    font-size: Tema.testo-medio;
+                    color: Tema.testo;
+                }
+
+                Text {
+                    x: 16px;
+                    y: 35px;
+                    width: interruttore-icona.x - self.x - 12px;
+                    text: "L'icona vicino all'orologio, con lo stesso menu del clic destro sulla pillola.";
+                    overflow: elide;
+                    font-size: Tema.testo-piccolo;
+                    color: Tema.testo-tenue;
+                }
+
+                interruttore-icona := Interruttore {
+                    x: parent.width - self.width - 18px;
+                    y: (parent.height - self.height) / 2;
+                    nome: "Mostra icona nella barra";
+                    acceso: icona-barra;
+                    commutato => { cambia-icona-barra-ora(); }
+                }
+            }
+
+            if config-non-salvata: Text {
+                y: icona-barra-disponibile ? 196px : 120px;
                 width: parent.width;
                 text: "Le impostazioni non sono state salvate su disco: il dettaglio è in Informazioni.";
                 wrap: word-wrap;

@@ -14,20 +14,20 @@ pub const TITOLO: &str = "ItsyHome — Impostazioni";
 
 thread_local! {
     static FINESTRA: RefCell<Option<FinestraImpostazioni>> = const { RefCell::new(None) };
-    /// Sezione da mostrare alla prossima apertura (voce «Informazioni» della tray).
+    /// Sezione da mostrare alla prossima apertura (voce «Informazioni» del menu).
     static SEZIONE: Cell<Option<i32>> = const { Cell::new(None) };
 }
 
 /// Sezione «Informazioni» delle Impostazioni (0 Home Assistant, 1 Sistema, 2 Informazioni).
 pub const SEZIONE_INFORMAZIONI: i32 = 2;
 
-/// La prossima `apri_impostazioni` mostra questa sezione (la si chiede dalla tray, prima che il
+/// La prossima `apri_impostazioni` mostra questa sezione (la si chiede dal menu, prima che il
 /// pannello si chiuda e la finestra si apra).
 fn alla_sezione(sezione: i32) {
     SEZIONE.with(|s| s.set(Some(sezione)));
 }
 
-/// Chiede le Impostazioni su `sezione` (voce «Informazioni» della tray). `apri` dice se una
+/// Chiede le Impostazioni su `sezione` (voce «Informazioni» del menu). `apri` dice se una
 /// finestra si è aperta davvero: se no, la sezione si dimentica (la prossima apertura normale
 /// non deve finire lì).
 pub fn apri_alla_sezione(sezione: i32, apri: impl FnOnce() -> bool) {
@@ -49,7 +49,7 @@ fn mostra_sezione_chiesta(f: &FinestraImpostazioni) {
 }
 
 /// Apre la finestra delle Impostazioni, o porta davanti quella già aperta. Va chiamata dal ciclo
-/// eventi (anche dalla tray, Task 12).
+/// eventi (anche dal menu, Task 12).
 pub fn apri_impostazioni() {
     let aperta = FINESTRA.with(|f| f.borrow().as_ref().map(|w| w.as_weak()));
     if let Some(w) = aperta.and_then(|w| w.upgrade()) {
@@ -132,7 +132,7 @@ mod test {
 
     #[test]
     fn sezione_dimenticata_se_non_si_apre_nulla() {
-        // La tray chiede «Informazioni» ma le Impostazioni non si aprono (nessuno sa aprirle):
+        // Il menu chiede «Informazioni» ma le Impostazioni non si aprono (nessuno sa aprirle):
         // la prossima apertura normale non deve finire su «Informazioni».
         apri_alla_sezione(SEZIONE_INFORMAZIONI, || false);
         assert_eq!(in_attesa(), None);

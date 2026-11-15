@@ -81,6 +81,20 @@ fn salva_e_rileggi_uguale() {
 }
 
 #[test]
+fn icona_nella_barra_spenta_di_serie_e_salvata() {
+    let d = tempfile::tempdir().unwrap();
+    let st = ConfigStore::apri(d.path());
+    // Un file di prima (senza la chiave) la lascia spenta.
+    std::fs::write(d.path().join("assistente.json"), r#"{ "favorites": ["a"] }"#).unwrap();
+    assert!(!st.leggi().mostra_icona_barra);
+    let c = Config { mostra_icona_barra: true, ..Config::default() };
+    st.salva(&c).unwrap();
+    let testo = std::fs::read_to_string(d.path().join("assistente.json")).unwrap();
+    assert!(testo.contains("\"mostraIconaBarra\": true"), "{testo}");
+    assert!(st.leggi().mostra_icona_barra);
+}
+
+#[test]
 fn config_illeggibile_da_default() {
     let d = tempfile::tempdir().unwrap();
     std::fs::write(d.path().join("assistente.json"), "{{non json").unwrap();

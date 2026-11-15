@@ -38,8 +38,8 @@ export component Pillola inherits Window {
     in property <bool> ritirata;
     in property <LivelloUi> livello-linea: LivelloUi.nessuno;
     callback cliccata();
-    // Clic destro sulla pillola: ritirata.
-    callback ritira();
+    // Clic destro sulla pillola: il menu dell'isola (nativo, lo apre Rust sotto la pillola).
+    callback menu();
     // Clic su un pulsante della pillola allargata: l'id del pulsante.
     callback azione(string);
 
@@ -239,7 +239,7 @@ export component Pillola inherits Window {
             }
             pointer-event(e) => {
                 if (e.button == PointerEventButton.right && e.kind == PointerEventKind.up) {
-                    root.ritira();
+                    root.menu();
                 }
             }
         }

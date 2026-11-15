@@ -263,6 +263,56 @@ mod accessibilita {
         assert_eq!(elemento(&p, "La casa chiede di te").accessible_role(), Some(AccessibleRole::Button));
     }
 
+    /// Task 14d: il clic destro sulla pillola chiede il menu dell'isola (non la ritirata né
+    /// l'apertura del pannello); il clic sinistro apre il pannello come prima.
+    #[test]
+    fn clic_destro_sulla_pillola_chiede_il_menu() {
+        use slint::platform::{PointerEventButton, WindowEvent};
+        piattaforma_di_prova();
+        let p = Pillola::new().expect("pillola");
+        p.show().expect("pillola mostrata nel backend di prova");
+        let eventi = std::rc::Rc::new(std::cell::RefCell::new(Vec::<&str>::new()));
+        let (e1, e2) = (eventi.clone(), eventi.clone());
+        p.on_menu(move || e1.borrow_mut().push("menu"));
+        p.on_cliccata(move || e2.borrow_mut().push("cliccata"));
+        let pillola = elemento(&p, "ItsyHome");
+        let (pos, lato) = (pillola.absolute_position(), pillola.size());
+        let centro = slint::LogicalPosition::new(pos.x + lato.width / 2.0, pos.y + lato.height / 2.0);
+        let clic = |button| {
+            p.window().dispatch_event(WindowEvent::PointerMoved { position: centro });
+            p.window().dispatch_event(WindowEvent::PointerPressed { position: centro, button });
+            p.window().dispatch_event(WindowEvent::PointerReleased { position: centro, button });
+        };
+        clic(PointerEventButton::Right);
+        assert_eq!(*eventi.borrow(), ["menu"]);
+        clic(PointerEventButton::Left);
+        assert_eq!(*eventi.borrow(), ["menu", "cliccata"]);
+    }
+
+    /// Task 14d: «Mostra icona nella barra» in Impostazioni › Sistema, spenta di serie; il
+    /// commutatore la accende (e lo dice a Rust); fuori da Windows non si mostra.
+    #[test]
+    fn interruttore_dell_icona_nella_barra() {
+        piattaforma_di_prova();
+        let f = FinestraImpostazioni::new().expect("impostazioni");
+        f.set_sezione(1);
+        f.show().expect("impostazioni mostrate nel backend di prova");
+        let chiesti = std::rc::Rc::new(std::cell::RefCell::new(Vec::<bool>::new()));
+        let c = chiesti.clone();
+        f.on_cambia_icona_barra(move |si| c.borrow_mut().push(si));
+        // Lo stesso nome ha anche il titolo (un testo): si prende il commutatore.
+        let interruttore = ElementHandle::find_by_accessible_label(&f, "Mostra icona nella barra")
+            .find(|e| e.accessible_role() == Some(AccessibleRole::Switch))
+            .expect("commutatore «Mostra icona nella barra»");
+        assert_eq!(interruttore.accessible_checked(), Some(false), "spenta di serie");
+        interruttore.invoke_accessible_default_action();
+        assert_eq!(*chiesti.borrow(), [true]);
+        assert_eq!(interruttore.accessible_checked(), Some(true));
+        f.set_icona_barra_disponibile(false);
+        assert!(ElementHandle::find_by_accessible_label(&f, "Mostra icona nella barra").next().is_none());
+        assert!(ElementHandle::find_by_accessible_label(&f, "Avvia con il sistema").next().is_some());
+    }
+
     #[test]
     fn sezioni_delle_impostazioni_selezionate() {
         piattaforma_di_prova();

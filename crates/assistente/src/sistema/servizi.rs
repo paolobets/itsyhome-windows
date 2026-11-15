@@ -7,9 +7,13 @@
 //! - il sondaggio del mouse ogni 100 ms SOLO mentre la pillola è ritirata e visibile (la linea
 //!   lascia passare i clic, quindi non riceve eventi del mouse).
 
+use super::menu::Comando;
+#[cfg(windows)]
+use super::menu::MenuIsola;
 use super::ritirata::{self, Ritirata, SONDAGGIO_MOUSE};
 use super::scorciatoie::{self, Scorciatoia, Scorciatoie};
-use super::tray::{self, Comando, Tray};
+#[cfg(windows)]
+use super::tray::{self, Tray};
 use super::{inattivita, passi, pillola_visibile, schermo_intero, IsteresiSchermoIntero, Visibilita};
 use crate::attenzione::Livello;
 use crate::finestre::{self, RettangoloFisico};
@@ -37,6 +41,11 @@ pub struct Servizi {
     mouse: slint::Timer,
     /// Zona sensibile della linea (pixel fisici), presa entrando nella ritirata e a ogni controllo.
     zona: Cell<Option<RettangoloFisico>>,
+    /// Il menu dell'isola (clic destro sulla pillola e icona nella barra).
+    #[cfg(windows)]
+    menu: RefCell<Option<MenuIsola>>,
+    /// L'icona nella barra, solo se l'utente l'ha accesa.
+    #[cfg(windows)]
     tray: RefCell<Option<Tray>>,
     scorciatoie: RefCell<Option<Scorciatoie>>,
 }
@@ -54,8 +63,8 @@ fn servizi() -> Option<Rc<Servizi>> {
     SERVIZI.with(|s| s.borrow().clone())
 }
 
-/// Avvia i servizi (dopo pillola, ponte e pannello). Tray e scorciatoie nascono al primo giro
-/// del ciclo eventi.
+/// Avvia i servizi (dopo pillola, ponte e pannello). Menu, icona nella barra (se accesa) e
+/// scorciatoie nascono al primo giro del ciclo eventi.
 pub fn avvia(pillola: &Pillola, apertura: Rc<Apertura>, ponte: Rc<Ponte>) {
     let s = Rc::new(Servizi {
         pillola: pillola.as_weak(),
@@ -68,15 +77,18 @@ pub fn avvia(pillola: &Pillola, apertura: Rc<Apertura>, ponte: Rc<Ponte>) {
         conferma: slint::Timer::default(),
         mouse: slint::Timer::default(),
         zona: Cell::new(None),
+        #[cfg(windows)]
+        menu: RefCell::new(None),
+        #[cfg(windows)]
         tray: RefCell::new(None),
         scorciatoie: RefCell::new(None),
     });
     SERVIZI.with(|x| *x.borrow_mut() = Some(s.clone()));
 
-    // Clic destro → ritirata solo dove si può anche tornare indietro (tray, scorciatoia, mouse
-    // sulla linea): fuori da Windows la linea resterebbe una trappola.
+    // Clic destro → il menu dell'isola (con la ritirata), solo dove c'è il menu nativo e si può
+    // anche tornare indietro (scorciatoia, mouse sulla linea): fuori da Windows niente.
     #[cfg(windows)]
-    pillola.on_ritira(commuta_ritirata);
+    pillola.on_menu(apri_menu);
     s.controllo.start(slint::TimerMode::Repeated, PERIODO_CONTROLLO, || {
         if let Some(s) = servizi() {
             s.controlla();
@@ -84,10 +96,12 @@ pub fn avvia(pillola: &Pillola, apertura: Rc<Apertura>, ponte: Rc<Ponte>) {
     });
     slint::Timer::single_shot(Duration::ZERO, || {
         let Some(s) = servizi() else { return };
-        match tray::crea(al_comando_tray, s.ritirata.borrow().attiva()) {
-            Ok(t) => *s.tray.borrow_mut() = Some(t),
-            Err(e) => eprintln!("icona nella tray non creata: {e}"),
+        #[cfg(windows)]
+        match MenuIsola::crea(al_comando, s.ritirata.borrow().attiva()) {
+            Ok(m) => *s.menu.borrow_mut() = Some(m),
+            Err(e) => eprintln!("menu dell'isola non creato: {e}"),
         }
+        mostra_icona(s.ponte.casa().config().mostra_icona_barra);
         let (gestore, non_attive) = scorciatoie::registra(al_tasto);
         *s.scorciatoie.borrow_mut() = gestore;
         for (sc, occupata) in non_attive {
@@ -97,18 +111,62 @@ pub fn avvia(pillola: &Pillola, apertura: Rc<Apertura>, ponte: Rc<Ponte>) {
     });
 }
 
-/// A fine programma: via tray (l'icona sparisce subito, non al passaggio del mouse) e scorciatoie.
+/// A fine programma: via icona (sparisce subito, non al passaggio del mouse), menu e scorciatoie.
 pub fn spegni() {
     if let Some(s) = SERVIZI.with(|x| x.borrow_mut().take()) {
         s.controllo.stop();
         s.conferma.stop();
         s.mouse.stop();
-        s.tray.borrow_mut().take();
+        #[cfg(windows)]
+        {
+            s.tray.borrow_mut().take();
+            s.menu.borrow_mut().take();
+        }
         s.scorciatoie.borrow_mut().take();
     }
 }
 
-fn al_comando_tray(c: Comando) {
+/// L'icona nella barra accesa o spenta, subito (Impostazioni › Sistema e avvio). Fuori da
+/// Windows non c'è.
+pub fn mostra_icona(si: bool) {
+    #[cfg(windows)]
+    {
+        let Some(s) = servizi() else { return };
+        if si == s.tray.borrow().is_some() {
+            return;
+        }
+        if !si {
+            s.tray.borrow_mut().take();
+            return;
+        }
+        let creata = match s.menu.borrow().as_ref() {
+            Some(m) => tray::crea(m, apri),
+            None => Err("menu dell'isola mancante".into()),
+        };
+        match creata {
+            Ok(t) => *s.tray.borrow_mut() = Some(t),
+            Err(e) => eprintln!("icona nella barra non creata: {e}"),
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = si;
+}
+
+/// Clic destro sulla pillola: il menu dell'isola, col bordo sinistro sotto la pillola. Esc o
+/// un clic altrove lo chiudono; la scelta arriva da sola (`al_comando`).
+#[cfg(windows)]
+fn apri_menu() {
+    let Some(s) = servizi() else { return };
+    let Some(p) = s.pillola.upgrade() else { return };
+    let Some(hwnd) = finestre::maniglia(p.window()) else { return };
+    let punto = pillola::punto_menu(&p);
+    let menu = s.menu.borrow();
+    if let Some(m) = menu.as_ref() {
+        m.mostra(hwnd, punto);
+    }
+}
+
+fn al_comando(c: Comando) {
     match c {
         Comando::Apri => apri(),
         Comando::Impostazioni => {
@@ -134,7 +192,7 @@ fn al_tasto(sc: Scorciatoia) {
     }
 }
 
-/// Scorciatoia «apri», tray «Apri», seconda istanza: la pillola esce dalla ritirata, torna
+/// Scorciatoia «apri», «Apri» del menu, clic sull'icona, seconda istanza: la pillola esce dalla ritirata, torna
 /// visibile e sopra (salvataggio), e il pannello si apre (o, se aperto, torna davanti).
 pub fn apri() {
     let Some(s) = servizi() else { return };
@@ -146,11 +204,11 @@ pub fn apri() {
     s.apertura.apri();
 }
 
-/// Clic destro sulla pillola, tray, Ctrl+Alt+Maiusc+I.
+/// «Ritira l'isola» / «Mostra l'isola» del menu, Ctrl+Alt+Maiusc+I.
 pub fn commuta_ritirata() {
     let Some(s) = servizi() else { return };
-    // Clic destro a pannello aperto non arriva (pillola nascosta); da tray o tasti il pannello
-    // resta com'è e la ritirata vale da quando si chiude.
+    // Il menu della pillola a pannello aperto non si apre (pillola nascosta); da icona o tasti
+    // il pannello resta com'è e la ritirata vale da quando si chiude.
     s.ritirata.borrow_mut().commuta();
     s.applica();
 }
@@ -241,8 +299,9 @@ impl Servizi {
         let aperto = self.apertura.aperto();
         let nuova = pillola_visibile(self.isteresi.borrow().nascosta(), aperto, self.ritirata.borrow().attiva());
         let prima = self.mostrata.replace(nuova);
-        if let Some(t) = self.tray.borrow().as_ref() {
-            t.ritirata(self.ritirata.borrow().attiva());
+        #[cfg(windows)]
+        if let Some(m) = self.menu.borrow().as_ref() {
+            m.ritirata(self.ritirata.borrow().attiva());
         }
         let passi = passi(prima, nuova, aperto);
         if passi.ferma_sondaggio {
