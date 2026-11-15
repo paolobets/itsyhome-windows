@@ -116,12 +116,12 @@ mod windows {
 
         /// Apre il menu nella finestra `hwnd`, col bordo sinistro in alto a `(x, y)` (pixel fisici
         /// dell'area client). Ritorna quando il menu si chiude (scelta, Esc o clic altrove); la
-        /// scelta arriva dopo, dal gestore di `crea`.
-        pub fn mostra(&self, hwnd: isize, (x, y): (i32, i32)) {
+        /// scelta arriva dopo, dal gestore di `crea`. Vero se è stata scelta una voce.
+        pub fn mostra(&self, hwnd: isize, (x, y): (i32, i32)) -> bool {
             // SAFETY: hwnd è la finestra viva della pillola, sul thread dell'interfaccia (lo stesso
             // del menu); `muda` lo usa solo per la durata di TrackPopupMenu.
             unsafe {
-                self.menu.show_context_menu_for_hwnd(hwnd, Some(PhysicalPosition::new(x, y).into()));
+                self.menu.show_context_menu_for_hwnd(hwnd, Some(PhysicalPosition::new(x, y).into()))
             }
         }
     }

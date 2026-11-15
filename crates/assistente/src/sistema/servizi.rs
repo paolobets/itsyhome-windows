@@ -47,6 +47,9 @@ pub struct Servizi {
     /// L'icona nella barra, solo se l'utente l'ha accesa.
     #[cfg(windows)]
     tray: RefCell<Option<Tray>>,
+    /// La finestra in primo piano prima del menu della pillola, finché arriva la scelta.
+    #[cfg(windows)]
+    primo_piano_prima: Cell<Option<isize>>,
     scorciatoie: RefCell<Option<Scorciatoie>>,
 }
 
@@ -81,6 +84,8 @@ pub fn avvia(pillola: &Pillola, apertura: Rc<Apertura>, ponte: Rc<Ponte>) {
         menu: RefCell::new(None),
         #[cfg(windows)]
         tray: RefCell::new(None),
+        #[cfg(windows)]
+        primo_piano_prima: Cell::new(None),
         scorciatoie: RefCell::new(None),
     });
     SERVIZI.with(|x| *x.borrow_mut() = Some(s.clone()));
@@ -154,19 +159,57 @@ pub fn mostra_icona(si: bool) {
 
 /// Clic destro sulla pillola: il menu dell'isola, col bordo sinistro sotto la pillola. Esc o
 /// un clic altrove lo chiudono; la scelta arriva da sola (`al_comando`).
+///
+/// Per aprire il menu la pillola va in primo piano (TrackPopupMenu lo vuole), e la pillola
+/// ingoia ogni tasto. Il primo piano torna alla finestra che lo aveva (chi stava scrivendo non
+/// perde il fuoco) se il menu si chiude senza scelta, o dopo «Ritira l'isola» / «Mostra
+/// l'isola». «Apri», «Impostazioni» e «Informazioni» aprono una finestra che si prende il fuoco
+/// da sé; «Esci» chiude tutto.
 #[cfg(windows)]
 fn apri_menu() {
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
     let Some(s) = servizi() else { return };
     let Some(p) = s.pillola.upgrade() else { return };
     let Some(hwnd) = finestre::maniglia(p.window()) else { return };
     let punto = pillola::punto_menu(&p);
-    let menu = s.menu.borrow();
-    if let Some(m) = menu.as_ref() {
-        m.mostra(hwnd, punto);
+    // SAFETY: solo lettura della finestra in primo piano.
+    let prima = unsafe { GetForegroundWindow() };
+    let prima = (prima != 0 && prima != hwnd).then_some(prima);
+    let scelta = {
+        let menu = s.menu.borrow();
+        menu.as_ref().is_some_and(|m| m.mostra(hwnd, punto))
+    };
+    if scelta {
+        // La scelta arriva dopo, dal ciclo eventi: `al_comando` decide se ridare il fuoco.
+        s.primo_piano_prima.set(prima);
+    } else {
+        ridai_primo_piano(prima);
+    }
+}
+
+/// Ridà il primo piano alla finestra che lo aveva prima del menu.
+#[cfg(windows)]
+fn ridai_primo_piano(prima: Option<isize>) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
+    if let Some(h) = prima {
+        // SAFETY: un HWND non più valido fa solo fallire la chiamata; il primo piano adesso è
+        // nostro (il menu l'ha appena preso), quindi Windows lascia restituirlo.
+        unsafe {
+            SetForegroundWindow(h);
+        }
     }
 }
 
 fn al_comando(c: Comando) {
+    // Il primo piano da ridare, se la scelta viene dal menu della pillola.
+    #[cfg(windows)]
+    let prima = servizi().and_then(|s| s.primo_piano_prima.take());
+    #[cfg(windows)]
+    if c == Comando::Ritirata {
+        commuta_ritirata();
+        ridai_primo_piano(prima);
+        return;
+    }
     match c {
         Comando::Apri => apri(),
         Comando::Impostazioni => {
