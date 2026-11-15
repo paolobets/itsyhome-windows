@@ -443,6 +443,50 @@ mod accessibilita {
         assert_eq!(*eventi.borrow(), ["icona cucina 17"]);
     }
 
+    /// Task 14f, N1 del 14e: un clic dentro il riquadro della scelta dell'icona ma fuori da
+    /// un'icona (titolo, margini) non la chiude; un clic fuori sì.
+    #[test]
+    fn scelta_icona_trattiene_i_clic_dentro_il_riquadro() {
+        use crate::{RigaDispositivoUi, TipoRigaUi};
+        use slint::platform::{PointerEventButton, WindowEvent};
+        piattaforma_di_prova();
+        let f = FinestraImpostazioni::new().expect("impostazioni");
+        f.set_sezione(1);
+        f.show().expect("impostazioni mostrate nel backend di prova");
+        f.set_righe_dispositivi(ModelRc::new(VecModel::from(vec![RigaDispositivoUi {
+            id: "s:cucina".into(),
+            tipo: TipoRigaUi::TestataStanza,
+            chiave: "cucina".into(),
+            area: "cucina".into(),
+            nome: "Cucina".into(),
+            icona: 6,
+            puo_icona: true,
+            ..Default::default()
+        }])));
+        f.set_nomi_icone(ModelRc::new(VecModel::from(
+            crate::stanze::ICONE.iter().map(|(_, n)| slint::SharedString::from(*n)).collect::<Vec<_>>(),
+        )));
+        let clic = |x: f32, y: f32| {
+            let posizione = slint::LogicalPosition::new(x, y);
+            let button = PointerEventButton::Left;
+            f.window().dispatch_event(WindowEvent::PointerMoved { position: posizione });
+            f.window().dispatch_event(WindowEvent::PointerPressed { position: posizione, button });
+            f.window().dispatch_event(WindowEvent::PointerReleased { position: posizione, button });
+        };
+        let aperta = || ElementHandle::find_by_accessible_label(&f, "ICONA DI «Cucina»").next().is_some();
+        elemento(&f, "Cambia icona di «Cucina»").invoke_accessible_default_action();
+        let riquadro = elemento(&f, "ICONA DI «Cucina»");
+        let (pos, lato) = (riquadro.absolute_position(), riquadro.size());
+        // Sul titolo e nell'angolo in basso a destra (sotto l'ultima riga, a destra dell'ultima colonna).
+        clic(pos.x + 24.0, pos.y + 24.0);
+        assert!(aperta(), "un clic sul titolo l'ha chiusa");
+        clic(pos.x + lato.width - 6.0, pos.y + lato.height - 6.0);
+        assert!(aperta(), "un clic nel margine l'ha chiusa");
+        // Sotto il riquadro, ancora nell'elenco: la chiude come Esc.
+        clic(pos.x + 24.0, pos.y + lato.height + 20.0);
+        assert!(!aperta(), "un clic fuori dal riquadro la chiude");
+    }
+
     fn tasto(p: &Pannello, testo: impl Into<slint::SharedString> + Clone) {
         use slint::platform::WindowEvent;
         p.window().dispatch_event(WindowEvent::KeyPressed { text: testo.clone().into() });

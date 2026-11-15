@@ -356,6 +356,10 @@ component SceltaIcona inherits FocusScope {
         return accept;
     }
 
+    // Trattiene i clic dentro il riquadro ma fuori da un'icona (titolo, margini, spazi fra le
+    // celle): senza, arriverebbero all'area sotto, che chiude la scelta come Esc (N1 del 14e).
+    TouchArea {}
+
     Rectangle {
         border-radius: Tema.raggio-xl;
         background: Tema.riquadro-pieno;

@@ -1108,7 +1108,10 @@ async fn ha_in_avvio_fa_rileggere_finche_non_e_pronto() {
     let mut p = prepara(&ha.url, Some(TOKEN));
     p.servizio.connetti_attivo();
     aspetta_dati(&mut p).await;
-    aspetta(|| ha.get_states() >= 2, "rilettura con HA in avvio").await;
+    // Il core passa a «RUNNING» solo dopo la seconda `get_config` (fine della seconda lettura):
+    // aspettando la seconda `get_states` lo si poteva cambiare a metà lettura, e allora la seconda
+    // vedeva già «RUNNING» e la terza non arrivava (test instabile, N3 del 14e).
+    aspetta(|| ha.letture_config() >= 2, "rilettura con HA in avvio").await;
     *ha.contatori.stato_core.lock().unwrap() = "RUNNING".into();
     aspetta(|| ha.letture_config() >= 3, "terza lettura").await;
     let fatte = ha.get_states();
