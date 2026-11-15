@@ -16,8 +16,10 @@
 //
 // Tastiera: Tab / Maiusc+Tab nell'ordine naturale (sezioni, pulsanti, campi), Invio o Spazio
 // premono il pulsante col fuoco. In un campo si scrive come in ogni casella (frecce, Backspace,
-// selezione); Esc esce dal campo, Esc fuori da un campo chiude la finestra; Invio in un campo salva.
-// Esc a livelli in Collegamenti: prima la conferma o il campo, poi il modulo, poi la finestra.
+// selezione); Esc esce dal campo; fuori da un campo chiude il modulo aperto e poi la finestra;
+// Invio in un campo salva.
+// Esc a livelli: prima la conferma o il campo, poi il modulo (ambienti o collegamenti), poi la
+// finestra.
 import { Tema, Movimento } from "tema.slint";
 import { AmbienteUi, TonoUi, RigaDispositivoUi, TipoRigaUi, CollegamentoUi } from "voci.slint";
 import { AboutSlint, Palette } from "std-widgets.slint";
@@ -822,9 +824,11 @@ export component FinestraImpostazioni inherits Window {
         focus-on-click: false;
         key-pressed(evento) => {
             if (evento.text == Key.Escape) {
-                // Un livello alla volta: la conferma, il modulo dei collegamenti, la finestra.
+                // Un livello alla volta: la conferma, il modulo (ambienti o collegamenti), la finestra.
                 if (sezione == 2 && conferma-c-id != "") {
                     annulla-elimina-collegamento();
+                } else if (sezione == 0 && modo == ModoAmbienti.modulo) {
+                    chiudi-modulo();
                 } else if (sezione == 2 && modulo-collegamento) {
                     chiudi-modulo-collegamento(true);
                 } else {
@@ -1515,7 +1519,7 @@ export component FinestraImpostazioni inherits Window {
                         BottoneIcona {
                             icona: Icone.su;
                             nome: "Sposta su " + tra-virgolette;
-                            attivo: i > 0;
+                            attivo: i > 0 && conferma-c-id == "";
                             richiesta: root.richiesta-fuoco;
                             mio: c.id == root.fuoco-collegamento && root.fuoco-azione-collegamento == "su";
                             fuoco-preso => {
@@ -1528,7 +1532,7 @@ export component FinestraImpostazioni inherits Window {
                         BottoneIcona {
                             icona: Icone.giu;
                             nome: "Sposta giù " + tra-virgolette;
-                            attivo: i < collegamenti.length - 1;
+                            attivo: i < collegamenti.length - 1 && conferma-c-id == "";
                             richiesta: root.richiesta-fuoco;
                             mio: c.id == root.fuoco-collegamento && root.fuoco-azione-collegamento == "giu";
                             fuoco-preso => {
@@ -1541,6 +1545,9 @@ export component FinestraImpostazioni inherits Window {
                         BottoneIcona {
                             icona: Icone.matita;
                             nome: "Modifica " + tra-virgolette;
+                            // Con la conferma aperta le righe sotto sono spente: Narrator e UIA non
+                            // le invocano (il mouse lo ferma già l'area sopra).
+                            attivo: conferma-c-id == "";
                             richiesta: root.richiesta-fuoco;
                             mio: c.id == root.fuoco-collegamento && root.fuoco-azione-collegamento == "modifica";
                             fuoco-preso => {
@@ -1553,6 +1560,7 @@ export component FinestraImpostazioni inherits Window {
                         BottoneIcona {
                             icona: Icone.cestino;
                             nome: "Elimina " + tra-virgolette;
+                            attivo: conferma-c-id == "";
                             richiesta: root.richiesta-fuoco;
                             mio: c.id == root.fuoco-collegamento && root.fuoco-azione-collegamento == "elimina";
                             fuoco-preso => {

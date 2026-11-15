@@ -1109,4 +1109,52 @@ mod accessibilita {
         assert!(conferma(&f).is_none());
         assert_eq!(*eventi.borrow(), ["elimina nas"]);
     }
+
+    /// Giro di rifinitura del 14f: Esc a livelli anche nel modulo degli ambienti di Home
+    /// Assistant (prima chiudeva la finestra, perdendo quanto scritto, token compreso).
+    #[test]
+    fn modulo_ambienti_esc_a_livelli() {
+        use slint::platform::Key;
+        piattaforma_di_prova();
+        let f = FinestraImpostazioni::new().expect("impostazioni");
+        f.show().expect("impostazioni mostrate nel backend di prova");
+        f.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        let chiusa = std::rc::Rc::new(std::cell::Cell::new(false));
+        let c = chiusa.clone();
+        f.on_chiudi(move || c.set(true));
+        elemento(&f, "Aggiungi ambiente").invoke_accessible_default_action();
+        assert!(ElementHandle::find_by_accessible_label(&f, "NUOVO AMBIENTE").next().is_some());
+        scrivi(&f, "Casa");
+        tasto_finestra(&f, Key::Escape);
+        assert!(ElementHandle::find_by_accessible_label(&f, "NUOVO AMBIENTE").next().is_some(), "il primo Esc esce dal campo");
+        tasto_finestra(&f, Key::Escape);
+        assert!(ElementHandle::find_by_accessible_label(&f, "NUOVO AMBIENTE").next().is_none(), "il secondo chiude il modulo");
+        assert!(!chiusa.get(), "la finestra resta aperta");
+        tasto_finestra(&f, Key::Escape);
+        assert!(chiusa.get(), "il terzo chiude la finestra");
+    }
+
+    /// Giro di rifinitura: un clic fuori dalla conferma vale «Annulla»; con la conferma aperta i
+    /// pulsanti delle righe sotto sono spenti (Narrator e UIA non li invocano).
+    #[test]
+    fn conferma_clic_fuori_e_righe_spente() {
+        use slint::platform::{PointerEventButton, WindowEvent};
+        let (f, eventi) = scheda_collegamenti();
+        elemento(&f, "Elimina «NAS»").invoke_accessible_default_action();
+        assert_eq!(elemento(&f, "Elimina «Router»").accessible_enabled(), Some(false));
+        elemento(&f, "Elimina «Router»").invoke_accessible_default_action();
+        assert!(ElementHandle::find_by_accessible_label(&f, "Eliminare “NAS”?").next().is_some(), "la conferma non cambia");
+        let riquadro = elemento(&f, "Eliminare “NAS”?");
+        let (pos, lato) = (riquadro.absolute_position(), riquadro.size());
+        let punto = slint::LogicalPosition::new(pos.x + 20.0, pos.y + lato.height + 40.0);
+        let button = PointerEventButton::Left;
+        for _ in 0..2 {
+            f.window().dispatch_event(WindowEvent::PointerMoved { position: punto });
+            f.window().dispatch_event(WindowEvent::PointerPressed { position: punto, button });
+            f.window().dispatch_event(WindowEvent::PointerReleased { position: punto, button });
+        }
+        assert!(ElementHandle::find_by_accessible_label(&f, "Eliminare “NAS”?").next().is_none(), "il clic fuori annulla");
+        assert_eq!(elemento(&f, "Elimina «Router»").accessible_enabled(), Some(true));
+        assert!(eventi.borrow().is_empty(), "{:?}", eventi.borrow());
+    }
 }
