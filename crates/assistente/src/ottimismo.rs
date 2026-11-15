@@ -71,6 +71,12 @@ impl<T: PartialEq + Clone> Ottimismo<T> {
         self.attese.get(id).map(|a| &a.atteso)
     }
 
+    /// Il numero del tocco che ha armato l'attesa in corso, se c'è.
+    #[cfg(test)]
+    pub fn numero(&self, id: &str) -> Option<u64> {
+        self.attese.get(id).map(|a| a.numero)
+    }
+
     /// Dati nuovi: `vero` dà il valore vero di un dispositivo (`None` se non c'è più). Escono le
     /// attese confermate e quelle dei dispositivi spariti; si restituiscono quelle confermate,
     /// con il tempo dal tocco.

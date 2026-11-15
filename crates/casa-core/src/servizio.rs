@@ -37,8 +37,10 @@ const TETTO_RAFFICA: Duration = Duration::from_millis(300);
 const ATTESA_REGISTRI: Duration = Duration::from_secs(1);
 const TETTO_REGISTRI: Duration = Duration::from_secs(5);
 /// Se la prima lettura completa della connessione fallisce non c'è nulla da aggiornare con gli
-/// eventi: si riprova dopo 2 s, finché riesce (prima ogni `state_changed` faceva rileggere).
+/// eventi: si riprova dopo 2 s, poi 4, 8, 16, 32 e al più ogni 60 s, finché riesce. L'attesa
+/// riparte da 2 s dopo una lettura riuscita.
 const RIPROVA_LETTURA: Duration = Duration::from_secs(2);
+const TETTO_RIPROVA: Duration = Duration::from_secs(60);
 
 type Fatto = Box<dyn FnOnce(TestConnectionResult) + Send>;
 
@@ -46,7 +48,7 @@ enum Comando {
     ConnettiAttivo,
     Connetti(String),
     Disconnetti,
-    Servizio { entity_id: String, dominio: String, servizio: String },
+    Servizio { entity_id: String, dominio: String, servizio: String, numero: u64 },
     Archivia(String),
     Prova { url: String, token: String, fatto: Fatto },
     Salva { config: Config, rimappa: bool },
@@ -103,12 +105,13 @@ impl CasaService {
         self.manda(Comando::Disconnetti);
     }
 
-    /// L'esito arriva come `CasaEvento::Esito`.
-    pub fn comando(&self, entity_id: &str, dominio: &str, servizio: &str) {
+    /// L'esito arriva come `CasaEvento::Esito` con lo stesso `numero` (scelto da chi chiama).
+    pub fn comando(&self, entity_id: &str, dominio: &str, servizio: &str, numero: u64) {
         self.manda(Comando::Servizio {
             entity_id: entity_id.to_owned(),
             dominio: dominio.to_owned(),
             servizio: servizio.to_owned(),
+            numero,
         });
     }
 
@@ -327,9 +330,11 @@ struct Motore {
     pubblica: Attesa,
     /// Alla pubblicazione serve la mappatura completa (non bastano le sostituzioni).
     rimappa: bool,
-    /// Rilettura completa in sospeso: dopo gli eventi dei registri o della configurazione, o per
-    /// riprovare una prima lettura fallita.
+    /// Rilettura completa in sospeso dopo gli eventi dei registri o della configurazione.
     registri: Attesa,
+    /// Nuovo tentativo di una prima lettura fallita, e l'attesa del prossimo (cresce fino al tetto).
+    riprova: Attesa,
+    attesa_riprova: Duration,
     /// Notifiche persistenti dell'ambiente connesso già consegnate all'applicazione.
     notifiche: BTreeSet<String>,
     /// L'ambiente a cui appartengono quelle notifiche.
@@ -363,6 +368,8 @@ impl Motore {
             pubblica: Attesa::default(),
             rimappa: false,
             registri: Attesa::default(),
+            riprova: Attesa::default(),
+            attesa_riprova: RIPROVA_LETTURA,
             notifiche: BTreeSet::new(),
             ambiente_notifiche: None,
         }
@@ -371,7 +378,8 @@ impl Motore {
     async fn esegui(mut self, mut rx: mpsc::UnboundedReceiver<Comando>) {
         let mut interni = self.interni_rx.take().expect("ricevitore interno");
         loop {
-            let (pubblica, registri) = (self.pubblica.scadenza(), self.registri.scadenza());
+            let (pubblica, registri, riprova) =
+                (self.pubblica.scadenza(), self.registri.scadenza(), self.riprova.scadenza());
             tokio::select! {
                 c = rx.recv() => match c {
                     None | Some(Comando::Ferma) => break,
@@ -387,6 +395,10 @@ impl Motore {
                 }
                 _ = sleep_until(registri.unwrap_or_else(Instant::now)), if registri.is_some() => {
                     self.registri.annulla();
+                    self.rileggi();
+                }
+                _ = sleep_until(riprova.unwrap_or_else(Instant::now)), if riprova.is_some() => {
+                    self.riprova.annulla();
                     self.rileggi();
                 }
             }
@@ -418,16 +430,16 @@ impl Motore {
                 self.dimentica_notifiche();
                 self.emetti(CasaEvento::Stato(StatoConnessione::Disconnesso));
             }
-            Comando::Servizio { entity_id, dominio, servizio } => {
+            Comando::Servizio { entity_id, dominio, servizio, numero } => {
                 let Some((client, _)) = &self.client else {
-                    self.emetti(CasaEvento::Esito { entity_id, ok: false, errore: Some(NON_CONNESSO.into()) });
+                    self.emetti(CasaEvento::Esito { entity_id, numero, ok: false, errore: Some(NON_CONNESSO.into()) });
                     return;
                 };
                 let client = client.clone();
                 let ascolta = self.ascolta.clone();
                 tokio::spawn(async move {
                     let r = client.call_service(&dominio, &servizio, &entity_id).await;
-                    ascolta(CasaEvento::Esito { entity_id, ok: r.is_ok(), errore: r.err() });
+                    ascolta(CasaEvento::Esito { entity_id, numero, ok: r.is_ok(), errore: r.err() });
                 });
             }
             Comando::Archivia(id) => {
@@ -533,6 +545,7 @@ impl Motore {
     fn ferma_attese(&mut self) {
         self.pubblica.annulla();
         self.registri.annulla();
+        self.riprova.annulla();
         self.rimappa = false;
     }
 
@@ -652,12 +665,18 @@ impl Motore {
             // Senza gli stati si tengono i dati precedenti.
             Err(e) => {
                 eprintln!("lettura di Home Assistant non riuscita: {e}");
-                // Senza nessun dato gli eventi non hanno su cosa lavorare: si riprova.
+                // Senza nessun dato gli eventi non hanno su cosa lavorare: si riprova, ogni volta
+                // aspettando il doppio (fino al tetto).
                 if self.casa.is_none() {
-                    self.registri.rinvia(Instant::now(), RIPROVA_LETTURA, RIPROVA_LETTURA);
+                    let attesa = self.attesa_riprova;
+                    self.riprova.rinvia(Instant::now(), attesa, attesa);
+                    self.attesa_riprova = (attesa * 2).min(TETTO_RIPROVA);
                 }
             }
             Ok(g) => {
+                // Riuscita (anche da una riconnessione): il tentativo in sospeso non serve più.
+                self.riprova.annulla();
+                self.attesa_riprova = RIPROVA_LETTURA;
                 let mut casa = Casa::new(*g, &mut self.mapper);
                 for (entity_id, nuovo) in attesi {
                     let piu_vecchio = match (&nuovo, casa.stato(&entity_id)) {
@@ -791,6 +810,53 @@ mod test {
         let ora = stato("sensor.x", "21", json!({ "device_class": "temperature", "unit_of_measurement": "°C" }));
         assert_eq!(c.applica(&m, "sensor.x", Some(ora)), Effetto::Rimappa);
         assert_eq!(c.stato("sensor.x").unwrap().attributes["unit_of_measurement"], "°C");
+    }
+
+    fn motore() -> (Motore, tempfile::TempDir) {
+        let cartella = tempfile::tempdir().unwrap();
+        let store = Arc::new(ConfigStore::apri(cartella.path()));
+        let segreti: Arc<dyn Segreti> = Arc::new(crate::segreti::MemoriaSegreti::new());
+        let config = Arc::new(Mutex::new(Config::default()));
+        (Motore::new(store, segreti, Arc::new(|_| {}), config, vec![]), cartella)
+    }
+
+    fn grezzi_vuoti() -> Box<Grezzi> {
+        Box::new(Grezzi { states: vec![luce("off")], areas: vec![], devices: vec![], entries: vec![], config: None })
+    }
+
+    /// N1: la prima lettura che fallisce si riprova con un'attesa che raddoppia (2, 4, 8 … fino
+    /// a 60 s), e che riparte da 2 s dopo una lettura riuscita.
+    #[test]
+    fn la_prima_lettura_fallita_si_riprova_aspettando_sempre_di_piu() {
+        let (mut m, _c) = motore();
+        let mut attese = Vec::new();
+        for _ in 0..8 {
+            let prima = Instant::now();
+            m.letti(Err("rifiutata".into()));
+            let scade = m.riprova.scadenza().expect("un nuovo tentativo armato");
+            attese.push((scade - prima).as_secs_f32().round() as u64);
+            m.riprova.annulla();
+        }
+        assert_eq!(attese, [2, 4, 8, 16, 32, 60, 60, 60]);
+        m.letti(Ok(grezzi_vuoti()));
+        m.casa = None; // la connessione cade: di nuovo senza dati
+        let prima = Instant::now();
+        m.letti(Err("rifiutata".into()));
+        let scade = m.riprova.scadenza().unwrap();
+        assert_eq!((scade - prima).as_secs_f32().round() as u64, 2, "dopo una lettura riuscita si riparte da 2 s");
+    }
+
+    /// N2: un nuovo tentativo in sospeso si annulla se intanto una lettura (di una riconnessione)
+    /// riesce; una rilettura chiesta dai registri invece resta.
+    #[test]
+    fn una_lettura_riuscita_annulla_il_tentativo_in_sospeso() {
+        let (mut m, _c) = motore();
+        m.letti(Err("rifiutata".into()));
+        assert!(m.riprova.scadenza().is_some());
+        m.registri.rinvia(Instant::now(), ATTESA_REGISTRI, TETTO_REGISTRI);
+        m.letti(Ok(grezzi_vuoti()));
+        assert_eq!(m.riprova.scadenza(), None, "nessuna lettura in più dopo quella riuscita");
+        assert!(m.registri.scadenza().is_some(), "la rilettura dei registri non si perde");
     }
 
     #[test]

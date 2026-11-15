@@ -47,9 +47,9 @@ pub struct Servizi {
     /// L'icona nella barra, solo se l'utente l'ha accesa.
     #[cfg(windows)]
     tray: RefCell<Option<Tray>>,
-    /// La finestra in primo piano prima del menu della pillola, finché arriva la scelta.
+    /// La finestra in primo piano prima del menu della pillola e la pillola, finché arriva la scelta.
     #[cfg(windows)]
-    primo_piano_prima: Cell<Option<isize>>,
+    primo_piano_prima: Cell<Option<(isize, isize)>>,
     scorciatoie: RefCell<Option<Scorciatoie>>,
 }
 
@@ -174,7 +174,7 @@ fn apri_menu() {
     let punto = pillola::punto_menu(&p);
     // SAFETY: solo lettura della finestra in primo piano.
     let prima = unsafe { GetForegroundWindow() };
-    let prima = (prima != 0 && prima != hwnd).then_some(prima);
+    let prima = (prima != 0 && prima != hwnd).then_some((prima, hwnd));
     let scelta = {
         let menu = s.menu.borrow();
         menu.as_ref().is_some_and(|m| m.mostra(hwnd, punto))
@@ -187,13 +187,24 @@ fn apri_menu() {
     }
 }
 
-/// Ridà il primo piano alla finestra che lo aveva prima del menu.
+/// A chi ridare il primo piano dopo il menu: alla finestra che lo aveva prima, ma solo se adesso
+/// ce l'ha ancora la pillola. Se intanto l'utente ha attivato un'altra finestra (un clic altrove
+/// mentre il menu era aperto, Alt+Tab), quella resta in primo piano: non la si scavalca.
+#[cfg(any(windows, test))]
+fn da_ridare(prima: Option<(isize, isize)>, in_primo_piano: isize) -> Option<isize> {
+    let (finestra, pillola) = prima?;
+    (in_primo_piano == pillola).then_some(finestra)
+}
+
+/// Ridà il primo piano alla finestra che lo aveva prima del menu (vedi `da_ridare`).
 #[cfg(windows)]
-fn ridai_primo_piano(prima: Option<isize>) {
-    use windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
-    if let Some(h) = prima {
+fn ridai_primo_piano(prima: Option<(isize, isize)>) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
+    // SAFETY: solo lettura della finestra in primo piano.
+    let adesso = unsafe { GetForegroundWindow() };
+    if let Some(h) = da_ridare(prima, adesso) {
         // SAFETY: un HWND non più valido fa solo fallire la chiamata; il primo piano adesso è
-        // nostro (il menu l'ha appena preso), quindi Windows lascia restituirlo.
+        // nostro (della pillola, appena controllato), quindi Windows lascia restituirlo.
         unsafe {
             SetForegroundWindow(h);
         }
@@ -395,4 +406,20 @@ impl Servizi {
 
 fn zona_della_linea(p: &Pillola) -> Option<RettangoloFisico> {
     finestre::schermo_di(p.window()).map(|(area, scala)| ritirata::zona_linea(area, scala))
+}
+
+#[cfg(test)]
+mod test {
+    use super::da_ridare;
+
+    /// N4 (ri-revisione del 14d): dopo il menu il primo piano torna a chi lo aveva solo se è
+    /// ancora della pillola.
+    #[test]
+    fn il_primo_piano_torna_solo_se_e_ancora_della_pillola() {
+        let (finestra, pillola, altra) = (10, 20, 30);
+        assert_eq!(da_ridare(Some((finestra, pillola)), pillola), Some(finestra));
+        assert_eq!(da_ridare(Some((finestra, pillola)), altra), None, "l'utente ha attivato un'altra finestra");
+        assert_eq!(da_ridare(Some((finestra, pillola)), 0), None, "nessuna finestra in primo piano");
+        assert_eq!(da_ridare(None, pillola), None);
+    }
 }

@@ -719,29 +719,29 @@ async fn comando_ok_e_comando_rifiutato() {
     p.servizio.connetti_attivo();
     aspetta_dati(&mut p).await;
 
-    p.servizio.comando("light.cucina", "light", "toggle");
+    p.servizio.comando("light.cucina", "light", "toggle", 7);
     let esito = loop {
         if let e @ CasaEvento::Esito { .. } = prossimo(&mut p).await {
             break e;
         }
     };
-    assert!(matches!(esito, CasaEvento::Esito { ref entity_id, ok: true, errore: None } if entity_id == "light.cucina"));
+    assert!(matches!(esito, CasaEvento::Esito { ref entity_id, numero: 7, ok: true, errore: None } if entity_id == "light.cucina"));
 
-    p.servizio.comando("light.fantasma", "light", "toggle");
+    p.servizio.comando("light.fantasma", "light", "toggle", 8);
     let esito = loop {
         if let e @ CasaEvento::Esito { .. } = prossimo(&mut p).await {
             break e;
         }
     };
-    assert!(matches!(esito, CasaEvento::Esito { ref entity_id, ok: false, errore: Some(_) } if entity_id == "light.fantasma"));
+    assert!(matches!(esito, CasaEvento::Esito { ref entity_id, numero: 8, ok: false, errore: Some(_) } if entity_id == "light.fantasma"));
 }
 
 #[tokio::test]
 async fn comando_senza_connessione_fallisce() {
     let ha = FintoHa::avvia().await;
     let mut p = prepara(&ha.url, Some(TOKEN));
-    p.servizio.comando("light.cucina", "light", "toggle");
-    assert!(matches!(prossimo(&mut p).await, CasaEvento::Esito { ok: false, errore: Some(_), .. }));
+    p.servizio.comando("light.cucina", "light", "toggle", 9);
+    assert!(matches!(prossimo(&mut p).await, CasaEvento::Esito { numero: 9, ok: false, errore: Some(_), .. }));
 }
 
 #[tokio::test]

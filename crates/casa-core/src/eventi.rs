@@ -32,7 +32,10 @@ pub enum CasaEvento {
     NotificaRimossa { id: String },
     /// `archivia_notifica` non è riuscita (la notifica resta finché HA non la rimuove).
     NotificaNonArchiviata { id: String, errore: String },
-    Esito { entity_id: String, ok: bool, errore: Option<String> },
+    /// Esito di `CasaService::comando`: `numero` è quello dato dal chiamante con il comando, così
+    /// l'esito torna al comando giusto anche con due comandi quasi simultanei sulla stessa entità
+    /// (ogni comando gira in un suo task e gli esiti possono arrivare in un altro ordine).
+    Esito { entity_id: String, numero: u64, ok: bool, errore: Option<String> },
     /// La configurazione non è stata scritta su disco (resta valida in memoria).
     ConfigNonSalvata(String),
 }

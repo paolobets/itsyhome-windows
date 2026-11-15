@@ -425,9 +425,6 @@ pub struct Ponte {
     ottimismo: RefCell<Ottimismo<bool>>,
     /// Suona alla scadenza della prossima attesa di conferma (solo se ce ne sono).
     sveglia_ottimismo: slint::Timer,
-    /// Per entità, i numeri dei tocchi i cui comandi aspettano l'esito, in ordine (0 = comando
-    /// senza attesa): l'esito di un comando vale solo per la sua attesa.
-    comandi_in_volo: RefCell<HashMap<String, std::collections::VecDeque<u64>>>,
     /// `ITSYHOME_TRACCIA_TOCCO=1`: tempi del tocco sullo stderr (icona cambiata nel modello,
     /// conferma di Home Assistant). Il fotogramma si misura da fuori, sulle foto della zona: il
     /// renderer software di Skia non chiama il notificatore di rendering.
@@ -472,7 +469,6 @@ pub fn collega(
         apri_impostazioni: RefCell::new(None),
         ottimismo: RefCell::new(Ottimismo::default()),
         sveglia_ottimismo: slint::Timer::default(),
-        comandi_in_volo: RefCell::new(HashMap::new()),
         traccia_tocco: std::env::var_os("ITSYHOME_TRACCIA_TOCCO").is_some_and(|v| v == "1"),
     });
     PONTE.with(|p| *p.borrow_mut() = Some(ponte.clone()));
@@ -559,7 +555,6 @@ impl Ponte {
                 // Senza connessione nessuna conferma può arrivare: i tocchi in attesa tornano veri.
                 if s != StatoConnessione::Connesso && self.ottimismo.borrow_mut().svuota() {
                     self.sveglia_ottimismo.stop();
-                    self.comandi_in_volo.borrow_mut().clear();
                 }
                 *self.stato.borrow_mut() = s;
                 // Con la connessione cambia anche se i preferiti si possono toccare.
@@ -592,14 +587,8 @@ impl Ponte {
                 self.non_archiviate.borrow_mut().insert(format!("{PREFISSO_NOTIFICA}{id}"));
                 self.attese_cambiate();
             }
-            CasaEvento::Esito { entity_id, ok, errore } => {
-                // I comandi di un'entità tornano nell'ordine in cui sono partiti.
-                let numero = self
-                    .comandi_in_volo
-                    .borrow_mut()
-                    .get_mut(&entity_id)
-                    .and_then(|coda| coda.pop_front())
-                    .unwrap_or(0);
+            CasaEvento::Esito { entity_id, numero, ok, errore } => {
+                // `numero` è quello del tocco che ha mandato il comando (0 = nessuna attesa).
                 if ok {
                     self.errori.borrow_mut().remove(&entity_id);
                     self.cervello.borrow_mut().ricevi(Segnale::ComandoRiuscito, ora);
@@ -1039,17 +1028,18 @@ impl Ponte {
         // tocco precedente aspetta ancora la conferma).
         // Un tocco che riporta al valore vero (un doppio tocco con `toggle`) non aspetta nulla:
         // HA non ripubblica dati uguali.
+        // Il numero del tocco viaggia col comando e torna con il suo esito.
+        let mut numero = 0;
         if let Some(vero) = acceso {
             let mostrato = self.ottimismo.borrow().atteso(entity_id).copied().unwrap_or(vero);
-            let numero = self.ottimismo.borrow_mut().tocca(entity_id, !mostrato, &vero, ora);
-            self.comandi_in_volo.borrow_mut().entry(entity_id.to_owned()).or_default().push_back(numero);
+            numero = self.ottimismo.borrow_mut().tocca(entity_id, !mostrato, &vero, ora);
             self.arma_sveglia_ottimismo();
         }
         self.ricostruisci_preferiti();
         if self.traccia_tocco && acceso.is_some() {
             eprintln!("tocco {entity_id}: icona cambiata nel modello dopo {} µs", ora.elapsed().as_micros());
         }
-        self.casa.comando(entity_id, dominio, servizio);
+        self.casa.comando(entity_id, dominio, servizio, numero);
     }
 
     /// Una sveglia singola alla prossima scadenza di un tocco non confermato.
@@ -1462,14 +1452,45 @@ pub(crate) mod test {
         assert!(p.errori.borrow().is_empty());
     }
 
+    /// Il numero dell'attesa armata dal tocco più recente su `id`.
+    fn numero_attesa(p: &Ponte, id: &str) -> u64 {
+        p.ottimismo.borrow().numero(id).expect("un'attesa armata")
+    }
+
     /// Rilievo 8: un esito negativo toglie l'attesa e mostra l'errore.
     #[test]
     fn esito_negativo_toglie_l_attesa() {
         let (_spegni, p, _pillola, _c) = ponte_di_prova();
         p.tocca("light.a");
-        p.ricevi(CasaEvento::Esito { entity_id: "light.a".into(), ok: false, errore: Some("guasto".into()) });
+        let numero = numero_attesa(&p, "light.a");
+        p.ricevi(CasaEvento::Esito { entity_id: "light.a".into(), numero, ok: false, errore: Some("guasto".into()) });
         assert_eq!(stato_mostrato(&p), "Non riuscito");
         assert!(p.ottimismo.borrow().atteso("light.a").is_none());
+    }
+
+    /// N3 (ri-revisione del 14d): ogni comando gira in un suo task, quindi gli esiti di due
+    /// comandi sulla stessa entità possono arrivare scambiati. L'esito vale per il suo tocco, non
+    /// per il primo in coda: l'errore del secondo comando, arrivato per primo, toglie l'attesa del
+    /// secondo tocco; quello del primo, arrivato dopo, non tocca nulla.
+    #[test]
+    fn l_esito_torna_al_suo_tocco_anche_fuori_ordine() {
+        let (_spegni, p, _pillola, _c) = ponte_di_prova();
+        // Primo tocco: si accende (attesa n1), e la conferma arriva con i dati.
+        p.tocca("light.a");
+        let primo = numero_attesa(&p, "light.a");
+        p.ricevi(CasaEvento::Dati(Arc::new(menu(vec![luce("light.a", true)], vec![]))));
+        // Secondo tocco: si spegne (attesa n2); il suo comando fallisce e l'esito arriva per primo.
+        p.tocca("light.a");
+        let secondo = numero_attesa(&p, "light.a");
+        assert_ne!(primo, secondo);
+        p.ricevi(CasaEvento::Esito { entity_id: "light.a".into(), numero: secondo, ok: false, errore: Some("guasto".into()) });
+        assert!(p.ottimismo.borrow().atteso("light.a").is_none(), "l'errore del secondo comando toglie la sua attesa");
+        assert_eq!(stato_mostrato(&p), "Non riuscito");
+        // Un terzo tocco arma un'attesa nuova; l'esito tardivo del primo comando non la tocca.
+        p.tocca("light.a");
+        let terzo = numero_attesa(&p, "light.a");
+        p.ricevi(CasaEvento::Esito { entity_id: "light.a".into(), numero: primo, ok: false, errore: Some("tardi".into()) });
+        assert_eq!(p.ottimismo.borrow().numero("light.a"), Some(terzo), "l'attesa del terzo tocco resta");
     }
 
     #[test]
