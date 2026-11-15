@@ -99,6 +99,26 @@ Nel giro 2 la pillola che chiama era salita a 10,6–10,7 MB: i suoi pulsanti us
 
 Tocco su una casa lenta (`--lenta 800`): l'icona cambia sullo schermo 32–51 ms dopo l'invocazione (prima 1150 ms); la conferma arriva dopo circa 880 ms e non cambia più nulla. Con la casa veloce la conferma arriva in circa 60 ms. Sotto lo 0,05% con la raffica non si scende di molto: un client WebSocket minimo che riceve gli stessi eventi e non fa altro costa già circa 140 µs di CPU per messaggio su questo PC.
 
+### Added (Task 14e: stanze e gestione dei dispositivi, 15/11/2026)
+- Vista Casa: a sinistra le stanze (ordine salvato, senza le nascoste, «Altro» e «Scene» in fondo), a destra i preferiti; una stanza aperta mostra i suoi dispositivi al posto dei preferiti, come il dettaglio della v2. Luci, interruttori e scene col tocco (stato ottimistico come i preferiti), il resto in sola lettura con lo stato in italiano. Tastiera: Tab fra stanze e card, Esc e «‹ Indietro» chiudono prima la stanza.
+- Impostazioni › Dispositivi (la scheda «Accessories» della v2): preferiti in cima con il loro ordine, stanze con ordine, icona (le 60 della v2, ridisegnate con icone Lucide, licenza ISC) e occhio, dispositivi con ordine, occhio e stella; stanze comprimibili. Ogni modifica è salvata subito con le chiavi della v2 e si vede subito nel pannello.
+
+### Changed (Task 14e)
+- Gli stati arrivano da `subscribe_entities` con le sole entità mostrate (preferiti, stanze, scene, telecamere, aggiornamenti), non più da `state_changed` di tutta la casa; l'iscrizione si rifà dopo ogni lettura completa e quando cambia ciò che si mostra, mai con l'elenco vuoto (per HA vorrebbe dire «tutte»).
+- Prima lettura fallita: nuovi tentativi dopo 2, 4, 8… fino a 60 s, annullati da una lettura riuscita. L'esito di un comando porta il numero del suo tocco. Dopo il menu della pillola il primo piano torna a chi lo aveva solo se è ancora della pillola.
+- Un `input_boolean` si commuta col suo servizio; le scene senza ordine salvato vanno per nome.
+
+### Misure del Task 14e (15/11/2026, stesse condizioni del 14d, finto con 25 entità)
+
+| Stato | Task 14d | Task 14e | Obiettivo |
+|---|---|---|---|
+| Riposo, 5 min | 0,015%, 8,0–8,2 MB | 0,019% (p95 0,13, max 0,52), 7,9–8,1 MB | ≤ 0,1% |
+| Raffica 20/s su entità non mostrate, 5 min | 0,053%, 8,3–8,4 MB | 0,022% (p95 0,13, max 0,39), 8,2–8,3 MB | ≤ 0,03% |
+| Casa grande (829 entità) + raffica, 2 min | 0,046%, 11,1–11,3 MB | 0,037%, 11,8 MB | |
+| Pillola che chiama e pulsa¹, 5 min | 0,557%, 9,4–9,5 MB | 0,340% (p95 0,64, max 1,04), 9,5–9,6 MB | ≤ 1% |
+
+¹ Build temporanea con `ALLARGATA_PER` = 600 s, senza toast.
+
 ---
 
 ## [2.1.2] - 2026-03-24
