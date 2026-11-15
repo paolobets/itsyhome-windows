@@ -12,11 +12,14 @@ use crate::impostazioni::{self, Modulo, Tono};
 use crate::ottimismo::Ottimismo;
 use crate::pillola::{self, VistaPillola};
 use crate::umore::{Cervello, Segnale, Umore};
-use crate::{AmbienteUi, FinestraImpostazioni, GenereUi, Pannello, Pillola, PreferitoUi, SensoreUi, TonoUi, VoceAttesaUi};
+use crate::{
+    AmbienteUi, FinestraImpostazioni, GenereUi, Pannello, Pillola, PreferitoUi, SensoreUi, StanzaUi, TonoUi, VoceAttesaUi,
+};
 use casa_core::eventi::{Ascoltatore, CasaEvento, StatoConnessione};
 use casa_core::segreti::Segreti;
 use casa_core::servizio::CasaService;
-use casa_core::types::{AppEntity, BaseEntity, MenuData, SensorEntity, TestConnectionResult};
+use casa_core::config::Config;
+use casa_core::types::{AppEntity, BaseEntity, MenuData, SensorEntity, TestConnectionResult, GRUPPO_SCENE};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -84,7 +87,8 @@ fn preferito(e: &AppEntity) -> Preferito {
             };
             (Tipo::Lettura, false, valore)
         }
-        _ => (Tipo::Lettura, false, numero_italiano(&b.state)),
+        // Tutto il resto si legge soltanto (i controlli arrivano con la milestone Casa).
+        _ => (Tipo::Lettura, false, stato_in_lettura(e)),
     };
     Preferito {
         entity_id: b.entity_id.clone(),
@@ -95,6 +99,119 @@ fn preferito(e: &AppEntity) -> Preferito {
         disponibile: b.is_available,
         errore: None,
     }
+}
+
+/// Lo stato in italiano di un dispositivo che per ora si legge soltanto (tapparelle, serrature,
+/// termostati, ventilatori…). Uno stato che non conosciamo resta com'è, con la virgola italiana.
+pub fn stato_in_lettura(e: &AppEntity) -> String {
+    let b = base(e);
+    let parola = |s: &str| -> Option<&'static str> {
+        Some(match s {
+            "on" => "Acceso",
+            "off" => "Spento",
+            _ => return None,
+        })
+    };
+    let testo: Option<String> = match e {
+        AppEntity::Cover(c) => {
+            let parola = match c.cover_state.as_str() {
+                "open" => "Aperta",
+                "closed" => "Chiusa",
+                "opening" => "In apertura",
+                "closing" => "In chiusura",
+                _ => "Ferma",
+            };
+            Some(match c.position.filter(|_| c.supports_position) {
+                Some(p) => format!("{parola} · {}%", p.round()),
+                None => parola.to_owned(),
+            })
+        }
+        AppEntity::Lock(l) => Some(
+            match l.lock_state.as_str() {
+                "locked" => "Chiusa",
+                "unlocked" => "Aperta",
+                "locking" => "In chiusura",
+                "unlocking" => "In apertura",
+                "jammed" => "Bloccata",
+                _ => "Sconosciuto",
+            }
+            .to_owned(),
+        ),
+        AppEntity::Climate(c) => {
+            let modo = match c.hvac_mode.as_str() {
+                "off" => "Spento",
+                "heat" => "Riscaldamento",
+                "cool" => "Raffrescamento",
+                "heat_cool" | "auto" => "Automatico",
+                "dry" => "Deumidifica",
+                "fan_only" => "Solo ventola",
+                altro => altro,
+            };
+            Some(match c.current_temp {
+                Some(t) => format!("{modo} · {}°", numero_italiano(&t.to_string())),
+                None => modo.to_owned(),
+            })
+        }
+        AppEntity::Fan(f) => Some(if f.is_on { "Acceso" } else { "Spento" }.to_owned()),
+        AppEntity::Humidifier(h) => Some(if h.is_on { "Acceso" } else { "Spento" }.to_owned()),
+        AppEntity::Valve(v) => Some(if v.is_open { "Aperta" } else { "Chiusa" }.to_owned()),
+        AppEntity::Alarm(a) => Some(
+            match a.alarm_state.as_str() {
+                "disarmed" => "Disinserito",
+                "armed_home" => "Inserito in casa",
+                "armed_away" => "Inserito fuori casa",
+                "armed_night" => "Inserito notte",
+                "armed_vacation" => "Inserito vacanza",
+                "armed_custom_bypass" => "Inserito personalizzato",
+                "pending" | "arming" => "In inserimento",
+                "triggered" => "Allarme scattato",
+                _ => "Sconosciuto",
+            }
+            .to_owned(),
+        ),
+        AppEntity::Camera(_) => Some("Telecamera".to_owned()),
+        _ => parola(&b.state).map(str::to_owned),
+    };
+    testo.unwrap_or_else(|| numero_italiano(&b.state))
+}
+
+/// Le stanze della vista Casa: quelle con qualcosa da mostrare, nell'ordine salvato (ci pensa il
+/// mapper), con l'icona scelta o quella predefinita dal nome; «Altro» (entità senza stanza) con
+/// l'icona della casa; in fondo le scene, se ci sono (il mapper le tiene fuori dalle stanze,
+/// come la v2, che le mostrava in una sezione loro dopo le stanze).
+pub fn stanze_ui(menu: &MenuData, config: &Config) -> Vec<StanzaUi> {
+    let mut stanze: Vec<StanzaUi> = menu
+        .rooms
+        .iter()
+        .map(|r| StanzaUi {
+            area_id: r.area_id.as_str().into(),
+            nome: r.name.as_str().into(),
+            icona: if r.area_id.is_empty() {
+                -1
+            } else {
+                crate::stanze::icona(config.area_icons.get(&r.area_id).map(String::as_str), &r.name) as i32
+            },
+            quanti: r.entities.len() as i32,
+        })
+        .collect();
+    if !menu.scenes.is_empty() {
+        stanze.push(StanzaUi {
+            area_id: GRUPPO_SCENE.into(),
+            nome: "Scene".into(),
+            icona: -2,
+            quanti: menu.scenes.len() as i32,
+        });
+    }
+    stanze
+}
+
+/// I dispositivi di una stanza della vista Casa, nell'ordine salvato (senza le nascoste: il mapper
+/// non le mette); le scene per il gruppo delle scene.
+pub fn dispositivi_stanza(menu: &MenuData, area_id: &str) -> Vec<AppEntity> {
+    if area_id == GRUPPO_SCENE {
+        return menu.scenes.iter().map(|s| AppEntity::Scene(s.clone())).collect();
+    }
+    menu.rooms.iter().find(|r| r.area_id == area_id).map(|r| r.entities.clone()).unwrap_or_default()
 }
 
 /// I preferiti da mostrare: quelli scelti dall'utente nell'ordine salvato; se non ce ne sono,
@@ -127,6 +244,8 @@ pub fn comando_per(e: &AppEntity) -> Option<(&'static str, &'static str)> {
     }
     match e {
         AppEntity::Light(_) => Some(("light", "toggle")),
+        // Il mapper fa «interruttore» anche di un `input_boolean`: il servizio è del suo dominio.
+        AppEntity::Switch(s) if s.base.entity_id.starts_with("input_boolean.") => Some(("input_boolean", "toggle")),
         AppEntity::Switch(_) => Some(("switch", "toggle")),
         AppEntity::Scene(_) => Some(("scene", "turn_on")),
         _ => None,
@@ -387,6 +506,10 @@ pub struct Ponte {
     /// riprende a ogni apertura.
     preferiti: Rc<VecModel<PreferitoUi>>,
     sensori: Rc<VecModel<SensoreUi>>,
+    /// Le stanze della vista Casa e i dispositivi della stanza aperta (`stanza_aperta`, un'area).
+    stanze: Rc<VecModel<StanzaUi>>,
+    dispositivi: Rc<VecModel<PreferitoUi>>,
+    stanza_aperta: RefCell<Option<String>>,
     /// Ora (HH:MM) degli ultimi dati arrivati dalla casa: senza connessione la vista Casa dice di
     /// quando sono i valori che mostra.
     dati_delle: RefCell<Option<String>>,
@@ -451,6 +574,9 @@ pub fn collega(
         errori: RefCell::new(HashMap::new()),
         preferiti: Rc::new(VecModel::default()),
         sensori: Rc::new(VecModel::default()),
+        stanze: Rc::new(VecModel::default()),
+        dispositivi: Rc::new(VecModel::default()),
+        stanza_aperta: RefCell::new(None),
         mostrato: RefCell::new(None),
         sveglia: slint::Timer::default(),
         attese: RefCell::new(Attese::default()),
@@ -666,31 +792,58 @@ impl Ponte {
         *self.stato.borrow() == StatoConnessione::Connesso
     }
 
-    /// Preferiti e sensori dei Quadranti dai dati più recenti, con gli errori ancora aperti e
-    /// lo stato della connessione.
+    /// Preferiti, sensori dei Quadranti, stanze e dispositivi della stanza aperta dai dati più
+    /// recenti, con lo stato ottimistico dei tocchi, gli errori ancora aperti e lo stato della
+    /// connessione.
     fn ricostruisci_preferiti(&self) {
         let connesso = self.connesso();
-        let (voci, sensori) = {
+        let config = self.casa.config();
+        let (voci, sensori, stanze, dispositivi) = {
             let menu = self.menu.borrow();
             let Some(menu) = menu.as_ref() else { return };
             let errori = self.errori.borrow();
             let ottimismo = self.ottimismo.borrow();
-            let voci: Vec<PreferitoUi> = preferiti_ui(menu, MASSIMO_PREFERITI)
-                .into_iter()
-                .map(|p| {
-                    let mut p = con_ottimismo(p, &ottimismo);
-                    p.errore = errori.get(&p.entity_id).cloned();
-                    voce_ui(&p, connesso)
-                })
-                .collect();
+            let pronta = |p: Preferito| {
+                let mut p = con_ottimismo(p, &ottimismo);
+                p.errore = errori.get(&p.entity_id).cloned();
+                voce_ui(&p, connesso)
+            };
+            let voci: Vec<PreferitoUi> = preferiti_ui(menu, MASSIMO_PREFERITI).into_iter().map(pronta).collect();
             let sensori: Vec<SensoreUi> = sensori_quadranti(menu, MASSIMO_PREFERITI, MASSIMO_SENSORI)
                 .into_iter()
                 .map(|(p, frazione)| SensoreUi { voce: voce_ui(&p, connesso), frazione })
                 .collect();
-            (voci, sensori)
+            let stanze = stanze_ui(menu, &config);
+            let dispositivi: Vec<PreferitoUi> = match self.stanza_aperta.borrow().as_deref() {
+                Some(area) => dispositivi_stanza(menu, area).iter().map(|e| pronta(preferito(e))).collect(),
+                None => Vec::new(),
+            };
+            (voci, sensori, stanze, dispositivi)
         };
         aggiorna_modello(&self.preferiti, voci);
         aggiorna_modello(&self.sensori, sensori);
+        // La stanza aperta può aver cambiato posto (ordine) o essere sparita (nascosta).
+        let aperta = self.stanza_aperta.borrow().clone();
+        if let Some(area) = aperta {
+            let indice = stanze.iter().position(|s| s.area_id == area.as_str());
+            if indice.is_none() {
+                *self.stanza_aperta.borrow_mut() = None;
+            }
+            if let Some(p) = self.pannello.borrow().upgrade() {
+                let i = indice.map_or(-1, |i| i as i32);
+                if p.get_stanza_aperta() != i {
+                    p.set_stanza_aperta(i);
+                }
+            }
+        }
+        aggiorna_modello(&self.stanze, stanze);
+        aggiorna_modello(&self.dispositivi, dispositivi);
+    }
+
+    /// Una stanza della vista Casa aperta (`Some(area)`) o chiusa.
+    fn stanza(&self, area: Option<String>) {
+        *self.stanza_aperta.borrow_mut() = area;
+        self.ricostruisci_preferiti();
     }
 
     /// Riga di stato della casa sul pannello aperto e dettagli della finestra delle Impostazioni.
@@ -948,6 +1101,18 @@ impl Ponte {
     pub fn riempi(&self, p: &Pannello) {
         p.set_preferiti(ModelRc::from(self.preferiti.clone()));
         p.set_sensori(ModelRc::from(self.sensori.clone()));
+        p.set_stanze(ModelRc::from(self.stanze.clone()));
+        p.set_dispositivi(ModelRc::from(self.dispositivi.clone()));
+        p.on_apri_stanza(|area| {
+            if let Some(ponte) = ponte() {
+                ponte.stanza(Some(area.to_string()));
+            }
+        });
+        p.on_chiudi_stanza(|| {
+            if let Some(ponte) = ponte() {
+                ponte.stanza(None);
+            }
+        });
         p.set_attese(ModelRc::from(self.modello_attese.clone()));
         self.riempi_stato(p);
         p.on_tocca(|id| {
@@ -988,6 +1153,10 @@ impl Ponte {
     /// l'umore di adesso.
     pub fn pannello_chiuso(&self) {
         *self.pannello.borrow_mut() = slint::Weak::default();
+        // Il pannello si riapre sui preferiti.
+        if self.stanza_aperta.borrow_mut().take().is_some() {
+            self.dispositivi.set_vec(Vec::new());
+        }
         self.ridisegna_pillola();
     }
 
@@ -1346,9 +1515,9 @@ pub(crate) mod test {
         assert_eq!(p[0].tipo, Tipo::Lettura);
         assert_eq!(p[0].valore, "21,5 °C");
         assert_eq!(p[1].valore, "7");
-        // Altri tipi: lettura con lo stato.
+        // Altri tipi: lettura con lo stato, in italiano (Task 14e).
         assert_eq!(p[2].tipo, Tipo::Lettura);
-        assert_eq!(p[2].valore, "locked");
+        assert_eq!(p[2].valore, "Chiusa");
     }
 
     #[test]
@@ -1491,6 +1660,85 @@ pub(crate) mod test {
         let terzo = numero_attesa(&p, "light.a");
         p.ricevi(CasaEvento::Esito { entity_id: "light.a".into(), numero: primo, ok: false, errore: Some("tardi".into()) });
         assert_eq!(p.ottimismo.borrow().numero("light.a"), Some(terzo), "l'attesa del terzo tocco resta");
+    }
+
+    /// Task 14e: le stanze della vista Casa nell'ordine del mapper, con l'icona scelta o quella
+    /// predefinita, «Altro» con la casa e in fondo le scene.
+    #[test]
+    fn stanze_della_vista_casa() {
+        let mut m = menu(vec![], vec![vec![luce("light.a", true), luce("light.b", false)], vec![interruttore("switch.c", true)]]);
+        m.rooms[0].name = "Cucina".into();
+        m.rooms[1].name = "Sala giochi".into();
+        m.rooms.push(Room { area_id: String::new(), name: "Altro".into(), entities: vec![luce("light.z", false)] });
+        let AppEntity::Scene(s) = scena("scene.notte") else { unreachable!() };
+        m.scenes = vec![s];
+        let mut config = Config::default();
+        config.area_icons.insert("a1".into(), "🎮".into());
+        let stanze = stanze_ui(&m, &config);
+        let nomi: Vec<&str> = stanze.iter().map(|s| s.nome.as_str()).collect();
+        assert_eq!(nomi, ["Cucina", "Sala giochi", "Altro", "Scene"]);
+        assert_eq!(stanze[0].icona as usize, crate::stanze::indice("🍳").unwrap(), "predefinita dal nome");
+        assert_eq!(stanze[1].icona as usize, crate::stanze::indice("🎮").unwrap(), "quella scelta");
+        assert_eq!((stanze[2].icona, stanze[3].icona), (-1, -2));
+        assert_eq!(stanze.iter().map(|s| s.quanti).collect::<Vec<_>>(), [2, 1, 1, 1]);
+        assert_eq!(dispositivi_stanza(&m, "a0").len(), 2);
+        assert_eq!(dispositivi_stanza(&m, GRUPPO_SCENE)[0].entity_id(), "scene.notte");
+        assert!(dispositivi_stanza(&m, "sparita").is_empty());
+    }
+
+    /// Task 14e: nella stanza aperta i dispositivi rispondono al tocco come i preferiti (stesso
+    /// comando e stesso stato ottimistico); una stanza nascosta si chiude da sola.
+    #[test]
+    fn i_dispositivi_della_stanza_aperta_rispondono_come_i_preferiti() {
+        let (_spegni, p, _pillola, _c) = ponte_di_prova();
+        p.ricevi(CasaEvento::Dati(Arc::new(menu(vec![luce("light.a", false)], vec![vec![interruttore("switch.s", false)]]))));
+        p.stanza(Some("a0".into()));
+        assert_eq!(p.dispositivi.row_data(0).unwrap().stato, "Spento");
+        p.tocca("switch.s");
+        assert_eq!(p.dispositivi.row_data(0).unwrap().stato, "Acceso", "stato ottimistico anche nella stanza");
+        assert_eq!(p.ottimismo.borrow().atteso("switch.s"), Some(&true));
+        // La stanza non c'è più (tutto nascosto): si chiude.
+        p.ricevi(CasaEvento::Dati(Arc::new(menu(vec![luce("light.a", false)], vec![]))));
+        assert!(p.stanza_aperta.borrow().is_none());
+        assert_eq!(p.dispositivi.row_count(), 0);
+    }
+
+    #[test]
+    fn stato_in_italiano_per_cio_che_si_legge_soltanto() {
+        let b = |id: &str, stato: &str| BaseEntity { state: stato.into(), ..base(id, true) };
+        let tapparella = AppEntity::Cover(CoverEntity {
+            base: b("cover.t", "open"),
+            cover_state: "open".into(),
+            position: Some(40.0),
+            tilt: None,
+            supports_position: true,
+            supports_tilt: false,
+            device_class: None,
+        });
+        assert_eq!(stato_in_lettura(&tapparella), "Aperta · 40%");
+        let serratura = serratura("lock.porta");
+        assert_eq!(stato_in_lettura(&serratura), "Chiusa");
+        let termostato = AppEntity::Climate(ClimateEntity {
+            base: b("climate.s", "heat"),
+            hvac_mode: "heat".into(),
+            hvac_action: None,
+            hvac_modes: vec![],
+            current_temp: Some(20.5),
+            target_temp: None,
+            target_temp_high: None,
+            target_temp_low: None,
+            min_temp: 7.0,
+            max_temp: 35.0,
+            temp_step: 0.5,
+        });
+        assert_eq!(stato_in_lettura(&termostato), "Riscaldamento · 20,5°");
+        assert_eq!(preferiti_ui(&menu(vec![serratura], vec![]), 1)[0].valore, "Chiusa");
+    }
+
+    #[test]
+    fn un_input_boolean_si_commuta_col_suo_servizio() {
+        assert_eq!(comando_per(&interruttore("input_boolean.ospiti", true)), Some(("input_boolean", "toggle")));
+        assert_eq!(comando_per(&interruttore("switch.presa", true)), Some(("switch", "toggle")));
     }
 
     #[test]

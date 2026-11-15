@@ -17,6 +17,7 @@ mod ponte;
 mod registro;
 mod scelte;
 mod sistema;
+mod stanze;
 mod umore;
 #[cfg(test)]
 mod test_ui;

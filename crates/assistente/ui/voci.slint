@@ -99,3 +99,12 @@ export struct AmbienteUi {
     attivo: bool,
     collegato: bool,
 }
+
+// Una stanza della vista Casa (vedi `ponte::stanze_ui`): `icona` è l'indice in `Icone.stanze`
+// (-1 «Altro», -2 le scene); `quanti`: i dispositivi mostrati.
+export struct StanzaUi {
+    area-id: string,
+    nome: string,
+    icona: int,
+    quanti: int,
+}

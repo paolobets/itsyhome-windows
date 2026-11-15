@@ -20,6 +20,87 @@ export global Icone {
     out property <image> goccia: @image-url("../assets/icone/goccia.svg");
     out property <image> sensore: @image-url("../assets/icone/sensore.svg");
 
+    // Comandi della scheda Dispositivi delle Impostazioni (Lucide, licenza ISC).
+    out property <image> su: @image-url("../assets/icone/lucide/chevron-up.svg");
+    out property <image> giu: @image-url("../assets/icone/lucide/chevron-down.svg");
+    out property <image> destra: @image-url("../assets/icone/lucide/chevron-right.svg");
+    out property <image> occhio: @image-url("../assets/icone/lucide/eye.svg");
+    out property <image> occhio-chiuso: @image-url("../assets/icone/lucide/eye-off.svg");
+    out property <image> stella: @image-url("../assets/icone/lucide/star.svg");
+    out property <image> stella-piena: @image-url("../assets/icone/lucide/star-piena.svg");
+
+    // Le 60 icone delle stanze, nell'ordine di `stanze::ICONE` (le emoji della v2 ridisegnate
+    // con le icone a contorno di Lucide, licenza ISC: assets/icone/lucide/LICENSE-lucide.txt).
+    out property <[image]> stanze: [
+        @image-url("../assets/icone/lucide/sofa.svg"),
+        @image-url("../assets/icone/lucide/house.svg"),
+        @image-url("../assets/icone/lucide/fence.svg"),
+        @image-url("../assets/icone/lucide/building-2.svg"),
+        @image-url("../assets/icone/lucide/castle.svg"),
+        @image-url("../assets/icone/lucide/tree-palm.svg"),
+        @image-url("../assets/icone/lucide/cooking-pot.svg"),
+        @image-url("../assets/icone/lucide/utensils.svg"),
+        @image-url("../assets/icone/lucide/coffee.svg"),
+        @image-url("../assets/icone/lucide/wine.svg"),
+        @image-url("../assets/icone/lucide/soup.svg"),
+        @image-url("../assets/icone/lucide/cookie.svg"),
+        @image-url("../assets/icone/lucide/bed-double.svg"),
+        @image-url("../assets/icone/lucide/moon.svg"),
+        @image-url("../assets/icone/lucide/toy-brick.svg"),
+        @image-url("../assets/icone/lucide/baby.svg"),
+        @image-url("../assets/icone/lucide/bed-single.svg"),
+        @image-url("../assets/icone/lucide/star.svg"),
+        @image-url("../assets/icone/lucide/shower-head.svg"),
+        @image-url("../assets/icone/lucide/bath.svg"),
+        @image-url("../assets/icone/lucide/droplets.svg"),
+        @image-url("../assets/icone/lucide/scan-face.svg"),
+        @image-url("../assets/icone/lucide/spray-can.svg"),
+        @image-url("../assets/icone/lucide/sparkles.svg"),
+        @image-url("../assets/icone/lucide/monitor.svg"),
+        @image-url("../assets/icone/lucide/laptop.svg"),
+        @image-url("../assets/icone/lucide/library.svg"),
+        @image-url("../assets/icone/lucide/notebook-pen.svg"),
+        @image-url("../assets/icone/lucide/graduation-cap.svg"),
+        @image-url("../assets/icone/lucide/microscope.svg"),
+        @image-url("../assets/icone/lucide/tree-deciduous.svg"),
+        @image-url("../assets/icone/lucide/leaf.svg"),
+        @image-url("../assets/icone/lucide/sprout.svg"),
+        @image-url("../assets/icone/lucide/sun.svg"),
+        @image-url("../assets/icone/lucide/flower.svg"),
+        @image-url("../assets/icone/lucide/flower-2.svg"),
+        @image-url("../assets/icone/lucide/gamepad-2.svg"),
+        @image-url("../assets/icone/lucide/tv.svg"),
+        @image-url("../assets/icone/lucide/clapperboard.svg"),
+        @image-url("../assets/icone/lucide/drama.svg"),
+        @image-url("../assets/icone/lucide/music.svg"),
+        @image-url("../assets/icone/lucide/guitar.svg"),
+        @image-url("../assets/icone/lucide/biceps-flexed.svg"),
+        @image-url("../assets/icone/lucide/dumbbell.svg"),
+        @image-url("../assets/icone/lucide/person-standing.svg"),
+        @image-url("../assets/icone/lucide/waves.svg"),
+        @image-url("../assets/icone/lucide/bike.svg"),
+        @image-url("../assets/icone/lucide/volleyball.svg"),
+        @image-url("../assets/icone/lucide/car.svg"),
+        @image-url("../assets/icone/lucide/door-open.svg"),
+        @image-url("../assets/icone/lucide/package.svg"),
+        @image-url("../assets/icone/lucide/washing-machine.svg"),
+        @image-url("../assets/icone/lucide/brush.svg"),
+        @image-url("../assets/icone/lucide/wrench.svg"),
+        @image-url("../assets/icone/lucide/lock.svg"),
+        @image-url("../assets/icone/lucide/lightbulb.svg"),
+        @image-url("../assets/icone/lucide/key-round.svg"),
+        @image-url("../assets/icone/lucide/flame.svg"),
+        @image-url("../assets/icone/lucide/thermometer.svg"),
+        @image-url("../assets/icone/lucide/droplet.svg")
+    ];
+
+    // L'icona di una stanza dal suo indice in `stanze`; -1 = «Altro» (la casa), -2 = le scene.
+    public pure function di-stanza(i: int) -> image {
+        if (i >= 0 && i < stanze.length) { return stanze[i]; }
+        if (i == -2) { return scena; }
+        return casa;
+    }
+
     // L'icona di un preferito dal suo genere (vedi `ponte::genere`).
     public pure function di-genere(genere: GenereUi) -> image {
         if (genere == GenereUi.luce) { return luce; }

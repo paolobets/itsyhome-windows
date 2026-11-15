@@ -209,6 +209,11 @@ pub struct SceneEntity {
 
 // ─── Menu data ────────────────────────────────────────────────────────────────
 
+/// La chiave del gruppo delle scene dove servono le stesse chiavi delle stanze (ordine dei
+/// dispositivi in `deviceOrder`, stanza «Scene» della vista Casa). Non è un `area_id` possibile:
+/// HA li fa con lettere minuscole, cifre e trattini bassi, mai doppi in testa.
+pub const GRUPPO_SCENE: &str = "__scene__";
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Room {

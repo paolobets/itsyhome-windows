@@ -357,6 +357,124 @@ mod accessibilita {
         assert!(chiuso.get(), "Esc chiude il pannello");
     }
 
+    fn voce_casa(id: &str, nome: &str) -> crate::PreferitoUi {
+        crate::PreferitoUi {
+            entity_id: id.into(),
+            nome: nome.into(),
+            genere: crate::GenereUi::Luce,
+            stato: "Spento".into(),
+            disponibile: true,
+            toccabile: true,
+            ..Default::default()
+        }
+    }
+
+    /// Un pannello sulla vista Casa con due stanze, un preferito e i dispositivi di una stanza;
+    /// restituisce gli eventi (stanze aperte e chiuse, tocchi, chiusura del pannello).
+    fn pannello_casa() -> (Pannello, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
+        piattaforma_di_prova();
+        let p = pannello();
+        p.set_app(app());
+        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        p.global::<crate::Fuochi>().set_pronti(true);
+        p.set_casa_pronta(true);
+        let stanza = |id: &str, nome: &str, quanti| crate::StanzaUi { area_id: id.into(), nome: nome.into(), icona: 0, quanti };
+        p.set_stanze(ModelRc::new(VecModel::from(vec![stanza("cucina", "Cucina", 2), stanza("soggiorno", "Soggiorno", 1)])));
+        p.set_preferiti(ModelRc::new(VecModel::from(vec![voce_casa("light.preferita", "Preferita")])));
+        p.set_dispositivi(ModelRc::new(VecModel::from(vec![
+            voce_casa("light.a", "Luce A"),
+            voce_casa("light.b", "Luce B"),
+        ])));
+        p.set_vista("casa".into());
+        let eventi = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let (e1, e2, e3, e4) = (eventi.clone(), eventi.clone(), eventi.clone(), eventi.clone());
+        p.on_apri_stanza(move |a| e1.borrow_mut().push(format!("apri {a}")));
+        p.on_chiudi_stanza(move || e2.borrow_mut().push("chiudi stanza".into()));
+        p.on_tocca(move |id| e3.borrow_mut().push(format!("tocca {id}")));
+        p.on_chiudi(move || e4.borrow_mut().push("chiudi pannello".into()));
+        (p, eventi)
+    }
+
+    /// Task 14e: le stanze sono pulsanti che si aprono (con nome e quanti dispositivi per Narrator).
+    #[test]
+    fn stanze_della_casa_accessibili() {
+        let (p, _) = pannello_casa();
+        let cucina = elemento(&p, "Cucina, 2 dispositivi");
+        assert_eq!(cucina.accessible_role(), Some(AccessibleRole::Button));
+        assert_eq!(cucina.accessible_expanded(), Some(false));
+        assert!(elemento(&p, "Soggiorno, 1 dispositivo").accessible_role().is_some());
+        cucina.invoke_accessible_default_action();
+        assert_eq!(p.get_stanza_aperta(), 0);
+        assert_eq!(elemento(&p, "Cucina, 2 dispositivi").accessible_expanded(), Some(true));
+        // La griglia mostra i dispositivi della stanza al posto dei preferiti.
+        assert!(ElementHandle::find_by_accessible_label(&p, "Luce A, Spento").next().is_some());
+        assert!(ElementHandle::find_by_accessible_label(&p, "Preferita, Spento").next().is_none());
+        // Un secondo clic sulla stanza aperta la chiude (come la v2).
+        elemento(&p, "Cucina, 2 dispositivi").invoke_accessible_default_action();
+        assert_eq!(p.get_stanza_aperta(), -1);
+        assert!(ElementHandle::find_by_accessible_label(&p, "Preferita, Spento").next().is_some());
+    }
+
+    /// Task 14e: da tastiera si va dalle card alle stanze (←), si sceglie (↓) e si apre (Invio);
+    /// il fuoco passa ai dispositivi, Invio tocca. Esc a livelli: prima chiude la stanza, poi il
+    /// pannello; Backspace chiude prima la stanza, poi torna alla Panoramica.
+    #[test]
+    fn stanza_da_tastiera_ed_esc_a_livelli() {
+        use slint::platform::Key;
+        let (p, eventi) = pannello_casa();
+        tasto(&p, Key::LeftArrow);
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::Return);
+        assert_eq!(p.get_stanza_aperta(), 1);
+        tasto(&p, Key::RightArrow);
+        tasto(&p, Key::Return);
+        assert_eq!(*eventi.borrow(), ["apri soggiorno", "tocca light.b"]);
+        tasto(&p, Key::Escape);
+        assert_eq!(p.get_stanza_aperta(), -1, "il primo Esc chiude la stanza");
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("chiudi stanza"));
+        // Il fuoco è tornato sulla stanza: Invio la riapre.
+        tasto(&p, Key::Return);
+        assert_eq!(p.get_stanza_aperta(), 1);
+        tasto(&p, Key::Backspace);
+        assert_eq!((p.get_stanza_aperta(), p.get_vista().as_str()), (-1, "casa"), "Backspace chiude prima la stanza");
+        tasto(&p, Key::Backspace);
+        assert_eq!(p.get_vista(), "panoramica");
+        // Il pannello ha ancora la tastiera (prima il fuoco finiva su una card che spariva).
+        let e5 = eventi.clone();
+        p.on_scorri_layout(move |_| e5.borrow_mut().push("scorri".into()));
+        tasto(&p, Key::RightArrow);
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("scorri"));
+        tasto(&p, Key::Escape);
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("chiudi pannello"), "{:?}", eventi.borrow());
+    }
+
+    /// Task 14e: Tab passa dalle stanze alle card e al dock; Maiusc+Tab torna indietro.
+    #[test]
+    fn tab_fra_stanze_card_e_dock() {
+        use slint::platform::Key;
+        let (p, eventi) = pannello_casa();
+        // Contenuto (card) → Maiusc+Tab: stanze; Invio apre la prima.
+        con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
+        tasto(&p, Key::Return);
+        assert_eq!(*eventi.borrow(), ["apri cucina"]);
+        // Esc chiude la stanza e il fuoco resta sulle stanze; Tab porta alle card.
+        tasto(&p, Key::Escape);
+        tasto(&p, Key::Tab);
+        tasto(&p, Key::Return);
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("tocca light.preferita"));
+    }
+
+    fn con_modificatori_pannello(p: &Pannello, modificatori: &[slint::platform::Key], t: slint::platform::Key) {
+        use slint::platform::WindowEvent;
+        for m in modificatori {
+            p.window().dispatch_event(WindowEvent::KeyPressed { text: (*m).into() });
+        }
+        tasto(p, t);
+        for m in modificatori.iter().rev() {
+            p.window().dispatch_event(WindowEvent::KeyReleased { text: (*m).into() });
+        }
+    }
+
     #[test]
     fn invio_non_consente_anche_col_fuoco_sul_pulsante() {
         // Il pulsante «Consenti» ha il fuoco vero (e sa premersi con Invio da solo), ma `tasti`
@@ -533,3 +651,4 @@ mod accessibilita {
         }
     }
 }
+
