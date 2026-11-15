@@ -130,6 +130,11 @@ Tocco su una casa lenta (`--lenta 800`): l'icona cambia sullo schermo 32–51 ms
 
 Riposo non rimisurato a schermo libero: durante tutta la prova lo schermo era bloccato (pillola nascosta dalla schermata di blocco), la misura di 5 minuti fatta allora (0,0004%, 7,9–8,0 MB) non si confronta con lo 0,019% del 14e. A pannello chiuso il codice nuovo non fa nulla (nessun timer, la vista nasce solo aperta); misura, raffica anti-glitch e foto restano da fare a schermo sbloccato.
 
+### Changed (Task 14f, giro di rifinitura)
+- Indirizzi dei collegamenti analizzati con `url` (regole WHATWG del browser) e salvati nella sua forma: ciò che si mostra è ciò che si apre. Nome del sito solo ASCII (un nome internazionale nella forma `xn--`): niente omografi né lettere a larghezza piena che il browser riscriverebbe; IPv6 e nomi controllati davvero, `%` solo con due cifre esadecimali, al più 2048 caratteri.
+- Un solo collegamento aperto per tocco (Invio ripetuto o doppio clic non aprono altre schede); configurazione scritta a mano riparata all'avvio (id vuoti o doppi, nomi sporchi).
+- Esc a livelli anche nel modulo degli ambienti di Home Assistant: chiude il modulo, non la finestra. Con la conferma di eliminazione aperta le righe sotto sono spente anche per Narrator.
+
 ### Fixed (Task 14f, minori del 14e)
 - La scelta dell'icona di una stanza non si chiude più con un clic dentro il riquadro ma fuori da un'icona.
 - Test di HA in avvio non più instabile.
