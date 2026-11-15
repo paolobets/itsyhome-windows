@@ -295,6 +295,7 @@ dependencies = [
  "sysinfo",
  "tempfile",
  "tray-icon",
+ "url",
  "windows-registry",
  "windows-sys 0.52.0",
 ]

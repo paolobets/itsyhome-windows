@@ -6,7 +6,7 @@
 //! ordine. Chi apre (`sistema::browser`) ricontrolla l'indirizzo: il file si può scrivere a mano.
 
 use casa_core::config::{Collegamento, Config};
-use gestione_protocollo::{carattere_invisibile, titolo_pulito};
+use gestione_protocollo::{carattere_invisibile, testo_pulito};
 
 /// Lunghezza massima del nome, in caratteri.
 pub const LUNGHEZZA_NOME: usize = 60;
@@ -14,7 +14,7 @@ pub const LUNGHEZZA_NOME: usize = 60;
 /// Il nome come lo mostra il pannello: senza caratteri di controllo né invisibili (direzione,
 /// larghezza zero), spazi compressi; obbligatorio, al più `LUNGHEZZA_NOME` caratteri.
 pub fn valida_nome(s: &str) -> Result<String, String> {
-    let nome = titolo_pulito(s);
+    let nome = testo_pulito(s);
     let quanti = nome.chars().count();
     if quanti == 0 {
         return Err("Scrivi un nome".into());
@@ -56,21 +56,44 @@ fn schema_e_resto(s: &str) -> (String, &str) {
     ("https".into(), s)
 }
 
+/// Lunghezza massima di un indirizzo, in caratteri (`INTERNET_MAX_URL_LENGTH` di Windows: oltre,
+/// alcuni percorsi di `ShellExecuteW` falliscono o troncano).
+pub const LUNGHEZZA_INDIRIZZO: usize = 2048;
+
+/// Un nome di host ASCII fatto di etichette vere: non vuote, al più 63 caratteri, senza `-` in
+/// testa o in coda (`https://...` e `https://-` non sono siti).
+fn host_ben_fatto(host: &str) -> bool {
+    host.split('.').all(|e| !e.is_empty() && e.len() <= 63 && !e.starts_with('-') && !e.ends_with('-'))
+}
+
 /// L'indirizzo come lo scrive una persona, controllato e normalizzato: solo `http://` e
-/// `https://` (senza schema si aggiunge `https://`), niente spazi, caratteri di controllo,
-/// invisibili o vietati, niente credenziali (`utente:password@`), un host e, se c'è, una porta
-/// valida. Schema e host in minuscolo; porta, percorso, query e frammento restano come sono. Un
-/// nome internazionale si accetta così com'è (nessuna conversione in punycode).
+/// `https://` (senza schema si aggiunge `https://`), al più `LUNGHEZZA_INDIRIZZO` caratteri,
+/// niente spazi, caratteri di controllo, invisibili o vietati, `%` solo seguito da due cifre
+/// esadecimali, niente credenziali (`utente:password@`), un host e, se c'è, una porta valida.
+///
+/// Il risultato è la serializzazione di `url::Url` (le stesse regole WHATWG del browser: host in
+/// minuscolo, `/` dopo l'host, porta predefinita tolta, caratteri speciali codificati): ciò che
+/// si salva, si mostra e si apre è una stringa sola, senza una seconda interpretazione nel
+/// browser. Per lo stesso motivo il nome del sito deve essere ASCII: con lettere a larghezza
+/// piena, `²` od omografi cirillici il browser andrebbe (via IDNA) su un sito diverso da quello
+/// che il pannello mostra. Un nome internazionale si scrive nella forma `xn--`.
 pub fn valida_indirizzo(s: &str) -> Result<String, String> {
     let s = s.trim();
     if s.is_empty() {
         return Err("Scrivi l'indirizzo della pagina".into());
+    }
+    if s.chars().count() > LUNGHEZZA_INDIRIZZO {
+        return Err(format!("Indirizzo troppo lungo: al massimo {LUNGHEZZA_INDIRIZZO} caratteri"));
     }
     if s.chars().any(char::is_whitespace) {
         return Err("L'indirizzo non può contenere spazi".into());
     }
     if s.chars().any(|c| c.is_control() || carattere_invisibile(c) || VIETATI.contains(&c)) {
         return Err("L'indirizzo contiene caratteri non ammessi".into());
+    }
+    let b = s.as_bytes();
+    if (0..b.len()).any(|i| b[i] == b'%' && !(i + 2 < b.len() && b[i + 1].is_ascii_hexdigit() && b[i + 2].is_ascii_hexdigit())) {
+        return Err("Un «%» nell'indirizzo va seguito da due cifre esadecimali".into());
     }
     let (schema, resto) = schema_e_resto(s);
     if schema != "http" && schema != "https" {
@@ -81,41 +104,47 @@ pub fn valida_indirizzo(s: &str) -> Result<String, String> {
     if autorita.contains('@') {
         return Err("Niente nome utente e password nell'indirizzo: inseriscili nella pagina".into());
     }
-    let (host, porta) = if let Some(dentro) = autorita.strip_prefix('[') {
-        // IPv6 fra parentesi quadre: «[fd00::1]:8006».
-        let Some(chiusa) = dentro.find(']') else { return Err("Nome del sito non valido".into()) };
-        let ip = &dentro[..chiusa];
-        if ip.is_empty() || !ip.chars().all(|c| c.is_ascii_hexdigit() || c == ':' || c == '.') {
-            return Err("Nome del sito non valido".into());
-        }
-        let dopo = &dentro[chiusa + 1..];
-        let porta = match dopo.strip_prefix(':') {
-            Some(p) => Some(p),
-            None if dopo.is_empty() => None,
-            None => return Err("Nome del sito non valido".into()),
-        };
-        (format!("[{}]", ip.to_ascii_lowercase()), porta)
-    } else {
-        let (host, porta) = match autorita.rsplit_once(':') {
-            Some((h, p)) => (h, Some(p)),
-            None => (autorita, None),
-        };
-        if host.is_empty() {
-            return Err("Manca il nome o l'indirizzo IP del sito".into());
-        }
-        if !host.chars().all(|c| c.is_alphanumeric() || matches!(c, '-' | '.' | '_')) {
-            return Err("Nome del sito non valido".into());
-        }
-        (host.to_ascii_lowercase(), porta)
+    if !autorita.is_ascii() {
+        return Err("Scrivi il nome del sito con lettere semplici (un nome internazionale nella forma xn--)".into());
+    }
+    let ipv6 = autorita.starts_with('[');
+    let (host, porta) = match autorita.rsplit_once(':') {
+        // In un IPv6 i «:» stanno dentro le parentesi: la porta, se c'è, viene dopo «]».
+        Some((h, p)) if !ipv6 || h.ends_with(']') => (h, Some(p)),
+        _ => (autorita, None),
     };
-    let porta = match porta {
-        None => String::new(),
-        Some(p) => match p.parse::<u16>() {
-            Ok(n) if n > 0 && p.chars().all(|c| c.is_ascii_digit()) => format!(":{p}"),
-            _ => return Err("Porta non valida (da 1 a 65535)".into()),
-        },
-    };
-    Ok(format!("{schema}://{host}{porta}{coda}"))
+    if host.is_empty() {
+        return Err("Manca il nome o l'indirizzo IP del sito".into());
+    }
+    if let Some(p) = porta {
+        if !(p.chars().all(|c| c.is_ascii_digit()) && p.parse::<u16>().is_ok_and(|n| n > 0)) {
+            return Err("Porta non valida (da 1 a 65535)".into());
+        }
+    }
+    let ip_valido = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .is_some_and(|h| h.parse::<std::net::Ipv6Addr>().is_ok());
+    if ipv6 && !ip_valido {
+        return Err("Nome del sito non valido".into());
+    }
+    let nome_valido = host.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_')) && host_ben_fatto(host);
+    if !ipv6 && !nome_valido {
+        return Err("Nome del sito non valido".into());
+    }
+    let url = url::Url::parse(&format!("{schema}://{autorita}{coda}")).map_err(|_| "Indirizzo non valido".to_owned())?;
+    // Doppio controllo su ciò che il browser vedrà davvero.
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none_or(str::is_empty) || !url.username().is_empty() || url.password().is_some() {
+        return Err("Indirizzo non valido".into());
+    }
+    let finale = url.as_str();
+    if !finale.is_ascii() || finale.chars().any(|c| VIETATI.contains(&c)) {
+        return Err("L'indirizzo contiene caratteri non ammessi".into());
+    }
+    if finale.len() > LUNGHEZZA_INDIRIZZO {
+        return Err(format!("Indirizzo troppo lungo: al massimo {LUNGHEZZA_INDIRIZZO} caratteri"));
+    }
+    Ok(finale.to_owned())
 }
 
 /// L'indirizzo accorciato per il pannello: host, porta e percorso, senza schema, query e
@@ -163,11 +192,11 @@ pub fn salva(config: &mut Config, id: &str, nome: &str, url: &str) -> Result<Str
     Ok(id.to_owned())
 }
 
-/// Toglie il collegamento; falso se non c'era.
+/// Toglie il collegamento (uno solo, il primo con quell'id); falso se non c'era.
 pub fn elimina(config: &mut Config, id: &str) -> bool {
-    let prima = config.collegamenti.len();
-    config.collegamenti.retain(|c| c.id != id);
-    config.collegamenti.len() != prima
+    let Some(i) = config.collegamenti.iter().position(|c| c.id == id) else { return false };
+    config.collegamenti.remove(i);
+    true
 }
 
 /// Sposta il collegamento di un posto (`verso` -1 su, +1 giù); falso se è già al bordo.
@@ -181,6 +210,42 @@ pub fn sposta(config: &mut Config, id: &str, verso: i32) -> bool {
     };
     config.collegamenti.swap(i, j);
     true
+}
+
+/// Ripara una configurazione scritta a mano: nomi ripuliti come nel modulo (controlli e
+/// caratteri invisibili via, al più `LUNGHEZZA_NOME` caratteri; vuoto → «Collegamento»), id
+/// vuoti o doppi rigenerati dal nome. Vero se ha cambiato qualcosa (allora va salvata). Gli
+/// indirizzi non si toccano: si ricontrollano a ogni apertura (`da_aprire`).
+pub fn ripara(config: &mut Config) -> bool {
+    let mut cambiato = false;
+    let mut visti: Vec<String> = Vec::new();
+    let mut voci = std::mem::take(&mut config.collegamenti);
+    // Un id rigenerato non deve prendere quello di un elemento che viene dopo.
+    let originali: Vec<String> = voci.iter().map(|c| c.id.clone()).filter(|id| !id.is_empty()).collect();
+    for c in &mut voci {
+        let mut nome: String = testo_pulito(&c.nome).chars().take(LUNGHEZZA_NOME).collect();
+        if nome.is_empty() {
+            nome = "Collegamento".into();
+        }
+        if nome != c.nome {
+            c.nome = nome;
+            cambiato = true;
+        }
+        if c.id.is_empty() || visti.contains(&c.id) {
+            let occupati: Vec<String> = visti.iter().chain(&originali).cloned().collect();
+            let fatti = Config { collegamenti: voci_con_id(&occupati), ..Config::default() };
+            c.id = nuovo_id(&fatti, &c.nome);
+            cambiato = true;
+        }
+        visti.push(c.id.clone());
+    }
+    config.collegamenti = voci;
+    cambiato
+}
+
+/// Collegamenti finti con questi id (per `nuovo_id` durante la riparazione).
+fn voci_con_id(ids: &[String]) -> Vec<Collegamento> {
+    ids.iter().map(|id| Collegamento { id: id.clone(), ..Collegamento::default() }).collect()
 }
 
 /// L'indirizzo da aprire per `id`, ricontrollato (il file si può scrivere a mano): `None` se il
@@ -197,22 +262,29 @@ mod test {
     #[test]
     fn indirizzi_buoni_e_normalizzati() {
         let casi = [
-            ("https://esempio.lan:8006", "https://esempio.lan:8006"),
+            // La serializzazione di `url::Url`: `/` dopo l'host, come la vede il browser.
+            ("https://esempio.lan:8006", "https://esempio.lan:8006/"),
             ("  http://esempio.lan/  ", "http://esempio.lan/"),
-            // Senza schema: https.
-            ("esempio.lan:8006", "https://esempio.lan:8006"),
-            ("pve.esempio.lan", "https://pve.esempio.lan"),
+            // Senza schema: https (anche per un IP locale, come chiede il brief).
+            ("esempio.lan:8006", "https://esempio.lan:8006/"),
+            ("pve.esempio.lan", "https://pve.esempio.lan/"),
             ("192.0.2.10:8080/admin", "https://192.0.2.10:8080/admin"),
+            ("127.0.0.1:18171/prova", "https://127.0.0.1:18171/prova"),
             // Schema e host in minuscolo; porta, percorso, query e frammento come sono.
             ("HTTPS://Esempio.LAN:8006/Pagina?Chiave=Valore#Parte", "https://esempio.lan:8006/Pagina?Chiave=Valore#Parte"),
-            ("HtTp://ESEMPIO.lan", "http://esempio.lan"),
+            ("HtTp://ESEMPIO.lan", "http://esempio.lan/"),
             ("[FD00::1]:8443/ui", "https://[fd00::1]:8443/ui"),
-            ("http://[::1]", "http://[::1]"),
-            ("esempio.lan?u=http://altro", "https://esempio.lan?u=http://altro"),
-            ("localhost:3000", "https://localhost:3000"),
-            // Nome internazionale: accettato così com'è.
-            ("https://città.esempio", "https://città.esempio"),
-            ("nas_casa.lan", "https://nas_casa.lan"),
+            ("http://[::1]", "http://[::1]/"),
+            ("esempio.lan?u=http://altro", "https://esempio.lan/?u=http://altro"),
+            ("localhost:3000", "https://localhost:3000/"),
+            // Nome internazionale scritto nella forma xn--: resta quella.
+            ("https://xn--citt-6qa.esempio", "https://xn--citt-6qa.esempio/"),
+            ("nas_casa.lan", "https://nas_casa.lan/"),
+            // Porta predefinita tolta, percent-encoding valido tenuto, lettere accentate del
+            // percorso codificate come fa il browser.
+            ("https://esempio.lan:443/x", "https://esempio.lan/x"),
+            ("https://esempio.lan/a%20b", "https://esempio.lan/a%20b"),
+            ("https://esempio.lan/città", "https://esempio.lan/citt%C3%A0"),
         ];
         for (scritto, atteso) in casi {
             assert_eq!(valida_indirizzo(scritto).as_deref(), Ok(atteso), "{scritto:?}");
@@ -253,6 +325,25 @@ mod test {
             "https://[fd00::1",
             "https://[zz]:80",
             "https://es%65mpio.lan",
+            // Host non ASCII: il browser li riscriverebbe (IDNA) in un sito diverso da quello mostrato.
+            "https://ｅｓｅｍｐｉｏ.lan",
+            "https://²².lan",
+            "https://еxample.lan",
+            "https://città.esempio",
+            "https://CITTÀ.esempio",
+            // IPv6 e nomi fatti solo di caratteri ammessi ma non validi.
+            "https://[1]",
+            "https://[:]",
+            "https://[fd00::1]x",
+            "https://...",
+            "https://-",
+            "https://-esempio.lan",
+            "https://esempio-.lan",
+            "https://esempio..lan",
+            // Percent-encoding rotto.
+            "https://esempio.lan/%zz",
+            "https://esempio.lan/%4",
+            "https://esempio.lan/%",
         ];
         for scritto in casi {
             assert!(valida_indirizzo(scritto).is_err(), "{scritto:?} accettato: {:?}", valida_indirizzo(scritto));
@@ -271,6 +362,20 @@ mod test {
         }
         assert!(valida_indirizzo("https://esempio.lan:70000").unwrap_err().contains("Porta"));
         assert!(valida_indirizzo("https://esem\u{202E}pio.lan").unwrap_err().contains("non ammessi"));
+        assert!(valida_indirizzo("https://еxample.lan").unwrap_err().contains("xn--"), "omografo cirillico");
+        assert!(valida_indirizzo("https://esempio.lan/%zz").unwrap_err().contains("%"));
+    }
+
+    #[test]
+    fn indirizzo_al_limite_di_lunghezza() {
+        let base = "https://esempio.lan/";
+        let giusto = format!("{base}{}", "a".repeat(LUNGHEZZA_INDIRIZZO - base.len()));
+        assert_eq!(valida_indirizzo(&giusto).as_deref(), Ok(giusto.as_str()), "2048: va bene");
+        let lungo = format!("{giusto}a");
+        assert_eq!(valida_indirizzo(&lungo).unwrap_err(), "Indirizzo troppo lungo: al massimo 2048 caratteri");
+        // Anche se si allunga solo dopo la codifica (ogni «è» diventa sei caratteri).
+        let codificato = format!("{base}{}", "è".repeat(400));
+        assert!(valida_indirizzo(&codificato).unwrap_err().contains("troppo lungo"));
     }
 
     #[test]
@@ -284,6 +389,8 @@ mod test {
         let sessanta = "è".repeat(LUNGHEZZA_NOME);
         assert_eq!(valida_nome(&sessanta).as_deref(), Ok(sessanta.as_str()), "60 caratteri (non byte): va bene");
         assert_eq!(valida_nome(&"x".repeat(61)).unwrap_err(), "Al massimo 60 caratteri (ora 61)");
+        // Contati prima di qualunque taglio (prima diceva «ora 200»).
+        assert_eq!(valida_nome(&"x".repeat(250)).unwrap_err(), "Al massimo 60 caratteri (ora 250)");
     }
 
     #[test]
@@ -316,7 +423,7 @@ mod test {
         assert_eq!(salva(&mut c, "", "  ", "x.lan"), Err("Scrivi un nome".into()));
         assert_eq!(salva(&mut c, "", "Male", "file:///x"), Err("Solo indirizzi http:// o https://".into()));
         assert_eq!(ids(&c), ["proxmox", "proxmox-2"], "gli errori non salvano nulla");
-        assert_eq!(c.collegamenti[0].url, "https://esempio.lan:8006", "salvato normalizzato");
+        assert_eq!(c.collegamenti[0].url, "https://esempio.lan:8006/", "salvato normalizzato");
         // Modifica: stesso id e stesso posto, nome e indirizzo nuovi.
         assert_eq!(salva(&mut c, "proxmox-2", "Router", "HTTP://Router.esempio.lan/"), Ok("proxmox-2".into()));
         assert_eq!(c.collegamenti[1], Collegamento { id: "proxmox-2".into(), nome: "Router".into(), url: "http://router.esempio.lan/".into() });
@@ -341,10 +448,26 @@ mod test {
         assert_eq!(ids(&c), ["c", "a", "b"]);
     }
 
+    /// Giro di rifinitura: un file scritto a mano con id vuoti o doppi e nomi sporchi si ripara
+    /// alla lettura; `elimina` toglie un elemento solo.
+    #[test]
+    fn configurazione_scritta_a_mano_riparata() {
+        let mut c = con(&[("a", "A"), ("a", "Doppio"), ("", "Senza id")]);
+        c.collegamenti[1].nome = "Dop\u{202E}pio\n riga".into();
+        assert!(ripara(&mut c));
+        assert_eq!(ids(&c), ["a", "doppio-riga", "senza-id"]);
+        assert_eq!(c.collegamenti[1].nome, "Doppio riga");
+        assert!(!ripara(&mut c), "già a posto: nulla da salvare");
+        let mut d = con(&[("x", "X"), ("y", "Y")]);
+        d.collegamenti[1].id = "x".into();
+        assert!(elimina(&mut d, "x"));
+        assert_eq!(d.collegamenti.len(), 1, "solo il primo con quell'id");
+    }
+
     #[test]
     fn da_aprire_ricontrolla_l_indirizzo_salvato() {
         let mut c = con(&[("a", "A")]);
-        assert_eq!(da_aprire(&c, "a"), Some(Ok("https://a.esempio.lan".into())));
+        assert_eq!(da_aprire(&c, "a"), Some(Ok("https://a.esempio.lan/".into())));
         assert_eq!(da_aprire(&c, "x"), None);
         // Scritto a mano nel file: non si apre.
         c.collegamenti[0].url = "file:///C:/Windows/System32/calc.exe".into();

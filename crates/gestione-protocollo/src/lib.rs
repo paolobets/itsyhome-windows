@@ -66,18 +66,24 @@ pub fn carattere_invisibile(c: char) -> bool {
     )
 }
 
+/// Un testo non fidato su una riga: via i caratteri invisibili (`carattere_invisibile`), i
+/// controlli (a capo compresi) diventano spazi e gli spazi si comprimono. Nessun taglio: chi lo
+/// usa decide la lunghezza (`titolo_pulito` a 200, i nomi dei collegamenti a 60).
+pub fn testo_pulito(testo: &str) -> String {
+    let parole: String = testo
+        .chars()
+        .filter(|c| !carattere_invisibile(*c))
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    parole.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// Il titolo non fidato pronto per la cornice e per il titolo della finestra di sistema (barra
 /// delle applicazioni, Alt+Tab): via i caratteri di controllo (a capo compresi) e quelli
 /// invisibili (`carattere_invisibile`: direzione, larghezza zero…); spazi compressi; al più
 /// `LUNGHEZZA_TITOLO` caratteri.
 pub fn titolo_pulito(titolo: &str) -> String {
-    // Controlli (a capo, tabulazioni, campanello…): diventano spazi, poi compressi.
-    let parole: String = titolo
-        .chars()
-        .filter(|c| !carattere_invisibile(*c))
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect();
-    let compatto = parole.split_whitespace().collect::<Vec<_>>().join(" ");
+    let compatto = testo_pulito(titolo);
     if compatto.chars().count() <= LUNGHEZZA_TITOLO {
         return compatto;
     }

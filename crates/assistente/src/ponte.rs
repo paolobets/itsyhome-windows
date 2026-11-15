@@ -572,6 +572,9 @@ pub struct Ponte {
     apri_url: RefCell<Rc<ApriUrl>>,
     /// Ultimo collegamento non aperto, col dettaglio tecnico, per Impostazioni › Informazioni.
     errore_collegamento: RefCell<Option<String>>,
+    /// Un collegamento è già partito da questo pannello: Invio ripetuto o doppio clic, prima che
+    /// il pannello si chiuda, non aprono altre schede. Torna falso alla chiusura del pannello.
+    collegamento_aperto: Cell<bool>,
     compresse: RefCell<std::collections::HashSet<String>>,
     /// Ora (HH:MM) degli ultimi dati arrivati dalla casa: senza connessione la vista Casa dice di
     /// quando sono i valori che mostra.
@@ -644,6 +647,7 @@ pub fn collega(
         collegamenti: Rc::new(VecModel::default()),
         apri_url: RefCell::new(Rc::new(crate::sistema::browser::apri)),
         errore_collegamento: RefCell::new(None),
+        collegamento_aperto: Cell::new(false),
         compresse: RefCell::new(std::collections::HashSet::new()),
         mostrato: RefCell::new(None),
         sveglia: slint::Timer::default(),
@@ -684,6 +688,16 @@ pub fn collega(
     });
     ponte.aggiorna_casa_offline();
     ponte.aggiorna_ambienti();
+    // Un file scritto a mano (id vuoti o doppi, nomi con caratteri invisibili) si ripara qui;
+    // se non c'è nulla da riparare non si salva nulla.
+    if ponte.casa.con_config(|c| {
+        let mut prova = c.clone();
+        collegamenti::ripara(&mut prova)
+    }) {
+        ponte.casa.aggiorna_config(|c| {
+            collegamenti::ripara(c);
+        });
+    }
     ponte.aggiorna_collegamenti();
     ponte.aggiorna_umore();
     ponte
@@ -1150,6 +1164,9 @@ impl Ponte {
     /// predefinito. Vero se il browser è partito (allora il pannello si chiude); se no il pannello
     /// resta aperto con una riga che lo dice e il dettaglio va in Impostazioni › Informazioni.
     pub fn apri_collegamento(&self, id: &str) -> bool {
+        if self.collegamento_aperto.get() {
+            return false;
+        }
         let trovato = self.casa.con_config(|c| {
             let nome = c.collegamenti.iter().find(|x| x.id == id).map(|x| x.nome.clone());
             nome.zip(collegamenti::da_aprire(c, id))
@@ -1161,6 +1178,7 @@ impl Ponte {
         });
         let errore = match esito {
             Ok(()) => {
+                self.collegamento_aperto.set(true);
                 self.scrivi_errore_collegamento("");
                 return true;
             }
@@ -1466,6 +1484,7 @@ impl Ponte {
     /// l'umore di adesso.
     pub fn pannello_chiuso(&self) {
         *self.pannello.borrow_mut() = slint::Weak::default();
+        self.collegamento_aperto.set(false);
         // Il pannello si riapre sui preferiti.
         if self.stanza_aperta.borrow_mut().take().is_some() {
             self.dispositivi.set_vec(Vec::new());
@@ -2073,13 +2092,18 @@ pub(crate) mod test {
         assert_eq!(p.salva_collegamento("", "NAS", "http://nas.esempio.lan/admin?x=1"), "");
         assert_eq!(p.salva_collegamento("", "Male", "javascript:alert(1)"), "Solo indirizzi http:// o https://");
         assert_eq!(elenco(&p), ["proxmox Proxmox esempio.lan:8006", "nas NAS nas.esempio.lan/admin"]);
-        assert_eq!(p.casa.config().collegamenti[0].url, "https://esempio.lan:8006");
+        assert_eq!(p.casa.config().collegamenti[0].url, "https://esempio.lan:8006/");
         p.sposta_collegamento("nas", -1);
         assert_eq!(elenco(&p), ["nas NAS nas.esempio.lan/admin", "proxmox Proxmox esempio.lan:8006"]);
         assert_eq!(p.salva_collegamento("proxmox", "Proxmox VE", "https://esempio.lan:8006/"), "");
         assert_eq!(elenco(&p)[1], "proxmox Proxmox VE esempio.lan:8006");
         assert!(p.apri_collegamento("proxmox"));
         assert_eq!(*aperti.borrow(), ["https://esempio.lan:8006/"]);
+        // Invio ripetuto o doppio clic prima che il pannello si chiuda: una sola scheda.
+        assert!(!p.apri_collegamento("proxmox"));
+        assert!(!p.apri_collegamento("nas"));
+        assert_eq!(aperti.borrow().len(), 1, "un solo tocco apre: {:?}", aperti.borrow());
+        p.pannello_chiuso();
         p.elimina_collegamento("nas");
         assert_eq!(elenco(&p), ["proxmox Proxmox VE esempio.lan:8006"]);
         // Il servizio salva sul suo thread: il file arriva poco dopo.

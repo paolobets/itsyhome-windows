@@ -10,6 +10,9 @@ gestione-protocollo = { path = "../gestione-protocollo" }
 slint = { version = "=1.18.1", features = ["renderer-skia", "unstable-winit-030", "raw-window-handle-06"] }
 # Solo l'ora locale per l'orologio del pannello.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# Indirizzi dei collegamenti analizzati e serializzati come li vede il browser (WHATWG, IDNA):
+# già nel Cargo.lock tramite le dipendenze di casa-core, stessa versione.
+url = "=2.5.8"
 sysinfo = { version = "0.38", default-features = false, features = ["system", "disk", "network"] }
 starship-battery = "0.12"
 # Notifiche di sistema (toast su Windows): errori solo nel log.
