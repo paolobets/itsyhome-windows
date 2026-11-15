@@ -1,11 +1,13 @@
 //! Servizi di sistema: istanza unica, menu dell'isola e icona nella barra, scorciatoie globali,
-//! avvio con il sistema, notifiche, schermo intero, inattività e modalità «ritirata» (spec §3bis).
+//! avvio con il sistema, notifiche, schermo intero, inattività, modalità «ritirata» (spec §3bis)
+//! e apertura dei collegamenti nel browser predefinito.
 //!
 //! Qui le decisioni pure (tempo e osservazioni arrivano dal chiamante); `servizi` le applica alla
 //! pillola con un solo timer da 5 s più sveglie singole, e un sondaggio del mouse (100 ms) solo
 //! mentre la pillola è ritirata.
 
 pub mod autoavvio;
+pub mod browser;
 pub mod inattivita;
 pub mod istanza;
 pub mod menu;

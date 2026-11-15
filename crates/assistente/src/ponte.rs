@@ -13,8 +13,9 @@ use crate::ottimismo::Ottimismo;
 use crate::pillola::{self, VistaPillola};
 use crate::umore::{Cervello, Segnale, Umore};
 use crate::dispositivi::{self, Riga, TipoRiga};
+use crate::collegamenti;
 use crate::{
-    AmbienteUi, FinestraImpostazioni, GenereUi, Pannello, Pillola, PreferitoUi, RigaDispositivoUi, SensoreUi, StanzaUi,
+    AmbienteUi, CollegamentoUi, FinestraImpostazioni, GenereUi, Pannello, Pillola, PreferitoUi, RigaDispositivoUi, SensoreUi, StanzaUi,
     TipoRigaUi, TonoUi, VoceAttesaUi,
 };
 use casa_core::eventi::{Ascoltatore, CasaEvento, StatoConnessione};
@@ -539,6 +540,9 @@ fn voce_attesa_ui(v: &Voce, non_archiviata: bool) -> VoceAttesaUi {
     }
 }
 
+/// Chi apre un indirizzo nel browser (vedi `Ponte::apri_url`).
+type ApriUrl = dyn Fn(&str) -> Result<(), String>;
+
 pub struct Ponte {
     casa: Rc<CasaService>,
     pillola: slint::Weak<Pillola>,
@@ -561,6 +565,13 @@ pub struct Ponte {
     stanza_aperta: RefCell<Option<String>>,
     /// Impostazioni › Dispositivi: le righe e le stanze compresse (solo finché l'app gira).
     righe: Rc<VecModel<RigaDispositivoUi>>,
+    /// I collegamenti veloci, per il pannello e per Impostazioni › Collegamenti.
+    collegamenti: Rc<VecModel<CollegamentoUi>>,
+    /// Chi apre un collegamento nel browser (`sistema::browser::apri`; i test lo sostituiscono:
+    /// nessun browser vero durante le prove).
+    apri_url: RefCell<Rc<ApriUrl>>,
+    /// Ultimo collegamento non aperto, col dettaglio tecnico, per Impostazioni › Informazioni.
+    errore_collegamento: RefCell<Option<String>>,
     compresse: RefCell<std::collections::HashSet<String>>,
     /// Ora (HH:MM) degli ultimi dati arrivati dalla casa: senza connessione la vista Casa dice di
     /// quando sono i valori che mostra.
@@ -630,6 +641,9 @@ pub fn collega(
         dispositivi: Rc::new(VecModel::default()),
         stanza_aperta: RefCell::new(None),
         righe: Rc::new(VecModel::default()),
+        collegamenti: Rc::new(VecModel::default()),
+        apri_url: RefCell::new(Rc::new(crate::sistema::browser::apri)),
+        errore_collegamento: RefCell::new(None),
         compresse: RefCell::new(std::collections::HashSet::new()),
         mostrato: RefCell::new(None),
         sveglia: slint::Timer::default(),
@@ -670,6 +684,7 @@ pub fn collega(
     });
     ponte.aggiorna_casa_offline();
     ponte.aggiorna_ambienti();
+    ponte.aggiorna_collegamenti();
     ponte.aggiorna_umore();
     ponte
 }
@@ -949,6 +964,7 @@ impl Ponte {
             self.errore_connessione.borrow().as_deref(),
             self.errore_import.as_deref(),
             self.errore_config.borrow().as_deref(),
+            self.errore_collegamento.borrow().as_deref(),
         );
         if p.get_dettagli_tecnici() != dettagli.as_str() {
             p.set_dettagli_tecnici(dettagli.into());
@@ -1047,6 +1063,126 @@ impl Ponte {
         self.ricostruisci_preferiti();
     }
 
+    // ─── Collegamenti veloci (Task 14f) ──────────────────────────────────────
+
+    /// I collegamenti della configurazione per il pannello e le Impostazioni.
+    fn aggiorna_collegamenti(&self) {
+        let voci: Vec<CollegamentoUi> = self.casa.con_config(|c| {
+            c.collegamenti
+                .iter()
+                .map(|c| CollegamentoUi {
+                    id: c.id.as_str().into(),
+                    nome: c.nome.as_str().into(),
+                    url: c.url.as_str().into(),
+                    corto: collegamenti::indirizzo_corto(&c.url).into(),
+                })
+                .collect()
+        });
+        aggiorna_modello(&self.collegamenti, voci);
+    }
+
+    /// Dopo una modifica il fuoco delle Impostazioni va su un pulsante di una riga (`id`, azione
+    /// «su», «giu», «modifica», «elimina») o su «Aggiungi collegamento» (`id` vuoto, «aggiungi»).
+    fn fuoco_collegamento(&self, id: &str, azione: &str) {
+        if let Some(f) = self.finestra.borrow().upgrade() {
+            f.set_fuoco_collegamento(id.into());
+            f.set_fuoco_azione_collegamento(azione.into());
+            f.set_richiesta_fuoco(f.get_richiesta_fuoco().wrapping_add(1));
+        }
+    }
+
+    /// Il modulo di Impostazioni › Collegamenti (`id` vuoto = nuovo): salvato subito e visibile
+    /// subito nel pannello. Restituisce l'errore da mostrare, vuoto se è andato bene.
+    fn salva_collegamento(&self, id: &str, nome: &str, url: &str) -> String {
+        let mut esito = Err(String::new());
+        self.casa.aggiorna_config(|c| esito = collegamenti::salva(c, id, nome, url));
+        match esito {
+            Ok(id) => {
+                self.aggiorna_collegamenti();
+                self.fuoco_collegamento(&id, "modifica");
+                String::new()
+            }
+            Err(e) => e,
+        }
+    }
+
+    /// Elimina (la conferma l'ha già chiesta la finestra); il fuoco va sulla riga che prende il
+    /// suo posto, o su «Aggiungi collegamento» se non ne resta nessuna.
+    fn elimina_collegamento(&self, id: &str) {
+        let indice = self.casa.con_config(|c| c.collegamenti.iter().position(|x| x.id == id));
+        self.casa.aggiorna_config(|c| {
+            collegamenti::elimina(c, id);
+        });
+        self.aggiorna_collegamenti();
+        let n = self.collegamenti.row_count();
+        let resta = indice.filter(|_| n > 0).and_then(|i| self.collegamenti.row_data(i.min(n - 1)));
+        match resta {
+            Some(r) => self.fuoco_collegamento(&r.id, "modifica"),
+            None => self.fuoco_collegamento("", "aggiungi"),
+        }
+    }
+
+    /// Su (-1) o giù (+1) di un posto; il fuoco resta sulla stessa freccia della riga spostata o,
+    /// arrivata al bordo, passa all'altra.
+    fn sposta_collegamento(&self, id: &str, verso: i32) {
+        self.casa.aggiorna_config(|c| {
+            collegamenti::sposta(c, id, verso);
+        });
+        self.aggiorna_collegamenti();
+        let n = self.collegamenti.row_count();
+        let Some(i) = (0..n).find(|i| self.collegamenti.row_data(*i).is_some_and(|r| r.id == id)) else { return };
+        let azione = match verso {
+            v if v < 0 && i == 0 => "giu",
+            v if v < 0 => "su",
+            _ if i + 1 == n => "su",
+            _ => "giu",
+        };
+        self.fuoco_collegamento(id, azione);
+    }
+
+    /// Sostituisce chi apre i collegamenti (i test: nessun browser vero).
+    #[cfg(test)]
+    pub fn su_apri_url(&self, f: impl Fn(&str) -> Result<(), String> + 'static) {
+        *self.apri_url.borrow_mut() = Rc::new(f);
+    }
+
+    /// Un collegamento scelto nel pannello: l'indirizzo salvato, ricontrollato, va al browser
+    /// predefinito. Vero se il browser è partito (allora il pannello si chiude); se no il pannello
+    /// resta aperto con una riga che lo dice e il dettaglio va in Impostazioni › Informazioni.
+    pub fn apri_collegamento(&self, id: &str) -> bool {
+        let trovato = self.casa.con_config(|c| {
+            let nome = c.collegamenti.iter().find(|x| x.id == id).map(|x| x.nome.clone());
+            nome.zip(collegamenti::da_aprire(c, id))
+        });
+        let Some((nome, indirizzo)) = trovato else { return false };
+        let esito = indirizzo.and_then(|url| {
+            let apri = self.apri_url.borrow().clone();
+            apri(&url)
+        });
+        let errore = match esito {
+            Ok(()) => {
+                self.scrivi_errore_collegamento("");
+                return true;
+            }
+            Err(e) => e,
+        };
+        eprintln!("collegamento «{nome}» non aperto: {errore}");
+        *self.errore_collegamento.borrow_mut() = Some(format!("{} · «{nome}» non aperto: {errore}", adesso_hh_mm()));
+        self.scrivi_errore_collegamento(&format!("«{nome}» non si è aperto: il dettaglio è in Impostazioni › Informazioni"));
+        if let Some(f) = self.finestra.borrow().upgrade() {
+            self.riempi_impostazioni(&f);
+        }
+        false
+    }
+
+    fn scrivi_errore_collegamento(&self, testo: &str) {
+        if let Some(p) = self.pannello.borrow().upgrade() {
+            if p.get_errore_collegamenti() != testo {
+                p.set_errore_collegamenti(testo.into());
+            }
+        }
+    }
+
     /// `Apertura` dice come aprire la finestra delle Impostazioni (chiudendo il pannello).
     pub fn su_apri_impostazioni(&self, f: impl Fn() + 'static) {
         *self.apri_impostazioni.borrow_mut() = Some(Box::new(f));
@@ -1080,6 +1216,22 @@ impl Ponte {
         f.set_versione(env!("CARGO_PKG_VERSION").into());
         f.set_icona_barra_disponibile(cfg!(windows));
         f.set_righe_dispositivi(ModelRc::from(self.righe.clone()));
+        f.set_collegamenti(ModelRc::from(self.collegamenti.clone()));
+        f.on_controlla_nome_collegamento(|nome| collegamenti::valida_nome(&nome).err().unwrap_or_default().into());
+        f.on_controlla_indirizzo_collegamento(|url| collegamenti::valida_indirizzo(&url).err().unwrap_or_default().into());
+        f.on_salva_collegamento(|id, nome, url| {
+            ponte().map(|p| p.salva_collegamento(&id, &nome, &url)).unwrap_or_default().into()
+        });
+        f.on_elimina_collegamento(|id| {
+            if let Some(p) = ponte() {
+                p.elimina_collegamento(&id);
+            }
+        });
+        f.on_sposta_collegamento(|id, verso| {
+            if let Some(p) = ponte() {
+                p.sposta_collegamento(&id, verso);
+            }
+        });
         let nomi: Vec<slint::SharedString> = crate::stanze::ICONE.iter().map(|(_, n)| (*n).into()).collect();
         f.set_nomi_icone(ModelRc::new(VecModel::from(nomi)));
         f.on_azione_dispositivo(|azione, id, chiave, area| {
@@ -1263,6 +1415,7 @@ impl Ponte {
         p.set_sensori(ModelRc::from(self.sensori.clone()));
         p.set_stanze(ModelRc::from(self.stanze.clone()));
         p.set_dispositivi(ModelRc::from(self.dispositivi.clone()));
+        p.set_collegamenti(ModelRc::from(self.collegamenti.clone()));
         p.on_apri_stanza(|area| {
             if let Some(ponte) = ponte() {
                 ponte.stanza(Some(area.to_string()));
@@ -1894,6 +2047,62 @@ pub(crate) mod test {
         p.scegli_icona("a0", 36);
         assert_eq!(p.casa.config().area_icons["a0"], crate::stanze::ICONE[36].0);
         assert_eq!(p.stanze.row_data(0).unwrap().icona, 36, "le stanze del pannello prendono l'icona subito");
+    }
+
+    /// Task 14f: aggiunta, modifica, ordine ed eliminazione dei collegamenti cambiano la
+    /// configurazione (salvata dal servizio) e l'elenco del pannello subito; aprirne uno chiama il
+    /// browser (qui finto, nessun browser vero) con l'indirizzo ricontrollato.
+    #[test]
+    fn collegamenti_salvati_e_aperti_col_browser_finto() {
+        let (_spegni, p, _pillola, cartella) = ponte_di_prova();
+        let aperti = Rc::new(RefCell::new(Vec::<String>::new()));
+        let a = aperti.clone();
+        p.su_apri_url(move |url| {
+            a.borrow_mut().push(url.to_owned());
+            Ok(())
+        });
+        let elenco = |p: &Ponte| {
+            (0..p.collegamenti.row_count())
+                .map(|i| {
+                    let c = p.collegamenti.row_data(i).unwrap();
+                    format!("{} {} {}", c.id, c.nome, c.corto)
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(p.salva_collegamento("", "Proxmox", "esempio.lan:8006"), "");
+        assert_eq!(p.salva_collegamento("", "NAS", "http://nas.esempio.lan/admin?x=1"), "");
+        assert_eq!(p.salva_collegamento("", "Male", "javascript:alert(1)"), "Solo indirizzi http:// o https://");
+        assert_eq!(elenco(&p), ["proxmox Proxmox esempio.lan:8006", "nas NAS nas.esempio.lan/admin"]);
+        assert_eq!(p.casa.config().collegamenti[0].url, "https://esempio.lan:8006");
+        p.sposta_collegamento("nas", -1);
+        assert_eq!(elenco(&p), ["nas NAS nas.esempio.lan/admin", "proxmox Proxmox esempio.lan:8006"]);
+        assert_eq!(p.salva_collegamento("proxmox", "Proxmox VE", "https://esempio.lan:8006/"), "");
+        assert_eq!(elenco(&p)[1], "proxmox Proxmox VE esempio.lan:8006");
+        assert!(p.apri_collegamento("proxmox"));
+        assert_eq!(*aperti.borrow(), ["https://esempio.lan:8006/"]);
+        p.elimina_collegamento("nas");
+        assert_eq!(elenco(&p), ["proxmox Proxmox VE esempio.lan:8006"]);
+        // Il servizio salva sul suo thread: il file arriva poco dopo.
+        let file = cartella.path().join("assistente.json");
+        let fine = Instant::now() + Duration::from_secs(5);
+        loop {
+            let testo = std::fs::read_to_string(&file).unwrap_or_default();
+            if testo.contains("Proxmox VE") && !testo.contains("nas.esempio.lan") {
+                break;
+            }
+            assert!(Instant::now() < fine, "configurazione non salvata: {testo}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        // Un indirizzo non ammesso scritto a mano nel file non si apre.
+        p.casa.aggiorna_config(|c| c.collegamenti[0].url = "file:///C:/Windows/win.ini".into());
+        assert!(!p.apri_collegamento("proxmox"));
+        assert!(!p.apri_collegamento("sparito"));
+        assert_eq!(aperti.borrow().len(), 1, "nulla di nuovo aperto");
+        // Il browser non parte: niente chiusura del pannello, l'errore nei dettagli tecnici.
+        p.casa.aggiorna_config(|c| c.collegamenti[0].url = "https://esempio.lan:8006".into());
+        p.su_apri_url(|_| Err("ShellExecuteW: 2".into()));
+        assert!(!p.apri_collegamento("proxmox"));
+        assert!(p.errore_collegamento.borrow().as_deref().is_some_and(|e| e.contains("ShellExecuteW: 2")));
     }
 
     #[test]

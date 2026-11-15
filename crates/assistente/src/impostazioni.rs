@@ -203,10 +203,20 @@ pub fn esito_prova(r: &TestConnectionResult) -> (String, Tono) {
 }
 
 /// Il dettaglio tecnico per la sezione Informazioni: ultimo errore di connessione, dell'import
-/// dalla v2 e del salvataggio della configurazione. Vuoto se non c'è nessun errore (la finestra
-/// lo dice allora in una frase, nel carattere normale).
-pub fn dettagli_tecnici(connessione: Option<&str>, import: Option<&str>, config: Option<&str>) -> String {
-    [("Connessione", connessione), ("Import dalla versione precedente", import), ("Configurazione", config)]
+/// dalla v2, del salvataggio della configurazione e dell'apertura di un collegamento. Vuoto se
+/// non c'è nessun errore (la finestra lo dice allora in una frase, nel carattere normale).
+pub fn dettagli_tecnici(
+    connessione: Option<&str>,
+    import: Option<&str>,
+    config: Option<&str>,
+    collegamento: Option<&str>,
+) -> String {
+    [
+        ("Connessione", connessione),
+        ("Import dalla versione precedente", import),
+        ("Configurazione", config),
+        ("Collegamento", collegamento),
+    ]
         .into_iter()
         .filter_map(|(cosa, e)| e.map(|e| format!("{cosa}: {e}")))
         .collect::<Vec<String>>()
@@ -326,10 +336,10 @@ mod test {
 
     #[test]
     fn dettagli_tecnici_righe() {
-        assert_eq!(dettagli_tecnici(None, None, None), "", "nessun errore: la frase la scrive la finestra");
+        assert_eq!(dettagli_tecnici(None, None, None, None), "", "nessun errore: la frase la scrive la finestra");
         assert_eq!(
-            dettagli_tecnici(Some("14:02 · token rifiutato"), None, Some("disco pieno")),
-            "Connessione: 14:02 · token rifiutato\nConfigurazione: disco pieno"
+            dettagli_tecnici(Some("14:02 · token rifiutato"), None, Some("disco pieno"), Some("«NAS» non aperto")),
+            "Connessione: 14:02 · token rifiutato\nConfigurazione: disco pieno\nCollegamento: «NAS» non aperto"
         );
     }
 }

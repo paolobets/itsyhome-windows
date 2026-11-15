@@ -41,38 +41,40 @@ pub fn riga_da_messaggio(m: &Messaggio) -> String {
 /// Lunghezza massima del titolo, in caratteri (puntini compresi).
 pub const LUNGHEZZA_TITOLO: usize = 200;
 
+/// Un carattere che non si vede ma cambia come si legge il testo: direzione (LRE..RLO, LRI..PDI,
+/// ALM), larghezza zero (ZWSP..RLM, WJ, operatori invisibili U+2061..2064, BOM, MVS), trattino
+/// morbido, CGJ, riempitivi Hangul (usati per i titoli che sembrano vuoti), selettori di variante
+/// e tag. Lo usano `titolo_pulito` e il controllo degli indirizzi dei collegamenti dell'assistente.
+pub fn carattere_invisibile(c: char) -> bool {
+    matches!(
+        c,
+        '\u{202A}'..='\u{202E}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{FEFF}'
+            | '\u{061C}'
+            | '\u{180E}'
+            | '\u{00AD}'
+            | '\u{034F}'
+            | '\u{115F}'
+            | '\u{1160}'
+            | '\u{3164}'
+            | '\u{FFA0}'
+            | '\u{FE00}'..='\u{FE0F}'
+            | '\u{E0000}'..='\u{E007F}'
+    )
+}
+
 /// Il titolo non fidato pronto per la cornice e per il titolo della finestra di sistema (barra
-/// delle applicazioni, Alt+Tab): via i caratteri di controllo (a capo compresi), le sostituzioni
-/// di direzione e i caratteri a larghezza zero; spazi compressi; al più `LUNGHEZZA_TITOLO`
-/// caratteri.
+/// delle applicazioni, Alt+Tab): via i caratteri di controllo (a capo compresi) e quelli
+/// invisibili (`carattere_invisibile`: direzione, larghezza zero…); spazi compressi; al più
+/// `LUNGHEZZA_TITOLO` caratteri.
 pub fn titolo_pulito(titolo: &str) -> String {
-    // Spariscono: direzione (LRE..RLO, LRI..PDI, ALM), larghezza zero (ZWSP..RLM, WJ, operatori
-    // invisibili U+2061..2064, BOM, MVS), trattino morbido, CGJ, riempitivi Hangul (usati per i
-    // titoli che sembrano vuoti), selettori di variante e tag.
-    let invisibile = |c: char| {
-        matches!(
-            c,
-            '\u{202A}'..='\u{202E}'
-                | '\u{2066}'..='\u{2069}'
-                | '\u{200B}'..='\u{200F}'
-                | '\u{2060}'..='\u{2064}'
-                | '\u{FEFF}'
-                | '\u{061C}'
-                | '\u{180E}'
-                | '\u{00AD}'
-                | '\u{034F}'
-                | '\u{115F}'
-                | '\u{1160}'
-                | '\u{3164}'
-                | '\u{FFA0}'
-                | '\u{FE00}'..='\u{FE0F}'
-                | '\u{E0000}'..='\u{E007F}'
-        )
-    };
     // Controlli (a capo, tabulazioni, campanello…): diventano spazi, poi compressi.
     let parole: String = titolo
         .chars()
-        .filter(|c| !invisibile(*c))
+        .filter(|c| !carattere_invisibile(*c))
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect();
     let compatto = parole.split_whitespace().collect::<Vec<_>>().join(" ");

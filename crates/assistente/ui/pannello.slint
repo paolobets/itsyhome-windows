@@ -8,6 +8,7 @@
 // Panoramica ←/→ cambiano layout, nel dock cambiano icona; in Casa Tab passa dalle stanze alle
 // card: ↑/↓ fra le stanze e → alle card, le frecce fra le card, ← dalla prima colonna alle stanze
 // e ↑ dalla prima riga a «Riprova» quando c'è; Casa vuota e non connessa: «Apri Impostazioni»);
+// In Collegamenti le frecce fra le card, ↑ dalla prima riga a «Modifica»; Invio apre la pagina.
 // Invio o Spazio attivano (su una stanza: la apre o la chiude; su una voce: la espande o la
 // riduce; un permesso, «Consenti», solo con Ctrl+Invio, e la voce che lo chiede si apre col fuoco
 // su «Nega»); Backspace o Alt+← = Indietro (prima chiude la stanza aperta); Esc un livello alla
@@ -18,10 +19,11 @@
 import { Tema, Movimento } from "tema.slint";
 import { Faccia, Occhi } from "faccia.slint";
 import { Anello, Fuoco, Fuochi } from "componenti.slint";
-import { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, UmoreUi, StanzaUi } from "voci.slint";
+import { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, UmoreUi, StanzaUi, CollegamentoUi } from "voci.slint";
 import { RigaAttesa, VoceEspansa } from "attesa.slint";
 import { VistaPc } from "viste/pc.slint";
 import { VistaCasa } from "viste/casa.slint";
+import { VistaCollegamenti } from "viste/collegamenti.slint";
 import { LayoutOrologio } from "layout/orologio.slint";
 import { LayoutQuadranti } from "layout/quadranti.slint";
 
@@ -117,7 +119,7 @@ export component Pannello inherits Window {
     // L'app aperta per ultima dal dock (indice in `app`) e se non ha una vista sua (oggi nessuna:
     // le Impostazioni hanno una finestra loro).
     property <int> indice-vista: 0;
-    property <bool> vista-vuota: vista != "panoramica" && vista != "casa" && vista != "pc"
+    property <bool> vista-vuota: vista != "panoramica" && vista != "casa" && vista != "pc" && vista != "collegamenti"
         && indice-vista >= 0 && indice-vista < app.length && app[indice-vista].id == vista;
     in property <[VoceAppUi]> app;
     // Statistiche del PC, aggiornate ogni 2 s solo a pannello aperto.
@@ -137,6 +139,9 @@ export component Pannello inherits Window {
     // Senza connessione: l'ora degli ultimi dati («dati delle 10:42») e se ha senso «Riprova».
     in property <string> dati-delle;
     in property <bool> casa-riprovabile;
+    // I collegamenti veloci (Task 14f) e l'errore dell'ultimo che non si è aperto (lo scrive Rust).
+    in property <[CollegamentoUi]> collegamenti;
+    in-out property <string> errore-collegamenti;
     // Da dove partono gli occhi all'apertura, rispetto al centro: aprendo da "ti cerca" sono
     // dove stavano quelli della pillola allargata e, appena il pannello è comparso, scivolano al centro.
     in property <length> partenza-occhi: 0px;
@@ -163,6 +168,10 @@ export component Pannello inherits Window {
     // Una stanza della vista Casa aperta (area) o chiusa.
     callback apri-stanza(string);
     callback chiudi-stanza();
+    // Un collegamento scelto (id): Rust lo apre nel browser e chiude il pannello.
+    callback apri-collegamento(string);
+    // «Modifica» o «Aggiungi un collegamento»: le Impostazioni sulla scheda Collegamenti.
+    callback gestisci-collegamenti();
 
     // Geometria (logica). La riga alta è alta quanto la pillola a riposo, così gli occhi cadono dove
     // stavano i suoi (vedi `posizione_pannello` in finestre.rs). Pannello 800 × 300: zona
@@ -203,6 +212,10 @@ export component Pannello inherits Window {
     property <int> fuoco-casa-valido: min(fuoco-casa, griglia.length - 1);
     property <int> fuoco-stanza: 0;
     property <int> fuoco-stanza-valido: min(fuoco-stanza, stanze.length - 1);
+    // Collegamenti: card col fuoco (-1 = «Modifica» nella testata), 3 colonne.
+    property <int> fuoco-collegamento: 0;
+    property <int> fuoco-collegamento-valido: min(fuoco-collegamento, collegamenti.length - 1);
+    property <int> colonne-collegamenti: 3;
     // «Riprova» nella testata della vista Casa: casa non connessa che si può riprovare.
     property <bool> riprova-visibile: !casa-pronta && casa-riprovabile && (griglia.length > 0 || stanze.length > 0);
     // «In attesa»: voce col fuoco (da chiusa 0..2, 3 = «+N») e pulsante della voce espansa
@@ -242,8 +255,9 @@ export component Pannello inherits Window {
             if (espansa) {
                 return false;
             }
-            // Casa vuota e non connessa: il fuoco va su «Apri Impostazioni».
-            return vista == "panoramica" || (vista == "casa" && (griglia.length > 0 || !casa-pronta));
+            // Casa vuota e non connessa: il fuoco va su «Apri Impostazioni». Collegamenti: le card,
+            // o «Aggiungi un collegamento» se non ce ne sono.
+            return vista == "panoramica" || vista == "collegamenti" || (vista == "casa" && (griglia.length > 0 || !casa-pronta));
         }
         return true;
     }
@@ -375,6 +389,7 @@ export component Pannello inherits Window {
         }
         vista = v;
         fuoco-casa = 0;
+        fuoco-collegamento = 0;
         if (!ha-zona(zona)) {
             zona = ha-zona(Zona.contenuto) ? Zona.contenuto : Zona.dock;
         }
@@ -454,6 +469,23 @@ export component Pannello inherits Window {
                 zona = Zona.contenuto;
                 fuoco-casa = 0;
             }
+        } else if (zona == Zona.contenuto && vista == "collegamenti" && collegamenti.length > 0) {
+            // -1 = «Modifica» nella testata: ↑ dalla prima riga, ↓ torna alle card.
+            if (fuoco-collegamento < 0) {
+                if (k == Key.DownArrow) {
+                    fuoco-collegamento = 0;
+                }
+            } else if (k == Key.LeftArrow) {
+                fuoco-collegamento = max(0, fuoco-collegamento-valido - 1);
+            } else if (k == Key.RightArrow) {
+                fuoco-collegamento = min(collegamenti.length - 1, fuoco-collegamento-valido + 1);
+            } else if (k == Key.UpArrow && fuoco-collegamento-valido >= colonne-collegamenti) {
+                fuoco-collegamento = fuoco-collegamento-valido - colonne-collegamenti;
+            } else if (k == Key.UpArrow) {
+                fuoco-collegamento = -1;
+            } else if (k == Key.DownArrow && fuoco-collegamento-valido + colonne-collegamenti < collegamenti.length) {
+                fuoco-collegamento = fuoco-collegamento-valido + colonne-collegamenti;
+            }
         } else if (zona == Zona.contenuto && vista == "casa" && griglia.length > 0) {
             // -1 = «Riprova» nella testata (solo se c'è): ↑ dalla prima riga, ↓ torna alle card.
             if (fuoco-casa < 0) {
@@ -508,6 +540,12 @@ export component Pannello inherits Window {
             scegli-stanza(fuoco-stanza-valido, true);
         } else if (vista == "panoramica") {
             root.scorri-layout(1);
+        } else if (vista == "collegamenti") {
+            if (collegamenti.length == 0 || fuoco-collegamento < 0) {
+                root.gestisci-collegamenti();
+            } else {
+                root.apri-collegamento(collegamenti[fuoco-collegamento-valido].id);
+            }
         } else if (vista == "casa" && griglia.length == 0) {
             root.apri-app("impostazioni");
         } else if (vista == "casa" && fuoco-casa < 0) {
@@ -832,6 +870,27 @@ export component Pannello inherits Window {
                     }
                 }
 
+                if vista == "collegamenti": VistaCollegamenti {
+                    width: parent.width;
+                    height: parent.height;
+                    voci: root.collegamenti;
+                    errore: root.errore-collegamenti;
+                    colonne: root.colonne-collegamenti;
+                    // Come nella vista Casa: ogni fuoco chiede anche la vista, perché lasciandola
+                    // la zona nuova non accenda il fuoco su un elemento che sta sparendo.
+                    fuoco: da-tastiera && zona == Zona.contenuto && vista == "collegamenti" ? fuoco-collegamento-valido : -1;
+                    fuoco-modifica: da-tastiera && zona == Zona.contenuto && vista == "collegamenti" && fuoco-collegamento < 0;
+                    fuoco-aggiungi: da-tastiera && zona == Zona.contenuto && vista == "collegamenti";
+                    apri(id) => {
+                        da-tastiera = false;
+                        root.apri-collegamento(id);
+                    }
+                    gestisci => {
+                        da-tastiera = false;
+                        root.gestisci-collegamenti();
+                    }
+                }
+
                 if vista == "pc": VistaPc {
                     width: parent.width;
                     height: parent.height;
@@ -1003,7 +1062,7 @@ export component Pannello inherits Window {
     property <bool> bersaglio: zona == Zona.indietro ? vista != "panoramica"
         : zona == Zona.attesa ? (espansa || (con-attese && (fuoco-attesa < min(3, attese.length) || (fuoco-attesa == 3 && attese.length > 3))))
         : zona == Zona.stanze ? ha-zona(Zona.stanze)
-        : zona == Zona.contenuto ? ha-zona(Zona.contenuto) && (vista == "panoramica"
+        : zona == Zona.contenuto ? ha-zona(Zona.contenuto) && (vista == "panoramica" || vista == "collegamenti"
             || (griglia.length > 0 ? (fuoco-casa >= 0 || riprova-visibile) : !casa-pronta))
         : true;
     property <bool> fuoco-su-elemento: da-tastiera && bersaglio;

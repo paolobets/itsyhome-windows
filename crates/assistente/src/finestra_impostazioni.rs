@@ -18,8 +18,10 @@ thread_local! {
     static SEZIONE: Cell<Option<i32>> = const { Cell::new(None) };
 }
 
-/// Sezione «Informazioni» delle Impostazioni (0 Home Assistant, 1 Sistema, 2 Informazioni).
-pub const SEZIONE_INFORMAZIONI: i32 = 3;
+/// Sezioni delle Impostazioni: 0 Home Assistant, 1 Dispositivi, 2 Collegamenti, 3 Sistema,
+/// 4 Informazioni. «Informazioni» la chiede il menu, «Collegamenti» il pannello.
+pub const SEZIONE_COLLEGAMENTI: i32 = 2;
+pub const SEZIONE_INFORMAZIONI: i32 = 4;
 
 /// La prossima `apri_impostazioni` mostra questa sezione (la si chiede dal menu, prima che il
 /// pannello si chiuda e la finestra si apra).

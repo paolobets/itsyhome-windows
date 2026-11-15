@@ -62,10 +62,12 @@ thread_local! {
 }
 
 /// Le icone che Rust passa all'interfaccia: un solo elenco, nome e SVG insieme.
-const ICONE_SVG: [(&str, &[u8]); 5] = [
+const ICONE_SVG: [(&str, &[u8]); 6] = [
     ("panoramica", include_bytes!("../assets/icone/panoramica.svg")),
     ("casa", include_bytes!("../assets/icone/casa.svg")),
     ("pc", include_bytes!("../assets/icone/pc.svg")),
+    // La catena di Lucide (ISC), come le card della vista Collegamenti.
+    ("collegamenti", include_bytes!("../assets/icone/lucide/link.svg")),
     ("impostazioni", include_bytes!("../assets/icone/impostazioni.svg")),
     // Fonte «prova» delle voci in attesa (un campanello).
     ("avviso", include_bytes!("../assets/icone/avviso.svg")),
@@ -282,6 +284,23 @@ impl Apertura {
             if id == "impostazioni" {
                 dopo(&a, Apertura::apri_impostazioni);
             }
+        });
+        // Un collegamento: il browser predefinito e, se è partito, il pannello si chiude (fuori da
+        // questo callback). Se non è partito il pannello resta aperto e lo dice.
+        let a = self.io.clone();
+        pannello.on_apri_collegamento(move |id| {
+            if a.upgrade().is_some_and(|ap| ap.ponte.apri_collegamento(&id)) {
+                dopo(&a, Apertura::chiudi);
+            }
+        });
+        // «Modifica» e «Aggiungi un collegamento»: le Impostazioni sulla scheda Collegamenti.
+        let a = self.io.clone();
+        pannello.on_gestisci_collegamenti(move || {
+            let a = a.clone();
+            finestra_impostazioni::apri_alla_sezione(finestra_impostazioni::SEZIONE_COLLEGAMENTI, move || {
+                dopo(&a, Apertura::apri_impostazioni);
+                true
+            });
         });
 
         let a = self.io.clone();

@@ -6,6 +6,9 @@
 //   aggiungi/modifica (nome, indirizzo, token in un campo password) prende il posto dell'elenco.
 // - Dispositivi: stanze e dispositivi come la scheda «Accessories» della v2 (ordine, icona e
 //   nascoste delle stanze; ordine, nascosti e preferiti dei dispositivi; ordine dei preferiti).
+// - Collegamenti: le pagine web delle gestioni (nome e indirizzo, solo http/https) che il pannello
+//   apre nel browser; aggiungi, modifica (il modulo prende il posto dell'elenco), elimina (con una
+//   conferma dentro la finestra che nomina il collegamento) e ordine con le frecce.
 // - Sistema: «Avvia con il sistema» e «Mostra icona nella barra» (spenta di serie).
 // - Informazioni: nome, versione, «© Paolo Bets», il riquadro AboutSlint (la licenza Slint
 //   royalty-free 2.0, punto 2(a), chiede proprio quel widget in una schermata «Informazioni») e
@@ -14,13 +17,14 @@
 // Tastiera: Tab / Maiusc+Tab nell'ordine naturale (sezioni, pulsanti, campi), Invio o Spazio
 // premono il pulsante col fuoco. In un campo si scrive come in ogni casella (frecce, Backspace,
 // selezione); Esc esce dal campo, Esc fuori da un campo chiude la finestra; Invio in un campo salva.
+// Esc a livelli in Collegamenti: prima la conferma o il campo, poi il modulo, poi la finestra.
 import { Tema, Movimento } from "tema.slint";
-import { AmbienteUi, TonoUi, RigaDispositivoUi, TipoRigaUi } from "voci.slint";
+import { AmbienteUi, TonoUi, RigaDispositivoUi, TipoRigaUi, CollegamentoUi } from "voci.slint";
 import { AboutSlint, Palette } from "std-widgets.slint";
 import { Anello, Fuoco, Pulsante, TipoPulsante, Etichetta } from "componenti.slint";
 import { Icone } from "icone.slint";
 
-export { AmbienteUi, TonoUi, RigaDispositivoUi, TipoRigaUi }
+export { AmbienteUi, TonoUi, RigaDispositivoUi, TipoRigaUi, CollegamentoUi }
 
 // Il contenuto della sezione Home Assistant: l'elenco degli ambienti o il modulo.
 enum ModoAmbienti { elenco, modulo }
@@ -33,15 +37,20 @@ component Bottone inherits Pulsante {
 }
 
 // Un campo del modulo: etichetta sempre visibile a sinistra, casella a destra. Il suggerimento
-// (formato atteso) compare solo a casella vuota.
+// (formato atteso) compare solo a casella vuota. `errore` (vuoto = nessuno) colora il bordo e
+// Narrator lo legge come descrizione del campo; il testo lo mostra chi usa il campo, sotto.
 component Campo inherits Rectangle {
     in property <string> etichetta;
     in property <string> suggerimento;
     in property <bool> password;
+    in property <string> errore;
     in-out property <string> testo <=> input.text;
     // Esc nel campo (il fuoco torna alla finestra) e Invio (salva).
     callback esci();
     callback invio();
+    // Il fuoco ha lasciato il campo (controllo al blur) e il testo è cambiato.
+    callback lasciato();
+    callback modificato();
 
     public function prendi() {
         input.focus();
@@ -64,8 +73,8 @@ component Campo inherits Rectangle {
         width: parent.width - self.x;
         height: parent.height;
         border-radius: Tema.raggio-m;
-        border-width: input.has-focus ? 2px : 1px;
-        border-color: input.has-focus ? Tema.petalo-4 : Tema.vetro-bordo;
+        border-width: input.has-focus || errore != "" ? 2px : 1px;
+        border-color: errore != "" ? Tema.caldo-2 : input.has-focus ? Tema.petalo-4 : Tema.vetro-bordo;
         background: Tema.riquadro-fondo;
 
         // Il suggerimento è più tenue del testo vero: non sembra un valore già scritto.
@@ -94,6 +103,13 @@ component Campo inherits Rectangle {
             accessible-role: text-input;
             accessible-label: etichetta;
             accessible-placeholder-text: suggerimento;
+            accessible-description: errore;
+            edited => { root.modificato(); }
+            changed has-focus => {
+                if (!self.has-focus) {
+                    root.lasciato();
+                }
+            }
             key-pressed(evento) => {
                 if (evento.text == Key.Escape) {
                     root.esci();
@@ -417,6 +433,91 @@ component SceltaIcona inherits FocusScope {
     }
 }
 
+// La conferma di un'eliminazione dentro la finestra (non un dialogo di sistema): nomina ciò che
+// sparisce. Il fuoco parte da «Annulla»; Esc annulla; Tab resta fra i due pulsanti finché non si
+// sceglie; un clic dentro il riquadro ma fuori dai pulsanti non fa nulla.
+component ConfermaElimina inherits FocusScope {
+    in property <string> nome;
+    callback conferma();
+    callback annulla();
+
+    property <string> domanda: "Eliminare “" + nome + "”?";
+    accessible-role: groupbox;
+    accessible-label: domanda;
+    init => {
+        annulla.focus();
+    }
+    key-pressed(evento) => {
+        if (evento.text == Key.Escape) {
+            root.annulla();
+            return accept;
+        }
+        if (evento.text == Key.Tab || evento.text == Key.Backtab) {
+            if (annulla.has-focus) {
+                elimina.focus();
+            } else {
+                annulla.focus();
+            }
+            return accept;
+        }
+        return reject;
+    }
+
+    TouchArea {}
+
+    Rectangle {
+        border-radius: Tema.raggio-xl;
+        background: Tema.riquadro-pieno;
+        border-width: 1px;
+        border-color: Tema.pericolo-filo;
+    }
+
+    Text {
+        x: 18px;
+        y: 16px;
+        width: parent.width - 36px;
+        height: 22px;
+        text: domanda;
+        overflow: elide;
+        font-weight: 500;
+        font-size: Tema.testo-medio;
+        color: Tema.testo;
+    }
+
+    Text {
+        x: 18px;
+        y: 44px;
+        width: parent.width - 36px;
+        text: "Sparisce dal pannello e dalle Impostazioni.";
+        wrap: word-wrap;
+        font-size: Tema.testo-corpo;
+        color: Tema.testo-tenue;
+    }
+
+    HorizontalLayout {
+        x: 18px;
+        y: parent.height - self.height - 16px;
+        width: parent.width - 36px;
+        height: 30px;
+        spacing: 10px;
+        alignment: end;
+
+        annulla := Pulsante {
+            testo: "Annulla";
+            largo-min: 84px;
+            premuto => { root.annulla(); }
+        }
+
+        elimina := Pulsante {
+            testo: "Elimina";
+            tipo: TipoPulsante.pericolo;
+            largo-min: 84px;
+            accessible-label: "Elimina “" + nome + "”";
+            premuto => { root.conferma(); }
+        }
+    }
+}
+
 export component FinestraImpostazioni inherits Window {
     in property <[AmbienteUi]> ambienti;
     in-out property <bool> avvio-con-sistema;
@@ -455,7 +556,22 @@ export component FinestraImpostazioni inherits Window {
     // (area, indice dell'icona in `Icone.stanze`).
     callback scegli-icona(string, int);
 
-    // 0 Home Assistant, 1 Dispositivi, 2 Sistema, 3 Informazioni.
+    // Collegamenti (Task 14f): l'elenco (lo scrive Rust) e il pulsante su cui riportare il fuoco
+    // dopo una modifica (id della riga e azione «su», «giu», «modifica», «elimina»; id vuoto e
+    // «aggiungi» = «Aggiungi collegamento»), con lo stesso contatore `richiesta-fuoco`.
+    in property <[CollegamentoUi]> collegamenti;
+    in-out property <string> fuoco-collegamento;
+    in-out property <string> fuoco-azione-collegamento;
+    // Controlli dei campi (al blur e al salvataggio): l'errore da mostrare, "" se va bene.
+    callback controlla-nome-collegamento(string) -> string;
+    callback controlla-indirizzo-collegamento(string) -> string;
+    // (id, nome, indirizzo) → errore da mostrare, "" se salvato (id vuoto = nuovo).
+    callback salva-collegamento(string, string, string) -> string;
+    callback elimina-collegamento(string);
+    // (id, -1 su / +1 giù).
+    callback sposta-collegamento(string, int);
+
+    // 0 Home Assistant, 1 Dispositivi, 2 Collegamenti, 3 Sistema, 4 Informazioni.
     in-out property <int> sezione: 0;
     // L'elenco o il modulo (aggiungi/modifica).
     property <ModoAmbienti> modo: ModoAmbienti.elenco;
@@ -488,6 +604,23 @@ export component FinestraImpostazioni inherits Window {
     property <int> scelta-attuale;
     property <int> scelta-fuoco;
     property <string> scelta-riga;
+    // Collegamenti: il modulo (al posto dell'elenco) con id in modifica ("" = nuovo), campi, errori
+    // dei campi e generale, e se un campo è già stato toccato (il controllo al blur parte solo
+    // dopo, non su un campo appena attraversato con Tab); la conferma di eliminazione aperta.
+    property <bool> modulo-collegamento;
+    property <string> modulo-c-id;
+    property <string> modulo-c-titolo;
+    property <string> campo-c-nome;
+    property <string> campo-c-url;
+    property <string> errore-c-nome;
+    property <string> errore-c-url;
+    property <string> errore-c;
+    property <bool> toccato-c-nome;
+    property <bool> toccato-c-url;
+    property <string> conferma-c-id;
+    property <string> conferma-c-nome;
+    property <length> alto-collegamento: 46px;
+    property <length> passo-collegamento: alto-collegamento + 4px;
 
     title: "ItsyHome — Impostazioni";
     preferred-width: 720px;
@@ -588,6 +721,78 @@ export component FinestraImpostazioni inherits Window {
         richiesta-fuoco += 1;
     }
 
+    // ─── Collegamenti ───
+
+    function apri-modulo-collegamento(i: int) {
+        conferma-c-id = "";
+        errore-c-nome = "";
+        errore-c-url = "";
+        errore-c = "";
+        toccato-c-nome = false;
+        toccato-c-url = false;
+        if (i >= 0 && i < collegamenti.length) {
+            modulo-c-id = collegamenti[i].id;
+            modulo-c-titolo = "MODIFICA «" + collegamenti[i].nome + "»";
+            campo-c-nome = collegamenti[i].nome;
+            campo-c-url = collegamenti[i].url;
+        } else {
+            modulo-c-id = "";
+            modulo-c-titolo = "NUOVO COLLEGAMENTO";
+            campo-c-nome = "";
+            campo-c-url = "";
+        }
+        modulo-collegamento = true;
+    }
+
+    // Chiude il modulo; `annullato`: il fuoco torna sul pulsante da cui era partito (dopo un
+    // salvataggio lo decide Rust: la riga salvata).
+    function chiudi-modulo-collegamento(annullato: bool) {
+        if (annullato) {
+            fuoco-collegamento = modulo-c-id;
+            fuoco-azione-collegamento = modulo-c-id == "" ? "aggiungi" : "modifica";
+            richiesta-fuoco += 1;
+        }
+        modulo-collegamento = false;
+        campo-c-nome = "";
+        campo-c-url = "";
+        errore-c-nome = "";
+        errore-c-url = "";
+        errore-c = "";
+    }
+
+    function chiedi-elimina-collegamento(i: int) {
+        if (i >= 0 && i < collegamenti.length) {
+            conferma-c-nome = collegamenti[i].nome;
+            conferma-c-id = collegamenti[i].id;
+        }
+    }
+
+    // «Annulla» o Esc: il fuoco torna su «Elimina» della stessa riga.
+    function annulla-elimina-collegamento() {
+        fuoco-collegamento = conferma-c-id;
+        fuoco-azione-collegamento = "elimina";
+        conferma-c-id = "";
+        richiesta-fuoco += 1;
+    }
+
+    function conferma-elimina-collegamento() {
+        root.elimina-collegamento(conferma-c-id);
+        conferma-c-id = "";
+    }
+
+    // Il fuoco chiesto è arrivato: la richiesta non vale più.
+    function fuoco-collegamento-arrivato(id: string) {
+        if (id == fuoco-collegamento) {
+            fuoco-collegamento = "";
+            fuoco-azione-collegamento = "";
+        }
+    }
+
+    // Lasciando la sezione la conferma non resta in sospeso.
+    changed sezione => {
+        conferma-c-id = "";
+    }
+
     function cambia-avvio-ora() {
         avvio-con-sistema = !avvio-con-sistema;
         root.cambia-avvio(avvio-con-sistema);
@@ -617,7 +822,14 @@ export component FinestraImpostazioni inherits Window {
         focus-on-click: false;
         key-pressed(evento) => {
             if (evento.text == Key.Escape) {
-                root.chiudi();
+                // Un livello alla volta: la conferma, il modulo dei collegamenti, la finestra.
+                if (sezione == 2 && conferma-c-id != "") {
+                    annulla-elimina-collegamento();
+                } else if (sezione == 2 && modulo-collegamento) {
+                    chiudi-modulo-collegamento(true);
+                } else {
+                    root.chiudi();
+                }
                 return accept;
             }
             return reject;
@@ -642,14 +854,14 @@ export component FinestraImpostazioni inherits Window {
         }
 
         // ─── Sezioni ───
-        for nome[i] in ["Home Assistant", "Dispositivi", "Sistema", "Informazioni"]: Sezione {
+        for nome[i] in ["Home Assistant", "Dispositivi", "Collegamenti", "Sistema", "Informazioni"]: Sezione {
             x: margine - 8px;
             y: alto-testata + i * 42px;
             width: largo-sezioni;
             nome: nome;
             attiva: sezione == i;
             indice: i;
-            quante: 4;
+            quante: 5;
             scelta => { sezione = i; }
         }
 
@@ -1165,8 +1377,358 @@ export component FinestraImpostazioni inherits Window {
             }
         }
 
+        // ─── Collegamenti: elenco ───
+        // Le pagine delle gestioni nell'ordine del pannello. Frecce su/giù per l'ordine, matita per
+        // il modulo, cestino con la conferma. Ogni modifica è salvata subito e si vede subito nel
+        // pannello.
+        if sezione == 2 && !modulo-collegamento: Rectangle {
+            x: contenuto-x;
+            y: alto-testata;
+            width: parent.width - self.x - margine;
+            height: parent.height - self.y - 24px;
+
+            Etichetta {
+                x: 0;
+                y: 0;
+                height: 30px;
+                text: "COLLEGAMENTI";
+            }
+
+            aggiungi-collegamento := Bottone {
+                x: parent.width - self.width;
+                y: 0;
+                testo: "Aggiungi collegamento";
+                tipo: collegamenti.length == 0 ? TipoPulsante.azione : TipoPulsante.neutro;
+                chiede-fuoco: fuoco-azione-collegamento == "aggiungi";
+                fuoco-preso => {
+                    if (fuoco-azione-collegamento == "aggiungi") {
+                        fuoco-azione-collegamento = "";
+                    }
+                }
+                premuto => { apri-modulo-collegamento(-1); }
+            }
+
+            Text {
+                x: 0;
+                y: 34px;
+                width: parent.width;
+                height: 18px;
+                text: "Le pagine delle tue gestioni: il pannello le apre nel browser predefinito.";
+                overflow: elide;
+                font-size: Tema.testo-piccolo;
+                color: Tema.testo-tenue;
+            }
+
+            if collegamenti.length == 0: VerticalLayout {
+                y: 60px;
+                height: parent.height - 60px;
+                alignment: center;
+                spacing: 8px;
+
+                Text {
+                    text: "Nessun collegamento";
+                    horizontal-alignment: center;
+                    font-weight: 500;
+                    font-size: Tema.testo-sottotitolo;
+                    color: Tema.testo;
+                }
+
+                Text {
+                    text: "Aggiungi le pagine che usi per le tue gestioni (router, NAS, server…): si aprono con un clic dal pannello.";
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                    font-size: Tema.testo-corpo;
+                    color: Tema.testo-tenue;
+                }
+            }
+
+            elenco-collegamenti := Flickable {
+                x: 0;
+                y: 60px;
+                width: parent.width;
+                height: parent.height - 60px;
+                content-width: self.width;
+                content-height: max(self.height, collegamenti.length * passo-collegamento);
+                interactive: collegamenti.length * passo-collegamento > self.height;
+
+                // Tab su un pulsante di una riga fuori vista: la riga scorre in vista.
+                function porta-in-vista(i: int) {
+                    if (i * passo-collegamento + self.content-y < 0) {
+                        self.content-y = -i * passo-collegamento;
+                    } else if ((i + 1) * passo-collegamento + self.content-y > self.height) {
+                        self.content-y = self.height - (i + 1) * passo-collegamento;
+                    }
+                }
+
+                for c[i] in collegamenti: Rectangle {
+                    property <string> tra-virgolette: "«" + c.nome + "»";
+                    x: 0;
+                    y: i * passo-collegamento;
+                    width: elenco-collegamenti.width;
+                    height: alto-collegamento;
+                    border-radius: Tema.raggio-m;
+                    background: Tema.card-fondo;
+
+                    Image {
+                        x: 12px;
+                        y: (parent.height - self.height) / 2;
+                        width: 18px;
+                        height: 18px;
+                        source: Icone.collegamento;
+                        colorize: Tema.icona;
+                        image-rendering: smooth;
+                        accessible-role: none;
+                    }
+
+                    Text {
+                        x: 40px;
+                        y: 5px;
+                        width: comandi-collegamento.x - self.x - 8px;
+                        height: 18px;
+                        text: c.nome;
+                        overflow: elide;
+                        font-weight: 500;
+                        font-size: Tema.testo-corpo;
+                        color: Tema.testo;
+                    }
+
+                    Text {
+                        x: 40px;
+                        y: 24px;
+                        width: comandi-collegamento.x - self.x - 8px;
+                        height: 15px;
+                        text: c.url;
+                        overflow: elide;
+                        font-size: Tema.testo-piccolo;
+                        color: Tema.testo-tenue;
+                    }
+
+                    // Quattro pulsanti da 28 (più gli spazi), allineati a destra.
+                    comandi-collegamento := HorizontalLayout {
+                        x: parent.width - 124px;
+                        y: (parent.height - 28px) / 2;
+                        width: 120px;
+                        height: 28px;
+                        spacing: 2px;
+                        alignment: end;
+
+                        BottoneIcona {
+                            icona: Icone.su;
+                            nome: "Sposta su " + tra-virgolette;
+                            attivo: i > 0;
+                            richiesta: root.richiesta-fuoco;
+                            mio: c.id == root.fuoco-collegamento && root.fuoco-azione-collegamento == "su";
+                            fuoco-preso => {
+                                elenco-collegamenti.porta-in-vista(i);
+                                fuoco-collegamento-arrivato(c.id);
+                            }
+                            premuto => { root.sposta-collegamento(c.id, -1); }
+                        }
+
+                        BottoneIcona {
+                            icona: Icone.giu;
+                            nome: "Sposta giù " + tra-virgolette;
+                            attivo: i < collegamenti.length - 1;
+                            richiesta: root.richiesta-fuoco;
+                            mio: c.id == root.fuoco-collegamento && root.fuoco-azione-collegamento == "giu";
+                            fuoco-preso => {
+                                elenco-collegamenti.porta-in-vista(i);
+                                fuoco-collegamento-arrivato(c.id);
+                            }
+                            premuto => { root.sposta-collegamento(c.id, 1); }
+                        }
+
+                        BottoneIcona {
+                            icona: Icone.matita;
+                            nome: "Modifica " + tra-virgolette;
+                            richiesta: root.richiesta-fuoco;
+                            mio: c.id == root.fuoco-collegamento && root.fuoco-azione-collegamento == "modifica";
+                            fuoco-preso => {
+                                elenco-collegamenti.porta-in-vista(i);
+                                fuoco-collegamento-arrivato(c.id);
+                            }
+                            premuto => { apri-modulo-collegamento(i); }
+                        }
+
+                        BottoneIcona {
+                            icona: Icone.cestino;
+                            nome: "Elimina " + tra-virgolette;
+                            richiesta: root.richiesta-fuoco;
+                            mio: c.id == root.fuoco-collegamento && root.fuoco-azione-collegamento == "elimina";
+                            fuoco-preso => {
+                                elenco-collegamenti.porta-in-vista(i);
+                                fuoco-collegamento-arrivato(c.id);
+                            }
+                            premuto => { chiedi-elimina-collegamento(i); }
+                        }
+                    }
+                }
+            }
+
+            // Barretta di scorrimento disegnata (4 px), solo se l'elenco non sta tutto.
+            if elenco-collegamenti.content-height > elenco-collegamenti.height + 0.5px: Rectangle {
+                x: parent.width + 8px;
+                y: elenco-collegamenti.y + (-elenco-collegamenti.content-y / elenco-collegamenti.content-height) * elenco-collegamenti.height;
+                width: 4px;
+                height: elenco-collegamenti.height * elenco-collegamenti.height / elenco-collegamenti.content-height;
+                border-radius: self.width / 2;
+                background: Tema.vetro-bordo;
+            }
+
+            // Con la conferma aperta il resto della sezione non risponde al mouse: un clic fuori
+            // dal riquadro annulla, come Esc.
+            if conferma-c-id != "": TouchArea {
+                clicked => { annulla-elimina-collegamento(); }
+            }
+
+            if conferma-c-id != "": ConfermaElimina {
+                x: 0;
+                y: 60px;
+                width: min(parent.width, 400px);
+                height: 132px;
+                nome: conferma-c-nome;
+                conferma => { conferma-elimina-collegamento(); }
+                annulla => { annulla-elimina-collegamento(); }
+            }
+        }
+
+        // ─── Collegamenti: modulo aggiungi/modifica ───
+        if sezione == 2 && modulo-collegamento: Rectangle {
+            x: contenuto-x;
+            y: alto-testata;
+            width: min(560px, parent.width - self.x - margine);
+            height: parent.height - self.y - 24px;
+            // Il modulo nasce col fuoco nel primo campo.
+            init => { nome-collegamento.prendi(); }
+
+            // Al salvataggio si controllano tutti e due i campi; il fuoco va sul primo sbagliato.
+            function salva() {
+                toccato-c-nome = true;
+                toccato-c-url = true;
+                errore-c-nome = root.controlla-nome-collegamento(campo-c-nome);
+                errore-c-url = root.controlla-indirizzo-collegamento(campo-c-url);
+                if (errore-c-nome != "") {
+                    nome-collegamento.prendi();
+                } else if (errore-c-url != "") {
+                    indirizzo-collegamento.prendi();
+                } else {
+                    errore-c = root.salva-collegamento(modulo-c-id, campo-c-nome, campo-c-url);
+                    if (errore-c == "") {
+                        chiudi-modulo-collegamento(false);
+                    }
+                }
+            }
+
+            Etichetta {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: 30px;
+                text: modulo-c-titolo;
+                overflow: elide;
+            }
+
+            nome-collegamento := Campo {
+                y: 44px;
+                width: parent.width;
+                etichetta: "Nome";
+                suggerimento: "es. Proxmox";
+                errore: errore-c-nome;
+                testo <=> campo-c-nome;
+                esci => { radice.focus(); }
+                invio => { salva(); }
+                modificato => {
+                    toccato-c-nome = true;
+                    // L'errore sparisce appena il nome va bene.
+                    if (errore-c-nome != "") {
+                        errore-c-nome = root.controlla-nome-collegamento(campo-c-nome);
+                    }
+                }
+                lasciato => {
+                    if (toccato-c-nome) {
+                        errore-c-nome = root.controlla-nome-collegamento(campo-c-nome);
+                    }
+                }
+            }
+
+            Text {
+                x: 100px;
+                y: 80px;
+                width: parent.width - self.x;
+                height: 16px;
+                text: errore-c-nome;
+                overflow: elide;
+                font-size: Tema.testo-piccolo;
+                color: Tema.caldo-2;
+            }
+
+            indirizzo-collegamento := Campo {
+                y: 100px;
+                width: parent.width;
+                etichetta: "Indirizzo";
+                suggerimento: "es. https://esempio.lan:8006";
+                errore: errore-c-url;
+                testo <=> campo-c-url;
+                esci => { radice.focus(); }
+                invio => { salva(); }
+                modificato => {
+                    toccato-c-url = true;
+                    if (errore-c-url != "") {
+                        errore-c-url = root.controlla-indirizzo-collegamento(campo-c-url);
+                    }
+                }
+                lasciato => {
+                    if (toccato-c-url) {
+                        errore-c-url = root.controlla-indirizzo-collegamento(campo-c-url);
+                    }
+                }
+            }
+
+            // Sotto l'indirizzo: l'errore, altrimenti cosa si accetta.
+            Text {
+                x: 100px;
+                y: 136px;
+                width: parent.width - self.x;
+                height: 16px;
+                text: errore-c-url != "" ? errore-c-url : "Solo http:// o https://; senza, si aggiunge https://.";
+                overflow: elide;
+                font-size: Tema.testo-piccolo;
+                color: errore-c-url != "" ? Tema.caldo-2 : Tema.testo-tenue;
+            }
+
+            HorizontalLayout {
+                x: 100px;
+                y: 166px;
+                height: 30px;
+                spacing: 10px;
+                alignment: start;
+
+                Bottone {
+                    testo: "Salva";
+                    tipo: TipoPulsante.azione;
+                    premuto => { salva(); }
+                }
+
+                Bottone {
+                    testo: "Annulla";
+                    premuto => { chiudi-modulo-collegamento(true); }
+                }
+            }
+
+            Text {
+                x: 100px;
+                y: 208px;
+                width: parent.width - self.x;
+                text: errore-c;
+                wrap: word-wrap;
+                font-size: Tema.testo-corpo;
+                color: Tema.caldo-2;
+                accessible-role: text;
+            }
+        }
+
         // ─── Sistema ───
-        if sezione == 2: Rectangle {
+        if sezione == 3: Rectangle {
             x: contenuto-x;
             y: alto-testata;
             width: parent.width - self.x - margine;
@@ -1262,7 +1824,7 @@ export component FinestraImpostazioni inherits Window {
         }
 
         // ─── Informazioni ───
-        if sezione == 3: Rectangle {
+        if sezione == 4: Rectangle {
             x: contenuto-x;
             y: alto-testata;
             width: parent.width - self.x - margine;

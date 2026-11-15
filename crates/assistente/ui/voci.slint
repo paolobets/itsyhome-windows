@@ -133,3 +133,12 @@ export struct RigaDispositivoUi {
     compressa: bool,
     puo-icona: bool,
 }
+
+// Un collegamento veloce (Task 14f), già pronto (vedi `ponte::aggiorna_collegamenti`): `url` è
+// l'indirizzo intero (Impostazioni), `corto` quello accorciato (pannello: host, porta, percorso).
+export struct CollegamentoUi {
+    id: string,
+    nome: string,
+    url: string,
+    corto: string,
+}

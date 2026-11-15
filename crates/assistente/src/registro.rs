@@ -13,6 +13,8 @@ pub fn app_disponibili() -> Vec<VoceApp> {
         VoceApp { id: "panoramica", nome: "Panoramica", icona: "panoramica" },
         VoceApp { id: "casa", nome: "Casa", icona: "casa" },
         VoceApp { id: "pc", nome: "PC", icona: "pc" },
+        // I collegamenti veloci (Task 14f): pagine web aperte nel browser predefinito.
+        VoceApp { id: "collegamenti", nome: "Collegamenti", icona: "collegamenti" },
         VoceApp { id: "impostazioni", nome: "Impostazioni", icona: "impostazioni" },
     ]
 }
@@ -24,15 +26,15 @@ mod test {
     #[test]
     fn app_disponibili_con_panoramica() {
         let ids: Vec<_> = app_disponibili().iter().map(|a| a.id).collect();
-        assert_eq!(ids, ["panoramica", "casa", "pc", "impostazioni"]);
+        assert_eq!(ids, ["panoramica", "casa", "pc", "collegamenti", "impostazioni"]);
     }
 
     #[test]
     fn app_disponibili_solo_quelle_vere() {
         let v = app_disponibili();
         let ids: Vec<_> = v.iter().map(|a| a.id).collect();
-        assert_eq!(ids, ["panoramica", "casa", "pc", "impostazioni"]);
+        assert_eq!(ids, ["panoramica", "casa", "pc", "collegamenti", "impostazioni"]);
         let nomi: Vec<_> = v.iter().map(|a| a.nome).collect();
-        assert_eq!(nomi, ["Panoramica", "Casa", "PC", "Impostazioni"]);
+        assert_eq!(nomi, ["Panoramica", "Casa", "PC", "Collegamenti", "Impostazioni"]);
     }
 }

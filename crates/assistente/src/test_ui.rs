@@ -177,6 +177,7 @@ mod accessibilita {
             voce("panoramica", "Panoramica"),
             voce("casa", "Casa"),
             voce("pc", "PC"),
+            voce("collegamenti", "Collegamenti"),
             voce("impostazioni", "Impostazioni"),
         ]))
     }
@@ -189,7 +190,7 @@ mod accessibilita {
         let panoramica = elemento(&p, "Panoramica");
         assert_eq!(panoramica.accessible_role(), Some(AccessibleRole::Tab));
         assert_eq!(panoramica.accessible_item_selected(), Some(true));
-        assert_eq!((panoramica.accessible_item_index(), panoramica.accessible_item_count()), (Some(0), Some(4)));
+        assert_eq!((panoramica.accessible_item_index(), panoramica.accessible_item_count()), (Some(0), Some(5)));
         let casa = elemento(&p, "Casa");
         assert_eq!(casa.accessible_item_selected(), Some(false));
         assert_eq!(casa.accessible_item_index(), Some(1));
@@ -295,7 +296,7 @@ mod accessibilita {
     fn interruttore_dell_icona_nella_barra() {
         piattaforma_di_prova();
         let f = FinestraImpostazioni::new().expect("impostazioni");
-        f.set_sezione(2);
+        f.set_sezione(3);
         f.show().expect("impostazioni mostrate nel backend di prova");
         let chiesti = std::rc::Rc::new(std::cell::RefCell::new(Vec::<bool>::new()));
         let c = chiesti.clone();
@@ -319,8 +320,9 @@ mod accessibilita {
         let f = FinestraImpostazioni::new().expect("impostazioni");
         let ha = elemento(&f, "Home Assistant");
         assert_eq!(ha.accessible_role(), Some(AccessibleRole::Tab));
-        assert_eq!((ha.accessible_item_selected(), ha.accessible_item_count()), (Some(true), Some(4)));
-        f.set_sezione(3);
+        assert_eq!((ha.accessible_item_selected(), ha.accessible_item_count()), (Some(true), Some(5)));
+        assert_eq!(elemento(&f, "Collegamenti").accessible_item_index(), Some(2));
+        f.set_sezione(crate::finestra_impostazioni::SEZIONE_INFORMAZIONI);
         assert_eq!(elemento(&f, "Informazioni").accessible_item_selected(), Some(true));
         assert_eq!(elemento(&f, "Home Assistant").accessible_item_selected(), Some(false));
     }
@@ -466,12 +468,16 @@ mod accessibilita {
         f.set_nomi_icone(ModelRc::new(VecModel::from(
             crate::stanze::ICONE.iter().map(|(_, n)| slint::SharedString::from(*n)).collect::<Vec<_>>(),
         )));
+        // Due volte: il primo clic su elementi appena nati da un `if` il backend di prova non lo
+        // consegna sempre; col secondo il controllo vale (senza il rimedio il titolo la chiudeva).
         let clic = |x: f32, y: f32| {
             let posizione = slint::LogicalPosition::new(x, y);
             let button = PointerEventButton::Left;
-            f.window().dispatch_event(WindowEvent::PointerMoved { position: posizione });
-            f.window().dispatch_event(WindowEvent::PointerPressed { position: posizione, button });
-            f.window().dispatch_event(WindowEvent::PointerReleased { position: posizione, button });
+            for _ in 0..2 {
+                f.window().dispatch_event(WindowEvent::PointerMoved { position: posizione });
+                f.window().dispatch_event(WindowEvent::PointerPressed { position: posizione, button });
+                f.window().dispatch_event(WindowEvent::PointerReleased { position: posizione, button });
+            }
         };
         let aperta = || ElementHandle::find_by_accessible_label(&f, "ICONA DI «Cucina»").next().is_some();
         elemento(&f, "Cambia icona di «Cucina»").invoke_accessible_default_action();
@@ -811,5 +817,296 @@ mod accessibilita {
                 }
             }
         }
+    }
+
+    // ─── Task 14f: collegamenti ─────────────────────────────────────────────
+
+    fn collegamento(id: &str, nome: &str, url: &str) -> crate::CollegamentoUi {
+        crate::CollegamentoUi {
+            id: id.into(),
+            nome: nome.into(),
+            url: url.into(),
+            corto: crate::collegamenti::indirizzo_corto(url).into(),
+        }
+    }
+
+    fn quattro_collegamenti() -> ModelRc<crate::CollegamentoUi> {
+        ModelRc::new(VecModel::from(vec![
+            collegamento("proxmox", "Proxmox", "https://esempio.lan:8006"),
+            collegamento("nas", "NAS", "http://nas.esempio.lan/admin?x=1"),
+            collegamento("router", "Router", "https://router.esempio.lan"),
+            collegamento("stampante", "Stampante", "http://192.0.2.20"),
+        ]))
+    }
+
+    /// Un pannello sulla vista Collegamenti; restituisce gli eventi (aperture, «gestisci»,
+    /// chiusura del pannello).
+    fn pannello_collegamenti(voci: ModelRc<crate::CollegamentoUi>) -> (Pannello, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
+        piattaforma_di_prova();
+        let p = pannello();
+        p.set_app(app());
+        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        p.global::<crate::Fuochi>().set_pronti(true);
+        p.set_collegamenti(voci);
+        let eventi = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let (e1, e2, e3) = (eventi.clone(), eventi.clone(), eventi.clone());
+        p.on_apri_collegamento(move |id| e1.borrow_mut().push(format!("apri {id}")));
+        p.on_gestisci_collegamenti(move || e2.borrow_mut().push("gestisci".into()));
+        p.on_chiudi(move || e3.borrow_mut().push("chiudi pannello".into()));
+        (p, eventi)
+    }
+
+    /// Il dock ha «Collegamenti»; la vista mostra le card (nome e indirizzo accorciato per
+    /// Narrator, pulsanti) nell'ordine dato; un tocco chiede di aprire quell'id.
+    #[test]
+    fn vista_collegamenti_card_accessibili() {
+        let (p, eventi) = pannello_collegamenti(quattro_collegamenti());
+        let scheda = elemento(&p, "Collegamenti");
+        assert_eq!((scheda.accessible_role(), scheda.accessible_item_index()), (Some(AccessibleRole::Tab), Some(3)));
+        scheda.invoke_accessible_default_action();
+        assert_eq!(p.get_vista(), "collegamenti");
+        let proxmox = elemento(&p, "Proxmox, esempio.lan:8006");
+        assert_eq!(proxmox.accessible_role(), Some(AccessibleRole::Button));
+        assert_eq!(proxmox.accessible_description().as_deref(), Some("Si apre nel browser"));
+        assert!(ElementHandle::find_by_accessible_label(&p, "NAS, nas.esempio.lan/admin").next().is_some(), "senza query");
+        // Ordine: Proxmox, NAS e Router nella prima riga (3 colonne), Stampante sotto.
+        let x = |nome: &str| elemento(&p, nome).absolute_position();
+        let (a, b, c, d) = (
+            x("Proxmox, esempio.lan:8006"),
+            x("NAS, nas.esempio.lan/admin"),
+            x("Router, router.esempio.lan"),
+            x("Stampante, 192.0.2.20"),
+        );
+        assert!(a.x < b.x && b.x < c.x && a.y == c.y && d.y > a.y && d.x == a.x, "{a:?} {b:?} {c:?} {d:?}");
+        elemento(&p, "NAS, nas.esempio.lan/admin").invoke_accessible_default_action();
+        elemento(&p, "Modifica i collegamenti").invoke_accessible_default_action();
+        assert_eq!(*eventi.borrow(), ["apri nas", "gestisci"]);
+    }
+
+    /// Da tastiera: frecce fra le card (3 colonne), Invio apre; ↑ dalla prima riga porta a
+    /// «Modifica», Invio lì apre le Impostazioni; Esc chiude il pannello (un solo livello).
+    #[test]
+    fn vista_collegamenti_da_tastiera() {
+        use slint::platform::Key;
+        let (p, eventi) = pannello_collegamenti(quattro_collegamenti());
+        // Dal dock: Tab, → fino a «Collegamenti», Invio.
+        tasto(&p, Key::Tab);
+        for _ in 0..3 {
+            tasto(&p, Key::RightArrow);
+        }
+        tasto(&p, Key::Return);
+        assert_eq!(p.get_vista(), "collegamenti");
+        // Il fuoco va sul contenuto: prima card; ↓ porta alla quarta (sotto la prima), Invio.
+        tasto(&p, Key::Tab);
+        tasto(&p, Key::Tab);
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::Return);
+        // → dall'ultima resta lì; ↑ torna alla prima riga, → alla seconda card.
+        tasto(&p, Key::RightArrow);
+        tasto(&p, Key::UpArrow);
+        tasto(&p, Key::RightArrow);
+        tasto(&p, Key::Return);
+        // ↑ dalla prima riga: «Modifica».
+        tasto(&p, Key::UpArrow);
+        tasto(&p, Key::Return);
+        assert_eq!(*eventi.borrow(), ["apri stampante", "apri nas", "gestisci"]);
+        let col_fuoco = i_slint_core::window::WindowInner::from_pub(p.window()).focus_item.borrow().upgrade();
+        assert!(col_fuoco.is_some(), "il pannello ha ancora il fuoco");
+        tasto(&p, Key::Escape);
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("chiudi pannello"));
+    }
+
+    /// Senza collegamenti: lo stato vuoto con «Aggiungi un collegamento», che apre le
+    /// Impostazioni (col mouse, con Narrator e con Invio).
+    #[test]
+    fn vista_collegamenti_vuota() {
+        use slint::platform::Key;
+        let (p, eventi) = pannello_collegamenti(ModelRc::new(VecModel::from(Vec::<crate::CollegamentoUi>::new())));
+        p.set_vista("collegamenti".into());
+        assert!(ElementHandle::find_by_accessible_label(&p, "Nessun collegamento").next().is_some());
+        assert!(ElementHandle::find_by_accessible_label(&p, "Modifica i collegamenti").next().is_none(), "niente da modificare");
+        let aggiungi = elemento(&p, "Aggiungi un collegamento");
+        assert_eq!(aggiungi.accessible_role(), Some(AccessibleRole::Button));
+        aggiungi.invoke_accessible_default_action();
+        tasto(&p, Key::Return);
+        assert_eq!(*eventi.borrow(), ["gestisci", "gestisci"]);
+    }
+
+    /// Un errore di apertura compare nella testata della vista.
+    #[test]
+    fn vista_collegamenti_dice_se_non_si_e_aperto() {
+        let (p, _) = pannello_collegamenti(quattro_collegamenti());
+        p.set_vista("collegamenti".into());
+        assert!(ElementHandle::find_by_accessible_label(&p, "Si aprono nel browser").next().is_some());
+        p.set_errore_collegamenti("«NAS» non si è aperto".into());
+        assert!(ElementHandle::find_by_accessible_label(&p, "«NAS» non si è aperto").next().is_some());
+    }
+
+    /// Le Impostazioni sulla scheda Collegamenti, coi controlli veri dei campi; restituisce gli
+    /// eventi (salvataggi, eliminazioni, spostamenti, chiusura della finestra).
+    fn scheda_collegamenti() -> (FinestraImpostazioni, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
+        piattaforma_di_prova();
+        let f = FinestraImpostazioni::new().expect("impostazioni");
+        f.set_sezione(crate::finestra_impostazioni::SEZIONE_COLLEGAMENTI);
+        f.show().expect("impostazioni mostrate nel backend di prova");
+        f.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        f.set_collegamenti(quattro_collegamenti());
+        f.on_controlla_nome_collegamento(|n| crate::collegamenti::valida_nome(&n).err().unwrap_or_default().into());
+        f.on_controlla_indirizzo_collegamento(|u| crate::collegamenti::valida_indirizzo(&u).err().unwrap_or_default().into());
+        let eventi = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let (e1, e2, e3, e4) = (eventi.clone(), eventi.clone(), eventi.clone(), eventi.clone());
+        f.on_salva_collegamento(move |id, nome, url| {
+            e1.borrow_mut().push(format!("salva [{id}] [{nome}] [{url}]"));
+            "".into()
+        });
+        f.on_elimina_collegamento(move |id| e2.borrow_mut().push(format!("elimina {id}")));
+        f.on_sposta_collegamento(move |id, verso| e3.borrow_mut().push(format!("sposta {id} {verso}")));
+        f.on_chiudi(move || e4.borrow_mut().push("chiudi finestra".into()));
+        (f, eventi)
+    }
+
+    fn tasto_finestra(f: &FinestraImpostazioni, testo: impl Into<slint::SharedString> + Clone) {
+        use slint::platform::WindowEvent;
+        f.window().dispatch_event(WindowEvent::KeyPressed { text: testo.clone().into() });
+        f.window().dispatch_event(WindowEvent::KeyReleased { text: testo.into() });
+    }
+
+    fn scrivi(f: &FinestraImpostazioni, testo: &str) {
+        for c in testo.chars() {
+            tasto_finestra(f, c.to_string());
+        }
+    }
+
+    fn campo(f: &FinestraImpostazioni, etichetta: &str) -> ElementHandle {
+        ElementHandle::find_by_accessible_label(f, etichetta)
+            .find(|e| e.accessible_role() == Some(AccessibleRole::TextInput))
+            .unwrap_or_else(|| panic!("nessun campo «{etichetta}»"))
+    }
+
+    /// La scheda: sezione «Collegamenti» fra Dispositivi e Sistema; righe coi pulsanti nominati;
+    /// le frecce ai bordi spente; le azioni arrivano a Rust con l'id giusto.
+    #[test]
+    fn scheda_collegamenti_righe_e_ordine() {
+        let (f, eventi) = scheda_collegamenti();
+        assert_eq!(elemento(&f, "Collegamenti").accessible_item_selected(), Some(true));
+        assert_eq!(elemento(&f, "Sposta su «Proxmox»").accessible_enabled(), Some(false), "già in cima");
+        assert_eq!(elemento(&f, "Sposta giù «Stampante»").accessible_enabled(), Some(false), "già in fondo");
+        assert!(ElementHandle::find_by_accessible_label(&f, "http://nas.esempio.lan/admin?x=1").next().is_some(), "indirizzo intero");
+        elemento(&f, "Sposta giù «Proxmox»").invoke_accessible_default_action();
+        elemento(&f, "Sposta su «Router»").invoke_accessible_default_action();
+        assert_eq!(*eventi.borrow(), ["sposta proxmox 1", "sposta router -1"]);
+        // Senza collegamenti: lo stato vuoto, e «Aggiungi collegamento» resta.
+        f.set_collegamenti(ModelRc::new(VecModel::from(Vec::<crate::CollegamentoUi>::new())));
+        assert!(ElementHandle::find_by_accessible_label(&f, "Nessun collegamento").next().is_some());
+        assert!(ElementHandle::find_by_accessible_label(&f, "Aggiungi collegamento").next().is_some());
+    }
+
+    /// Il modulo: etichette visibili; controllo al blur solo su un campo toccato; l'errore sparisce
+    /// appena corretto; Invio salva; Esc a livelli (campo, modulo, finestra).
+    #[test]
+    fn scheda_collegamenti_modulo_con_controlli() {
+        use slint::platform::Key;
+        let (f, eventi) = scheda_collegamenti();
+        elemento(&f, "Aggiungi collegamento").invoke_accessible_default_action();
+        assert!(ElementHandle::find_by_accessible_label(&f, "NUOVO COLLEGAMENTO").next().is_some());
+        // Il fuoco è nel Nome: Tab senza scrivere non segnala nulla (campo solo attraversato).
+        tasto_finestra(&f, Key::Tab);
+        assert_eq!(campo(&f, "Nome").accessible_description().as_deref(), Some(""));
+        // Indirizzo sbagliato: al blur l'errore compare.
+        scrivi(&f, "file:///x");
+        tasto_finestra(&f, Key::Tab);
+        let errore = campo(&f, "Indirizzo").accessible_description().unwrap_or_default();
+        assert_eq!(errore, "Solo indirizzi http:// o https://");
+        assert!(ElementHandle::find_by_accessible_label(&f, "Solo indirizzi http:// o https://").next().is_some(), "testo visibile");
+        // Si torna nel campo, si seleziona tutto e si riscrive: l'errore sparisce al primo
+        // carattere che rende l'indirizzo valido, prima di lasciare il campo.
+        con_modificatori_finestra(&f, &[Key::Shift], Key::Tab);
+        con_modificatori_finestra(&f, &[Key::Control], "a");
+        scrivi(&f, "e");
+        assert_eq!(campo(&f, "Indirizzo").accessible_description().as_deref(), Some(""));
+        scrivi(&f, "sempio.lan:8006");
+        // Invio col nome vuoto: il nome si segnala e prende il fuoco; nulla si salva.
+        tasto_finestra(&f, Key::Return);
+        assert_eq!(campo(&f, "Nome").accessible_description().as_deref(), Some("Scrivi un nome"));
+        assert!(eventi.borrow().is_empty(), "{:?}", eventi.borrow());
+        scrivi(&f, "Proxmox");
+        assert_eq!(campo(&f, "Nome").accessible_description().as_deref(), Some(""), "corretto: errore via");
+        tasto_finestra(&f, Key::Return);
+        assert_eq!(*eventi.borrow(), ["salva [] [Proxmox] [esempio.lan:8006]"]);
+        assert!(ElementHandle::find_by_accessible_label(&f, "NUOVO COLLEGAMENTO").next().is_none(), "salvato: modulo chiuso");
+        // Modifica: i campi partono dai valori salvati; Esc esce dal campo, poi chiude il modulo
+        // (senza salvare), poi chiude la finestra.
+        elemento(&f, "Modifica «NAS»").invoke_accessible_default_action();
+        assert_eq!(campo(&f, "Nome").accessible_value().as_deref(), Some("NAS"));
+        assert_eq!(campo(&f, "Indirizzo").accessible_value().as_deref(), Some("http://nas.esempio.lan/admin?x=1"));
+        tasto_finestra(&f, Key::Escape);
+        assert!(ElementHandle::find_by_accessible_label(&f, "MODIFICA «NAS»").next().is_some(), "il primo Esc esce solo dal campo");
+        tasto_finestra(&f, Key::Escape);
+        assert!(ElementHandle::find_by_accessible_label(&f, "MODIFICA «NAS»").next().is_none(), "il secondo chiude il modulo");
+        assert_eq!(eventi.borrow().len(), 1, "niente salvato né chiuso: {:?}", eventi.borrow());
+        tasto_finestra(&f, Key::Escape);
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("chiudi finestra"));
+    }
+
+    fn con_modificatori_finestra(f: &FinestraImpostazioni, modificatori: &[slint::platform::Key], t: impl Into<slint::SharedString> + Clone) {
+        use slint::platform::WindowEvent;
+        for m in modificatori {
+            f.window().dispatch_event(WindowEvent::KeyPressed { text: (*m).into() });
+        }
+        tasto_finestra(f, t);
+        for m in modificatori.iter().rev() {
+            f.window().dispatch_event(WindowEvent::KeyReleased { text: (*m).into() });
+        }
+    }
+
+    /// Il testo del controllo col fuoco (id dell'elemento, «Componente::id»), "" se nessuno.
+    fn col_fuoco(f: &FinestraImpostazioni) -> String {
+        let fuoco = i_slint_core::window::WindowInner::from_pub(f.window()).focus_item.borrow().upgrade();
+        fuoco
+            .as_ref()
+            .and_then(|i| i.element_type_names_and_ids(0))
+            .and_then(|v| v.first().map(|(_, id)| id.to_string()))
+            .unwrap_or_default()
+    }
+
+    /// L'eliminazione chiede conferma dentro la finestra nominando il collegamento; il fuoco parte
+    /// da «Annulla» (Invio lì non elimina); Esc annulla; «Elimina» elimina quell'id.
+    #[test]
+    fn scheda_collegamenti_conferma_di_eliminazione() {
+        use slint::platform::Key;
+        let (f, eventi) = scheda_collegamenti();
+        let conferma = |f: &FinestraImpostazioni| ElementHandle::find_by_accessible_label(f, "Eliminare “NAS”?").next();
+        elemento(&f, "Elimina «NAS»").invoke_accessible_default_action();
+        assert_eq!(conferma(&f).and_then(|c| c.accessible_role()), Some(AccessibleRole::Groupbox));
+        assert!(col_fuoco(&f).ends_with("::annulla"), "fuoco su «{}»", col_fuoco(&f));
+        tasto_finestra(&f, Key::Return);
+        assert!(conferma(&f).is_none(), "Invio su «Annulla» chiude la conferma");
+        // Tab resta nella conferma; Esc annulla senza chiudere la finestra.
+        elemento(&f, "Elimina «NAS»").invoke_accessible_default_action();
+        tasto_finestra(&f, Key::Tab);
+        assert!(col_fuoco(&f).ends_with("::elimina"), "fuoco su «{}»", col_fuoco(&f));
+        tasto_finestra(&f, Key::Tab);
+        assert!(col_fuoco(&f).ends_with("::annulla"), "fuoco su «{}»", col_fuoco(&f));
+        tasto_finestra(&f, Key::Escape);
+        assert!(conferma(&f).is_none());
+        assert!(eventi.borrow().is_empty(), "{:?}", eventi.borrow());
+        // Un clic dentro il riquadro (sul testo) non la chiude; «Elimina» elimina.
+        elemento(&f, "Elimina «NAS»").invoke_accessible_default_action();
+        let riquadro = conferma(&f).unwrap();
+        let (pos, _) = (riquadro.absolute_position(), riquadro.size());
+        let punto = slint::LogicalPosition::new(pos.x + 30.0, pos.y + 60.0);
+        use slint::platform::{PointerEventButton, WindowEvent};
+        let button = PointerEventButton::Left;
+        // Due volte: il primo clic su elementi appena nati da un `if` il backend di prova non lo
+        // consegna sempre (visto anche nella scelta dell'icona); col secondo il controllo vale.
+        for _ in 0..2 {
+            f.window().dispatch_event(WindowEvent::PointerMoved { position: punto });
+            f.window().dispatch_event(WindowEvent::PointerPressed { position: punto, button });
+            f.window().dispatch_event(WindowEvent::PointerReleased { position: punto, button });
+        }
+        assert!(conferma(&f).is_some(), "un clic nel riquadro l'ha chiusa");
+        elemento(&f, "Elimina “NAS”").invoke_accessible_default_action();
+        assert!(conferma(&f).is_none());
+        assert_eq!(*eventi.borrow(), ["elimina nas"]);
     }
 }
