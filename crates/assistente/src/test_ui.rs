@@ -295,7 +295,7 @@ mod accessibilita {
     fn interruttore_dell_icona_nella_barra() {
         piattaforma_di_prova();
         let f = FinestraImpostazioni::new().expect("impostazioni");
-        f.set_sezione(1);
+        f.set_sezione(2);
         f.show().expect("impostazioni mostrate nel backend di prova");
         let chiesti = std::rc::Rc::new(std::cell::RefCell::new(Vec::<bool>::new()));
         let c = chiesti.clone();
@@ -319,10 +319,128 @@ mod accessibilita {
         let f = FinestraImpostazioni::new().expect("impostazioni");
         let ha = elemento(&f, "Home Assistant");
         assert_eq!(ha.accessible_role(), Some(AccessibleRole::Tab));
-        assert_eq!((ha.accessible_item_selected(), ha.accessible_item_count()), (Some(true), Some(3)));
-        f.set_sezione(2);
+        assert_eq!((ha.accessible_item_selected(), ha.accessible_item_count()), (Some(true), Some(4)));
+        f.set_sezione(3);
         assert_eq!(elemento(&f, "Informazioni").accessible_item_selected(), Some(true));
         assert_eq!(elemento(&f, "Home Assistant").accessible_item_selected(), Some(false));
+    }
+
+    /// Task 14e: Impostazioni › Dispositivi. Ogni pulsante ha il suo nome per Narrator e porta a
+    /// Rust l'azione con la riga, la chiave e la stanza; le frecce ai bordi sono spente; la scelta
+    /// dell'icona si apre, sceglie e si chiude.
+    #[test]
+    fn scheda_dispositivi_pulsanti_e_scelta_icona() {
+        use crate::{GenereUi, RigaDispositivoUi, TipoRigaUi};
+        piattaforma_di_prova();
+        let f = FinestraImpostazioni::new().expect("impostazioni");
+        f.set_sezione(1);
+        f.show().expect("impostazioni mostrate nel backend di prova");
+        let riga = |id: &str, tipo, chiave: &str, area: &str, nome: &str, su, giu| RigaDispositivoUi {
+            id: id.into(),
+            tipo,
+            chiave: chiave.into(),
+            area: area.into(),
+            nome: nome.into(),
+            sotto: "".into(),
+            icona: 6,
+            genere: GenereUi::Luce,
+            su,
+            giu,
+            puo_icona: tipo == TipoRigaUi::TestataStanza,
+            ..Default::default()
+        };
+        f.set_righe_dispositivi(ModelRc::new(VecModel::from(vec![
+            riga("h:", TipoRigaUi::TestataPreferiti, "__preferiti__", "", "Preferiti", false, false),
+            riga("s:cucina", TipoRigaUi::TestataStanza, "cucina", "cucina", "Cucina", false, true),
+            riga("d:light.a", TipoRigaUi::Dispositivo, "light.a", "cucina", "Luce A", false, true),
+            riga("d:light.b", TipoRigaUi::Dispositivo, "light.b", "cucina", "Luce B", true, false),
+            riga("s:sala", TipoRigaUi::TestataStanza, "sala", "sala", "Sala", true, false),
+        ])));
+        f.set_nomi_icone(ModelRc::new(VecModel::from(
+            crate::stanze::ICONE.iter().map(|(_, n)| slint::SharedString::from(*n)).collect::<Vec<_>>(),
+        )));
+        let azioni = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let (a1, a2) = (azioni.clone(), azioni.clone());
+        f.on_azione_dispositivo(move |azione, id, chiave, area| a1.borrow_mut().push(format!("{azione} {id} {chiave} {area}")));
+        f.on_scegli_icona(move |area, i| a2.borrow_mut().push(format!("icona {area} {i}")));
+
+        assert_eq!(elemento(&f, "Sposta su «Luce A»").accessible_enabled(), Some(false), "già in cima");
+        // I comandi stanno a destra della riga, larga quanto la colonna del contenuto (prima le
+        // righe nascevano strette e i pulsanti finivano sopra i nomi).
+        let occhio = elemento(&f, "Nascondi «Luce B»");
+        let larghezza = f.window().size().to_logical(f.window().scale_factor()).width;
+        assert!(occhio.absolute_position().x > larghezza - 80.0, "occhio a x {} su {larghezza}", occhio.absolute_position().x);
+        elemento(&f, "Sposta su «Luce B»").invoke_accessible_default_action();
+        elemento(&f, "Aggiungi «Luce A» ai preferiti").invoke_accessible_default_action();
+        elemento(&f, "Nascondi «Luce B»").invoke_accessible_default_action();
+        elemento(&f, "Nascondi la stanza «Sala»").invoke_accessible_default_action();
+        elemento(&f, "Sposta su «Sala»").invoke_accessible_default_action();
+        elemento(&f, "Comprimi «Cucina»").invoke_accessible_default_action();
+        assert_eq!(
+            *azioni.borrow(),
+            [
+                "su d:light.b light.b cucina",
+                "preferito d:light.a light.a cucina",
+                "nascondi d:light.b light.b cucina",
+                "nascondi s:sala sala sala",
+                "su s:sala sala sala",
+                "comprimi s:cucina cucina cucina",
+            ]
+        );
+        // La scelta dell'icona: si apre col nome della stanza, la scelta va a Rust e si chiude.
+        elemento(&f, "Cambia icona di «Cucina»").invoke_accessible_default_action();
+        let scelta = elemento(&f, "ICONA DI «Cucina»");
+        assert_eq!(scelta.accessible_role(), Some(AccessibleRole::Groupbox));
+        let pentola = elemento(&f, "Pentola");
+        assert_eq!(pentola.accessible_item_selected(), Some(true), "l'icona di adesso è evidenziata");
+        elemento(&f, "Videogiochi").invoke_accessible_default_action();
+        assert_eq!(azioni.borrow().last().map(String::as_str), Some("icona cucina 36"));
+        assert!(ElementHandle::find_by_accessible_label(&f, "ICONA DI «Cucina»").next().is_none(), "chiusa");
+    }
+
+    /// Task 14e: la scelta dell'icona da tastiera (frecce, Invio) ed Esc che la chiude senza
+    /// chiudere la finestra.
+    #[test]
+    fn scelta_icona_da_tastiera() {
+        use crate::{RigaDispositivoUi, TipoRigaUi};
+        use slint::platform::{Key, WindowEvent};
+        piattaforma_di_prova();
+        let f = FinestraImpostazioni::new().expect("impostazioni");
+        f.set_sezione(1);
+        f.show().expect("impostazioni mostrate nel backend di prova");
+        f.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
+        f.set_righe_dispositivi(ModelRc::new(VecModel::from(vec![RigaDispositivoUi {
+            id: "s:cucina".into(),
+            tipo: TipoRigaUi::TestataStanza,
+            chiave: "cucina".into(),
+            area: "cucina".into(),
+            nome: "Cucina".into(),
+            icona: 6,
+            puo_icona: true,
+            ..Default::default()
+        }])));
+        f.set_nomi_icone(ModelRc::new(VecModel::from(
+            crate::stanze::ICONE.iter().map(|(_, n)| slint::SharedString::from(*n)).collect::<Vec<_>>(),
+        )));
+        let eventi = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let (e1, e2) = (eventi.clone(), eventi.clone());
+        f.on_scegli_icona(move |area, i| e1.borrow_mut().push(format!("icona {area} {i}")));
+        f.on_chiudi(move || e2.borrow_mut().push("chiudi finestra".into()));
+        let tasto = |t: Key| {
+            f.window().dispatch_event(WindowEvent::KeyPressed { text: t.into() });
+            f.window().dispatch_event(WindowEvent::KeyReleased { text: t.into() });
+        };
+        elemento(&f, "Cambia icona di «Cucina»").invoke_accessible_default_action();
+        // Esc chiude la scelta, non la finestra.
+        tasto(Key::Escape);
+        assert!(ElementHandle::find_by_accessible_label(&f, "ICONA DI «Cucina»").next().is_none());
+        assert!(eventi.borrow().is_empty(), "{:?}", eventi.borrow());
+        // Di nuovo: dalla 6 (Pentola) → giù di una riga (16) e a destra (17), Invio.
+        elemento(&f, "Cambia icona di «Cucina»").invoke_accessible_default_action();
+        tasto(Key::DownArrow);
+        tasto(Key::RightArrow);
+        tasto(Key::Return);
+        assert_eq!(*eventi.borrow(), ["icona cucina 17"]);
     }
 
     fn tasto(p: &Pannello, testo: impl Into<slint::SharedString> + Clone) {

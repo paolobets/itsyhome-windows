@@ -8,7 +8,7 @@ use super::models::{HaArea, HaConfig, HaDevice, HaEntityEntry, HaState};
 use crate::types::{
     AlarmEntity, AppEntity, BaseEntity, CameraEntity, ClimateEntity, CoverEntity, FanEntity,
     HumidifierEntity, LightEntity, LockEntity, MenuData, Room, SceneEntity, SensorEntity,
-    SwitchEntity, ValveEntity,
+    StanzaCatalogo, SwitchEntity, ValveEntity, VoceCatalogo, GRUPPO_SCENE,
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -194,6 +194,21 @@ impl EntityMapper {
             }
         }
 
+        // Le scene nell'ordine salvato per il loro gruppo (Impostazioni › Dispositivi), le altre
+        // per nome.
+        let scenes: Vec<SceneEntity> = {
+            let ordine = device_orders.get(GRUPPO_SCENE).map(|v| v.as_slice()).unwrap_or(&[]);
+            let tutte: Vec<AppEntity> = scenes.into_iter().map(AppEntity::Scene).collect();
+            Self::ordered_entities(GRUPPO_SCENE, tutte, ordine)
+                .into_iter()
+                .filter_map(|e| match e {
+                    AppEntity::Scene(s) => Some(s),
+                    _ => None,
+                })
+                .collect()
+        };
+        let catalogo = Self::catalogo(area_map, &all_entities, &scenes, room_order, device_orders);
+
         // Hidden / favorites sets
         let hidden_set: HashSet<&str> = hidden_entities.iter().map(|s| s.as_str()).collect();
         let fav_set: HashSet<&str> = favorites_order.iter().map(|s| s.as_str()).collect();
@@ -315,7 +330,64 @@ impl EntityMapper {
             temp_unit: self.temp_unit.clone(),
             notification_count,
             update_count,
+            catalogo,
         }
+    }
+
+    /// Il catalogo per la gestione: le stanze come `rooms` (stesso ordine, stesso «Altro»), ma
+    /// con tutte le entità, anche quelle nascoste dall'utente, e anche le stanze che lui ha
+    /// nascosto per intero; in fondo il gruppo delle scene.
+    fn catalogo(
+        area_map: &HashMap<String, HaArea>,
+        entita: &[AppEntity],
+        scene: &[SceneEntity],
+        room_order: &[String],
+        device_orders: &HashMap<String, Vec<String>>,
+    ) -> Vec<StanzaCatalogo> {
+        let mut per_stanza: HashMap<&str, Vec<AppEntity>> = HashMap::new();
+        for e in entita {
+            // Come `rooms`: una stanza che il registro non ha più non si mostra, e nemmeno qui.
+            let area = entity_base_area_id(e).unwrap_or("");
+            if area.is_empty() || area_map.contains_key(area) {
+                per_stanza.entry(area).or_default().push(e.clone());
+            }
+        }
+        let salvate: HashSet<&str> = room_order.iter().map(String::as_str).collect();
+        let mut altre: Vec<&str> =
+            per_stanza.keys().copied().filter(|a| !a.is_empty() && !salvate.contains(a)).collect();
+        altre.sort_by(|a, b| area_map[*a].name.cmp(&area_map[*b].name));
+        let ordine: Vec<&str> = room_order
+            .iter()
+            .map(String::as_str)
+            .filter(|a| !a.is_empty() && per_stanza.contains_key(a))
+            .chain(altre)
+            .chain(per_stanza.contains_key("").then_some(""))
+            .collect();
+        let voce = |e: &AppEntity| VoceCatalogo {
+            entity_id: e.entity_id().to_owned(),
+            name: e.name().to_owned(),
+            kind: tipo_di(e).to_owned(),
+        };
+        let mut catalogo: Vec<StanzaCatalogo> = ordine
+            .into_iter()
+            .map(|area| {
+                let salvato = device_orders.get(area).map(|v| v.as_slice()).unwrap_or(&[]);
+                let ordinate = Self::ordered_entities(area, per_stanza.remove(area).unwrap_or_default(), salvato);
+                StanzaCatalogo {
+                    area_id: area.to_owned(),
+                    name: if area.is_empty() { "Altro".to_owned() } else { area_map[area].name.clone() },
+                    voci: ordinate.iter().map(voce).collect(),
+                }
+            })
+            .collect();
+        if !scene.is_empty() {
+            catalogo.push(StanzaCatalogo {
+                area_id: GRUPPO_SCENE.to_owned(),
+                name: "Scene".to_owned(),
+                voci: scene.iter().map(|s| voce(&AppEntity::Scene(s.clone()))).collect(),
+            });
+        }
+        catalogo
     }
 
     /// Restore saved ordering within a room/area, append unseen entities by name.
@@ -625,6 +697,24 @@ impl EntityMapper {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/// Il tipo di un'entità come nel tag di `AppEntity`.
+fn tipo_di(e: &AppEntity) -> &'static str {
+    match e {
+        AppEntity::Light(_) => "light",
+        AppEntity::Switch(_) => "switch",
+        AppEntity::Climate(_) => "climate",
+        AppEntity::Cover(_) => "cover",
+        AppEntity::Lock(_) => "lock",
+        AppEntity::Fan(_) => "fan",
+        AppEntity::Humidifier(_) => "humidifier",
+        AppEntity::Valve(_) => "valve",
+        AppEntity::Sensor(_) => "sensor",
+        AppEntity::Alarm(_) => "alarm",
+        AppEntity::Camera(_) => "camera",
+        AppEntity::Scene(_) => "scene",
+    }
+}
+
 fn domain_of(entity_id: &str) -> &str {
     entity_id.split('.').next().unwrap_or("")
 }
@@ -809,9 +899,10 @@ mod tests {
         let menu = mappa(&stati, &[], &[], None, &["scene.sera", "light.a"], &[], &[]);
         assert_eq!(ids(&menu.favorites), vec!["scene.sera", "light.a"]);
         assert!(matches!(menu.favorites[0], AppEntity::Scene(_)));
-        // Per il resto come prima: le scene restano in `scenes` e mai nelle stanze.
+        // Per il resto come prima: le scene restano in `scenes` e mai nelle stanze. Senza un
+        // ordine salvato vanno per nome, come i dispositivi delle stanze (Task 14e).
         let scene: Vec<&str> = menu.scenes.iter().map(|s| s.base.entity_id.as_str()).collect();
-        assert_eq!(scene, vec!["scene.sera", "scene.notte"]);
+        assert_eq!(scene, vec!["scene.notte", "scene.sera"]);
         assert!(menu.rooms.iter().all(|r| r.entities.iter().all(|e| !matches!(e, AppEntity::Scene(_)))));
     }
 
@@ -821,6 +912,47 @@ mod tests {
         let menu = mappa(&stati, &[], &[], None, &["scene.sera"], &["scene.sera"], &[]);
         assert!(menu.favorites.is_empty());
         assert!(menu.scenes.is_empty());
+    }
+
+    /// Task 14e: il catalogo della gestione ha tutte le entità (anche nascoste) e anche le stanze
+    /// nascoste per intero, nell'ordine salvato, con «Altro» e le scene in fondo; le scene seguono
+    /// l'ordine salvato per il loro gruppo anche in `scenes`.
+    #[test]
+    fn catalogo_con_le_nascoste_e_nell_ordine_salvato() {
+        let stati = [stato("light.a"), stato("light.b"), stato("switch.c"), stato("light.z"), stato("scene.sera"), stato("scene.alba")];
+        let aree = [area("cucina", "Cucina"), area("sala", "Sala")];
+        let voci = [voce("light.a", Some("cucina")), voce("light.b", Some("cucina")), voce("switch.c", Some("sala")), voce("light.z", None)];
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let mut ordini = HashMap::new();
+        ordini.insert("cucina".to_owned(), s(&["light.b", "light.a"]));
+        ordini.insert(GRUPPO_SCENE.to_owned(), s(&["scene.sera"]));
+        let (nascosti, ordine) = (s(&["light.a", "switch.c"]), s(&["sala", "cucina"]));
+        let menu = EntityMapper::new().map(
+            DatiHa { states: &stati, areas: &aree, devices: &[], entries: &voci, config: None, notification_count: 0 },
+            Preferenze { favorites_order: &[], hidden_entities: &nascosti, room_order: &ordine, device_orders: &ordini },
+        );
+        let stanze: Vec<(&str, Vec<&str>)> = menu
+            .catalogo
+            .iter()
+            .map(|st| (st.area_id.as_str(), st.voci.iter().map(|v| v.entity_id.as_str()).collect()))
+            .collect();
+        assert_eq!(
+            stanze,
+            [
+                ("sala", vec!["switch.c"]),
+                ("cucina", vec!["light.b", "light.a"]),
+                ("", vec!["light.z"]),
+                (GRUPPO_SCENE, vec!["scene.sera", "scene.alba"]),
+            ]
+        );
+        assert_eq!(menu.catalogo[0].name, "Sala");
+        assert_eq!(menu.catalogo[1].voci[0].kind, "light");
+        // Nelle stanze del pannello la sala (tutta nascosta) non c'è e la luce nascosta nemmeno.
+        let nel_pannello: Vec<&str> = menu.rooms.iter().map(|r| r.area_id.as_str()).collect();
+        assert_eq!(nel_pannello, ["cucina", ""]);
+        assert_eq!(ids(&menu.rooms[0].entities), vec!["light.b"]);
+        let scene: Vec<&str> = menu.scenes.iter().map(|s| s.base.entity_id.as_str()).collect();
+        assert_eq!(scene, ["scene.sera", "scene.alba"]);
     }
 
     #[test]

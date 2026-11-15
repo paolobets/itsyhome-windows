@@ -12,8 +12,10 @@ use crate::impostazioni::{self, Modulo, Tono};
 use crate::ottimismo::Ottimismo;
 use crate::pillola::{self, VistaPillola};
 use crate::umore::{Cervello, Segnale, Umore};
+use crate::dispositivi::{self, Riga, TipoRiga};
 use crate::{
-    AmbienteUi, FinestraImpostazioni, GenereUi, Pannello, Pillola, PreferitoUi, SensoreUi, StanzaUi, TonoUi, VoceAttesaUi,
+    AmbienteUi, FinestraImpostazioni, GenereUi, Pannello, Pillola, PreferitoUi, RigaDispositivoUi, SensoreUi, StanzaUi,
+    TipoRigaUi, TonoUi, VoceAttesaUi,
 };
 use casa_core::eventi::{Ascoltatore, CasaEvento, StatoConnessione};
 use casa_core::segreti::Segreti;
@@ -304,6 +306,54 @@ pub fn genere(p: &Preferito) -> GenereUi {
     }
 }
 
+/// Il genere (icona) di un dispositivo dal suo tipo nel catalogo.
+fn genere_di_tipo(kind: &str) -> GenereUi {
+    match kind {
+        "light" => GenereUi::Luce,
+        "switch" => GenereUi::Presa,
+        "scene" => GenereUi::Scena,
+        "climate" => GenereUi::Termo,
+        "sensor" => GenereUi::Sensore,
+        _ => GenereUi::Casa,
+    }
+}
+
+/// L'id unico di una riga di Impostazioni › Dispositivi (un'entità compare due volte: fra i
+/// preferiti e nella sua stanza).
+fn id_riga(r: &Riga) -> String {
+    match r.tipo {
+        TipoRiga::TestataPreferiti => "h:".into(),
+        TipoRiga::Preferito => format!("p:{}", r.chiave),
+        TipoRiga::TestataStanza => format!("s:{}", r.chiave),
+        TipoRiga::Dispositivo => format!("d:{}", r.chiave),
+    }
+}
+
+/// Una riga di Impostazioni › Dispositivi per l'interfaccia.
+pub fn riga_ui(r: &Riga) -> RigaDispositivoUi {
+    RigaDispositivoUi {
+        id: id_riga(r).into(),
+        tipo: match r.tipo {
+            TipoRiga::TestataPreferiti => TipoRigaUi::TestataPreferiti,
+            TipoRiga::Preferito => TipoRigaUi::Preferito,
+            TipoRiga::TestataStanza => TipoRigaUi::TestataStanza,
+            TipoRiga::Dispositivo => TipoRigaUi::Dispositivo,
+        },
+        chiave: r.chiave.as_str().into(),
+        area: r.area.as_str().into(),
+        nome: r.nome.as_str().into(),
+        sotto: r.sotto.as_str().into(),
+        icona: r.icona,
+        genere: genere_di_tipo(&r.kind),
+        nascosto: r.nascosto,
+        preferito: r.preferito,
+        su: r.su,
+        giu: r.giu,
+        compressa: r.compressa,
+        puo_icona: r.tipo == TipoRiga::TestataStanza && dispositivi::stanza_vera(&r.area),
+    }
+}
+
 /// Il tono di uno stato come lo conosce l'interfaccia (colore del pallino).
 fn tono_ui(t: Tono) -> TonoUi {
     match t {
@@ -510,6 +560,9 @@ pub struct Ponte {
     stanze: Rc<VecModel<StanzaUi>>,
     dispositivi: Rc<VecModel<PreferitoUi>>,
     stanza_aperta: RefCell<Option<String>>,
+    /// Impostazioni › Dispositivi: le righe e le stanze compresse (solo finché l'app gira).
+    righe: Rc<VecModel<RigaDispositivoUi>>,
+    compresse: RefCell<std::collections::HashSet<String>>,
     /// Ora (HH:MM) degli ultimi dati arrivati dalla casa: senza connessione la vista Casa dice di
     /// quando sono i valori che mostra.
     dati_delle: RefCell<Option<String>>,
@@ -577,6 +630,8 @@ pub fn collega(
         stanze: Rc::new(VecModel::default()),
         dispositivi: Rc::new(VecModel::default()),
         stanza_aperta: RefCell::new(None),
+        righe: Rc::new(VecModel::default()),
+        compresse: RefCell::new(std::collections::HashSet::new()),
         mostrato: RefCell::new(None),
         sveglia: slint::Timer::default(),
         attese: RefCell::new(Attese::default()),
@@ -890,6 +945,7 @@ impl Ponte {
             p.set_icona_barra(config.mostra_icona_barra);
         }
         p.set_config_non_salvata(self.errore_config.borrow().is_some());
+        self.aggiorna_righe();
         let dettagli = impostazioni::dettagli_tecnici(
             self.errore_connessione.borrow().as_deref(),
             self.errore_import.as_deref(),
@@ -898,6 +954,98 @@ impl Ponte {
         if p.get_dettagli_tecnici() != dettagli.as_str() {
             p.set_dettagli_tecnici(dettagli.into());
         }
+    }
+
+    /// Le righe di Impostazioni › Dispositivi dal catalogo degli ultimi dati e dalla configurazione
+    /// di adesso (una modifica appena fatta si vede subito, prima dei dati rimappati).
+    fn aggiorna_righe(&self) {
+        let config = self.casa.config();
+        let righe: Vec<RigaDispositivoUi> = match self.menu.borrow().as_ref() {
+            Some(m) if !m.catalogo.is_empty() => {
+                dispositivi::righe(&m.catalogo, &config, &self.compresse.borrow()).iter().map(riga_ui).collect()
+            }
+            _ => Vec::new(),
+        };
+        aggiorna_modello(&self.righe, righe);
+    }
+
+    /// Un pulsante di Impostazioni › Dispositivi: la modifica va in configurazione (salvata dal
+    /// servizio, che rimappa e consegna i dati nuovi al pannello); l'elenco si rifà subito e il
+    /// fuoco resta sul pulsante premuto, anche se la riga si è spostata.
+    fn azione_dispositivo(&self, azione: &str, id: &str, chiave: &str, area: &str) {
+        let catalogo = match self.menu.borrow().as_ref() {
+            Some(m) => m.catalogo.clone(),
+            None => return,
+        };
+        let verso = match azione {
+            "su" => -1,
+            "giu" => 1,
+            _ => 0,
+        };
+        let preferito = id.starts_with("p:");
+        match azione {
+            "comprimi" => {
+                let mut compresse = self.compresse.borrow_mut();
+                if !compresse.remove(chiave) {
+                    compresse.insert(chiave.to_owned());
+                }
+            }
+            "su" | "giu" if preferito => {
+                self.casa.aggiorna_config(|c| {
+                    dispositivi::sposta_preferito(c, &catalogo, chiave, verso);
+                });
+            }
+            "su" | "giu" if id.starts_with("s:") => {
+                self.casa.aggiorna_config(|c| {
+                    dispositivi::sposta_stanza(c, &catalogo, chiave, verso);
+                });
+            }
+            "su" | "giu" => {
+                self.casa.aggiorna_config(|c| {
+                    dispositivi::sposta_dispositivo(c, &catalogo, area, chiave, verso);
+                });
+            }
+            "preferito" => self.casa.aggiorna_config(|c| dispositivi::commuta_preferito(c, chiave)),
+            "nascondi" if id.starts_with("s:") => {
+                self.casa.aggiorna_config(|c| dispositivi::commuta_stanza_nascosta(c, &catalogo, chiave))
+            }
+            "nascondi" => self.casa.aggiorna_config(|c| dispositivi::commuta_nascosto(c, chiave)),
+            _ => return,
+        }
+        self.aggiorna_righe();
+        self.ricostruisci_preferiti();
+        // Il fuoco: sullo stesso pulsante della stessa riga; se la riga è arrivata in cima (o in
+        // fondo) quel pulsante si spegne e il fuoco va sull'altra freccia. Togliendo la stella da
+        // un preferito la sua riga sparisce: il fuoco va sulla stella dello stesso dispositivo
+        // nella sua stanza.
+        let mut riga = id.to_owned();
+        let mut quale = azione.to_owned();
+        if preferito && azione == "preferito" {
+            riga = format!("d:{chiave}");
+        }
+        if let Some(r) = (0..self.righe.row_count()).filter_map(|i| self.righe.row_data(i)).find(|r| r.id == riga.as_str()) {
+            if quale == "su" && !r.su && r.giu {
+                quale = "giu".into();
+            } else if quale == "giu" && !r.giu && r.su {
+                quale = "su".into();
+            }
+        }
+        if let Some(f) = self.finestra.borrow().upgrade() {
+            f.set_fuoco_riga(riga.into());
+            f.set_fuoco_azione(quale.into());
+            f.set_richiesta_fuoco(f.get_richiesta_fuoco().wrapping_add(1));
+        }
+    }
+
+    /// L'icona scelta per una stanza (indice in `stanze::ICONE`): in `areaIcons`, come la v2.
+    fn scegli_icona(&self, area: &str, indice: usize) {
+        let Some((emoji, _)) = crate::stanze::ICONE.get(indice) else { return };
+        self.casa.aggiorna_config(|c| {
+            dispositivi::imposta_icona(c, area, emoji);
+        });
+        // L'icona non cambia i dati della casa: elenco e pannello si rifanno da qui.
+        self.aggiorna_righe();
+        self.ricostruisci_preferiti();
     }
 
     /// `Apertura` dice come aprire la finestra delle Impostazioni (chiudendo il pannello).
@@ -932,6 +1080,19 @@ impl Ponte {
         f.set_ambienti(ModelRc::from(self.modello_ambienti.clone()));
         f.set_versione(env!("CARGO_PKG_VERSION").into());
         f.set_icona_barra_disponibile(cfg!(windows));
+        f.set_righe_dispositivi(ModelRc::from(self.righe.clone()));
+        let nomi: Vec<slint::SharedString> = crate::stanze::ICONE.iter().map(|(_, n)| (*n).into()).collect();
+        f.set_nomi_icone(ModelRc::new(VecModel::from(nomi)));
+        f.on_azione_dispositivo(|azione, id, chiave, area| {
+            if let Some(p) = ponte() {
+                p.azione_dispositivo(&azione, &id, &chiave, &area);
+            }
+        });
+        f.on_scegli_icona(|area, indice| {
+            if let Some(p) = ponte() {
+                p.scegli_icona(&area, indice.max(0) as usize);
+            }
+        });
         self.riempi_impostazioni(f);
         f.on_salva_ambiente(|id, nome, url, token| {
             let Some(ponte) = ponte() else { return "".into() };
@@ -1456,6 +1617,7 @@ pub(crate) mod test {
             temp_unit: "°C".into(),
             notification_count: 0,
             update_count: 0,
+            catalogo: vec![],
         }
     }
 
@@ -1701,6 +1863,37 @@ pub(crate) mod test {
         p.ricevi(CasaEvento::Dati(Arc::new(menu(vec![luce("light.a", false)], vec![]))));
         assert!(p.stanza_aperta.borrow().is_none());
         assert_eq!(p.dispositivi.row_count(), 0);
+    }
+
+    /// Task 14e: un pulsante di Impostazioni › Dispositivi cambia la configurazione (quella che il
+    /// servizio salva) e rifà subito l'elenco; l'icona cambia anche le stanze del pannello.
+    #[test]
+    fn la_scheda_dispositivi_cambia_la_configurazione_e_l_elenco_subito() {
+        use casa_core::types::{StanzaCatalogo, VoceCatalogo};
+        let (_spegni, p, _pillola, _c) = ponte_di_prova();
+        let voce = |id: &str| VoceCatalogo { entity_id: id.into(), name: id.into(), kind: "light".into() };
+        let mut m = menu(vec![], vec![vec![luce("light.a", false)], vec![luce("light.b", false)]]);
+        m.catalogo = vec![
+            StanzaCatalogo { area_id: "a0".into(), name: "Stanza 0".into(), voci: vec![voce("light.a")] },
+            StanzaCatalogo { area_id: "a1".into(), name: "Stanza 1".into(), voci: vec![voce("light.b")] },
+        ];
+        p.ricevi(CasaEvento::Dati(Arc::new(m)));
+        p.aggiorna_righe();
+        let ids = |p: &Ponte| (0..p.righe.row_count()).map(|i| p.righe.row_data(i).unwrap().id.to_string()).collect::<Vec<_>>();
+        assert_eq!(ids(&p), ["h:", "s:a0", "d:light.a", "s:a1", "d:light.b"]);
+        p.azione_dispositivo("su", "s:a1", "a1", "a1");
+        assert_eq!(p.casa.config().room_order, ["a1", "a0"]);
+        assert_eq!(ids(&p), ["h:", "s:a1", "d:light.b", "s:a0", "d:light.a"], "l'elenco si rifà subito");
+        p.azione_dispositivo("preferito", "d:light.a", "light.a", "a0");
+        assert_eq!(p.casa.config().favorites, ["light.a"]);
+        assert_eq!(ids(&p)[1], "p:light.a");
+        p.azione_dispositivo("nascondi", "d:light.b", "light.b", "a1");
+        assert_eq!(p.casa.config().hidden_entities, ["light.b"]);
+        p.azione_dispositivo("comprimi", "s:a1", "a1", "a1");
+        assert!(!ids(&p).contains(&"d:light.b".to_string()));
+        p.scegli_icona("a0", 36);
+        assert_eq!(p.casa.config().area_icons["a0"], crate::stanze::ICONE[36].0);
+        assert_eq!(p.stanze.row_data(0).unwrap().icona, 36, "le stanze del pannello prendono l'icona subito");
     }
 
     #[test]

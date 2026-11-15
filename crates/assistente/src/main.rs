@@ -3,6 +3,7 @@
 
 mod attenzione;
 mod avvio;
+mod dispositivi;
 mod finestra_impostazioni;
 mod finestre;
 mod gestione;

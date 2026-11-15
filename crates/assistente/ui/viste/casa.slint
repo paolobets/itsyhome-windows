@@ -100,6 +100,12 @@ component RigaStanza inherits Rectangle {
     accessible-expandable: true;
     accessible-expanded: aperta;
     accessible-action-default => { root.scelta(); }
+    // Narrator la apre anche con «Espandi» (il pulsante è espandibile).
+    accessible-action-expand => {
+        if (!aperta) {
+            root.scelta();
+        }
+    }
 
     Fuoco { chiede: anello; }
 

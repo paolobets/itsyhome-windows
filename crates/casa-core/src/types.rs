@@ -222,6 +222,27 @@ pub struct Room {
     pub entities: Vec<AppEntity>,
 }
 
+/// Un dispositivo nel catalogo della gestione (Impostazioni › Dispositivi): solo ciò che serve a
+/// riconoscerlo, niente stato (quello delle entità nascoste non è seguito).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoceCatalogo {
+    pub entity_id: String,
+    pub name: String,
+    /// Il tipo come nel tag di `AppEntity` («light», «switch», «scene»…).
+    pub kind: String,
+}
+
+/// Una stanza nel catalogo: tutte le sue entità, anche quelle nascoste dall'utente, nell'ordine
+/// salvato. `area_id` vuoto = «Altro»; `GRUPPO_SCENE` = le scene.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StanzaCatalogo {
+    pub area_id: String,
+    pub name: String,
+    pub voci: Vec<VoceCatalogo>,
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MenuData {
@@ -235,6 +256,11 @@ pub struct MenuData {
     /// come `CasaEvento::NotificaAggiunta`/`NotificaRimossa`).
     pub notification_count: u32,
     pub update_count: u32,
+    /// Tutte le stanze con tutte le entità che l'app sa mostrare, nascoste comprese (le stanze
+    /// tutte nascoste restano), nell'ordine salvato; poi «Altro» e il gruppo delle scene. Le
+    /// telecamere no (si vedono sempre). Serve alla gestione di stanze e dispositivi.
+    #[serde(default)]
+    pub catalogo: Vec<StanzaCatalogo>,
 }
 
 // ─── Config / environment ─────────────────────────────────────────────────────

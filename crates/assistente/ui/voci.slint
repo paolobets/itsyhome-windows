@@ -108,3 +108,28 @@ export struct StanzaUi {
     icona: int,
     quanti: int,
 }
+
+// Il tipo di una riga di Impostazioni › Dispositivi (vedi `dispositivi::TipoRiga`).
+export enum TipoRigaUi { testata-preferiti, preferito, testata-stanza, dispositivo }
+
+// Una riga di Impostazioni › Dispositivi, già pronta (vedi `ponte::riga_ui`).
+// `id`: unico nell'elenco («d:light.x», «p:light.x», «s:cucina», «h:»), per riportarci il fuoco;
+// `chiave`: l'entità o l'area su cui agiscono i pulsanti; `area`: la stanza della riga;
+// `icona`: per le testate di stanza l'indice in `Icone.stanze` (-1 «Altro», -2 scene);
+// `puo-icona`: la stanza è vera (icona da scegliere, si sposta); `su`/`giu`: c'è un posto dove andare.
+export struct RigaDispositivoUi {
+    id: string,
+    tipo: TipoRigaUi,
+    chiave: string,
+    area: string,
+    nome: string,
+    sotto: string,
+    icona: int,
+    genere: GenereUi,
+    nascosto: bool,
+    preferito: bool,
+    su: bool,
+    giu: bool,
+    compressa: bool,
+    puo-icona: bool,
+}

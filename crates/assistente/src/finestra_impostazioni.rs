@@ -19,7 +19,7 @@ thread_local! {
 }
 
 /// Sezione «Informazioni» delle Impostazioni (0 Home Assistant, 1 Sistema, 2 Informazioni).
-pub const SEZIONE_INFORMAZIONI: i32 = 2;
+pub const SEZIONE_INFORMAZIONI: i32 = 3;
 
 /// La prossima `apri_impostazioni` mostra questa sezione (la si chiede dal menu, prima che il
 /// pannello si chiuda e la finestra si apra).
