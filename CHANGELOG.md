@@ -81,6 +81,24 @@ Campioni da 1 s del solo processo dell'assistente; il budget delle animazioni va
 
 Nel giro 2 la pillola che chiama era salita a 10,6–10,7 MB: i suoi pulsanti usavano il carattere di sistema (un font in più in memoria). Corretto prima di questa misura.
 
+### Changed (Task 14d: dalla prima prova sulla casa vera, 15/11/2026)
+- Casa reattiva e leggera: uno `state_changed` aggiorna in memoria solo la sua entità (dal `new_state` dell'evento, come da documentazione di Home Assistant) e si pubblica solo se cambia ciò che l'app mostra; raffiche visibili in una pubblicazione (50 ms, tetto 300 ms). Stati, registri e configurazione si leggono tutti solo alla (ri)connessione, dopo gli eventi `*_registry_updated` (ora seguiti) o con uno stato illeggibile. Prima ogni evento della casa, sensori compresi, faceva rileggere tutto almeno una volta al secondo.
+- Memoria: stati mai mostrati senza attributi, risultati delle richieste presi dal messaggio invece che copiati, niente più `persistent_notification/get`.
+- Tocco: l'icona cambia subito (stato ottimistico, riusabile per ogni dispositivo); torna com'è con l'errore se il comando fallisce o se in 5 s Home Assistant non conferma.
+- Niente icona nella barra di serie (decisione di Paolo): il clic destro sulla pillola apre il menu dell'isola (Apri, Impostazioni, Informazioni, Ritira/Mostra l'isola, Esci), nativo di Windows, sotto la pillola. L'icona si accende o spegne subito da Impostazioni › Sistema › «Mostra icona nella barra». La ritirata ora si sceglie dal menu.
+- `finto_ha`: `--raffica <n>`, `--casa-grande <n>`, `--lenta <ms>` per provare una casa che si muove, pesante o lenta.
+
+### Misure del Task 14d (15/11/2026, build release, Home Assistant finto con 7 entità e 7 preferiti, `--umore calm`)
+
+| Stato | Prima (bd02ec2, 2 min) | Dopo (5 min) | Obiettivo |
+|---|---|---|---|
+| Riposo | 0,022%, 10,6 MB | 0,015% (p95 0,13, max 0,39), 8,0–8,2 MB | ≤ 0,1% |
+| Riposo con 20 `state_changed`/s | 0,074%, 10,7–11,2 MB | 0,053% (p95 0,26, max 0,39), 8,3–8,4 MB | ≤ 0,05%, RAM +≤ 1 MB |
+| Casa grande (807 entità) con 20/s, 2 min | 0,182%, 15,0–17,5 MB | 0,046%, 11,1–11,3 MB | |
+| Pillola che chiama e pulsa¹ | 0,53% (giro 2) | 0,557% (p95 0,91, max 1,43), 9,4–9,5 MB | ≤ 1% |
+
+Tocco su una casa lenta (`--lenta 800`): l'icona cambia sullo schermo 32–51 ms dopo l'invocazione (prima 1150 ms); la conferma arriva dopo circa 880 ms e non cambia più nulla. Con la casa veloce la conferma arriva in circa 60 ms. Sotto lo 0,05% con la raffica non si scende di molto: un client WebSocket minimo che riceve gli stessi eventi e non fa altro costa già circa 140 µs di CPU per messaggio su questo PC.
+
 ---
 
 ## [2.1.2] - 2026-03-24
