@@ -196,6 +196,7 @@ export component VistaCasa inherits Rectangle {
     property <length> alto-card: min(76px, (self.height - testata - spazio) / 2);
     property <length> passo-riga: alto-card + spazio;
     property <length> passo-stanza: 32px;
+    property <length> bordo: 5px;
     property <bool> in-stanza: stanza-aperta >= 0 && stanza-aperta < stanze.length;
     // Senza connessione la testata dice di quando sono i dati mostrati.
     property <string> riga-testata: casa-pronta || dati-delle == "" ? stato-casa : stato-casa + " · dati delle " + dati-delle;
@@ -227,6 +228,16 @@ export component VistaCasa inherits Rectangle {
             tenue: !root.casa-pronta;
             scelta => { root.scegli-stanza(i); }
         }
+    }
+
+    // Barretta di scorrimento (3 px) quando le stanze non stanno tutte: dice che ce ne sono altre.
+    if con-stanze && stanze.length * passo-stanza > elenco-stanze.height + 0.5px: Rectangle {
+        x: largo-stanze + 4px;
+        y: elenco-stanze.y + (-elenco-stanze.content-y / (stanze.length * passo-stanza)) * elenco-stanze.height;
+        width: 3px;
+        height: elenco-stanze.height * elenco-stanze.height / (stanze.length * passo-stanza);
+        border-radius: self.width / 2;
+        background: Tema.traccia;
     }
 
     // La stanza col fuoco da tastiera scorre in vista.
@@ -277,17 +288,19 @@ export component VistaCasa inherits Rectangle {
         premuto => { root.riprova-casa(); }
     }
 
+    // La griglia sporge di `bordo` su ogni lato: l'anello del fuoco, fuori dalla card, non viene
+    // tagliato dal ritaglio della Flickable.
     griglia := Flickable {
-        x: griglia-x;
-        y: testata;
-        width: griglia-l;
-        height: parent.height - testata;
-        content-height: max(self.height, ceil(voci.length / colonne) * passo-riga - spazio);
-        interactive: ceil(voci.length / colonne) * passo-riga - spazio > self.height + 0.5px;
+        x: griglia-x - bordo;
+        y: testata - bordo;
+        width: griglia-l + 2 * bordo;
+        height: parent.height - testata + 2 * bordo;
+        content-height: max(self.height, ceil(voci.length / colonne) * passo-riga - spazio + 2 * bordo);
+        interactive: ceil(voci.length / colonne) * passo-riga - spazio + 2 * bordo > self.height + 0.5px;
 
         for voce[i] in voci: Dispositivo {
-            x: mod(i, colonne) * (lato + spazio);
-            y: floor(i / colonne) * passo-riga;
+            x: bordo + mod(i, colonne) * (lato + spazio);
+            y: bordo + floor(i / colonne) * passo-riga;
             width: lato;
             height: alto-card;
             voce: voce;
@@ -296,13 +309,23 @@ export component VistaCasa inherits Rectangle {
         }
     }
 
+    // Lo stesso per i dispositivi di una stanza con più di due righe.
+    if griglia.content-height > griglia.height + 0.5px: Rectangle {
+        x: parent.width + 2px;
+        y: griglia.y + (-griglia.content-y / griglia.content-height) * griglia.height;
+        width: 3px;
+        height: griglia.height * griglia.height / griglia.content-height;
+        border-radius: self.width / 2;
+        background: Tema.traccia;
+    }
+
     // La card col fuoco da tastiera scorre in vista (una stanza con più di due righe).
     changed fuoco => {
         if (fuoco >= 0) {
             if (floor(fuoco / colonne) * passo-riga + griglia.content-y < 0) {
                 griglia.content-y = -floor(fuoco / colonne) * passo-riga;
-            } else if (floor(fuoco / colonne) * passo-riga + alto-card + griglia.content-y > griglia.height) {
-                griglia.content-y = griglia.height - floor(fuoco / colonne) * passo-riga - alto-card;
+            } else if (floor(fuoco / colonne) * passo-riga + alto-card + 2 * bordo + griglia.content-y > griglia.height) {
+                griglia.content-y = griglia.height - floor(fuoco / colonne) * passo-riga - alto-card - 2 * bordo;
             }
         }
     }
