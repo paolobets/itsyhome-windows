@@ -9,6 +9,7 @@ mod gestione;
 mod impostazioni;
 mod layout;
 mod orologio;
+mod ottimismo;
 mod pannello;
 mod pc_stats;
 mod pillola;

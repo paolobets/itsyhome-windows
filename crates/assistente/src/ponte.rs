@@ -9,6 +9,7 @@ use crate::attenzione::{
 };
 use crate::sistema::{autoavvio, servizi};
 use crate::impostazioni::{self, Modulo, Tono};
+use crate::ottimismo::Ottimismo;
 use crate::pillola::{self, VistaPillola};
 use crate::umore::{Cervello, Segnale, Umore};
 use crate::{AmbienteUi, FinestraImpostazioni, GenereUi, Pannello, Pillola, PreferitoUi, SensoreUi, TonoUi, VoceAttesaUi};
@@ -279,6 +280,28 @@ fn frazione_arco(s: &SensorEntity) -> f32 {
     frazione.clamp(0.0, 1.0)
 }
 
+/// Acceso o spento, per i dispositivi che un tocco accende e spegne (il valore dello stato
+/// ottimistico); `None` per tutto il resto.
+pub fn acceso_di(e: &AppEntity) -> Option<bool> {
+    match e {
+        AppEntity::Light(l) => Some(l.is_on),
+        AppEntity::Switch(s) => Some(s.is_on),
+        _ => None,
+    }
+}
+
+/// Un preferito con lo stato ottimistico al posto di quello vero, se ce n'è uno.
+pub fn con_ottimismo(mut p: Preferito, ottimismo: &Ottimismo<bool>) -> Preferito {
+    if let Some(&acceso) = ottimismo.atteso(&p.entity_id) {
+        p.acceso = acceso;
+        p.valore = if acceso { "on" } else { "off" }.into();
+    }
+    p
+}
+
+/// L'errore di un tocco che Home Assistant non ha confermato in tempo.
+pub const ERRORE_SENZA_CONFERMA: &str = "Home Assistant non ha confermato il comando";
+
 /// L'entità con questo id fra preferiti, stanze e scene (per il comando di un tocco).
 pub fn entita(menu: &MenuData, entity_id: &str) -> Option<AppEntity> {
     menu.favorites
@@ -398,6 +421,14 @@ pub struct Ponte {
     /// Apre la finestra delle Impostazioni chiudendo il pannello (lo collega `Apertura`): icona
     /// del dock e pulsante «Impostazioni» della voce del token.
     apri_impostazioni: RefCell<Option<Box<dyn Fn()>>>,
+    /// Acceso/spento mostrati subito dopo un tocco, finché Home Assistant non conferma.
+    ottimismo: RefCell<Ottimismo<bool>>,
+    /// Suona alla scadenza della prossima attesa di conferma (solo se ce ne sono).
+    sveglia_ottimismo: slint::Timer,
+    /// `ITSYHOME_TRACCIA_TOCCO=1`: tempi del tocco sullo stderr (icona cambiata nel modello,
+    /// conferma di Home Assistant). Il fotogramma si misura da fuori, sulle foto della zona: il
+    /// renderer software di Skia non chiama il notificatore di rendering.
+    traccia_tocco: bool,
 }
 
 pub fn collega(
@@ -436,6 +467,9 @@ pub fn collega(
         prova: Cell::new(0),
         finestra: RefCell::new(slint::Weak::default()),
         apri_impostazioni: RefCell::new(None),
+        ottimismo: RefCell::new(Ottimismo::default()),
+        sveglia_ottimismo: slint::Timer::default(),
+        traccia_tocco: std::env::var_os("ITSYHOME_TRACCIA_TOCCO").is_some_and(|v| v == "1"),
     });
     PONTE.with(|p| *p.borrow_mut() = Some(ponte.clone()));
     // I pulsanti della pillola allargata agiscono sulla voce che sta chiamando; «Apri» (un
@@ -518,6 +552,10 @@ impl Ponte {
                 if let Some(d) = dettaglio_stato(&s) {
                     *self.errore_connessione.borrow_mut() = Some(d);
                 }
+                // Senza connessione nessuna conferma può arrivare: i tocchi in attesa tornano veri.
+                if s != StatoConnessione::Connesso && self.ottimismo.borrow_mut().svuota() {
+                    self.sveglia_ottimismo.stop();
+                }
                 *self.stato.borrow_mut() = s;
                 // Con la connessione cambia anche se i preferiti si possono toccare.
                 self.ricostruisci_preferiti();
@@ -527,6 +565,13 @@ impl Ponte {
             }
             CasaEvento::Dati(menu) => {
                 self.appena_connesso.set(false);
+                let vero = |id: &str| entita(&menu, id).as_ref().and_then(acceso_di);
+                let confermati = self.ottimismo.borrow_mut().conferma(vero, ora);
+                if self.traccia_tocco {
+                    for (id, dopo) in &confermati {
+                        eprintln!("tocco {id}: confermato da Home Assistant dopo {} ms", dopo.as_millis());
+                    }
+                }
                 *self.menu.borrow_mut() = Some(menu);
                 *self.dati_delle.borrow_mut() = Some(adesso_hh_mm());
                 self.ricostruisci_preferiti();
@@ -549,6 +594,8 @@ impl Ponte {
                 } else {
                     let errore = errore.unwrap_or_else(|| "comando non riuscito".into());
                     eprintln!("comando su {entity_id} non riuscito: {errore}");
+                    // L'icona torna com'è davvero, con l'errore.
+                    self.ottimismo.borrow_mut().fallito(&entity_id);
                     self.errori.borrow_mut().insert(entity_id, errore);
                     self.cervello.borrow_mut().ricevi(Segnale::ComandoFallito, ora);
                 }
@@ -625,9 +672,11 @@ impl Ponte {
             let menu = self.menu.borrow();
             let Some(menu) = menu.as_ref() else { return };
             let errori = self.errori.borrow();
+            let ottimismo = self.ottimismo.borrow();
             let voci: Vec<PreferitoUi> = preferiti_ui(menu, MASSIMO_PREFERITI)
                 .into_iter()
-                .map(|mut p| {
+                .map(|p| {
+                    let mut p = con_ottimismo(p, &ottimismo);
                     p.errore = errori.get(&p.entity_id).cloned();
                     voce_ui(&p, connesso)
                 })
@@ -954,16 +1003,54 @@ impl Ponte {
         if !self.connesso() {
             return;
         }
-        let comando = {
+        let ora = Instant::now();
+        let (comando, acceso) = {
             let menu = self.menu.borrow();
             let Some(menu) = menu.as_ref() else { return };
-            entita(menu, entity_id).as_ref().and_then(comando_per)
+            let e = entita(menu, entity_id);
+            (e.as_ref().and_then(comando_per), e.as_ref().and_then(acceso_di))
         };
         let Some((dominio, servizio)) = comando else { return };
-        if self.errori.borrow_mut().remove(entity_id).is_some() {
-            self.ricostruisci_preferiti();
+        self.errori.borrow_mut().remove(entity_id);
+        // Stato ottimistico: l'icona cambia adesso, rispetto a come si vede adesso (anche se un
+        // tocco precedente aspetta ancora la conferma).
+        if let Some(vero) = acceso {
+            let mostrato = self.ottimismo.borrow().atteso(entity_id).copied().unwrap_or(vero);
+            self.ottimismo.borrow_mut().tocca(entity_id, !mostrato, ora);
+            self.arma_sveglia_ottimismo();
+        }
+        self.ricostruisci_preferiti();
+        if self.traccia_tocco && acceso.is_some() {
+            eprintln!("tocco {entity_id}: icona cambiata nel modello dopo {} µs", ora.elapsed().as_micros());
         }
         self.casa.comando(entity_id, dominio, servizio);
+    }
+
+    /// Una sveglia singola alla prossima scadenza di un tocco non confermato.
+    fn arma_sveglia_ottimismo(&self) {
+        match self.ottimismo.borrow().prossima_scadenza(Instant::now()) {
+            Some(tra) => self.sveglia_ottimismo.start(slint::TimerMode::SingleShot, tra + MARGINE_SVEGLIA, || {
+                if let Some(p) = ponte() {
+                    p.ottimismo_scaduto();
+                }
+            }),
+            None => self.sveglia_ottimismo.stop(),
+        }
+    }
+
+    /// Tocchi che Home Assistant non ha confermato in tempo: tornano allo stato vero, con l'errore.
+    fn ottimismo_scaduto(&self) {
+        let scaduti = self.ottimismo.borrow_mut().scadute(Instant::now());
+        if !scaduti.is_empty() {
+            for id in scaduti {
+                eprintln!("comando su {id} non confermato entro {} s", crate::ottimismo::ATTESA_CONFERMA.as_secs());
+                self.errori.borrow_mut().insert(id, ERRORE_SENZA_CONFERMA.into());
+            }
+            self.cervello.borrow_mut().ricevi(Segnale::ComandoFallito, Instant::now());
+            self.ricostruisci_preferiti();
+            self.aggiorna_umore();
+        }
+        self.arma_sveglia_ottimismo();
     }
 
     // ─── Voci «In attesa» ────────────────────────────────────────────────────
@@ -1266,6 +1353,28 @@ pub(crate) mod test {
             disponibile: true,
             errore: None,
         }
+    }
+
+    #[test]
+    fn lo_stato_ottimistico_cambia_icona_e_testo() {
+        let mut o = Ottimismo::default();
+        let spenta = p("light.a", Tipo::Interruttore, false, "off");
+        assert_eq!(con_ottimismo(spenta.clone(), &o), spenta, "senza attesa resta vera");
+        o.tocca("light.a", true, Instant::now());
+        let mostrata = con_ottimismo(spenta, &o);
+        assert!(mostrata.acceso);
+        assert_eq!(testo_stato(&mostrata), "Acceso");
+        assert!(voce_ui(&mostrata, true).acceso);
+        let altra = p("switch.b", Tipo::Interruttore, false, "off");
+        assert!(!con_ottimismo(altra, &o).acceso, "solo il dispositivo toccato");
+    }
+
+    #[test]
+    fn acceso_solo_per_luci_e_interruttori() {
+        assert_eq!(acceso_di(&luce("light.a", true)), Some(true));
+        assert_eq!(acceso_di(&interruttore("switch.b", false)), Some(false));
+        assert_eq!(acceso_di(&scena("scene.c")), None);
+        assert_eq!(acceso_di(&sensore("sensor.t", "21", Some("°C"))), None);
     }
 
     #[test]
