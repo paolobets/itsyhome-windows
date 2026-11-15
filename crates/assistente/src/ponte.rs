@@ -425,6 +425,9 @@ pub struct Ponte {
     ottimismo: RefCell<Ottimismo<bool>>,
     /// Suona alla scadenza della prossima attesa di conferma (solo se ce ne sono).
     sveglia_ottimismo: slint::Timer,
+    /// Per entità, i numeri dei tocchi i cui comandi aspettano l'esito, in ordine (0 = comando
+    /// senza attesa): l'esito di un comando vale solo per la sua attesa.
+    comandi_in_volo: RefCell<HashMap<String, std::collections::VecDeque<u64>>>,
     /// `ITSYHOME_TRACCIA_TOCCO=1`: tempi del tocco sullo stderr (icona cambiata nel modello,
     /// conferma di Home Assistant). Il fotogramma si misura da fuori, sulle foto della zona: il
     /// renderer software di Skia non chiama il notificatore di rendering.
@@ -469,6 +472,7 @@ pub fn collega(
         apri_impostazioni: RefCell::new(None),
         ottimismo: RefCell::new(Ottimismo::default()),
         sveglia_ottimismo: slint::Timer::default(),
+        comandi_in_volo: RefCell::new(HashMap::new()),
         traccia_tocco: std::env::var_os("ITSYHOME_TRACCIA_TOCCO").is_some_and(|v| v == "1"),
     });
     PONTE.with(|p| *p.borrow_mut() = Some(ponte.clone()));
@@ -555,6 +559,7 @@ impl Ponte {
                 // Senza connessione nessuna conferma può arrivare: i tocchi in attesa tornano veri.
                 if s != StatoConnessione::Connesso && self.ottimismo.borrow_mut().svuota() {
                     self.sveglia_ottimismo.stop();
+                    self.comandi_in_volo.borrow_mut().clear();
                 }
                 *self.stato.borrow_mut() = s;
                 // Con la connessione cambia anche se i preferiti si possono toccare.
@@ -588,14 +593,22 @@ impl Ponte {
                 self.attese_cambiate();
             }
             CasaEvento::Esito { entity_id, ok, errore } => {
+                // I comandi di un'entità tornano nell'ordine in cui sono partiti.
+                let numero = self
+                    .comandi_in_volo
+                    .borrow_mut()
+                    .get_mut(&entity_id)
+                    .and_then(|coda| coda.pop_front())
+                    .unwrap_or(0);
                 if ok {
                     self.errori.borrow_mut().remove(&entity_id);
                     self.cervello.borrow_mut().ricevi(Segnale::ComandoRiuscito, ora);
                 } else {
                     let errore = errore.unwrap_or_else(|| "comando non riuscito".into());
                     eprintln!("comando su {entity_id} non riuscito: {errore}");
-                    // L'icona torna com'è davvero, con l'errore.
-                    self.ottimismo.borrow_mut().fallito(&entity_id);
+                    // L'icona torna com'è davvero, con l'errore; l'attesa di un tocco più recente
+                    // (un secondo tocco già partito) resta.
+                    self.ottimismo.borrow_mut().fallito(&entity_id, numero);
                     self.errori.borrow_mut().insert(entity_id, errore);
                     self.cervello.borrow_mut().ricevi(Segnale::ComandoFallito, ora);
                 }
@@ -1024,9 +1037,12 @@ impl Ponte {
         self.errori.borrow_mut().remove(entity_id);
         // Stato ottimistico: l'icona cambia adesso, rispetto a come si vede adesso (anche se un
         // tocco precedente aspetta ancora la conferma).
+        // Un tocco che riporta al valore vero (un doppio tocco con `toggle`) non aspetta nulla:
+        // HA non ripubblica dati uguali.
         if let Some(vero) = acceso {
             let mostrato = self.ottimismo.borrow().atteso(entity_id).copied().unwrap_or(vero);
-            self.ottimismo.borrow_mut().tocca(entity_id, !mostrato, ora);
+            let numero = self.ottimismo.borrow_mut().tocca(entity_id, !mostrato, &vero, ora);
+            self.comandi_in_volo.borrow_mut().entry(entity_id.to_owned()).or_default().push_back(numero);
             self.arma_sveglia_ottimismo();
         }
         self.ricostruisci_preferiti();
@@ -1041,7 +1057,7 @@ impl Ponte {
         match self.ottimismo.borrow().prossima_scadenza(Instant::now()) {
             Some(tra) => self.sveglia_ottimismo.start(slint::TimerMode::SingleShot, tra + MARGINE_SVEGLIA, || {
                 if let Some(p) = ponte() {
-                    p.ottimismo_scaduto();
+                    p.ottimismo_scaduto(Instant::now());
                 }
             }),
             None => self.sveglia_ottimismo.stop(),
@@ -1049,14 +1065,26 @@ impl Ponte {
     }
 
     /// Tocchi che Home Assistant non ha confermato in tempo: tornano allo stato vero, con l'errore.
-    fn ottimismo_scaduto(&self) {
-        let scaduti = self.ottimismo.borrow_mut().scadute(Instant::now());
-        if !scaduti.is_empty() {
-            for id in scaduti {
+    fn ottimismo_scaduto(&self, ora: Instant) {
+        let scadute = {
+            let menu = self.menu.borrow();
+            let vero = |id: &str| menu.as_ref().and_then(|m| entita(m, id)).as_ref().and_then(acceso_di);
+            self.ottimismo.borrow_mut().scadute(ora, vero)
+        };
+        if self.traccia_tocco {
+            for (id, dopo) in &scadute.confermate {
+                eprintln!("tocco {id}: già com'era chiesto alla scadenza ({} ms)", dopo.as_millis());
+            }
+        }
+        if !scadute.confermate.is_empty() {
+            self.ricostruisci_preferiti();
+        }
+        if !scadute.fallite.is_empty() {
+            for id in scadute.fallite {
                 eprintln!("comando su {id} non confermato entro {} s", crate::ottimismo::ATTESA_CONFERMA.as_secs());
                 self.errori.borrow_mut().insert(id, ERRORE_SENZA_CONFERMA.into());
             }
-            self.cervello.borrow_mut().ricevi(Segnale::ComandoFallito, Instant::now());
+            self.cervello.borrow_mut().ricevi(Segnale::ComandoFallito, ora);
             self.ricostruisci_preferiti();
             self.aggiorna_umore();
         }
@@ -1365,12 +1393,91 @@ pub(crate) mod test {
         }
     }
 
+    /// Un ponte vero sul backend di prova di Slint, con un `CasaService` che non si connette (i
+    /// comandi tornano «non connesso» a un ascoltatore muto), la casa data per connessa e una
+    /// luce spenta fra i preferiti.
+    /// Lascia il ponte del thread anche se il test fallisce: distrutto dal thread_local a fine
+    /// thread, il `CasaService` resterebbe appeso nella sua `join`.
+    struct Spegni;
+    impl Drop for Spegni {
+        fn drop(&mut self) {
+            spegni();
+        }
+    }
+
+    fn ponte_di_prova() -> (Spegni, Rc<Ponte>, crate::Pillola, tempfile::TempDir) {
+        use casa_core::config::ConfigStore;
+        use casa_core::segreti::MemoriaSegreti;
+        crate::test_ui::piattaforma_di_prova();
+        let cartella = tempfile::tempdir().unwrap();
+        let segreti: Arc<dyn Segreti> = Arc::new(MemoriaSegreti::new());
+        let store = Arc::new(ConfigStore::apri(cartella.path()));
+        let casa = Rc::new(CasaService::avvia(store, segreti.clone(), Arc::new(|_| {})));
+        let pillola = crate::Pillola::new().unwrap();
+        let cervello = Rc::new(RefCell::new(Cervello::new(Instant::now())));
+        let p = collega(casa, segreti, &pillola, cervello, None, None);
+        p.ricevi(CasaEvento::Stato(StatoConnessione::Connesso));
+        p.ricevi(CasaEvento::Dati(Arc::new(menu(vec![luce("light.a", false)], vec![]))));
+        (Spegni, p, pillola, cartella)
+    }
+
+    fn stato_mostrato(p: &Ponte) -> String {
+        p.preferiti.row_data(0).unwrap().stato.to_string()
+    }
+
+    /// Giro di correzioni 1, rilievo 1: due tocchi rapidi con `toggle` riportano la luce com'era.
+    /// HA non ripubblica nulla (il `MenuData` è uguale), quindi nessuna conferma arriva: alla
+    /// scadenza non deve comparire un falso «non ha confermato».
+    #[test]
+    fn doppio_tocco_senza_falso_errore() {
+        let (_spegni, p, _pillola, _c) = ponte_di_prova();
+        let t = Instant::now();
+        p.tocca("light.a");
+        assert_eq!(stato_mostrato(&p), "Acceso", "il primo tocco si vede subito");
+        p.tocca("light.a");
+        assert_eq!(stato_mostrato(&p), "Spento");
+        p.ottimismo_scaduto(t + Duration::from_secs(6));
+        assert_eq!(stato_mostrato(&p), "Spento", "nessun errore: la luce è com'era chiesto");
+        assert!(p.errori.borrow().is_empty());
+    }
+
+    /// Rilievo 8: il cablaggio della scadenza nel ponte. Senza conferma, a 5 s la card torna vera
+    /// con l'errore; la conferma che arriva prima chiude l'attesa senza errore.
+    #[test]
+    fn tocco_senza_conferma_torna_vero_con_l_errore() {
+        let (_spegni, p, _pillola, _c) = ponte_di_prova();
+        let t = Instant::now();
+        p.tocca("light.a");
+        p.ottimismo_scaduto(t + Duration::from_secs(4));
+        assert_eq!(stato_mostrato(&p), "Acceso", "prima dei 5 s resta l'attesa");
+        p.ottimismo_scaduto(t + Duration::from_secs(6));
+        assert_eq!(stato_mostrato(&p), "Non riuscito");
+        assert_eq!(p.errori.borrow().get("light.a").map(String::as_str), Some(ERRORE_SENZA_CONFERMA));
+        // Un tocco nuovo toglie l'errore; la conferma lo chiude.
+        p.tocca("light.a");
+        assert_eq!(stato_mostrato(&p), "Acceso");
+        p.ricevi(CasaEvento::Dati(Arc::new(menu(vec![luce("light.a", true)], vec![]))));
+        p.ottimismo_scaduto(Instant::now() + Duration::from_secs(60));
+        assert_eq!(stato_mostrato(&p), "Acceso");
+        assert!(p.errori.borrow().is_empty());
+    }
+
+    /// Rilievo 8: un esito negativo toglie l'attesa e mostra l'errore.
+    #[test]
+    fn esito_negativo_toglie_l_attesa() {
+        let (_spegni, p, _pillola, _c) = ponte_di_prova();
+        p.tocca("light.a");
+        p.ricevi(CasaEvento::Esito { entity_id: "light.a".into(), ok: false, errore: Some("guasto".into()) });
+        assert_eq!(stato_mostrato(&p), "Non riuscito");
+        assert!(p.ottimismo.borrow().atteso("light.a").is_none());
+    }
+
     #[test]
     fn lo_stato_ottimistico_cambia_icona_e_testo() {
         let mut o = Ottimismo::default();
         let spenta = p("light.a", Tipo::Interruttore, false, "off");
         assert_eq!(con_ottimismo(spenta.clone(), &o), spenta, "senza attesa resta vera");
-        o.tocca("light.a", true, Instant::now());
+        o.tocca("light.a", true, &false, Instant::now());
         let mostrata = con_ottimismo(spenta, &o);
         assert!(mostrata.acceso);
         assert_eq!(testo_stato(&mostrata), "Acceso");
