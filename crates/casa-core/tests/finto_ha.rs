@@ -1,5 +1,5 @@
 //! `CasaService` contro un Home Assistant finto (WebSocket locale su 127.0.0.1:0).
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -35,6 +35,10 @@ struct Contatori {
     /// Ritardo della risposta al registro delle stanze (le altre letture restano in volo).
     ritardo_aree_ms: AtomicU64,
     letture_registri: AtomicUsize,
+    /// Quante risposte a `get_states` rifiutare ancora (errore di HA).
+    stati_da_rifiutare: AtomicUsize,
+    /// La presa nascosta dall'utente nel registro delle entità (`hidden_by: "user"`).
+    presa_nascosta: AtomicBool,
 }
 
 struct FintoHa {
@@ -125,13 +129,22 @@ fn risposta(v: &Value, contatori: &Contatori) -> Value {
     match v["type"].as_str().unwrap_or("") {
         "get_states" => {
             contatori.get_states.fetch_add(1, Ordering::SeqCst);
+            let da_rifiutare = &contatori.stati_da_rifiutare;
+            if da_rifiutare.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_ok() {
+                return json!({ "id": id, "type": "result", "success": false,
+                               "error": { "code": "unknown_error", "message": "Errore finto" } });
+            }
             ok(json!([stato("light.cucina", "on", "Luce cucina"), stato("switch.presa", "off", "Presa")]))
         }
         "config/area_registry/list" => ok(json!([{ "area_id": "cucina", "name": "Cucina" }])),
         "config/device_registry/list" => ok(json!([])),
         "config/entity_registry/list" => {
             contatori.letture_registri.fetch_add(1, Ordering::SeqCst);
-            ok(json!([entry("light.cucina", "cucina"), entry("switch.presa", "cucina")]))
+            let mut presa = entry("switch.presa", "cucina");
+            if contatori.presa_nascosta.load(Ordering::SeqCst) {
+                presa["hidden_by"] = json!("user");
+            }
+            ok(json!([entry("light.cucina", "cucina"), presa]))
         }
         "get_config" => ok(json!({ "unit_system": { "temperature": "°C" }, "location_name": "Casa" })),
         "persistent_notification/get" => ok(json!([])),
@@ -515,21 +528,61 @@ async fn entita_tolta_esce_e_nuova_entra() {
 }
 
 #[tokio::test]
-async fn eventi_dei_registri_rileggono_una_volta_dopo_la_raffica() {
+async fn eventi_dei_registri_e_della_configurazione_rileggono_una_volta() {
     let ha = FintoHa::avvia().await;
     let mut p = prepara(&ha.url, Some(TOKEN));
     p.servizio.connetti_attivo();
     aspetta_dati(&mut p).await;
 
-    for tipo in ["entity_registry_updated", "device_registry_updated", "area_registry_updated", "entity_registry_updated"] {
+    // Quattro eventi in un colpo: una sola rilettura. I tempi esatti dell'attesa (1 s dall'ultimo,
+    // tetto 5 s) li prova `servizio::test::attesa_con_tetto` senza orologio vero; qui si aspetta
+    // la rilettura senza margini stretti e si controlla che non ne arrivi una seconda.
+    for tipo in ["entity_registry_updated", "device_registry_updated", "area_registry_updated", "core_config_updated"] {
         ha.manda_evento(tipo, json!({ "action": "update" }));
-        sleep(Duration::from_millis(100)).await;
     }
-    sleep(Duration::from_millis(600)).await;
-    assert_eq!(ha.letture_registri(), 1, "non prima di 1 s dall'ultimo evento");
-    sleep(Duration::from_millis(900)).await;
-    assert_eq!(ha.letture_registri(), 2);
+    aspetta(|| ha.letture_registri() == 2, "rilettura dopo gli eventi").await;
+    sleep(Duration::from_millis(1500)).await;
+    assert_eq!(ha.letture_registri(), 2, "una sola rilettura per la raffica");
     assert_eq!(ha.get_states(), 2);
+}
+
+/// Aspetta (al più 10 s) che `fatto` diventi vero.
+async fn aspetta(fatto: impl Fn() -> bool, cosa: &str) {
+    let fine = Instant::now() + Duration::from_secs(10);
+    while !fatto() {
+        assert!(Instant::now() < fine, "{cosa}: non è successo entro 10 s");
+        sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// Revisione del 14d, rilievo 2: se la prima lettura fallisce si riprova da soli, senza
+/// aspettare un evento o una riconnessione.
+#[tokio::test]
+async fn prima_lettura_fallita_si_riprova() {
+    let ha = FintoHa::avvia().await;
+    ha.contatori.stati_da_rifiutare.store(1, Ordering::SeqCst);
+    let mut p = prepara(&ha.url, Some(TOKEN));
+    p.servizio.connetti_attivo();
+    let d = aspetta_dati(&mut p).await;
+    assert_eq!(conta_entita(&d), 2);
+    assert_eq!(ha.get_states(), 2);
+    assert_eq!(ha.connessioni(), 1, "riprova sulla stessa connessione");
+}
+
+/// Rilievo 8: un'entità nascosta nel registro ha lo stato alleggerito; quando torna visibile
+/// (evento del registro) ricompare con gli attributi interi (qui il nome, da `friendly_name`).
+#[tokio::test]
+async fn entita_nascosta_nel_registro_torna_con_gli_attributi() {
+    let ha = FintoHa::avvia().await;
+    ha.contatori.presa_nascosta.store(true, Ordering::SeqCst);
+    let mut p = prepara(&ha.url, Some(TOKEN));
+    p.servizio.connetti_attivo();
+    assert_eq!(conta_entita(&*aspetta_dati(&mut p).await), 1, "presa nascosta");
+    ha.contatori.presa_nascosta.store(false, Ordering::SeqCst);
+    ha.manda_evento("entity_registry_updated", json!({ "action": "update", "entity_id": "switch.presa" }));
+    let d = aspetta_dati(&mut p).await;
+    let presa = d.rooms.iter().flat_map(|r| &r.entities).find(|e| e.entity_id() == "switch.presa").expect("presa");
+    assert_eq!(presa.name(), "Presa", "attributi interi, non lo stato alleggerito");
 }
 
 #[tokio::test]

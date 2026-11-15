@@ -36,14 +36,18 @@ pub enum EventoWs {
     StatoCambiato { entity_id: String, nuovo: Option<HaState> },
     /// `state_changed` con uno stato nuovo che non si riesce a leggere: si rilegge tutto.
     StatoIlleggibile,
-    /// `area_registry_updated`, `device_registry_updated` o `entity_registry_updated`.
-    RegistroCambiato,
+    /// Un registro (`area_registry_updated`, `device_registry_updated`, `entity_registry_updated`)
+    /// o la configurazione (`core_config_updated`: unità di temperatura) sono cambiati.
+    DaRileggere,
     Notifiche { tipo: Aggiornamento, notifiche: Vec<NotificaHa> },
 }
 
-/// Gli eventi dei registri a cui ci si iscrive (oltre a `state_changed`). Sono nella lista degli
-/// eventi che anche un utente non amministratore può seguire (`SUBSCRIBE_ALLOWLIST` di HA).
-pub const EVENTI_REGISTRI: [&str; 3] = ["area_registry_updated", "device_registry_updated", "entity_registry_updated"];
+/// Gli eventi che fanno rileggere registri e configurazione, a cui ci si iscrive oltre a
+/// `state_changed`. Sono tutti nella lista degli eventi che anche un utente non amministratore
+/// può seguire (`SUBSCRIBE_ALLOWLIST` di HA, `homeassistant/auth/permissions/events.py`:
+/// `EVENT_*_REGISTRY_UPDATED` ed `EVENT_CORE_CONFIG_UPDATE`).
+pub const EVENTI_RILETTURA: [&str; 4] =
+    ["area_registry_updated", "device_registry_updated", "entity_registry_updated", "core_config_updated"];
 
 /// Titolo di una notifica senza titolo (in HA `title` è facoltativo e può essere null).
 pub const TITOLO_PREDEFINITO: &str = "Home Assistant";
@@ -78,7 +82,7 @@ pub fn interpreta(v: &mut Value) -> Option<EventoWs> {
                 _ => Some(EventoWs::StatoIlleggibile),
             }
         }
-        t if EVENTI_REGISTRI.contains(&t) => Some(EventoWs::RegistroCambiato),
+        t if EVENTI_RILETTURA.contains(&t) => Some(EventoWs::DaRileggere),
         _ => None,
     }
 }
@@ -167,10 +171,10 @@ mod tests {
     }
 
     #[test]
-    fn eventi_dei_registri() {
-        for t in EVENTI_REGISTRI {
+    fn eventi_dei_registri_e_della_configurazione() {
+        for t in EVENTI_RILETTURA {
             let mut v = evento(t, json!({ "action": "update" }));
-            assert_eq!(interpreta(&mut v), Some(EventoWs::RegistroCambiato), "{t}");
+            assert_eq!(interpreta(&mut v), Some(EventoWs::DaRileggere), "{t}");
         }
     }
 

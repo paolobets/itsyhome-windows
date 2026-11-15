@@ -14,7 +14,7 @@ use tokio::task::JoinHandle;
 use tokio::time::{sleep_until, timeout, timeout_at, Instant, MissedTickBehavior};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
-use super::eventi::{interpreta, interpreta_notifiche, EventoWs, EVENTI_REGISTRI};
+use super::eventi::{interpreta, interpreta_notifiche, EventoWs, EVENTI_RILETTURA};
 use crate::eventi::StatoConnessione;
 use crate::types::TestConnectionResult;
 
@@ -182,7 +182,7 @@ async fn sessione(
                         *tentativo = 0;
                         autenticato = true;
                         // Gli stati e, per rileggere i registri solo quando cambiano, i loro eventi.
-                        for tipo in std::iter::once("state_changed").chain(EVENTI_REGISTRI) {
+                        for tipo in std::iter::once("state_changed").chain(EVENTI_RILETTURA) {
                             uscenti.push(json!({ "type": "subscribe_events", "event_type": tipo, "id": prossimo_id }));
                             prossimo_id += 1;
                         }

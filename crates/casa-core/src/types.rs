@@ -225,6 +225,9 @@ pub struct MenuData {
     pub scenes: Vec<SceneEntity>,
     pub cameras: Vec<AppEntity>,
     pub temp_unit: String,
+    /// Notifiche persistenti al momento dell'ultima mappatura completa: le notifiche da sole non
+    /// rimappano, quindi il numero può restare indietro. L'app non lo usa (le notifiche arrivano
+    /// come `CasaEvento::NotificaAggiunta`/`NotificaRimossa`).
     pub notification_count: u32,
     pub update_count: u32,
 }

@@ -36,6 +36,9 @@ const TETTO_RAFFICA: Duration = Duration::from_millis(300);
 /// stanza rinominata): si rilegge 1 s dopo l'ultimo evento, e al più tardi 5 s dopo il primo.
 const ATTESA_REGISTRI: Duration = Duration::from_secs(1);
 const TETTO_REGISTRI: Duration = Duration::from_secs(5);
+/// Se la prima lettura completa della connessione fallisce non c'è nulla da aggiornare con gli
+/// eventi: si riprova dopo 2 s, finché riesce (prima ogni `state_changed` faceva rileggere).
+const RIPROVA_LETTURA: Duration = Duration::from_secs(2);
 
 type Fatto = Box<dyn FnOnce(TestConnectionResult) + Send>;
 
@@ -265,8 +268,10 @@ impl Casa {
 
 /// Uno stato che l'app non mostra si tiene senza i suoi attributi (un lettore multimediale o
 /// un'automazione ne hanno tanti): resta solo `device_class`, che decide se un sensore si mostra.
-/// Se l'entità diventa visibile lo stato nuovo arriva intero con lo `state_changed`; se cambia un
-/// registro (un'entità non più nascosta) si rilegge tutto.
+/// Un'entità può diventare visibile in due modi: per il suo stato (un sensore che diventa di
+/// temperatura), e allora lo stato nuovo arriva intero con lo `state_changed`; o per un
+/// registro (un'entità non più nascosta o disattivata), e allora nessuno `state_changed` arriva
+/// ma l'evento del registro fa rileggere tutto, stati interi compresi.
 fn alleggerisci(mut s: HaState, mostrata: bool) -> HaState {
     if !mostrata {
         let classe = s.attributes.get_mut("device_class").map(Value::take);
@@ -322,7 +327,8 @@ struct Motore {
     pubblica: Attesa,
     /// Alla pubblicazione serve la mappatura completa (non bastano le sostituzioni).
     rimappa: bool,
-    /// Rilettura dopo gli eventi dei registri.
+    /// Rilettura completa in sospeso: dopo gli eventi dei registri o della configurazione, o per
+    /// riprovare una prima lettura fallita.
     registri: Attesa,
     /// Notifiche persistenti dell'ambiente connesso già consegnate all'applicazione.
     notifiche: BTreeSet<String>,
@@ -580,7 +586,7 @@ impl Motore {
                 self.stato_cambiato(entity_id, nuovo);
             }
             Interno::Client(_, DalClient::Evento(EventoWs::StatoIlleggibile)) => self.rileggi(),
-            Interno::Client(_, DalClient::Evento(EventoWs::RegistroCambiato)) => {
+            Interno::Client(_, DalClient::Evento(EventoWs::DaRileggere)) => {
                 self.registri.rinvia(Instant::now(), ATTESA_REGISTRI, TETTO_REGISTRI);
             }
             Interno::Client(_, DalClient::Evento(EventoWs::Notifiche { tipo, notifiche })) => {
@@ -644,7 +650,13 @@ impl Motore {
         let attesi = self.in_lettura.take().unwrap_or_default();
         match esito {
             // Senza gli stati si tengono i dati precedenti.
-            Err(e) => eprintln!("lettura di Home Assistant non riuscita: {e}"),
+            Err(e) => {
+                eprintln!("lettura di Home Assistant non riuscita: {e}");
+                // Senza nessun dato gli eventi non hanno su cosa lavorare: si riprova.
+                if self.casa.is_none() {
+                    self.registri.rinvia(Instant::now(), RIPROVA_LETTURA, RIPROVA_LETTURA);
+                }
+            }
             Ok(g) => {
                 let mut casa = Casa::new(*g, &mut self.mapper);
                 for (entity_id, nuovo) in attesi {
