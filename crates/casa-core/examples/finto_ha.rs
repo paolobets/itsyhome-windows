@@ -4,12 +4,15 @@
 //! cargo run -p casa-core --example finto_ha -- prepara <cartella> <porta> [--preferiti]
 //!     scrive <cartella>/assistente.json con l'ambiente "prova-locale" su ws://127.0.0.1:<porta>
 //!     e mette un token FINTO nel portachiavi sotto "prova-locale"
-//! cargo run -p casa-core --example finto_ha -- <porta> [--con-notifica] [--notifica-dopo <s>] [--rimuovi-dopo <s>]
+//! cargo run -p casa-core --example finto_ha -- <porta> [--con-notifica] [--notifica-dopo <s>] [--rimuovi-dopo <s>] [--raffica <n>] [--casa-grande <n>]
 //!     avvia il server (Ctrl+C o chiusura del processo per fermarlo).
 //!     --con-notifica: una notifica persistente c'è già all'avvio ("aggiornamento");
 //!     --notifica-dopo: dopo <s> secondi compare la notifica "lavatrice";
 //!     --rimuovi-dopo: dopo <s> secondi HA stesso archivia la notifica "lavatrice".
 //!     `persistent_notification.dismiss` la toglie e manda "removed", come l'HA vero.
+//!     --raffica <n>: casa che si muove sempre, <n> state_changed al secondo su entità non mostrate
+//!         più qualche cambio su entità mostrate (vedi `raffica`);
+//!     --casa-grande <n>: <n> entità in più con attributi da casa vera (vedi `casa_grande`).
 //! cargo run -p casa-core --example finto_ha -- pulisci
 //!     cancella il token finto dal portachiavi
 //! ```
@@ -40,12 +43,29 @@ const TOKEN: &str = "token-finto-di-prova";
 
 struct Entita {
     stato: String,
-    nome: &'static str,
-    area: Option<&'static str>,
+    nome: String,
+    area: Option<String>,
+    /// `entity_category` del registro («diagnostic»/«config»: entità che l'app non mostra).
+    categoria: Option<&'static str>,
     attributi: Value,
+    /// `last_updated`, in secondi da un'ora fissa: cambia a ogni scrittura dello stato.
+    aggiornata: u64,
 }
 
-type Stati = Arc<Mutex<BTreeMap<&'static str, Entita>>>;
+impl Entita {
+    fn new(stato: &str, nome: &str, area: Option<&str>, attributi: Value) -> Entita {
+        Entita {
+            stato: stato.into(),
+            nome: nome.into(),
+            area: area.map(str::to_owned),
+            categoria: None,
+            attributi,
+            aggiornata: 0,
+        }
+    }
+}
+
+type Stati = Arc<Mutex<BTreeMap<String, Entita>>>;
 /// Notifiche persistenti: id → (titolo, messaggio).
 type Notifiche = Arc<Mutex<BTreeMap<String, (String, String)>>>;
 
@@ -79,10 +99,10 @@ fn togli_notifica(n: &Notifiche, tx: &broadcast::Sender<Value>, id: &str) -> boo
     true
 }
 
-fn entita_iniziali() -> BTreeMap<&'static str, Entita> {
+fn entita_iniziali() -> BTreeMap<String, Entita> {
     let mut m = BTreeMap::new();
-    let mut e = |id, stato: &str, nome, area, attributi: Value| {
-        m.insert(id, Entita { stato: stato.into(), nome, area, attributi });
+    let mut e = |id: &str, stato: &str, nome: &str, area: Option<&str>, attributi: Value| {
+        m.insert(id.to_owned(), Entita::new(stato, nome, area, attributi));
     };
     let luce = json!({ "supported_color_modes": ["onoff"], "color_mode": "onoff" });
     e("light.soggiorno", "on", "Luce soggiorno", Some("soggiorno"), luce.clone());
@@ -104,10 +124,140 @@ fn entita_iniziali() -> BTreeMap<&'static str, Entita> {
 fn stato_json(id: &str, e: &Entita) -> Value {
     let mut attributi = e.attributi.clone();
     attributi["friendly_name"] = json!(e.nome);
+    let (ore, resto) = (10 + e.aggiornata / 3600, e.aggiornata % 3600);
+    let quando = format!("2026-11-13T{:02}:{:02}:{:02}+00:00", ore % 24, resto / 60, resto % 60);
     json!({
         "entity_id": id, "state": e.stato, "attributes": attributi,
-        "last_changed": "2026-11-13T10:00:00+00:00", "last_updated": "2026-11-13T10:00:00+00:00"
+        "last_changed": "2026-11-13T10:00:00+00:00", "last_updated": quando
     })
+}
+
+/// L'evento `state_changed` di un'entità appena cambiata, come lo manda HA
+/// (`{"event_type": "state_changed", "data": {"entity_id", "old_state", "new_state"}}`).
+fn evento_cambio(id: &str, vecchio: Value, e: &Entita) -> Value {
+    json!({
+        "id": 1, "type": "event",
+        "event": { "event_type": "state_changed",
+                   "data": { "entity_id": id, "old_state": vecchio, "new_state": stato_json(id, e) } }
+    })
+}
+
+/// `--casa-grande <n>`: `n` entità in più con attributi come quelli di una casa vera (luci a
+/// colori, prese, consumi, temperature, movimento, lettori multimediali, automazioni, segnali in
+/// diagnostica), divise in dieci stanze in più. Serve a misurare la memoria con una casa pesante.
+fn casa_grande(m: &mut BTreeMap<String, Entita>, n: usize) {
+    for i in 0..n {
+        let area = format!("stanza_{}", i % 10);
+        let area = Some(area.as_str());
+        let (id, e) = match i % 8 {
+            0 => {
+                let attributi = json!({
+                    "supported_color_modes": ["color_temp", "xy"], "color_mode": "xy", "brightness": 180,
+                    "hs_color": [30.0, 60.0], "rgb_color": [255, 180, 100], "xy_color": [0.5, 0.4],
+                    "color_temp_kelvin": 3000, "min_color_temp_kelvin": 2000, "max_color_temp_kelvin": 6500,
+                    "min_mireds": 153, "max_mireds": 500,
+                    "effect_list": ["colorloop", "random", "candle", "fireplace"], "supported_features": 44
+                });
+                let stato = if i % 3 == 0 { "on" } else { "off" };
+                (format!("light.grande_{i}"), Entita::new(stato, &format!("Luce {i}"), area, attributi))
+            }
+            1 => (
+                format!("switch.grande_{i}"),
+                Entita::new("off", &format!("Presa {i}"), area, json!({ "device_class": "outlet" })),
+            ),
+            2 => {
+                let attributi = json!({ "state_class": "measurement", "unit_of_measurement": "W", "device_class": "power" });
+                (format!("sensor.potenza_{i}"), Entita::new("42.7", &format!("Potenza {i}"), area, attributi))
+            }
+            3 => {
+                let attributi =
+                    json!({ "state_class": "measurement", "unit_of_measurement": "°C", "device_class": "temperature" });
+                (format!("sensor.temperatura_{i}"), Entita::new("20.4", &format!("Temperatura {i}"), area, attributi))
+            }
+            4 => (
+                format!("binary_sensor.movimento_{i}"),
+                Entita::new("off", &format!("Movimento {i}"), area, json!({ "device_class": "motion" })),
+            ),
+            5 => {
+                let attributi = json!({
+                    "source_list": (0..40).map(|k| format!("Sorgente {k}")).collect::<Vec<_>>(),
+                    "sound_mode_list": ["Film", "Musica", "Notte", "Diretta"], "volume_level": 0.3,
+                    "is_volume_muted": false,
+                    "entity_picture": format!("/api/media_player_proxy/media_player.grande_{i}?token=0123456789abcdef&cache=1"),
+                    "supported_features": 152463
+                });
+                (format!("media_player.grande_{i}"), Entita::new("idle", &format!("Lettore {i}"), area, attributi))
+            }
+            6 => {
+                let attributi = json!({
+                    "id": format!("{i:013}"), "last_triggered": "2026-11-13T09:00:00+00:00", "mode": "single", "current": 0
+                });
+                (format!("automation.grande_{i}"), Entita::new("on", &format!("Automazione {i}"), None, attributi))
+            }
+            _ => {
+                let attributi =
+                    json!({ "state_class": "measurement", "unit_of_measurement": "dBm", "device_class": "signal_strength" });
+                let mut e = Entita::new("-61", &format!("Segnale {i}"), area, attributi);
+                e.categoria = Some("diagnostic");
+                (format!("sensor.segnale_{i}"), e)
+            }
+        };
+        m.insert(id, e);
+    }
+}
+
+/// Le entità che l'app non mostra e che la raffica fa cambiare: due segnali in diagnostica, un
+/// sensore di movimento (dominio escluso) e una potenza (sensore che il mapper non tiene).
+const NASCOSTE: [&str; 4] =
+    ["sensor.segnale_wifi", "sensor.segnale_zigbee", "binary_sensor.movimento_corridoio", "sensor.potenza_frigo"];
+
+fn entita_della_raffica(m: &mut BTreeMap<String, Entita>) {
+    for id in NASCOSTE {
+        let (nome, attributi) = match id {
+            "binary_sensor.movimento_corridoio" => ("Movimento corridoio", json!({ "device_class": "motion" })),
+            "sensor.potenza_frigo" => ("Potenza frigo", json!({ "unit_of_measurement": "W", "device_class": "power" })),
+            _ => ("Segnale", json!({ "unit_of_measurement": "dBm", "device_class": "signal_strength" })),
+        };
+        let mut e = Entita::new("-50", nome, Some("soggiorno"), attributi);
+        if id.starts_with("sensor.segnale") {
+            e.categoria = Some("diagnostic");
+        }
+        m.insert(id.to_owned(), e);
+    }
+}
+
+/// `--raffica <n>`: una casa che si muove sempre. `n` `state_changed` al secondo su entità che
+/// l'app non mostra, più qualche cambio su entità mostrate: ogni 2 s la temperatura del soggiorno
+/// (si vede), ogni secondo un attributo che l'app non usa della luce del soggiorno (non si vede:
+/// cambiano solo quell'attributo e `last_updated`).
+async fn raffica(stati: Stati, tx: broadcast::Sender<String>, al_secondo: u32) {
+    let al_secondo = u64::from(al_secondo.max(1));
+    let mut passo = tokio::time::interval(Duration::from_secs_f64(1.0 / al_secondo as f64));
+    let mut giro: u64 = 0;
+    loop {
+        passo.tick().await;
+        giro += 1;
+        let mut cambi: Vec<&str> = vec![NASCOSTE[(giro % 4) as usize]];
+        if giro.is_multiple_of(2 * al_secondo) {
+            cambi.push("sensor.temperatura");
+        }
+        if giro % al_secondo == al_secondo / 2 {
+            cambi.push("light.soggiorno");
+        }
+        let mut stati = stati.lock().unwrap();
+        for id in cambi {
+            let Some(e) = stati.get_mut(id) else { continue };
+            let vecchio = stato_json(id, e);
+            e.aggiornata = giro;
+            match id {
+                "sensor.temperatura" => e.stato = if e.stato == "21.5" { "21.6" } else { "21.5" }.into(),
+                "light.soggiorno" => e.attributi["linkquality"] = json!(giro % 255),
+                "binary_sensor.movimento_corridoio" => e.stato = if e.stato == "on" { "off" } else { "on" }.into(),
+                _ => e.stato = format!("-{}", 40 + giro % 30),
+            }
+            let _ = tx.send(evento_cambio(id, vecchio, e).to_string());
+        }
+    }
 }
 
 fn errore(id: &Value, codice: &str, messaggio: &str) -> Value {
@@ -121,10 +271,15 @@ fn risposta(v: &Value, stati: &Stati) -> (Value, Option<Value>) {
     let stati_ora = stati.lock().unwrap();
     match v["type"].as_str().unwrap_or("") {
         "get_states" => (ok(stati_ora.iter().map(|(id, e)| stato_json(id, e)).collect()), None),
-        "config/area_registry/list" => (
-            ok(json!([{ "area_id": "soggiorno", "name": "Soggiorno" }, { "area_id": "cucina", "name": "Cucina" }])),
-            None,
-        ),
+        "config/area_registry/list" => {
+            let mut aree =
+                vec![json!({ "area_id": "soggiorno", "name": "Soggiorno" }), json!({ "area_id": "cucina", "name": "Cucina" })];
+            // Le stanze della casa grande (vedi `casa_grande`).
+            if stati_ora.keys().any(|k| k.contains("_grande_") || k.contains(".potenza_") || k.contains(".segnale_")) {
+                aree.extend((0..10).map(|i| json!({ "area_id": format!("stanza_{i}"), "name": format!("Stanza {i}") })));
+            }
+            (ok(json!(aree)), None)
+        }
         "config/device_registry/list" => (ok(json!([])), None),
         "config/entity_registry/list" => (
             ok(stati_ora
@@ -133,7 +288,7 @@ fn risposta(v: &Value, stati: &Stati) -> (Value, Option<Value>) {
                     json!({
                         "entity_id": id, "name": null, "platform": "finto", "device_id": null,
                         "area_id": e.area, "disabled_by": null, "hidden_by": null, "icon": null,
-                        "entity_category": null
+                        "entity_category": e.categoria
                     })
                 })
                 .collect()),
@@ -164,9 +319,10 @@ fn servizio(v: &Value, id: &Value, stati: &Stati) -> (Value, Option<Value>) {
     let entity_id = v["target"]["entity_id"].as_str().unwrap_or_default();
     let servizio = v["service"].as_str().unwrap_or_default();
     let mut stati = stati.lock().unwrap();
-    let Some((&chiave, e)) = stati.iter_mut().find(|(k, _)| **k == entity_id) else {
+    let Some((chiave, e)) = stati.iter_mut().find(|(k, _)| k.as_str() == entity_id) else {
         return (errore(id, "not_found", "Entità sconosciuta"), None);
     };
+    let chiave = chiave.as_str();
     if chiave == "switch.guasto" {
         return (errore(id, "home_assistant_error", "Dispositivo non raggiungibile"), None);
     }
@@ -181,12 +337,9 @@ fn servizio(v: &Value, id: &Value, stati: &Stati) -> (Value, Option<Value>) {
         (Some("light" | "switch"), "turn_off") => "off".into(),
         _ => return (errore(id, "not_supported", "Servizio non supportato"), None),
     };
+    e.aggiornata += 1;
     println!("call_service {entity_id} {servizio} → {}", e.stato);
-    let evento = json!({
-        "id": 1, "type": "event",
-        "event": { "event_type": "state_changed",
-                   "data": { "entity_id": chiave, "old_state": vecchio, "new_state": stato_json(chiave, e) } }
-    });
+    let evento = evento_cambio(chiave, vecchio, e);
     (json!({ "id": id, "type": "result", "success": true, "result": { "context": {} } }), Some(evento))
 }
 
@@ -249,7 +402,12 @@ async fn servi(
                 }
             }
             e = eventi.recv() => {
-                let Ok(e) = e else { return };
+                let e = match e {
+                    Ok(e) => e,
+                    // Un client lento perde qualche evento (come con un HA vero sotto carico), non la connessione.
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(_) => return,
+                };
                 if tx.send(Message::Text(e.into())).await.is_err() { return; }
             }
             n = aggiornamenti.recv() => {
@@ -310,12 +468,28 @@ fn main() -> Result<(), String> {
             };
             let (notifica_dopo, rimuovi_dopo) = (secondi("--notifica-dopo"), secondi("--rimuovi-dopo"));
             let con_notifica = argomenti.iter().any(|a| a == "--con-notifica");
+            let numero = |nome: &str| -> Option<u32> {
+                let i = argomenti.iter().position(|a| a == nome)?;
+                argomenti.get(i + 1).and_then(|s| s.parse().ok())
+            };
+            let raffica_al_secondo = numero("--raffica");
             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
             rt.block_on(async move {
                 let listener = TcpListener::bind(("127.0.0.1", porta)).await.map_err(|e| e.to_string())?;
                 println!("HA finto su ws://127.0.0.1:{porta}/api/websocket");
-                let stati: Stati = Arc::new(Mutex::new(entita_iniziali()));
-                let (eventi, _) = broadcast::channel(64);
+                let mut iniziali = entita_iniziali();
+                if let Some(n) = numero("--casa-grande") {
+                    casa_grande(&mut iniziali, n as usize);
+                }
+                if raffica_al_secondo.is_some() {
+                    entita_della_raffica(&mut iniziali);
+                }
+                println!("{} entità", iniziali.len());
+                let stati: Stati = Arc::new(Mutex::new(iniziali));
+                let (eventi, _) = broadcast::channel(1024);
+                if let Some(n) = raffica_al_secondo {
+                    tokio::spawn(raffica(stati.clone(), eventi.clone(), n));
+                }
                 let notifiche: Notifiche = Arc::default();
                 let (notifiche_tx, _) = broadcast::channel(64);
                 if con_notifica {
@@ -342,6 +516,6 @@ fn main() -> Result<(), String> {
                 }
             })
         }
-        None => Err("uso: finto_ha <porta> [--con-notifica] [--notifica-dopo <s>] [--rimuovi-dopo <s>] | prepara <cartella> <porta> [--preferiti] | pulisci".into()),
+        None => Err("uso: finto_ha <porta> [--con-notifica] [--notifica-dopo <s>] [--rimuovi-dopo <s>] [--raffica <n>] [--casa-grande <n>] | prepara <cartella> <porta> [--preferiti] | pulisci".into()),
     }
 }
