@@ -49,7 +49,7 @@ struct Entita {
     /// `entity_category` del registro («diagnostic»/«config»: entità che l'app non mostra).
     categoria: Option<&'static str>,
     attributi: Value,
-    /// `last_updated`, in secondi da un'ora fissa: cambia a ogni scrittura dello stato.
+    /// `last_updated`, in secondi dalle 10:00 del 13/11/2026: a ogni scrittura prende `adesso()`.
     aggiornata: u64,
 }
 
@@ -67,6 +67,14 @@ impl Entita {
 }
 
 type Stati = Arc<Mutex<BTreeMap<String, Entita>>>;
+
+/// L'orologio finto di `last_updated`: un contatore unico per tutto il server, sempre in avanti
+/// (raffica e comandi scrivono le stesse entità, e il servizio scarta gli eventi «più vecchi»).
+static OROLOGIO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn adesso() -> u64 {
+    OROLOGIO.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+}
 /// Notifiche persistenti: id → (titolo, messaggio).
 type Notifiche = Arc<Mutex<BTreeMap<String, (String, String)>>>;
 
@@ -125,8 +133,15 @@ fn entita_iniziali() -> BTreeMap<String, Entita> {
 fn stato_json(id: &str, e: &Entita) -> Value {
     let mut attributi = e.attributi.clone();
     attributi["friendly_name"] = json!(e.nome);
-    let (ore, resto) = (10 + e.aggiornata / 3600, e.aggiornata % 3600);
-    let quando = format!("2026-11-13T{:02}:{:02}:{:02}+00:00", ore % 24, resto / 60, resto % 60);
+    // Dal 13/11/2026 alle 10:00 in avanti, giorno compreso (il mese basta per 17 giorni di prova).
+    let secondi = 10 * 3600 + e.aggiornata;
+    let (giorno, resto) = (13 + secondi / 86_400, secondi % 86_400);
+    let quando = format!(
+        "2026-11-{giorno:02}T{:02}:{:02}:{:02}+00:00",
+        resto / 3600,
+        resto % 3600 / 60,
+        resto % 60
+    );
     json!({
         "entity_id": id, "state": e.stato, "attributes": attributi,
         "last_changed": "2026-11-13T10:00:00+00:00", "last_updated": quando
@@ -249,7 +264,7 @@ async fn raffica(stati: Stati, tx: broadcast::Sender<String>, al_secondo: u32) {
         for id in cambi {
             let Some(e) = stati.get_mut(id) else { continue };
             let vecchio = stato_json(id, e);
-            e.aggiornata = giro;
+            e.aggiornata = adesso();
             match id {
                 "sensor.temperatura" => e.stato = if e.stato == "21.5" { "21.6" } else { "21.5" }.into(),
                 "light.soggiorno" => e.attributi["linkquality"] = json!(giro % 255),
@@ -338,7 +353,7 @@ fn servizio(v: &Value, id: &Value, stati: &Stati) -> (Value, Option<Value>) {
         (Some("light" | "switch"), "turn_off") => "off".into(),
         _ => return (errore(id, "not_supported", "Servizio non supportato"), None),
     };
-    e.aggiornata += 1;
+    e.aggiornata = adesso();
     println!("call_service {entity_id} {servizio} → {}", e.stato);
     let evento = evento_cambio(chiave, vecchio, e);
     (json!({ "id": id, "type": "result", "success": true, "result": { "context": {} } }), Some(evento))
