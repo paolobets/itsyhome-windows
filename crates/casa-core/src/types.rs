@@ -1,5 +1,6 @@
 /// All shared application types serialised with camelCase for the TypeScript frontend.
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 // ─── Entity enum ──────────────────────────────────────────────────────────────
 
@@ -258,9 +259,10 @@ pub struct MenuData {
     pub update_count: u32,
     /// Tutte le stanze con tutte le entità che l'app sa mostrare, nascoste comprese (le stanze
     /// tutte nascoste restano), nell'ordine salvato; poi «Altro» e il gruppo delle scene. Le
-    /// telecamere no (si vedono sempre). Serve alla gestione di stanze e dispositivi.
+    /// telecamere no (si vedono sempre). Serve alla gestione di stanze e dispositivi. In un `Arc`:
+    /// le sostituzioni di un'entità (`Arc::make_mut` sul `MenuData`) non lo copiano.
     #[serde(default)]
-    pub catalogo: Vec<StanzaCatalogo>,
+    pub catalogo: Arc<Vec<StanzaCatalogo>>,
 }
 
 // ─── Config / environment ─────────────────────────────────────────────────────

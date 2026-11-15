@@ -12,9 +12,12 @@
 //!
 //! L'iscrizione si rifà dopo ogni lettura completa (il suo primo evento porta gli stati di
 //! adesso: niente cambi persi fra la lettura e l'iscrizione) e quando cambia l'insieme mostrato
-//! (entità nascoste, preferiti, entità nuove o tolte). Un'entità che diventa mostrabile solo per
-//! il suo stato (un sensore che diventa di temperatura) non arriva finché non si rilegge: non è
-//! fra quelle seguite.
+//! (entità nascoste, entità nuove). Si seguono anche le voci del registro che l'app mostrerà
+//! appena avranno uno stato (dopo un riavvio di HA molte integrazioni caricano più tardi: HA le
+//! manda con `a` quando nascono), e un'entità tolta (`r`) resta seguita fino alla prossima lettura
+//! completa (un ricaricamento la rimette). Se HA sta ancora avviandosi (`get_config` → `state`
+//! diverso da «RUNNING») si rilegge di nuovo poco dopo; arrivato a «RUNNING» HA manda comunque
+//! `core_config_updated`, che fa rileggere.
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
@@ -49,6 +52,8 @@ const TETTO_REGISTRI: Duration = Duration::from_secs(5);
 /// riparte da 2 s dopo una lettura riuscita.
 const RIPROVA_LETTURA: Duration = Duration::from_secs(2);
 const TETTO_RIPROVA: Duration = Duration::from_secs(60);
+/// HA ancora in avvio alla lettura: si rilegge dopo 5 s, finché non è «RUNNING».
+const ATTESA_AVVIO: Duration = Duration::from_secs(5);
 
 type Fatto = Box<dyn FnOnce(TestConnectionResult) + Send>;
 
@@ -141,6 +146,12 @@ impl CasaService {
 
     pub fn config(&self) -> Config {
         blocca(&self.config).clone()
+    }
+
+    /// Legge solo ciò che serve della configurazione, senza copiarla tutta.
+    /// `f` gira col lucchetto preso: non deve richiamare il servizio.
+    pub fn con_config<R>(&self, f: impl FnOnce(&Config) -> R) -> R {
+        f(&blocca(&self.config))
     }
 
     /// Applica `f`, salva (sul thread del servizio) e, se cambiano preferiti,
@@ -344,9 +355,12 @@ struct Motore {
     rimappa: bool,
     /// Rilettura completa in sospeso dopo gli eventi dei registri o della configurazione.
     registri: Attesa,
-    /// Nuovo tentativo di una prima lettura fallita, e l'attesa del prossimo (cresce fino al tetto).
+    /// Nuovo tentativo di una lettura fallita prima che la connessione ne abbia fatta una
+    /// riuscita, e l'attesa del prossimo (cresce fino al tetto).
     riprova: Attesa,
     attesa_riprova: Duration,
+    /// La connessione corrente ha già fatto una lettura completa riuscita.
+    letta: bool,
     /// Notifiche persistenti dell'ambiente connesso già consegnate all'applicazione.
     notifiche: BTreeSet<String>,
     /// L'ambiente a cui appartengono quelle notifiche.
@@ -384,6 +398,7 @@ impl Motore {
             registri: Attesa::default(),
             riprova: Attesa::default(),
             attesa_riprova: RIPROVA_LETTURA,
+            letta: false,
             notifiche: BTreeSet::new(),
             ambiente_notifiche: None,
         }
@@ -608,8 +623,12 @@ impl Motore {
                 }
                 self.emetti(CasaEvento::Stato(s));
                 if connesso {
-                    // Una (ri)connessione consegna sempre i dati, anche se uguali a prima.
+                    // Una (ri)connessione consegna sempre i dati, anche se uguali a prima, e
+                    // deve fare la sua lettura (finché non riesce si riprova).
                     self.consegnato = None;
+                    self.letta = false;
+                    // La sessione nuova non ha ancora nessuna iscrizione agli stati.
+                    self.seguite = None;
                     self.rileggi();
                 }
             }
@@ -667,25 +686,40 @@ impl Motore {
         }
     }
 
-    /// Le entità da seguire: quelle che l'app mostra (preferiti, stanze, scene, telecamere) e gli
-    /// `update.*`, che contano gli aggiornamenti in `MenuData`.
-    fn da_seguire(casa: &Casa) -> BTreeSet<String> {
+    /// Le entità da seguire: quelle che l'app mostra (preferiti, stanze, scene, telecamere), le
+    /// voci del registro che mostrerà appena avranno uno stato (salvo quelle nascoste dall'utente)
+    /// e gli `update.*`, che contano gli aggiornamenti in `MenuData`.
+    fn da_seguire(casa: &Casa, nascoste: &[String]) -> BTreeSet<String> {
         let m = &casa.menu;
+        let nascosta = |id: &str| nascoste.iter().any(|n| n == id);
         m.favorites
             .iter()
             .chain(m.rooms.iter().flat_map(|r| &r.entities))
             .chain(&m.cameras)
             .map(|e| e.entity_id().to_owned())
             .chain(m.scenes.iter().map(|s| s.base.entity_id.clone()))
+            .chain(casa.indici.mostrabili_dal_registro().filter(|id| !nascosta(id)).map(str::to_owned))
             .chain(casa.stati.iter().filter(|s| s.entity_id.starts_with("update.")).map(|s| s.entity_id.clone()))
             .collect()
     }
 
     /// Rifà l'iscrizione `subscribe_entities` se cambiano le entità da seguire, o sempre se
-    /// `sempre` (dopo una lettura completa: il primo evento porta gli stati di adesso).
+    /// `sempre` (dopo una lettura completa: il primo evento porta gli stati di adesso). Fra due
+    /// letture un'entità seguita che non c'è più (tolta con `r`) resta seguita, salvo che l'utente
+    /// l'abbia nascosta: se torna (un ricaricamento) HA la rimanda con `a`.
     fn segui(&mut self, sempre: bool) {
         let (Some(casa), Some((client, _))) = (&self.casa, &self.client) else { return };
-        let ids = Self::da_seguire(casa);
+        let nascoste = blocca(&self.config).hidden_entities.clone();
+        let mut ids = Self::da_seguire(casa, &nascoste);
+        if !sempre {
+            if let Some(prima) = &self.seguite {
+                let tolte = prima
+                    .iter()
+                    .filter(|id| casa.stato(id).is_none() && !nascoste.contains(id))
+                    .cloned();
+                ids.extend(tolte.collect::<Vec<_>>());
+            }
+        }
         if !sempre && self.seguite.as_ref() == Some(&ids) {
             return;
         }
@@ -732,24 +766,35 @@ impl Motore {
             // Senza gli stati si tengono i dati precedenti.
             Err(e) => {
                 eprintln!("lettura di Home Assistant non riuscita: {e}");
-                // Senza nessun dato gli eventi non hanno su cosa lavorare: si riprova, ogni volta
-                // aspettando il doppio (fino al tetto).
-                if self.casa.is_none() {
+                // Finché la connessione non ha fatto una lettura riuscita (anche se ci sono i dati
+                // di una connessione precedente) si riprova, ogni volta aspettando il doppio fino
+                // al tetto. Intanto, con i dati di prima, ci si iscrive comunque agli stati: il
+                // primo evento porta quelli di adesso.
+                if !self.letta {
                     let attesa = self.attesa_riprova;
                     self.riprova.rinvia(Instant::now(), attesa, attesa);
                     self.attesa_riprova = (attesa * 2).min(TETTO_RIPROVA);
+                    if self.casa.is_some() && self.seguite.is_none() {
+                        self.segui(true);
+                    }
                 }
             }
             Ok(g) => {
                 // Riuscita (anche da una riconnessione): il tentativo in sospeso non serve più.
                 self.riprova.annulla();
                 self.attesa_riprova = RIPROVA_LETTURA;
+                self.letta = true;
+                let in_avvio = g.config.as_ref().and_then(|c| c.state.as_deref()).is_some_and(|s| s != "RUNNING");
                 self.casa = Some(Casa::new(*g, &mut self.mapper));
                 self.pubblica.annulla();
                 self.rimappa = false;
                 self.mappa_tutto();
                 self.consegna();
                 self.segui(true);
+                // HA ancora in avvio: molte entità non ci sono ancora; si rilegge poco dopo.
+                if in_avvio {
+                    self.riprova.rinvia(Instant::now(), ATTESA_AVVIO, ATTESA_AVVIO);
+                }
             }
         }
         if std::mem::take(&mut self.rileggi_dopo) {
@@ -896,7 +941,7 @@ mod test {
         }
         assert_eq!(attese, [2, 4, 8, 16, 32, 60, 60, 60]);
         m.letti(Ok(grezzi_vuoti()));
-        m.casa = None; // la connessione cade: di nuovo senza dati
+        m.letta = false; // una riconnessione: la sua lettura è ancora da fare
         let prima = Instant::now();
         m.letti(Err("rifiutata".into()));
         let scade = m.riprova.scadenza().unwrap();
@@ -914,6 +959,49 @@ mod test {
         m.letti(Ok(grezzi_vuoti()));
         assert_eq!(m.riprova.scadenza(), None, "nessuna lettura in più dopo quella riuscita");
         assert!(m.registri.scadenza().is_some(), "la rilettura dei registri non si perde");
+    }
+
+    /// Giro di correzioni 1, I1: dopo una riconnessione la lettura fallisce ma ci sono i dati di
+    /// prima: si riprova lo stesso, con l'attesa crescente.
+    #[test]
+    fn lettura_fallita_dopo_la_riconnessione_si_riprova() {
+        let (mut m, _c) = motore();
+        m.letti(Ok(grezzi_vuoti()));
+        m.interno(Interno::Client(m.generazione, DalClient::Stato(StatoConnessione::Connesso)));
+        assert!(!m.letta, "la connessione nuova deve fare la sua lettura");
+        m.letti(Err("HA si sta avviando".into()));
+        assert!(m.riprova.scadenza().is_some(), "nuovo tentativo anche con i dati di prima");
+        m.riprova.annulla();
+        m.letti(Err("ancora".into()));
+        assert!(m.riprova.scadenza().is_some());
+        m.riprova.annulla();
+        m.letti(Ok(grezzi_vuoti()));
+        m.letti(Err("dopo una riuscita".into()));
+        assert_eq!(m.riprova.scadenza(), None, "letta in questa connessione: si tengono i dati");
+    }
+
+    /// B1: con HA ancora in avvio (`get_config` → «STARTING») si rilegge dopo 5 s; pronto no.
+    #[test]
+    fn ha_in_avvio_arma_una_rilettura() {
+        let (mut m, _c) = motore();
+        let config = |stato: &str| {
+            Some(HaConfig {
+                unit_system: crate::ha::models::HaUnitSystem { temperature: "°C".into() },
+                location_name: "Casa".into(),
+                state: Some(stato.into()),
+            })
+        };
+        let mut g = grezzi_vuoti();
+        g.config = config("STARTING");
+        let prima = Instant::now();
+        m.letti(Ok(g));
+        let scade = m.riprova.scadenza().expect("rilettura armata");
+        assert_eq!((scade - prima).as_secs_f32().round() as u64, 5);
+        m.riprova.annulla();
+        let mut g = grezzi_vuoti();
+        g.config = config("RUNNING");
+        m.letti(Ok(g));
+        assert_eq!(m.riprova.scadenza(), None);
     }
 
     /// Gli eventi di un'iscrizione alle entità già sostituita (arrivati dopo che il servizio ne

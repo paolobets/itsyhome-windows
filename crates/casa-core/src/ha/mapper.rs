@@ -97,6 +97,32 @@ impl Indici {
     }
 }
 
+impl Indici {
+    /// Le entità del registro che l'app mostrerebbe appena avranno uno stato (anche se adesso
+    /// non ne hanno: integrazione non ancora caricata dopo un riavvio di HA, ricaricamento): stesso
+    /// filtro di `mappa_entita` per dominio, disattivate, nascoste e categorie; per i sensori conta
+    /// la classe del registro (scelta dall'utente o data dall'integrazione).
+    pub fn mostrabili_dal_registro(&self) -> impl Iterator<Item = &str> {
+        self.entries.values().filter(|e| registro_mostrabile(e)).map(|e| e.entity_id.as_str())
+    }
+}
+
+fn registro_mostrabile(e: &HaEntityEntry) -> bool {
+    let dominio = domain_of(&e.entity_id);
+    if dominio != "camera" && (e.disabled_by.is_some() || e.hidden_by.is_some() || e.entity_category.is_some()) {
+        return false;
+    }
+    match dominio {
+        "light" | "switch" | "input_boolean" | "climate" | "cover" | "lock" | "fan" | "humidifier" | "valve"
+        | "alarm_control_panel" | "camera" | "scene" => true,
+        "sensor" => matches!(
+            e.device_class.as_deref().or(e.original_device_class.as_deref()),
+            Some("temperature" | "humidity")
+        ),
+        _ => false,
+    }
+}
+
 /// Un aggiornamento in attesa (`update.*` acceso): `MenuData::update_count` li conta.
 pub fn aggiornamento_disponibile(state: &HaState) -> bool {
     domain_of(&state.entity_id) == "update" && state.state == "on"
@@ -330,7 +356,7 @@ impl EntityMapper {
             temp_unit: self.temp_unit.clone(),
             notification_count,
             update_count,
-            catalogo,
+            catalogo: std::sync::Arc::new(catalogo),
         }
     }
 
@@ -764,6 +790,8 @@ mod tests {
             hidden_by: None,
             icon: None,
             entity_category: None,
+            device_class: None,
+            original_device_class: None,
         }
     }
 
@@ -775,6 +803,7 @@ mod tests {
         HaConfig {
             unit_system: super::super::models::HaUnitSystem { temperature: unita.to_owned() },
             location_name: "Casa".to_owned(),
+            state: None,
         }
     }
 
@@ -953,6 +982,30 @@ mod tests {
         assert_eq!(ids(&menu.rooms[0].entities), vec!["light.b"]);
         let scene: Vec<&str> = menu.scenes.iter().map(|s| s.base.entity_id.as_str()).collect();
         assert_eq!(scene, ["scene.sera", "scene.alba"]);
+    }
+
+    /// B1 del giro 1: le voci del registro che l'app mostrerà quando avranno uno stato.
+    #[test]
+    fn mostrabili_dal_registro_anche_senza_stato() {
+        let mut nascosta = voce("light.nascosta", None);
+        nascosta.hidden_by = Some("user".into());
+        let mut disattivata = voce("switch.spenta", None);
+        disattivata.disabled_by = Some("integration".into());
+        let mut temperatura = voce("sensor.t", None);
+        temperatura.original_device_class = Some("temperature".into());
+        let mut potenza = voce("sensor.p", None);
+        potenza.original_device_class = Some("power".into());
+        let mut umidita_utente = voce("sensor.u", None);
+        umidita_utente.device_class = Some("humidity".into());
+        umidita_utente.original_device_class = Some("moisture".into());
+        let mut telecamera = voce("camera.c", None);
+        telecamera.entity_category = Some("diagnostic".into());
+        let voci = vec![voce("light.a", None), nascosta, disattivata, temperatura, potenza, umidita_utente, telecamera,
+                        voce("binary_sensor.b", None), voce("scene.s", None)];
+        let indici = Indici::new(vec![], vec![], voci);
+        let mut ids: Vec<&str> = indici.mostrabili_dal_registro().collect();
+        ids.sort();
+        assert_eq!(ids, ["camera.c", "light.a", "scene.s", "sensor.t", "sensor.u"]);
     }
 
     #[test]

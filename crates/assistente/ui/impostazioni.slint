@@ -1136,6 +1136,14 @@ export component FinestraImpostazioni inherits Window {
                 background: Tema.vetro-bordo;
             }
 
+            // Finché la scelta dell'icona è aperta l'elenco sotto non risponde al mouse (un clic
+            // fuori dal riquadro la chiude, come Esc).
+            if scelta-area != "": TouchArea {
+                y: 52px;
+                height: parent.height - 52px;
+                clicked => { chiudi-scelta-icona(); }
+            }
+
             // La scelta dell'icona copre l'elenco finché non si sceglie o si annulla.
             if scelta-area != "": SceltaIcona {
                 y: 52px;

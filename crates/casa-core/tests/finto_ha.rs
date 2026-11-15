@@ -17,6 +17,8 @@ use tokio::time::{sleep, sleep_until, timeout, timeout_at, Instant};
 use tokio_tungstenite::tungstenite::Message;
 
 const TOKEN: &str = "token-finto-di-prova";
+/// Messaggio interno del finto HA: chiude le connessioni aperte.
+const CHIUDI: &str = "__chiudi__";
 const RITARDO_TEST: Duration = Duration::from_millis(50);
 
 // ─── Server finto ─────────────────────────────────────────────────────────────
@@ -50,6 +52,12 @@ struct Contatori {
     stati_da_rifiutare: AtomicUsize,
     /// La presa nascosta dall'utente nel registro delle entità (`hidden_by: "user"`).
     presa_nascosta: AtomicBool,
+    /// Voci in più nel registro delle entità (anche senza stato: integrazione non ancora caricata).
+    voci_extra: Mutex<Vec<Value>>,
+    /// Lo stato del core in `get_config` («RUNNING» se vuoto).
+    stato_core: Mutex<String>,
+    /// Quante `get_config` ricevute.
+    letture_config: AtomicUsize,
 }
 
 struct FintoHa {
@@ -87,6 +95,15 @@ impl FintoHa {
         }
         let v = json!({ "id": 1, "type": "event", "event": { "event_type": tipo, "data": data } });
         let _ = self.eventi.send(v.to_string());
+    }
+
+    /// Chiude tutte le connessioni aperte (il client si riconnette da solo).
+    fn chiudi_connessioni(&self) {
+        let _ = self.eventi.send(CHIUDI.to_owned());
+    }
+
+    fn letture_config(&self) -> usize {
+        self.contatori.letture_config.load(Ordering::SeqCst)
     }
 
     fn iscrizioni_entita(&self) -> Vec<Vec<String>> {
@@ -231,9 +248,16 @@ fn risposta(v: &Value, contatori: &Contatori) -> Value {
             if contatori.presa_nascosta.load(Ordering::SeqCst) {
                 presa["hidden_by"] = json!("user");
             }
-            ok(json!([entry("light.cucina", "cucina"), presa]))
+            let mut voci = vec![entry("light.cucina", "cucina"), presa];
+            voci.extend(contatori.voci_extra.lock().unwrap().iter().cloned());
+            ok(Value::Array(voci))
         }
-        "get_config" => ok(json!({ "unit_system": { "temperature": "°C" }, "location_name": "Casa" })),
+        "get_config" => {
+            contatori.letture_config.fetch_add(1, Ordering::SeqCst);
+            let stato = contatori.stato_core.lock().unwrap().clone();
+            let stato = if stato.is_empty() { "RUNNING".to_owned() } else { stato };
+            ok(json!({ "unit_system": { "temperature": "°C" }, "location_name": "Casa", "state": stato }))
+        }
         "persistent_notification/get" => ok(json!([])),
         "subscribe_events" => {
             if v["event_type"] == "state_changed" {
@@ -350,6 +374,11 @@ async fn servi(tcp: tokio::net::TcpStream, contatori: Arc<Contatori>, mut eventi
             }
             e = eventi.recv() => {
                 let Ok(e) = e else { return };
+                // La connessione cade (come un riavvio di HA).
+                if e == CHIUDI {
+                    let _ = tx.close().await;
+                    return;
+                }
                 let v: Value = serde_json::from_str(&e).unwrap();
                 if v["event"]["event_type"] != "state_changed" {
                     if tx.send(Message::Text(e.into())).await.is_err() { return; }
@@ -714,9 +743,11 @@ async fn entita_tolta_esce_e_nuova_entra_col_registro() {
     assert_eq!(conta_entita(&d), 2);
     assert_eq!(acceso(&d, "switch.nuova"), Some(true));
     assert_eq!(ha.get_states(), 2);
-    // Riscritta senza la presa (tolta), poi con la nuova (dopo la rilettura).
-    let attese = [vec!["light.cucina".to_string()], vec!["light.cucina".to_string(), "switch.nuova".to_string()]];
-    aspetta(|| ha.iscrizioni_entita()[1..] == attese, "riscritta senza la presa e poi con la nuova").await;
+    // La presa tolta resta seguita (ha la sua voce nel registro: può tornare); dopo la rilettura
+    // l'iscrizione rifatta segue anche la nuova.
+    let attesa = vec!["light.cucina".to_string(), "switch.nuova".to_string(), "switch.presa".to_string()];
+    aspetta(|| ha.iscrizioni_entita().last() == Some(&attesa), "riscritta con la nuova").await;
+    assert!(ha.iscrizioni_entita().iter().all(|i| i.contains(&"switch.presa".to_string())), "mai senza la presa");
 }
 
 #[tokio::test]
@@ -1029,3 +1060,85 @@ async fn connetti_rende_attivo_l_ambiente_e_lo_salva() {
     let su_disco = ConfigStore::apri(&percorso).leggi();
     assert_eq!(su_disco.active_env_id.as_deref(), Some("env2"));
 }
+
+/// Giro di correzioni 1, B1: un'entità del registro senza stato alla lettura (HA appena riavviato,
+/// integrazione che carica dopo) è già seguita; quando nasce compare, senza riconnettersi.
+#[tokio::test]
+async fn entita_del_registro_che_nasce_dopo_la_lettura_compare() {
+    let ha = FintoHa::avvia().await;
+    ha.contatori.voci_extra.lock().unwrap().push(entry("light.tardiva", "cucina"));
+    let mut p = prepara(&ha.url, Some(TOKEN));
+    p.servizio.connetti_attivo();
+    assert_eq!(conta_entita(&*aspetta_dati(&mut p).await), 2);
+    aspetta_iscrizione(&ha, 1).await;
+    assert!(ha.iscrizioni_entita()[0].contains(&"light.tardiva".to_string()), "seguita anche senza stato");
+    cambio(&ha, "light.tardiva", stato_nuovo("light.tardiva", "on", "Tardiva"));
+    let d = aspetta_dati(&mut p).await;
+    assert_eq!(acceso(&d, "light.tardiva"), Some(true));
+    assert_eq!((ha.get_states(), ha.connessioni()), (1, 1), "senza riletture né riconnessioni");
+}
+
+/// B1, seconda parte: un'entità seguita senza voce nel registro (template YAML senza
+/// `unique_id`) tolta con `r` da un ricaricamento resta seguita fino alla prossima lettura: quando
+/// torna, ricompare.
+#[tokio::test]
+async fn entita_senza_registro_tolta_e_rimessa_ricompare() {
+    let ha = FintoHa::avvia().await;
+    ha.contatori.stati.lock().unwrap().insert("switch.modello".into(), stato("switch.modello", "off", "Modello"));
+    let mut p = prepara(&ha.url, Some(TOKEN));
+    p.servizio.connetti_attivo();
+    assert_eq!(conta_entita(&*aspetta_dati(&mut p).await), 3);
+    aspetta_iscrizione(&ha, 1).await;
+    ha.manda_evento("state_changed", json!({ "entity_id": "switch.modello", "new_state": null }));
+    assert_eq!(conta_entita(&*aspetta_dati(&mut p).await), 2);
+    // Oltre la raffica (la rimappatura è già pubblicata): il ricaricamento dura di più.
+    sleep(Duration::from_millis(500)).await;
+    cambio(&ha, "switch.modello", stato_nuovo("switch.modello", "on", "Modello"));
+    let d = aspetta_dati(&mut p).await;
+    assert_eq!(acceso(&d, "switch.modello"), Some(true), "ricaricata, torna");
+    assert_eq!(ha.get_states(), 1);
+}
+
+/// B1: lettura mentre HA è ancora in avvio (`get_config` → «STARTING»): si rilegge finché non è
+/// «RUNNING», poi basta.
+#[tokio::test]
+async fn ha_in_avvio_fa_rileggere_finche_non_e_pronto() {
+    let ha = FintoHa::avvia().await;
+    *ha.contatori.stato_core.lock().unwrap() = "STARTING".into();
+    let mut p = prepara(&ha.url, Some(TOKEN));
+    p.servizio.connetti_attivo();
+    aspetta_dati(&mut p).await;
+    aspetta(|| ha.get_states() >= 2, "rilettura con HA in avvio").await;
+    *ha.contatori.stato_core.lock().unwrap() = "RUNNING".into();
+    aspetta(|| ha.letture_config() >= 3, "terza lettura").await;
+    let fatte = ha.get_states();
+    sleep(Duration::from_secs(7)).await;
+    assert_eq!(ha.get_states(), fatte, "con HA pronto niente più riletture");
+}
+
+/// Giro di correzioni 1, I1 (e M2): dopo una riconnessione la prima lettura fallisce. Il servizio
+/// si riscrive comunque agli stati coi dati di prima e riprova la lettura: i cambi arrivano.
+#[tokio::test]
+async fn riconnessione_con_lettura_fallita_riprova_e_segue_gli_stati() {
+    let ha = FintoHa::avvia().await;
+    let mut p = prepara(&ha.url, Some(TOKEN));
+    p.servizio.connetti_attivo();
+    aspetta_dati(&mut p).await;
+    aspetta_iscrizione(&ha, 1).await;
+    ha.contatori.stati_da_rifiutare.store(1, Ordering::SeqCst);
+    ha.chiudi_connessioni();
+    aspetta(|| ha.connessioni() == 2, "riconnessione").await;
+    aspetta(|| ha.iscrizioni_entita().len() >= 2, "iscrizione rifatta sulla connessione nuova").await;
+    assert_eq!(ha.iscrizioni_entita()[1], ha.iscrizioni_entita()[0], "stesse entità");
+    sleep(Duration::from_millis(200)).await;
+    cambio(&ha, "light.cucina", stato_nuovo("light.cucina", "off", "Luce cucina"));
+    let fine = Instant::now() + Duration::from_secs(5);
+    loop {
+        let d = timeout_at(fine, aspetta_dati(&mut p)).await.expect("il cambio non è arrivato");
+        if acceso(&d, "light.cucina") == Some(false) {
+            break;
+        }
+    }
+    aspetta(|| ha.get_states() >= 3, "nuovo tentativo della lettura").await;
+}
+

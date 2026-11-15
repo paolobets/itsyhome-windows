@@ -117,7 +117,12 @@ Tocco su una casa lenta (`--lenta 800`): l'icona cambia sullo schermo 32–51 ms
 | Casa grande (829 entità) + raffica, 2 min | 0,046%, 11,1–11,3 MB | 0,037%, 11,8 MB | |
 | Pillola che chiama e pulsa¹, 5 min | 0,557%, 9,4–9,5 MB | 0,340% (p95 0,64, max 1,04), 9,5–9,6 MB | ≤ 1% |
 
-¹ Build temporanea con `ALLARGATA_PER` = 600 s, senza toast.
+¹ Build temporanea con `ALLARGATA_PER` = 600 s, **senza toast** (prova senza `ITSYHOME_PROVA_NOTIFICHE`, quindi senza AUMID): il confronto col 14d, misurato col toast, non è alla pari; il codice della pillola non è cambiato.
+
+### Fixed (Task 14e, giro di correzioni 1)
+- Entità che nascono dopo la lettura (HA appena riavviato, integrazioni lente, ricaricamenti) non restavano più fuori: si seguono anche le voci del registro che l'app mostrerà appena avranno uno stato, un'entità tolta resta seguita fino alla lettura successiva, e se `get_config` dice che HA non è ancora «RUNNING» si rilegge dopo 5 s (arrivato a «RUNNING» HA manda anche `core_config_updated`, che fa rileggere).
+- Riconnessione con lettura fallita: si riprova con l'attesa crescente anche se ci sono i dati di prima, e intanto ci si iscrive agli stati.
+- Iscrizione agli stati rifiutata da HA scritta nel log; catalogo in un `Arc` (non si copia a ogni cambio); scelta dell'icona chiusa da un clic fuori; le scene con le scintille (come il «✨» della v2), la stella solo per i preferiti.
 
 ---
 

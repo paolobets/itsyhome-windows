@@ -20,7 +20,6 @@ use crate::{
 use casa_core::eventi::{Ascoltatore, CasaEvento, StatoConnessione};
 use casa_core::segreti::Segreti;
 use casa_core::servizio::CasaService;
-use casa_core::config::Config;
 use casa_core::types::{AppEntity, BaseEntity, MenuData, SensorEntity, TestConnectionResult, GRUPPO_SCENE};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::cell::{Cell, RefCell};
@@ -181,7 +180,7 @@ pub fn stato_in_lettura(e: &AppEntity) -> String {
 /// mapper), con l'icona scelta o quella predefinita dal nome; «Altro» (entità senza stanza) con
 /// l'icona della casa; in fondo le scene, se ci sono (il mapper le tiene fuori dalle stanze,
 /// come la v2, che le mostrava in una sezione loro dopo le stanze).
-pub fn stanze_ui(menu: &MenuData, config: &Config) -> Vec<StanzaUi> {
+pub fn stanze_ui(menu: &MenuData, icone: &HashMap<String, String>) -> Vec<StanzaUi> {
     let mut stanze: Vec<StanzaUi> = menu
         .rooms
         .iter()
@@ -191,7 +190,7 @@ pub fn stanze_ui(menu: &MenuData, config: &Config) -> Vec<StanzaUi> {
             icona: if r.area_id.is_empty() {
                 -1
             } else {
-                crate::stanze::icona(config.area_icons.get(&r.area_id).map(String::as_str), &r.name) as i32
+                crate::stanze::icona(icone.get(&r.area_id).map(String::as_str), &r.name) as i32
             },
             quanti: r.entities.len() as i32,
         })
@@ -852,7 +851,7 @@ impl Ponte {
     /// connessione.
     fn ricostruisci_preferiti(&self) {
         let connesso = self.connesso();
-        let config = self.casa.config();
+        let icone = self.casa.con_config(|c| c.area_icons.clone());
         let (voci, sensori, stanze, dispositivi) = {
             let menu = self.menu.borrow();
             let Some(menu) = menu.as_ref() else { return };
@@ -868,7 +867,7 @@ impl Ponte {
                 .into_iter()
                 .map(|(p, frazione)| SensoreUi { voce: voce_ui(&p, connesso), frazione })
                 .collect();
-            let stanze = stanze_ui(menu, &config);
+            let stanze = stanze_ui(menu, &icone);
             let dispositivi: Vec<PreferitoUi> = match self.stanza_aperta.borrow().as_deref() {
                 Some(area) => dispositivi_stanza(menu, area).iter().map(|e| pronta(preferito(e))).collect(),
                 None => Vec::new(),
@@ -1617,7 +1616,7 @@ pub(crate) mod test {
             temp_unit: "°C".into(),
             notification_count: 0,
             update_count: 0,
-            catalogo: vec![],
+            catalogo: Default::default(),
         }
     }
 
@@ -1828,6 +1827,7 @@ pub(crate) mod test {
     /// predefinita, «Altro» con la casa e in fondo le scene.
     #[test]
     fn stanze_della_vista_casa() {
+        use casa_core::config::Config;
         let mut m = menu(vec![], vec![vec![luce("light.a", true), luce("light.b", false)], vec![interruttore("switch.c", true)]]);
         m.rooms[0].name = "Cucina".into();
         m.rooms[1].name = "Sala giochi".into();
@@ -1836,7 +1836,7 @@ pub(crate) mod test {
         m.scenes = vec![s];
         let mut config = Config::default();
         config.area_icons.insert("a1".into(), "🎮".into());
-        let stanze = stanze_ui(&m, &config);
+        let stanze = stanze_ui(&m, &config.area_icons);
         let nomi: Vec<&str> = stanze.iter().map(|s| s.nome.as_str()).collect();
         assert_eq!(nomi, ["Cucina", "Sala giochi", "Altro", "Scene"]);
         assert_eq!(stanze[0].icona as usize, crate::stanze::indice("🍳").unwrap(), "predefinita dal nome");
@@ -1873,10 +1873,10 @@ pub(crate) mod test {
         let (_spegni, p, _pillola, _c) = ponte_di_prova();
         let voce = |id: &str| VoceCatalogo { entity_id: id.into(), name: id.into(), kind: "light".into() };
         let mut m = menu(vec![], vec![vec![luce("light.a", false)], vec![luce("light.b", false)]]);
-        m.catalogo = vec![
+        m.catalogo = Arc::new(vec![
             StanzaCatalogo { area_id: "a0".into(), name: "Stanza 0".into(), voci: vec![voce("light.a")] },
             StanzaCatalogo { area_id: "a1".into(), name: "Stanza 1".into(), voci: vec![voce("light.b")] },
-        ];
+        ]);
         p.ricevi(CasaEvento::Dati(Arc::new(m)));
         p.aggiorna_righe();
         let ids = |p: &Ponte| (0..p.righe.row_count()).map(|i| p.righe.row_data(i).unwrap().id.to_string()).collect::<Vec<_>>();

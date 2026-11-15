@@ -41,6 +41,12 @@ pub struct HaEntityEntry {
     pub hidden_by: Option<String>,
     pub icon: Option<String>,
     pub entity_category: Option<String>,
+    /// La classe scelta dall'utente e quella data dall'integrazione: dicono se un sensore senza
+    /// stato (non ancora caricato) sarà di temperatura o umidità.
+    #[serde(default)]
+    pub device_class: Option<String>,
+    #[serde(default)]
+    pub original_device_class: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -52,6 +58,10 @@ pub struct HaUnitSystem {
 pub struct HaConfig {
     pub unit_system: HaUnitSystem,
     pub location_name: String,
+    /// Lo stato del core (`CoreState` di `homeassistant/core.py`: «NOT_RUNNING», «STARTING»,
+    /// «RUNNING»…; `Config.as_dict` in `core_config.py` lo mette in `get_config`).
+    #[serde(default)]
+    pub state: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

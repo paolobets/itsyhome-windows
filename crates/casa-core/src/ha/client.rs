@@ -220,6 +220,14 @@ async fn sessione(
                         let id = v["id"].as_u64().unwrap_or(0);
                         if let Some(tx) = pendenti.remove(&id) {
                             let _ = tx.send(esito(v));
+                        } else if iscrizione_entita.is_some_and(|(ws, _)| ws == id) {
+                            // L'iscrizione agli stati rifiutata (HA troppo vecchio, un id che HA
+                            // non accetta): senza, gli stati restano fermi. Lo si scrive; rileggere
+                            // non servirebbe (la rifiuterebbe di nuovo, a ripetizione).
+                            if let Err(e) = esito(v) {
+                                eprintln!("iscrizione agli stati (subscribe_entities) rifiutata da Home Assistant: {e}");
+                                iscrizione_entita = None;
+                            }
                         }
                     }
                     Some("pong") => attesa_pong = None,
