@@ -1,6 +1,7 @@
 //! Connessione WebSocket a Home Assistant (port di `src-tauri/src/ha/client.rs`).
 //!
-//! Un attore tokio per ambiente: si autentica, si iscrive a `state_changed` e alle notifiche
+//! Un attore tokio per ambiente: si autentica, si iscrive a `state_changed`, agli eventi dei
+//! registri (stanze, dispositivi, entità) e alle notifiche
 //! persistenti (`persistent_notification/subscribe`), risponde alle richieste e si riconnette
 //! con i ritardi di v2. Gli eventi escono da una callback (`DalClient`), mai dal token.
 use std::collections::HashMap;
@@ -13,7 +14,7 @@ use tokio::task::JoinHandle;
 use tokio::time::{sleep_until, timeout, timeout_at, Instant, MissedTickBehavior};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
-use super::eventi::{interpreta, interpreta_notifiche, EventoWs};
+use super::eventi::{interpreta, interpreta_notifiche, EventoWs, EVENTI_REGISTRI};
 use crate::eventi::StatoConnessione;
 use crate::types::TestConnectionResult;
 
@@ -170,16 +171,21 @@ async fn sessione(
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break 'sessione Fine::Chiusa,
                     Some(Ok(_)) => continue,
                 };
-                let Ok(v) = serde_json::from_str::<Value>(&testo) else { continue };
-                match v["type"].as_str() {
+                let Ok(mut v) = serde_json::from_str::<Value>(&testo) else { continue };
+                // Il tipo copiato: risultati ed eventi si prendono dal messaggio (`esito`, `interpreta`).
+                let tipo = v["type"].as_str().map(str::to_owned);
+                match tipo.as_deref() {
                     Some("auth_required") => {
                         uscenti.push(json!({ "type": "auth", "access_token": token }));
                     }
                     Some("auth_ok") => {
                         *tentativo = 0;
                         autenticato = true;
-                        uscenti.push(json!({ "type": "subscribe_events", "event_type": "state_changed", "id": prossimo_id }));
-                        prossimo_id += 1;
+                        // Gli stati e, per rileggere i registri solo quando cambiano, i loro eventi.
+                        for tipo in std::iter::once("state_changed").chain(EVENTI_REGISTRI) {
+                            uscenti.push(json!({ "type": "subscribe_events", "event_type": tipo, "id": prossimo_id }));
+                            prossimo_id += 1;
+                        }
                         uscenti.push(json!({ "type": "persistent_notification/subscribe", "id": prossimo_id }));
                         iscrizione_notifiche = Some(prossimo_id);
                         prossimo_id += 1;
@@ -189,7 +195,7 @@ async fn sessione(
                     Some("result") => {
                         let id = v["id"].as_u64().unwrap_or(0);
                         if let Some(tx) = pendenti.remove(&id) {
-                            let _ = tx.send(esito(&v));
+                            let _ = tx.send(esito(v));
                         }
                     }
                     Some("pong") => attesa_pong = None,
@@ -197,7 +203,7 @@ async fn sessione(
                         let e = if v["id"].as_u64().is_some() && v["id"].as_u64() == iscrizione_notifiche {
                             interpreta_notifiche(&v)
                         } else {
-                            interpreta(&v)
+                            interpreta(&mut v)
                         };
                         if let Some(e) = e {
                             uscita(DalClient::Evento(e));
@@ -248,9 +254,10 @@ async fn sessione(
     fine
 }
 
-fn esito(v: &Value) -> Result<Value, String> {
+/// Il risultato si prende dal messaggio, non si copia: quello di `get_states` di una casa vera è grosso.
+fn esito(mut v: Value) -> Result<Value, String> {
     if v["success"].as_bool().unwrap_or(false) {
-        return Ok(v["result"].clone());
+        return Ok(v.get_mut("result").map(Value::take).unwrap_or(Value::Null));
     }
     let e = &v["error"];
     Err(e["message"]
@@ -282,7 +289,7 @@ pub(crate) async fn prova_connessione(url: &str, token: &str) -> TestConnectionR
                 Some("auth_invalid") => return fallita("token non valido".into()),
                 Some("result") if autenticato => {
                     let _ = scrivi.close().await;
-                    return match esito(&v) {
+                    return match esito(v) {
                         Ok(r) => TestConnectionResult {
                             ok: true,
                             entity_count: r.as_array().map(|a| a.len() as u32),

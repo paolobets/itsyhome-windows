@@ -1,7 +1,13 @@
 //! `CasaService`: un thread con runtime tokio `current_thread` che tiene la
-//! connessione a Home Assistant, rilegge i dati (logica di `src-tauri/src/refresh.rs`)
-//! e consegna `CasaEvento` all'`Ascoltatore`, sempre da quel thread.
-use std::collections::BTreeSet;
+//! connessione a Home Assistant, tiene in memoria stati e registri e consegna `CasaEvento`
+//! all'`Ascoltatore`, sempre da quel thread.
+//!
+//! Alla connessione si legge tutto una volta (stati, registri, configurazione). Poi ogni
+//! `state_changed` aggiorna in memoria solo la sua entità (dal `new_state` dell'evento) e si
+//! pubblica solo se cambia qualcosa che l'app mostra; i registri si rileggono solo sui loro
+//! eventi `*_registry_updated`. Così una casa vera, dove i sensori cambiano di continuo, non
+//! costa letture né mappature.
+use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -14,15 +20,22 @@ use crate::config::{Config, ConfigStore};
 use crate::eventi::{Ascoltatore, CasaEvento, StatoConnessione};
 use crate::ha::client::{self, Client, DalClient, NON_CONNESSO};
 use crate::ha::eventi::{Aggiornamento, EventoWs};
-use crate::ha::mapper::{DatiHa, EntityMapper, Preferenze};
-use crate::ha::models::{HaArea, HaConfig, HaDevice, HaEntityEntry, HaNotification, HaState};
+use crate::ha::mapper::{aggiornamento_disponibile, sostituisci_in_menu, EntityMapper, Indici, Preferenze};
+use crate::ha::models::{HaArea, HaConfig, HaDevice, HaEntityEntry, HaState};
 use crate::segreti::Segreti;
-use crate::types::{MenuData, TestConnectionResult};
+use crate::types::{AppEntity, MenuData, TestConnectionResult};
 
-/// Trailing debounce di v2 sugli `state_changed`...
-const DEBOUNCE: Duration = Duration::from_millis(300);
-/// ...ma un flusso continuo rilegge comunque almeno una volta al secondo.
-const ATTESA_MASSIMA: Duration = Duration::from_secs(1);
+/// Cambi visibili a raffica (una scena che accende sei luci, un gruppo, un'automazione che
+/// tocca più entità) arrivano entro pochi millisecondi: si aspetta che si calmino per 50 ms e
+/// si pubblicano insieme, una sola volta (tre fotogrammi a 60 Hz: il tocco ha già lo stato
+/// ottimistico, la conferma non ha fretta di un fotogramma)...
+const RAFFICA: Duration = Duration::from_millis(50);
+/// ...ma un flusso continuo di cambi visibili si pubblica almeno ogni 300 ms.
+const TETTO_RAFFICA: Duration = Duration::from_millis(300);
+/// Anche i registri cambiano a raffiche (un'integrazione che aggiunge dieci dispositivi, una
+/// stanza rinominata): si rilegge 1 s dopo l'ultimo evento, e al più tardi 5 s dopo il primo.
+const ATTESA_REGISTRI: Duration = Duration::from_secs(1);
+const TETTO_REGISTRI: Duration = Duration::from_secs(5);
 
 type Fatto = Box<dyn FnOnce(TestConnectionResult) + Send>;
 
@@ -158,21 +171,130 @@ fn blocca(m: &Mutex<Config>) -> MutexGuard<'_, Config> {
 
 // ─── Il thread del servizio ───────────────────────────────────────────────────
 
-/// Risposte di Home Assistant da cui si ricostruisce `MenuData`.
+/// Risposte di Home Assistant da cui si ricostruisce tutto.
 struct Grezzi {
     states: Vec<HaState>,
     areas: Vec<HaArea>,
     devices: Vec<HaDevice>,
     entries: Vec<HaEntityEntry>,
     config: Option<HaConfig>,
-    notifiche: u32,
 }
 
 /// Messaggi dai task del runtime al motore, con la generazione della connessione
 /// che li ha prodotti: quelli di una connessione superata si scartano.
 enum Interno {
     Client(u64, DalClient),
-    Grezzi(u64, Grezzi),
+    /// Esito di una lettura completa (`Err`: senza gli stati non c'è nulla da mostrare).
+    Grezzi(u64, Result<Box<Grezzi>, String>),
+}
+
+/// Cosa comporta, per ciò che si vede, il cambio di stato di un'entità.
+#[derive(Debug, PartialEq)]
+// Valore di ritorno di vita breve, mai in un vettore: la variante grande non costa nulla.
+#[allow(clippy::large_enum_variant)]
+enum Effetto {
+    /// Nulla che l'app mostri (entità mai mostrata, attributi che non usiamo, `last_updated`).
+    Niente,
+    /// Cambia solo il contenuto di un'entità mostrata: la si sostituisce dov'è.
+    Sostituisci(AppEntity),
+    /// Cambiano presenza, nome o conteggi: serve la mappatura completa (in memoria, niente letture).
+    Rimappa,
+}
+
+/// I dati di Home Assistant in memoria per la connessione corrente: stati, registri indicizzati
+/// e l'ultimo `MenuData` costruito. Gli `state_changed` li aggiornano un'entità alla volta.
+struct Casa {
+    stati: Vec<HaState>,
+    posizione: HashMap<String, usize>,
+    indici: Indici,
+    config: Option<HaConfig>,
+    menu: Arc<MenuData>,
+}
+
+impl Casa {
+    fn new(g: Grezzi, mapper: &mut EntityMapper) -> Casa {
+        mapper.usa_config(g.config.as_ref());
+        let indici = Indici::new(g.areas, g.devices, g.entries);
+        let stati: Vec<HaState> = g
+            .states
+            .into_iter()
+            .map(|s| {
+                let mostrata = mapper.mappa_entita(&indici, &s).is_some();
+                alleggerisci(s, mostrata)
+            })
+            .collect();
+        let posizione = stati.iter().enumerate().map(|(i, s)| (s.entity_id.clone(), i)).collect();
+        Casa { stati, posizione, indici, config: g.config, menu: Arc::new(MenuData::default()) }
+    }
+
+    fn stato(&self, entity_id: &str) -> Option<&HaState> {
+        self.posizione.get(entity_id).map(|&i| &self.stati[i])
+    }
+
+    /// Mette in memoria lo stato nuovo di un'entità (`None`: tolta) e dice cosa cambia per l'app.
+    fn applica(&mut self, mapper: &EntityMapper, entity_id: &str, nuovo: Option<HaState>) -> Effetto {
+        let vecchio = self.stato(entity_id);
+        let prima = vecchio.and_then(|s| mapper.mappa_entita(&self.indici, s));
+        let aggiornamento_prima = vecchio.is_some_and(aggiornamento_disponibile);
+        let dopo = nuovo.as_ref().and_then(|s| mapper.mappa_entita(&self.indici, s));
+        let aggiornamento_dopo = nuovo.as_ref().is_some_and(aggiornamento_disponibile);
+        match (self.posizione.get(entity_id).copied(), nuovo) {
+            (Some(i), Some(s)) => self.stati[i] = alleggerisci(s, dopo.is_some()),
+            (None, Some(s)) => {
+                self.posizione.insert(entity_id.to_owned(), self.stati.len());
+                self.stati.push(alleggerisci(s, dopo.is_some()));
+            }
+            (Some(i), None) => {
+                // Raro (un'entità tolta): si rifà l'indice.
+                self.stati.remove(i);
+                self.posizione = self.stati.iter().enumerate().map(|(i, s)| (s.entity_id.clone(), i)).collect();
+            }
+            (None, None) => {}
+        }
+        if aggiornamento_prima != aggiornamento_dopo {
+            return Effetto::Rimappa;
+        }
+        match (prima, dopo) {
+            (a, b) if a == b => Effetto::Niente,
+            // Stesso nome: l'ordine nelle stanze non cambia, basta sostituirla.
+            (Some(a), Some(b)) if a.name() == b.name() => Effetto::Sostituisci(b),
+            _ => Effetto::Rimappa,
+        }
+    }
+}
+
+/// Uno stato che l'app non mostra si tiene senza i suoi attributi (un lettore multimediale o
+/// un'automazione ne hanno tanti): resta solo `device_class`, che decide se un sensore si mostra.
+/// Se l'entità diventa visibile lo stato nuovo arriva intero con lo `state_changed`; se cambia un
+/// registro (un'entità non più nascosta) si rilegge tutto.
+fn alleggerisci(mut s: HaState, mostrata: bool) -> HaState {
+    if !mostrata {
+        let classe = s.attributes.get_mut("device_class").map(Value::take);
+        s.attributes = match classe {
+            Some(c) => json!({ "device_class": c }),
+            None => Value::Null,
+        };
+    }
+    s
+}
+
+/// Un'attesa che si rinvia a ogni nuovo arrivo, con un tetto dal primo: (primo arrivo, scadenza).
+#[derive(Debug, Clone, Copy, Default)]
+struct Attesa(Option<(Instant, Instant)>);
+
+impl Attesa {
+    fn rinvia(&mut self, ora: Instant, attesa: Duration, tetto: Duration) {
+        let primo = self.0.map_or(ora, |(p, _)| p);
+        self.0 = Some((primo, (ora + attesa).min(primo + tetto)));
+    }
+
+    fn scadenza(&self) -> Option<Instant> {
+        self.0.map(|(_, s)| s)
+    }
+
+    fn annulla(&mut self) {
+        self.0 = None;
+    }
 }
 
 struct Motore {
@@ -185,9 +307,23 @@ struct Motore {
     interni_rx: Option<mpsc::UnboundedReceiver<Interno>>,
     client: Option<(Client, tokio::task::JoinHandle<()>)>,
     generazione: u64,
-    grezzi: Option<Grezzi>,
-    /// (primo evento in attesa, scadenza della rilettura)
-    debounce: Option<(Instant, Instant)>,
+    mapper: EntityMapper,
+    /// I dati in memoria, dopo la prima lettura completa della connessione.
+    casa: Option<Casa>,
+    /// L'ultimo `MenuData` consegnato all'applicazione (non si riconsegna uguale).
+    consegnato: Option<Arc<MenuData>>,
+    /// Una lettura completa è in volo: gli `state_changed` che arrivano intanto si tengono qui e
+    /// si riapplicano ai dati nuovi (un evento può arrivare dopo la risposta di `get_states` ma
+    /// prima che le altre letture finiscano).
+    in_lettura: Option<Vec<(String, Option<HaState>)>>,
+    /// Un'altra lettura completa è stata chiesta mentre una era in volo.
+    rileggi_dopo: bool,
+    /// Pubblicazione dei cambi visibili, raccolti in una raffica.
+    pubblica: Attesa,
+    /// Alla pubblicazione serve la mappatura completa (non bastano le sostituzioni).
+    rimappa: bool,
+    /// Rilettura dopo gli eventi dei registri.
+    registri: Attesa,
     /// Notifiche persistenti dell'ambiente connesso già consegnate all'applicazione.
     notifiche: BTreeSet<String>,
     /// L'ambiente a cui appartengono quelle notifiche.
@@ -213,8 +349,14 @@ impl Motore {
             interni_rx: Some(interni_rx),
             client: None,
             generazione: 0,
-            grezzi: None,
-            debounce: None,
+            mapper: EntityMapper::new(),
+            casa: None,
+            consegnato: None,
+            in_lettura: None,
+            rileggi_dopo: false,
+            pubblica: Attesa::default(),
+            rimappa: false,
+            registri: Attesa::default(),
             notifiche: BTreeSet::new(),
             ambiente_notifiche: None,
         }
@@ -223,15 +365,22 @@ impl Motore {
     async fn esegui(mut self, mut rx: mpsc::UnboundedReceiver<Comando>) {
         let mut interni = self.interni_rx.take().expect("ricevitore interno");
         loop {
-            let scadenza = self.debounce.map(|(_, s)| s);
+            let (pubblica, registri) = (self.pubblica.scadenza(), self.registri.scadenza());
             tokio::select! {
                 c = rx.recv() => match c {
                     None | Some(Comando::Ferma) => break,
                     Some(c) => self.comando(c),
                 },
                 Some(i) = interni.recv() => self.interno(i),
-                _ = sleep_until(scadenza.unwrap_or_else(Instant::now)), if scadenza.is_some() => {
-                    self.debounce = None;
+                _ = sleep_until(pubblica.unwrap_or_else(Instant::now)), if pubblica.is_some() => {
+                    self.pubblica.annulla();
+                    if std::mem::take(&mut self.rimappa) {
+                        self.mappa_tutto();
+                    }
+                    self.consegna();
+                }
+                _ = sleep_until(registri.unwrap_or_else(Instant::now)), if registri.is_some() => {
+                    self.registri.annulla();
                     self.rileggi();
                 }
             }
@@ -295,7 +444,8 @@ impl Motore {
             Comando::Salva { config, rimappa } => {
                 self.salva(&config);
                 if rimappa {
-                    self.pubblica();
+                    self.mappa_tutto();
+                    self.consegna();
                 }
             }
             Comando::Ferma => {}
@@ -367,8 +517,17 @@ impl Motore {
             task.abort();
         }
         self.generazione += 1;
-        self.grezzi = None;
-        self.debounce = None;
+        self.casa = None;
+        self.consegnato = None;
+        self.in_lettura = None;
+        self.rileggi_dopo = false;
+        self.ferma_attese();
+    }
+
+    fn ferma_attese(&mut self) {
+        self.pubblica.annulla();
+        self.registri.annulla();
+        self.rimappa = false;
     }
 
     /// Le notifiche dell'ambiente lasciato non sono più raggiungibili: escono.
@@ -408,73 +567,120 @@ impl Motore {
             Interno::Client(_, DalClient::Stato(s)) => {
                 let connesso = s == StatoConnessione::Connesso;
                 if !connesso {
-                    self.debounce = None;
+                    self.ferma_attese();
                 }
                 self.emetti(CasaEvento::Stato(s));
                 if connesso {
+                    // Una (ri)connessione consegna sempre i dati, anche se uguali a prima.
+                    self.consegnato = None;
                     self.rileggi();
                 }
             }
-            Interno::Client(_, DalClient::Evento(EventoWs::StatoCambiato)) => {
-                let ora = Instant::now();
-                let primo = self.debounce.map_or(ora, |(p, _)| p);
-                self.debounce = Some((primo, (ora + DEBOUNCE).min(primo + ATTESA_MASSIMA)));
+            Interno::Client(_, DalClient::Evento(EventoWs::StatoCambiato { entity_id, nuovo })) => {
+                self.stato_cambiato(entity_id, nuovo);
+            }
+            Interno::Client(_, DalClient::Evento(EventoWs::StatoIlleggibile)) => self.rileggi(),
+            Interno::Client(_, DalClient::Evento(EventoWs::RegistroCambiato)) => {
+                self.registri.rinvia(Instant::now(), ATTESA_REGISTRI, TETTO_REGISTRI);
             }
             Interno::Client(_, DalClient::Evento(EventoWs::Notifiche { tipo, notifiche })) => {
                 self.notifiche(tipo, notifiche);
             }
-            Interno::Grezzi(_, g) => {
-                self.grezzi = Some(g);
-                self.pubblica();
-            }
+            Interno::Grezzi(_, esito) => self.letti(esito),
         }
     }
 
-    /// `trigger_refresh` di v2: le sei letture in parallelo, poi la mappatura.
-    fn rileggi(&self) {
+    /// Un `state_changed`: aggiorna in memoria solo quell'entità; se il cambio si vede, la
+    /// pubblicazione parte alla fine della raffica.
+    fn stato_cambiato(&mut self, entity_id: String, nuovo: Option<HaState>) {
+        if let Some(attesi) = &mut self.in_lettura {
+            attesi.push((entity_id.clone(), nuovo.clone()));
+        }
+        let Some(casa) = &mut self.casa else { return };
+        match casa.applica(&self.mapper, &entity_id, nuovo) {
+            Effetto::Niente => return,
+            Effetto::Sostituisci(e) => {
+                if !sostituisci_in_menu(Arc::make_mut(&mut casa.menu), &e) {
+                    return; // mostrabile ma nascosta dall'utente
+                }
+            }
+            Effetto::Rimappa => self.rimappa = true,
+        }
+        self.pubblica.rinvia(Instant::now(), RAFFICA, TETTO_RAFFICA);
+    }
+
+    /// La lettura completa (`trigger_refresh` di v2): stati, registri e configurazione in
+    /// parallelo. Solo alla connessione, dopo un cambio dei registri o con uno stato illeggibile.
+    fn rileggi(&mut self) {
         let Some((client, _)) = &self.client else { return };
+        if self.in_lettura.is_some() {
+            self.rileggi_dopo = true;
+            return;
+        }
+        self.in_lettura = Some(Vec::new());
         let (client, tx, g) = (client.clone(), self.interni_tx.clone(), self.generazione);
         tokio::spawn(async move {
-            let (states, areas, devices, entries, config, notifiche) = tokio::join!(
+            let (states, areas, devices, entries, config) = tokio::join!(
                 leggi::<Vec<HaState>>(&client, "get_states"),
                 leggi::<Vec<HaArea>>(&client, "config/area_registry/list"),
                 leggi::<Vec<HaDevice>>(&client, "config/device_registry/list"),
                 leggi::<Vec<HaEntityEntry>>(&client, "config/entity_registry/list"),
                 leggi::<HaConfig>(&client, "get_config"),
-                leggi::<Vec<HaNotification>>(&client, "persistent_notification/get"),
             );
-            // Senza gli stati non c'è nulla da mostrare: si tengono i dati precedenti.
-            let Ok(states) = states else { return };
-            let _ = tx.send(Interno::Grezzi(
-                g,
-                Grezzi {
-                    states,
-                    areas: areas.unwrap_or_default(),
-                    devices: devices.unwrap_or_default(),
-                    entries: entries.unwrap_or_default(),
-                    config: config.ok(),
-                    notifiche: notifiche.map(|n| n.len() as u32).unwrap_or(0),
-                },
-            ));
+            let esito = states.map(|states| Box::new(Grezzi {
+                states,
+                areas: areas.unwrap_or_default(),
+                devices: devices.unwrap_or_default(),
+                entries: entries.unwrap_or_default(),
+                config: config.ok(),
+            }));
+            let _ = tx.send(Interno::Grezzi(g, esito));
         });
     }
 
-    /// Mappa gli ultimi dati con la configurazione corrente e li consegna.
-    fn pubblica(&self) {
-        let Some(g) = &self.grezzi else { return };
+    /// La lettura completa è arrivata: dati nuovi, con sopra gli `state_changed` arrivati intanto
+    /// (solo quelli non più vecchi dello stato letto), mappati e consegnati subito.
+    fn letti(&mut self, esito: Result<Box<Grezzi>, String>) {
+        let attesi = self.in_lettura.take().unwrap_or_default();
+        match esito {
+            // Senza gli stati si tengono i dati precedenti.
+            Err(e) => eprintln!("lettura di Home Assistant non riuscita: {e}"),
+            Ok(g) => {
+                let mut casa = Casa::new(*g, &mut self.mapper);
+                for (entity_id, nuovo) in attesi {
+                    let piu_vecchio = match (&nuovo, casa.stato(&entity_id)) {
+                        // Stessa forma ISO di HA: il confronto fra testi segue il tempo.
+                        (Some(n), Some(letto)) => n.last_updated < letto.last_updated,
+                        _ => false,
+                    };
+                    if !piu_vecchio {
+                        casa.applica(&self.mapper, &entity_id, nuovo);
+                    }
+                }
+                self.casa = Some(casa);
+                self.pubblica.annulla();
+                self.rimappa = false;
+                self.mappa_tutto();
+                self.consegna();
+            }
+        }
+        if std::mem::take(&mut self.rileggi_dopo) {
+            self.rileggi();
+        }
+    }
+
+    /// Ricostruisce tutto `MenuData` dai dati in memoria con la configurazione corrente.
+    fn mappa_tutto(&mut self) {
+        let Some(casa) = &mut self.casa else { return };
         let (favorites, hidden, room_order, device_order) = {
             let c = blocca(&self.config);
             (c.favorites.clone(), c.hidden_entities.clone(), c.room_order.clone(), c.device_order.clone())
         };
-        let dati: MenuData = EntityMapper::new().map(
-            DatiHa {
-                states: &g.states,
-                areas: &g.areas,
-                devices: &g.devices,
-                entries: &g.entries,
-                config: g.config.as_ref(),
-                notification_count: g.notifiche,
-            },
+        let dati = self.mapper.map_indicizzato(
+            &casa.indici,
+            &casa.stati,
+            casa.config.as_ref(),
+            self.notifiche.len() as u32,
             Preferenze {
                 favorites_order: &favorites,
                 hidden_entities: &hidden,
@@ -482,11 +688,110 @@ impl Motore {
                 device_orders: &device_order,
             },
         );
-        self.emetti(CasaEvento::Dati(Arc::new(dati)));
+        casa.menu = Arc::new(dati);
+    }
+
+    /// Consegna l'ultimo `MenuData` se è diverso da quello già consegnato.
+    fn consegna(&mut self) {
+        let Some(casa) = &self.casa else { return };
+        if self.consegnato.as_deref() == Some(&*casa.menu) {
+            return;
+        }
+        self.consegnato = Some(casa.menu.clone());
+        self.emetti(CasaEvento::Dati(casa.menu.clone()));
     }
 }
 
 async fn leggi<T: serde::de::DeserializeOwned>(client: &Client, tipo: &str) -> Result<T, String> {
     let v = client.richiesta(tipo, Value::Null).await?;
     serde_json::from_value(v).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    fn stato(id: &str, s: &str, attributi: Value) -> HaState {
+        HaState {
+            entity_id: id.into(),
+            state: s.into(),
+            attributes: attributi,
+            last_changed: String::new(),
+            last_updated: String::new(),
+        }
+    }
+
+    fn luce(s: &str) -> HaState {
+        stato("light.cucina", s, json!({ "friendly_name": "Cucina", "supported_color_modes": ["onoff"] }))
+    }
+
+    fn casa(stati: Vec<HaState>) -> (Casa, EntityMapper) {
+        let mut mapper = EntityMapper::new();
+        let g = Grezzi { states: stati, areas: vec![], devices: vec![], entries: vec![], config: None };
+        (Casa::new(g, &mut mapper), mapper)
+    }
+
+    #[test]
+    fn cambio_di_stato_visibile_si_sostituisce() {
+        let (mut c, m) = casa(vec![luce("off")]);
+        let Effetto::Sostituisci(e) = c.applica(&m, "light.cucina", Some(luce("on"))) else { panic!() };
+        assert!(matches!(e, AppEntity::Light(l) if l.is_on));
+        assert_eq!(c.stato("light.cucina").unwrap().state, "on");
+    }
+
+    #[test]
+    fn attributi_inutili_e_entita_nascoste_non_cambiano_nulla() {
+        let potenza = |v: &str| stato("sensor.frigo", v, json!({ "device_class": "power", "unit_of_measurement": "W" }));
+        let (mut c, m) = casa(vec![luce("off"), potenza("40")]);
+        let mut con_attributo = luce("off");
+        con_attributo.attributes["linkquality"] = json!(80);
+        con_attributo.last_updated = "2026-11-15T10:00:00+00:00".into();
+        assert_eq!(c.applica(&m, "light.cucina", Some(con_attributo)), Effetto::Niente);
+        assert_eq!(c.applica(&m, "sensor.frigo", Some(potenza("41"))), Effetto::Niente);
+        assert_eq!(c.applica(&m, "binary_sensor.porta", Some(stato("binary_sensor.porta", "on", json!({})))), Effetto::Niente);
+    }
+
+    #[test]
+    fn nome_presenza_e_aggiornamenti_rimappano() {
+        let (mut c, m) = casa(vec![luce("off")]);
+        let mut rinominata = luce("off");
+        rinominata.attributes["friendly_name"] = json!("Cucina grande");
+        assert_eq!(c.applica(&m, "light.cucina", Some(rinominata)), Effetto::Rimappa);
+        assert_eq!(c.applica(&m, "light.cucina", None), Effetto::Rimappa, "tolta");
+        assert!(c.stato("light.cucina").is_none());
+        assert_eq!(c.applica(&m, "switch.nuovo", Some(stato("switch.nuovo", "on", json!({})))), Effetto::Rimappa);
+        assert_eq!(c.stato("switch.nuovo").unwrap().state, "on");
+        assert_eq!(c.applica(&m, "update.core", Some(stato("update.core", "on", json!({})))), Effetto::Rimappa);
+        assert_eq!(c.applica(&m, "update.core", Some(stato("update.core", "on", json!({ "x": 1 })))), Effetto::Niente);
+    }
+
+    #[test]
+    fn stati_non_mostrati_senza_attributi() {
+        let lettore = stato("media_player.tv", "idle", json!({ "source_list": ["a", "b"], "device_class": "tv" }));
+        let (c, _) = casa(vec![lettore, luce("on")]);
+        assert_eq!(c.stato("media_player.tv").unwrap().attributes, json!({ "device_class": "tv" }));
+        assert_eq!(c.stato("light.cucina").unwrap().attributes["supported_color_modes"], json!(["onoff"]));
+    }
+
+    #[test]
+    fn un_sensore_che_diventa_temperatura_si_mostra() {
+        let (mut c, m) = casa(vec![stato("sensor.x", "3", json!({ "device_class": "power" }))]);
+        let ora = stato("sensor.x", "21", json!({ "device_class": "temperature", "unit_of_measurement": "°C" }));
+        assert_eq!(c.applica(&m, "sensor.x", Some(ora)), Effetto::Rimappa);
+        assert_eq!(c.stato("sensor.x").unwrap().attributes["unit_of_measurement"], "°C");
+    }
+
+    #[test]
+    fn attesa_con_tetto() {
+        let t = Instant::now();
+        let mut a = Attesa::default();
+        a.rinvia(t, RAFFICA, TETTO_RAFFICA);
+        assert_eq!(a.scadenza(), Some(t + RAFFICA));
+        a.rinvia(t + Duration::from_millis(40), RAFFICA, TETTO_RAFFICA);
+        assert_eq!(a.scadenza(), Some(t + Duration::from_millis(90)));
+        a.rinvia(t + Duration::from_millis(280), RAFFICA, TETTO_RAFFICA);
+        assert_eq!(a.scadenza(), Some(t + TETTO_RAFFICA));
+        a.annulla();
+        assert_eq!(a.scadenza(), None);
+    }
 }

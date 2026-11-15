@@ -3,12 +3,15 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct HaState {
     pub entity_id: String,
     pub state: String,
+    #[serde(default)]
     pub attributes: Value,
+    #[serde(default)]
     pub last_changed: String,
+    #[serde(default)]
     pub last_updated: String,
 }
 

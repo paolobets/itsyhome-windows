@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 // ─── Entity enum ──────────────────────────────────────────────────────────────
 
 /// Tagged union that the frontend reads as `{ type: "light", ... }` etc.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum AppEntity {
     Light(LightEntity),
@@ -61,7 +61,7 @@ impl AppEntity {
 
 /// Common fields present on every entity.  Flattened into each concrete type so
 /// the wire format matches the TypeScript interface (no nested `base` key).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BaseEntity {
     pub entity_id: String,
@@ -73,7 +73,7 @@ pub struct BaseEntity {
 
 // ─── Concrete entity types ────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LightEntity {
     #[serde(flatten)]
@@ -90,7 +90,7 @@ pub struct LightEntity {
     pub supports_rgb: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SwitchEntity {
     #[serde(flatten)]
@@ -98,7 +98,7 @@ pub struct SwitchEntity {
     pub is_on: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClimateEntity {
     #[serde(flatten)]
@@ -115,7 +115,7 @@ pub struct ClimateEntity {
     pub temp_step: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CoverEntity {
     #[serde(flatten)]
@@ -128,7 +128,7 @@ pub struct CoverEntity {
     pub device_class: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LockEntity {
     #[serde(flatten)]
@@ -136,7 +136,7 @@ pub struct LockEntity {
     pub lock_state: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FanEntity {
     #[serde(flatten)]
@@ -152,7 +152,7 @@ pub struct FanEntity {
     pub supports_direction: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HumidifierEntity {
     #[serde(flatten)]
@@ -164,7 +164,7 @@ pub struct HumidifierEntity {
     pub modes: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ValveEntity {
     #[serde(flatten)]
@@ -174,7 +174,7 @@ pub struct ValveEntity {
     pub supports_position: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SensorEntity {
     #[serde(flatten)]
@@ -184,7 +184,7 @@ pub struct SensorEntity {
     pub device_class: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AlarmEntity {
     #[serde(flatten)]
@@ -193,14 +193,14 @@ pub struct AlarmEntity {
     pub supported_modes: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CameraEntity {
     #[serde(flatten)]
     pub base: BaseEntity,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SceneEntity {
     #[serde(flatten)]
@@ -209,7 +209,7 @@ pub struct SceneEntity {
 
 // ─── Menu data ────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Room {
     pub area_id: String,
@@ -217,7 +217,7 @@ pub struct Room {
     pub entities: Vec<AppEntity>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MenuData {
     pub favorites: Vec<AppEntity>,

@@ -77,6 +77,56 @@ pub struct Preferenze<'a> {
     pub device_orders: &'a HashMap<String, Vec<String>>,
 }
 
+/// I registri di Home Assistant (stanze, dispositivi, entità) indicizzati per id. Il servizio li
+/// costruisce a ogni lettura dei registri e li tiene: servono alla mappatura completa e a quella
+/// di una sola entità quando ne cambia lo stato (`EntityMapper::mappa_entita`).
+#[derive(Debug, Default)]
+pub struct Indici {
+    entries: HashMap<String, HaEntityEntry>,
+    devices: HashMap<String, HaDevice>,
+    areas: HashMap<String, HaArea>,
+}
+
+impl Indici {
+    pub fn new(areas: Vec<HaArea>, devices: Vec<HaDevice>, entries: Vec<HaEntityEntry>) -> Indici {
+        Indici {
+            entries: entries.into_iter().map(|e| (e.entity_id.clone(), e)).collect(),
+            devices: devices.into_iter().map(|d| (d.id.clone(), d)).collect(),
+            areas: areas.into_iter().map(|a| (a.area_id.clone(), a)).collect(),
+        }
+    }
+}
+
+/// Un aggiornamento in attesa (`update.*` acceso): `MenuData::update_count` li conta.
+pub fn aggiornamento_disponibile(state: &HaState) -> bool {
+    domain_of(&state.entity_id) == "update" && state.state == "on"
+}
+
+/// Mette `nuova` al posto dell'entità con lo stesso id in preferiti, stanze, scene e telecamere,
+/// senza toccare l'ordine. Vale solo se l'ordine non può cambiare: stesso nome (le stanze senza
+/// ordine salvato vanno per nome), stessa stanza, stessa presenza. Vero se l'ha trovata almeno
+/// una volta (un'entità nascosta dall'utente non c'è).
+pub fn sostituisci_in_menu(menu: &mut MenuData, nuova: &AppEntity) -> bool {
+    let id = nuova.entity_id();
+    let mut trovata = false;
+    let liste = menu
+        .favorites
+        .iter_mut()
+        .chain(menu.rooms.iter_mut().flat_map(|r| r.entities.iter_mut()))
+        .chain(menu.cameras.iter_mut());
+    for e in liste.filter(|e| e.entity_id() == id) {
+        *e = nuova.clone();
+        trovata = true;
+    }
+    if let AppEntity::Scene(s) = nuova {
+        for vecchia in menu.scenes.iter_mut().filter(|v| v.base.entity_id == id) {
+            *vecchia = s.clone();
+            trovata = true;
+        }
+    }
+    trovata
+}
+
 impl Default for EntityMapper {
     fn default() -> Self {
         Self::new()
@@ -102,36 +152,25 @@ impl EntityMapper {
 
     /// Map raw HA API results into a fully-typed `MenuData`.
     pub fn map(&mut self, ha: DatiHa<'_>, preferenze: Preferenze<'_>) -> MenuData {
-        let DatiHa { states, areas, devices, entries, config: ha_config, notification_count } = ha;
+        let DatiHa { states, areas, devices, entries, config, notification_count } = ha;
+        let indici = Indici::new(areas.to_vec(), devices.to_vec(), entries.to_vec());
+        self.map_indicizzato(&indici, states, config, notification_count, preferenze)
+    }
+
+    /// Come `map`, con i registri già indicizzati (il servizio li tiene fra una lettura e l'altra).
+    pub fn map_indicizzato(
+        &mut self,
+        indici: &Indici,
+        states: &[HaState],
+        ha_config: Option<&HaConfig>,
+        notification_count: u32,
+        preferenze: Preferenze<'_>,
+    ) -> MenuData {
         let Preferenze { favorites_order, hidden_entities, room_order, device_orders } = preferenze;
         if let Some(cfg) = ha_config {
             self.set_temp_unit(&cfg.unit_system.temperature);
         }
-
-        // Build lookup maps
-        let device_map: HashMap<&str, &HaDevice> =
-            devices.iter().map(|d| (d.id.as_str(), d)).collect();
-        let entry_map: HashMap<&str, &HaEntityEntry> =
-            entries.iter().map(|e| (e.entity_id.as_str(), e)).collect();
-        let area_map: HashMap<&str, &HaArea> =
-            areas.iter().map(|a| (a.area_id.as_str(), a)).collect();
-
-        let excluded_set: HashSet<&str> = EXCLUDED_DOMAINS.iter().copied().collect();
-
-        let get_area_id = |state: &HaState| -> Option<String> {
-            let entry = entry_map.get(state.entity_id.as_str())?;
-            if let Some(aid) = &entry.area_id {
-                if !aid.is_empty() {
-                    return Some(aid.clone());
-                }
-            }
-            if let Some(did) = &entry.device_id {
-                if let Some(dev) = device_map.get(did.as_str()) {
-                    return dev.area_id.clone();
-                }
-            }
-            None
-        };
+        let area_map = &indici.areas;
 
         let mut update_count: u32 = 0;
         let mut all_entities: Vec<AppEntity> = Vec::new();
@@ -139,38 +178,12 @@ impl EntityMapper {
         let mut cameras: Vec<AppEntity> = Vec::new();
 
         for state in states {
-            let domain = domain_of(&state.entity_id);
-
             // Count pending updates regardless of filtering
-            if domain == "update" && state.state == "on" {
+            if aggiornamento_disponibile(state) {
                 update_count += 1;
             }
 
-            if excluded_set.contains(domain) {
-                continue;
-            }
-
-            // Skip disabled / hidden / config entities.
-            // Exception: cameras always pass — HA sometimes tags them with
-            // entity_category but they are explicitly user-facing.
-            if domain != "camera" {
-                if let Some(entry) = entry_map.get(state.entity_id.as_str()) {
-                    if entry.disabled_by.is_some() {
-                        continue;
-                    }
-                    if entry.hidden_by.is_some() {
-                        continue;
-                    }
-                    if entry.entity_category.is_some() {
-                        continue;
-                    }
-                }
-            }
-
-            let area_id = get_area_id(state);
-            let entry = entry_map.get(state.entity_id.as_str()).copied();
-
-            let Some(entity) = self.map_entity(state, entry, area_id) else {
+            let Some(entity) = self.mappa_entita(indici, state) else {
                 continue;
             };
 
@@ -249,8 +262,8 @@ impl EntityMapper {
             .filter(|id| !room_order_set.contains(id))
             .collect();
         other_area_ids.sort_by(|a, b| {
-            let na = area_map.get(a).map(|ar| ar.name.as_str()).unwrap_or(a);
-            let nb = area_map.get(b).map(|ar| ar.name.as_str()).unwrap_or(b);
+            let na = area_map.get(*a).map(|ar| ar.name.as_str()).unwrap_or(a);
+            let nb = area_map.get(*b).map(|ar| ar.name.as_str()).unwrap_or(b);
             na.cmp(nb)
         });
 
@@ -263,7 +276,7 @@ impl EntityMapper {
 
         let mut rooms: Vec<Room> = Vec::new();
         for area_id in &ordered_area_ids {
-            let area = match area_map.get(area_id) {
+            let area = match area_map.get(*area_id) {
                 Some(a) => a,
                 None => continue,
             };
@@ -328,6 +341,44 @@ impl EntityMapper {
 
         ordered.extend(rest);
         ordered
+    }
+
+    /// Una sola entità come la mostrerebbe `map` (prima di nascosti e preferiti, che dipendono
+    /// dall'utente): `None` se l'app non la mostra mai (dominio escluso, entità disattivata,
+    /// nascosta o di configurazione/diagnostica nel registro, sensore che non è temperatura o
+    /// umidità). Due risultati uguali per due stati della stessa entità vogliono dire che il
+    /// cambio non si vede.
+    pub fn mappa_entita(&self, indici: &Indici, state: &HaState) -> Option<AppEntity> {
+        let domain = domain_of(&state.entity_id);
+        if EXCLUDED_DOMAINS.contains(&domain) {
+            return None;
+        }
+        let entry = indici.entries.get(state.entity_id.as_str());
+        // Skip disabled / hidden / config entities.
+        // Exception: cameras always pass — HA sometimes tags them with
+        // entity_category but they are explicitly user-facing.
+        if domain != "camera" {
+            if let Some(entry) = entry {
+                if entry.disabled_by.is_some() || entry.hidden_by.is_some() || entry.entity_category.is_some() {
+                    return None;
+                }
+            }
+        }
+        let area_id = entry.and_then(|entry| {
+            if let Some(aid) = entry.area_id.as_ref().filter(|a| !a.is_empty()) {
+                return Some(aid.clone());
+            }
+            let did = entry.device_id.as_ref()?;
+            indici.devices.get(did.as_str())?.area_id.clone()
+        });
+        self.map_entity(state, entry, area_id)
+    }
+
+    /// Imposta l'unità di temperatura da `get_config` (per `mappa_entita` fuori da `map`).
+    pub fn usa_config(&mut self, config: Option<&HaConfig>) {
+        if let Some(cfg) = config {
+            self.set_temp_unit(&cfg.unit_system.temperature);
+        }
     }
 
     fn map_entity(
@@ -668,6 +719,47 @@ mod tests {
                 device_orders: &HashMap::new(),
             },
         )
+    }
+
+    /// `mappa_entita` dà la stessa entità che `map` mette nelle stanze, e `None` per ciò che `map` scarta.
+    #[test]
+    fn una_entita_come_nella_mappatura_completa() {
+        let mut nascosta = voce("switch.nascosta", Some("sala"));
+        nascosta.hidden_by = Some("user".into());
+        let mut diagnostica = voce("sensor.segnale", Some("sala"));
+        diagnostica.entity_category = Some("diagnostic".into());
+        let mut temperatura = stato("sensor.t");
+        temperatura.state = "21.5".into();
+        temperatura.attributes = json!({ "device_class": "temperature", "unit_of_measurement": "°C" });
+        let stati = [stato("light.a"), stato("switch.nascosta"), stato("sensor.segnale"), stato("binary_sensor.p"), temperatura];
+        let aree = [area("sala", "Sala")];
+        let voci = [voce("light.a", Some("sala")), nascosta, diagnostica, voce("sensor.t", Some("sala"))];
+        let menu = mappa(&stati, &aree, &voci, None, &[], &[], &[]);
+        let indici = Indici::new(aree.to_vec(), vec![], voci.to_vec());
+        let m = EntityMapper::new();
+        let nelle_stanze: Vec<&AppEntity> = menu.rooms.iter().flat_map(|r| &r.entities).collect();
+        for s in &stati {
+            let una = m.mappa_entita(&indici, s);
+            assert_eq!(una.as_ref(), nelle_stanze.iter().copied().find(|e| e.entity_id() == s.entity_id), "{}", s.entity_id);
+        }
+    }
+
+    #[test]
+    fn sostituisce_nei_preferiti_e_nelle_stanze_senza_cambiare_ordine() {
+        let stati = [stato("light.a"), stato("light.b")];
+        let aree = [area("sala", "Sala")];
+        let voci = [voce("light.a", Some("sala")), voce("light.b", Some("sala"))];
+        let mut menu = mappa(&stati, &aree, &voci, None, &["light.b"], &[], &[]);
+        let indici = Indici::new(aree.to_vec(), vec![], voci.to_vec());
+        let mut spenta = stato("light.b");
+        spenta.state = "off".into();
+        let nuova = EntityMapper::new().mappa_entita(&indici, &spenta).unwrap();
+        assert!(sostituisci_in_menu(&mut menu, &nuova));
+        assert_eq!(menu.favorites, vec![nuova.clone()]);
+        assert_eq!(ids(&menu.rooms[0].entities), vec!["light.a", "light.b"]);
+        assert_eq!(menu.rooms[0].entities[1], nuova);
+        let fuori = EntityMapper::new().mappa_entita(&indici, &stato("light.zeta")).unwrap();
+        assert!(!sostituisci_in_menu(&mut menu, &fuori), "un'entità che non c'è non si aggiunge");
     }
 
     #[test]
