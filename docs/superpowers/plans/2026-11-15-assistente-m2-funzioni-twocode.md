@@ -257,6 +257,14 @@ Il test M1 `batteria_con_isteresi` si adatta alla firma nuova senza cambiare le 
   - Impostazioni: nuova sezione **«Isola»** all'indice 3 (`["Home Assistant", "Dispositivi", "Collegamenti", "Isola", "Sistema", "Informazioni"]`); `SEZIONE_INFORMAZIONI` passa da 4 a 5. Contenuto: «A sinistra degli occhi», «A destra degli occhi» (selettori con `scelte()`), «Meteo da» (Automatico + `meteo_elenco`, D1), nota «Il nome della rete non compare mai nella pillola.». I Task 7 e 9 ci aggiungono i loro interruttori.
   - Nuovo componente `Scelta` in `componenti.slint`: pulsante con valore e «›» che apre un `PopupWindow` con l'elenco; ↑/↓ e Invio scelgono, Esc chiude e ridà il fuoco al pulsante; `accessible-role: combobox`, nome = etichetta, valore = scelta.
 
+- **Aggiunta del 16/11 (decisione di Paolo): quadranti configurabili** con lo stesso catalogo.
+  - `Config { …, #[serde(default)] pub quadranti: Vec<String> }` (3 voci, stesse stringhe di `Lato`; vuoto o mancante = i tre quadranti attuali di M1; `#[serde(default)] pub massimi_quadranti: HashMap<String, f64>` per i massimi scelti dall'utente).
+  - Il catalogo si allarga per i quadranti con `Disco`, `ReteGiu`, `ReteSu`, `Gpu` (dal Task 10; prima assente) e con **qualunque sensore numerico** di HA disponibile in `MenuData` (temperatura, umidità, potenza W, energia/produzione FV): `Lato::Sensore(entity_id)` vale per entrambi; i lati della pillola mostrano solo ciò che ci sta (stessa funzione `scelte`, con un parametro `per_quadranti: bool`).
+  - `pub fn scala(fonte: &Lato, unita: Option<&str>, massimo_utente: Option<f64>) -> (f64, f64)`: `%` → 0..100; `°C` → −10..40; `W` → 0..massimo (predefinito 3000, modificabile nelle Impostazioni accanto alla scelta); `kW` → 0..massimo (predefinito 6); altre unità → 0..massimo utente, o 0..(valore × 2) finché l'utente non lo imposta; valore fuori scala → arco pieno o vuoto, testo col valore vero.
+  - Impostazioni › Isola: «Quadrante 1/2/3» (selettori `Scelta`) + campo «Massimo» accanto quando l'unità è W/kW o ignota.
+  - Campionamento: il `pc_stats` dei quadranti legge solo le fonti PC scelte (niente disco se nessun quadrante lo mostra); i sensori arrivano già con `MenuData` (nessuna lettura in più). L'insieme di entità seguite (`subscribe_entities`) deve includere i sensori scelti per quadranti e lati.
+  - Test in più: `quadranti_di_m1_predefiniti` (config senza chiave → i tre di M1), `scala_per_unita` (%, °C, W col massimo predefinito e utente, unità ignota), `quadranti_leggono_solo_cio_che_mostrano` (nessun disco scelto → il campionatore non legge il disco), `sensore_scelto_e_seguito` (un sensore scelto per un quadrante entra nell'insieme seguito), test Slint del selettore del quadrante.
+
 - [ ] **Step 1: test (falliscono)**
 
 ```rust
