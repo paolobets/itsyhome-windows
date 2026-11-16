@@ -92,6 +92,9 @@ component RigaStanza inherits Rectangle {
     in property <string> nome;
     in property <image> icona;
     in property <int> quanti;
+    // «Preferiti» non ha il numero: le card che mostra non sono «quanti preferiti hai» (al più 8,
+    // e senza preferiti scelti le prime entità delle stanze).
+    in property <bool> con-numero: true;
     in property <bool> selezionata;
     in property <bool> anello;
     in property <bool> tenue;
@@ -102,7 +105,7 @@ component RigaStanza inherits Rectangle {
     border-radius: Tema.raggio-m;
     background: selezionata ? Tema.scheda-attiva : area.has-hover ? Tema.scheda-sopra : transparent;
     accessible-role: tab;
-    accessible-label: nome + ", " + (quanti == 1 ? "1 dispositivo" : quanti + " dispositivi");
+    accessible-label: !con-numero ? nome : nome + ", " + (quanti == 1 ? "1 dispositivo" : quanti + " dispositivi");
     accessible-item-selectable: true;
     accessible-item-selected: selezionata;
     accessible-item-index: indice;
@@ -136,6 +139,7 @@ component RigaStanza inherits Rectangle {
 
     Text {
         accessible-role: none;
+        visible: con-numero;
         x: parent.width - 40px;
         width: 22px;
         height: parent.height;
@@ -172,8 +176,6 @@ export component VistaCasa inherits Rectangle {
     in property <[StanzaUi]> stanze;
     // La stanza aperta (indice in `stanze`, -1 = nessuna: «Preferiti» selezionata).
     in property <int> stanza-aperta: -1;
-    // Quanti preferiti ci sono (il numero della voce «Preferiti», come quello delle stanze).
-    in property <int> numero-preferiti;
     in property <string> stato-casa;
     in property <bool> casa-pronta;
     // Ora degli ultimi dati («10:42»; vuota se non ne sono mai arrivati).
@@ -218,12 +220,8 @@ export component VistaCasa inherits Rectangle {
     property <int> riga-col-fuoco: fuoco-preferiti ? 0 : fuoco-stanza >= 0 ? fuoco-stanza + 1 : -1;
 
     // ─── Elenco: «Preferiti» e le stanze ───
-    if con-stanze: Etichetta {
-        x: 2px;
-        y: 0;
-        height: 28px;
-        text: "STANZE";
-    }
+    // Nessuna intestazione: «STANZE» sopra «Preferiti» non era vero. L'elenco parte all'altezza
+    // delle card, accanto al titolo della griglia.
 
     elenco := Rectangle {
         x: 0;
@@ -232,7 +230,7 @@ export component VistaCasa inherits Rectangle {
         height: parent.height - testata;
         visible: con-stanze;
         accessible-role: tab-list;
-        accessible-label: "Stanze";
+        accessible-label: "Preferiti e stanze";
 
         elenco-stanze := Flickable {
             width: parent.width;
@@ -246,7 +244,7 @@ export component VistaCasa inherits Rectangle {
                 height: 30px;
                 nome: "Preferiti";
                 icona: Icone.stella;
-                quanti: root.numero-preferiti;
+                con-numero: false;
                 selezionata: !root.in-stanza;
                 anello: root.fuoco-preferiti;
                 tenue: !root.casa-pronta;

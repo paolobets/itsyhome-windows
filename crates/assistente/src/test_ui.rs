@@ -578,40 +578,56 @@ mod accessibilita {
         // La griglia mostra i dispositivi della stanza al posto dei preferiti.
         assert!(ElementHandle::find_by_accessible_label(&p, "Luce A, Spento").next().is_some());
         assert!(ElementHandle::find_by_accessible_label(&p, "Preferita, Spento").next().is_none());
-        // Un secondo clic sulla stanza aperta la chiude (come la v2): tornano i preferiti.
+        // Giro di correzioni 1: la scheda già selezionata resta tale (come «Preferiti»); si torna ai
+        // preferiti con «Preferiti».
         elemento(&p, "Cucina, 2 dispositivi").invoke_accessible_default_action();
+        assert_eq!(p.get_stanza_aperta(), 0, "un secondo tocco non chiude la stanza");
+        scheda(&p, "Preferiti").invoke_accessible_default_action();
         assert_eq!(p.get_stanza_aperta(), -1);
         assert!(ElementHandle::find_by_accessible_label(&p, "Preferita, Spento").next().is_some());
     }
 
-    /// Task 14g: la prima voce dell'elenco delle stanze è «Preferiti» (stella, numero dei
-    /// preferiti), selezionata all'apertura; toccandola la griglia torna ai preferiti col titolo
-    /// «Preferiti». Nella riga alta non c'è più «‹ Indietro».
+    /// La scheda dell'elenco con quel nome (il titolo della griglia può avere lo stesso testo).
+    fn scheda(p: &Pannello, nome: &str) -> ElementHandle {
+        ElementHandle::find_by_accessible_label(p, nome)
+            .find(|e| e.accessible_role() == Some(AccessibleRole::Tab))
+            .unwrap_or_else(|| panic!("nessuna scheda «{nome}»"))
+    }
+
+    fn titolo(p: &Pannello, testo: &str) -> bool {
+        ElementHandle::find_by_accessible_label(p, testo).any(|e| e.accessible_role() == Some(AccessibleRole::Text))
+    }
+
+    /// Task 14g: la prima voce dell'elenco è «Preferiti» (stella, senza numero: vedi il giro di
+    /// correzioni 1), selezionata all'apertura; toccandola la griglia torna ai preferiti col titolo
+    /// «Preferiti». Nessuna intestazione «STANZE» sopra «Preferiti»; nella riga alta non c'è più
+    /// «‹ Indietro».
     #[test]
     fn preferiti_prima_voce_delle_stanze() {
         let (p, eventi) = pannello_casa();
-        let elenco = elemento(&p, "Stanze");
+        let elenco = elemento(&p, "Preferiti e stanze");
         assert_eq!(elenco.accessible_role(), Some(AccessibleRole::TabList));
-        let preferiti = elemento(&p, "Preferiti, 1 dispositivo");
-        assert_eq!(preferiti.accessible_role(), Some(AccessibleRole::Tab));
+        assert!(ElementHandle::find_by_accessible_label(&p, "STANZE").next().is_none(), "niente «STANZE» sopra «Preferiti»");
+        assert!(ElementHandle::find_by_accessible_label(&p, "Preferiti, 1 dispositivo").next().is_none(), "senza numero");
+        let preferiti = scheda(&p, "Preferiti");
         assert_eq!(preferiti.accessible_item_selected(), Some(true), "selezionata all'apertura");
         assert_eq!((preferiti.accessible_item_index(), preferiti.accessible_item_count()), (Some(0), Some(3)));
         let cucina = elemento(&p, "Cucina, 2 dispositivi");
         assert_eq!((cucina.accessible_item_index(), cucina.accessible_item_count()), (Some(1), Some(3)));
-        assert!(ElementHandle::find_by_accessible_label(&p, "Preferiti").next().is_some(), "titolo della griglia");
+        assert!(titolo(&p, "Preferiti"), "titolo della griglia");
         assert!(ElementHandle::find_by_accessible_label(&p, "Indietro").next().is_none(), "niente «Indietro»");
 
         cucina.invoke_accessible_default_action();
-        assert_eq!(elemento(&p, "Preferiti, 1 dispositivo").accessible_item_selected(), Some(false));
-        assert!(ElementHandle::find_by_accessible_label(&p, "Preferiti").next().is_none(), "titolo: la stanza");
-        assert!(ElementHandle::find_by_accessible_label(&p, "Cucina").next().is_some());
+        assert_eq!(scheda(&p, "Preferiti").accessible_item_selected(), Some(false));
+        assert!(!titolo(&p, "Preferiti"), "titolo: la stanza");
+        assert!(titolo(&p, "Cucina"));
 
-        elemento(&p, "Preferiti, 1 dispositivo").invoke_accessible_default_action();
+        scheda(&p, "Preferiti").invoke_accessible_default_action();
         assert_eq!(p.get_stanza_aperta(), -1);
-        assert_eq!(elemento(&p, "Preferiti, 1 dispositivo").accessible_item_selected(), Some(true));
+        assert_eq!(scheda(&p, "Preferiti").accessible_item_selected(), Some(true));
         assert!(ElementHandle::find_by_accessible_label(&p, "Preferita, Spento").next().is_some());
         // «Preferiti» già selezionata: toccarla di nuovo non cambia nulla.
-        elemento(&p, "Preferiti, 1 dispositivo").invoke_accessible_default_action();
+        scheda(&p, "Preferiti").invoke_accessible_default_action();
         assert_eq!(*eventi.borrow(), ["apri cucina", "chiudi stanza"]);
     }
 
@@ -644,7 +660,7 @@ mod accessibilita {
         tasto(&p, Key::Escape);
         assert_eq!(p.get_stanza_aperta(), -1, "il primo Esc torna a «Preferiti»");
         assert_eq!(eventi.borrow().last().map(String::as_str), Some("chiudi stanza"));
-        assert_eq!(elemento(&p, "Preferiti, 1 dispositivo").accessible_item_selected(), Some(true));
+        assert_eq!(scheda(&p, "Preferiti").accessible_item_selected(), Some(true));
         // Il fuoco è su «Preferiti»: ↓ e Invio riaprono la prima stanza.
         tasto(&p, Key::DownArrow);
         tasto(&p, Key::Return);
@@ -676,6 +692,13 @@ mod accessibilita {
         tasto(&p, Key::DownArrow);
         tasto(&p, Key::Return);
         assert_eq!(p.get_stanza_aperta(), 0);
+        // Giro di correzioni 1: ← porta sulla stanza aperta, Invio lì torna alle card (come su
+        // «Preferiti») senza chiuderla.
+        tasto(&p, Key::LeftArrow);
+        tasto(&p, Key::Return);
+        assert_eq!(p.get_stanza_aperta(), 0, "Invio sulla stanza aperta non la chiude");
+        tasto(&p, Key::Return);
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("tocca light.a"), "il fuoco è tornato alle card");
         tasto(&p, Key::LeftArrow);
         tasto(&p, Key::UpArrow);
         tasto(&p, Key::Return);

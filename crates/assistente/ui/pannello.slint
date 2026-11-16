@@ -10,7 +10,7 @@
 // card: ↑/↓ fra «Preferiti» e le stanze e → alle card, le frecce fra le card, ← dalla prima colonna all'elenco
 // e ↑ dalla prima riga a «Riprova» quando c'è; Casa vuota e non connessa: «Apri Impostazioni»);
 // In Collegamenti le frecce fra le card, ↑ dalla prima riga a «Modifica»; Invio apre la pagina.
-// Invio o Spazio attivano (su una stanza: la apre o la chiude; su una voce: la espande o la
+// Invio o Spazio attivano (su una stanza o «Preferiti»: la sceglie e porta alle card; su una voce: la espande o la
 // riduce; un permesso, «Consenti», solo con Ctrl+Invio, e la voce che lo chiede si apre col fuoco
 // su «Nega»); Backspace o Alt+← = indietro (prima torna a «Preferiti»); Esc un livello alla
 // volta: riduce la voce espansa, torna a «Preferiti», poi chiude il pannello; ↑/↓ sulla voce espansa
@@ -363,12 +363,15 @@ export component Pannello inherits Window {
         }
     }
 
-    // Clic o Invio su una stanza: la apre, o la chiude se è già aperta (come la v2).
+    // Clic o Invio su una stanza: la apre. Sulla stanza già aperta (la scheda selezionata) non
+    // cambia nulla, come su «Preferiti»: da tastiera il fuoco torna alle card. Ai preferiti si
+    // torna con «Preferiti», Esc o Backspace.
     function scegli-stanza(i: int, alle-card: bool) {
-        if (i == stanza-aperta) {
-            chiudi-stanza-ora();
-        } else {
+        if (i != stanza-aperta) {
             apri-stanza-i(i, alle-card);
+        } else if (alle-card && griglia.length > 0 && ha-zona(Zona.contenuto)) {
+            zona = Zona.contenuto;
+            fuoco-casa = 0;
         }
     }
 
@@ -814,7 +817,6 @@ export component Pannello inherits Window {
                     // senza tastiera).
                     fuoco-stanza: da-tastiera && zona == Zona.stanze && vista == "casa" && fuoco-stanza-valido >= 0 ? fuoco-stanza-valido : -1;
                     fuoco-preferiti: da-tastiera && zona == Zona.stanze && vista == "casa" && fuoco-stanza-valido < 0;
-                    numero-preferiti: root.preferiti.length;
                     stato-casa: root.stato-casa;
                     casa-pronta: root.casa-pronta;
                     dati-delle: root.dati-delle;
