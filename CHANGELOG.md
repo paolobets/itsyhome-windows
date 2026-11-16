@@ -189,6 +189,10 @@ Riposo non rimisurato a schermo libero: durante tutta la prova lo schermo era bl
 - I nomi che HA riscrive nello stato (`original_name`, `translation_key`, `has_entity_name`, `changes` vuoto, nome del dispositivo proprio) non rileggono più i registri. Restano il nome scelto (`name`) e il nome di un dispositivo padre con figli mostrati.
 - Registro diagnostico: contatori anche per `translation_key`, `has_entity_name` e `parent_device_id`.
 
+### Fixed (Task 14h, giro di correzioni 3)
+- Il nuovo tentativo di una lettura non si arma più a connessione caduta (l'errore delle letture in volo arriva dopo la caduta): niente tentativi a vuoto durante la riconnessione, e la prima lettura fallita della connessione nuova si riprova dopo 2 s invece che con l'attesa cresciuta intanto.
+- Una lettura completa che parte annulla il tentativo armato (niente seconda lettura accodata); il tentativo si arma sempre da capo, mai con una scadenza già passata.
+
 ### Changed (Task 14i: decisione di Paolo, 16/11/2026)
 - Riga alta del pannello: dopo l'ora il pulsante **«⋯»** («Altre opzioni», 28 × 28, anello da tastiera) apre lo stesso menu nativo del clic destro sulla pillola, senza «Apri» e con «Impostazioni» in testa (Impostazioni, Informazioni, Ritira/Mostra l'isola, Esci), sotto il pulsante e allineato al suo bordo destro dentro l'area di lavoro. Esc lo chiude e il fuoco resta su «⋯»; «Ritira l'isola» da qui chiude il pannello e ritira subito la pillola.
 - Dock di sole app: via l'ingranaggio delle Impostazioni. Tab gira fra «In attesa», contenuto, dock e «⋯».
