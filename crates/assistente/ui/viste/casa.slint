@@ -1,12 +1,12 @@
-// Vista Casa: a sinistra le stanze (nell'ordine salvato, senza le nascoste, poi «Altro» e le
-// scene), a destra i preferiti in una griglia di card; una stanza aperta prende il posto dei
-// preferiti con i suoi dispositivi (come il pannello di dettaglio della v2, che si apriva accanto
-// all'elenco delle stanze). Così stanze e preferiti si vedono insieme nel pannello fisso 800 × 300
-// senza schede da cambiare. Un tocco accende/spegne luci e interruttori e attiva le scene; il
-// resto si legge soltanto. Il colore compare solo sui dispositivi accesi; quelli non disponibili
-// (o tutti, a casa non connessa) restano tenui e non rispondono al tocco. Da tastiera (in
-// pannello.slint): Tab fra stanze e card, frecce dentro, Invio o Spazio apre la stanza o tocca la
-// card; Esc o «‹ Indietro» chiudono prima la stanza.
+// Vista Casa: a sinistra l'elenco con «★ Preferiti» in cima e poi le stanze (nell'ordine salvato,
+// senza le nascoste, poi «Altro» e le scene), a destra una griglia di card: i preferiti, o i
+// dispositivi della stanza scelta (come il pannello di dettaglio della v2, che si apriva accanto
+// all'elenco delle stanze). Nell'elenco una voce sola è selezionata: «Preferiti» all'apertura, o
+// la stanza aperta. Un tocco accende/spegne luci e interruttori e attiva le scene; il resto si
+// legge soltanto. Il colore compare solo sui dispositivi accesi; quelli non disponibili (o tutti,
+// a casa non connessa) restano tenui e non rispondono al tocco. Da tastiera (in pannello.slint):
+// Tab fra elenco e card, frecce dentro, Invio o Spazio sceglie la voce o tocca la card; Esc con
+// una stanza aperta torna a «Preferiti».
 import { Tema } from "../tema.slint";
 import { Icone, Icona } from "../icone.slint";
 import { PreferitoUi, GenereUi, StanzaUi } from "../voci.slint";
@@ -85,27 +85,29 @@ export component Dispositivo inherits Rectangle {
     if anello: Anello { raggio: parent.border-radius; }
 }
 
-// Una stanza nell'elenco: icona, nome, quanti dispositivi e «›». Quella aperta resta evidenziata.
+// Una voce dell'elenco («Preferiti» o una stanza): icona, nome, quanti dispositivi e «›». Una
+// scheda di un elenco di schede: Narrator dice nome, numero, «selezionato» e la posizione. Quella
+// selezionata resta evidenziata.
 component RigaStanza inherits Rectangle {
-    in property <StanzaUi> stanza;
-    in property <bool> aperta;
+    in property <string> nome;
+    in property <image> icona;
+    in property <int> quanti;
+    in property <bool> selezionata;
     in property <bool> anello;
     in property <bool> tenue;
+    in property <int> indice;
+    in property <int> totale;
     callback scelta();
 
     border-radius: Tema.raggio-m;
-    background: aperta ? Tema.scheda-attiva : area.has-hover ? Tema.scheda-sopra : transparent;
-    accessible-role: button;
-    accessible-label: stanza.nome + ", " + (stanza.quanti == 1 ? "1 dispositivo" : stanza.quanti + " dispositivi");
-    accessible-expandable: true;
-    accessible-expanded: aperta;
+    background: selezionata ? Tema.scheda-attiva : area.has-hover ? Tema.scheda-sopra : transparent;
+    accessible-role: tab;
+    accessible-label: nome + ", " + (quanti == 1 ? "1 dispositivo" : quanti + " dispositivi");
+    accessible-item-selectable: true;
+    accessible-item-selected: selezionata;
+    accessible-item-index: indice;
+    accessible-item-count: totale;
     accessible-action-default => { root.scelta(); }
-    // Narrator la apre anche con «Espandi» (il pulsante è espandibile).
-    accessible-action-expand => {
-        if (!aperta) {
-            root.scelta();
-        }
-    }
 
     Fuoco { chiede: anello; }
 
@@ -114,27 +116,30 @@ component RigaStanza inherits Rectangle {
         y: (parent.height - self.height) / 2;
         width: 18px;
         height: 18px;
-        source: Icone.di-stanza(stanza.icona);
-        colorize: aperta ? Tema.icona-attiva : Tema.icona;
+        source: icona;
+        colorize: selezionata ? Tema.icona-attiva : Tema.icona;
     }
 
+    // Il nome e il numero li dice già la voce (accessible-label): i testi non si ripetono.
     Text {
+        accessible-role: none;
         x: 34px;
         width: parent.width - self.x - 44px;
         height: parent.height;
-        text: stanza.nome;
+        text: nome;
         vertical-alignment: center;
         overflow: elide;
         font-size: Tema.testo-corpo;
-        font-weight: aperta ? 500 : 400;
+        font-weight: selezionata ? 500 : 400;
         color: tenue ? Tema.testo-tenue : Tema.testo;
     }
 
     Text {
+        accessible-role: none;
         x: parent.width - 40px;
         width: 22px;
         height: parent.height;
-        text: stanza.quanti;
+        text: quanti;
         horizontal-alignment: right;
         vertical-alignment: center;
         font-family: Tema.carattere-mono;
@@ -143,6 +148,7 @@ component RigaStanza inherits Rectangle {
     }
 
     Text {
+        accessible-role: none;
         x: parent.width - 14px;
         width: 8px;
         height: parent.height;
@@ -164,23 +170,28 @@ export component VistaCasa inherits Rectangle {
     // Le card della griglia: i preferiti, o i dispositivi della stanza aperta.
     in property <[PreferitoUi]> voci;
     in property <[StanzaUi]> stanze;
-    // La stanza aperta (indice in `stanze`, -1 = nessuna: si vedono i preferiti).
+    // La stanza aperta (indice in `stanze`, -1 = nessuna: «Preferiti» selezionata).
     in property <int> stanza-aperta: -1;
+    // Quanti preferiti ci sono (il numero della voce «Preferiti», come quello delle stanze).
+    in property <int> numero-preferiti;
     in property <string> stato-casa;
     in property <bool> casa-pronta;
     // Ora degli ultimi dati («10:42»; vuota se non ne sono mai arrivati).
     in property <string> dati-delle;
     // «Riprova» nella testata: casa non connessa che si può riprovare.
     in property <bool> riprova;
-    // Card col fuoco da tastiera (-1 = nessuna), stanza col fuoco (-1 = nessuna); fuoco su
-    // «Riprova» e su «Apri Impostazioni».
+    // Card col fuoco da tastiera (-1 = nessuna), stanza col fuoco (-1 = nessuna), fuoco su
+    // «Preferiti», su «Riprova» e su «Apri Impostazioni».
     in property <int> fuoco: -1;
     in property <int> fuoco-stanza: -1;
+    in property <bool> fuoco-preferiti;
     in property <bool> fuoco-riprova;
     in property <bool> fuoco-impostazioni;
     callback tocca(string);
     // Clic su una stanza (pannello.slint decide: aprirla, o chiuderla se è già aperta).
     callback scegli-stanza(int);
+    // Clic su «Preferiti»: la stanza aperta si chiude.
+    callback scegli-preferiti();
     callback riprova-casa();
     callback apri-impostazioni();
 
@@ -200,8 +211,13 @@ export component VistaCasa inherits Rectangle {
     property <bool> in-stanza: stanza-aperta >= 0 && stanza-aperta < stanze.length;
     // Senza connessione la testata dice di quando sono i dati mostrati.
     property <string> riga-testata: casa-pronta || dati-delle == "" ? stato-casa : stato-casa + " · dati delle " + dati-delle;
+    // Le voci dell'elenco: «Preferiti» (riga 0) e le stanze (riga i + 1).
+    property <int> righe: stanze.length + 1;
+    property <length> alto-elenco: righe * passo-stanza;
+    // La riga col fuoco da tastiera (-1 = nessuna).
+    property <int> riga-col-fuoco: fuoco-preferiti ? 0 : fuoco-stanza >= 0 ? fuoco-stanza + 1 : -1;
 
-    // ─── Stanze ───
+    // ─── Elenco: «Preferiti» e le stanze ───
     if con-stanze: Etichetta {
         x: 2px;
         y: 0;
@@ -209,44 +225,70 @@ export component VistaCasa inherits Rectangle {
         text: "STANZE";
     }
 
-    elenco-stanze := Flickable {
+    elenco := Rectangle {
         x: 0;
         y: testata;
         width: con-stanze ? largo-stanze : 0px;
         height: parent.height - testata;
         visible: con-stanze;
-        content-height: max(self.height, stanze.length * passo-stanza);
-        interactive: stanze.length * passo-stanza > self.height;
+        accessible-role: tab-list;
+        accessible-label: "Stanze";
 
-        for stanza[i] in stanze: RigaStanza {
-            y: i * passo-stanza;
-            width: largo-stanze;
-            height: 30px;
-            stanza: stanza;
-            aperta: i == root.stanza-aperta;
-            anello: i == root.fuoco-stanza;
-            tenue: !root.casa-pronta;
-            scelta => { root.scegli-stanza(i); }
+        elenco-stanze := Flickable {
+            width: parent.width;
+            height: parent.height;
+            content-height: max(self.height, alto-elenco);
+            interactive: alto-elenco > self.height;
+
+            RigaStanza {
+                y: 0;
+                width: largo-stanze;
+                height: 30px;
+                nome: "Preferiti";
+                icona: Icone.stella;
+                quanti: root.numero-preferiti;
+                selezionata: !root.in-stanza;
+                anello: root.fuoco-preferiti;
+                tenue: !root.casa-pronta;
+                indice: 0;
+                totale: root.righe;
+                scelta => { root.scegli-preferiti(); }
+            }
+
+            for stanza[i] in stanze: RigaStanza {
+                y: (i + 1) * passo-stanza;
+                width: largo-stanze;
+                height: 30px;
+                nome: stanza.nome;
+                icona: Icone.di-stanza(stanza.icona);
+                quanti: stanza.quanti;
+                selezionata: i == root.stanza-aperta;
+                anello: i == root.fuoco-stanza;
+                tenue: !root.casa-pronta;
+                indice: i + 1;
+                totale: root.righe;
+                scelta => { root.scegli-stanza(i); }
+            }
         }
     }
 
-    // Barretta di scorrimento (3 px) quando le stanze non stanno tutte: dice che ce ne sono altre.
-    if con-stanze && stanze.length * passo-stanza > elenco-stanze.height + 0.5px: Rectangle {
+    // Barretta di scorrimento (3 px) quando le voci non stanno tutte: dice che ce ne sono altre.
+    if con-stanze && alto-elenco > elenco-stanze.height + 0.5px: Rectangle {
         x: largo-stanze + 4px;
-        y: elenco-stanze.y + (-elenco-stanze.content-y / (stanze.length * passo-stanza)) * elenco-stanze.height;
+        y: elenco.y + (-elenco-stanze.content-y / alto-elenco) * elenco-stanze.height;
         width: 3px;
-        height: elenco-stanze.height * elenco-stanze.height / (stanze.length * passo-stanza);
+        height: elenco-stanze.height * elenco-stanze.height / alto-elenco;
         border-radius: self.width / 2;
         background: Tema.traccia;
     }
 
-    // La stanza col fuoco da tastiera scorre in vista.
-    changed fuoco-stanza => {
-        if (fuoco-stanza >= 0) {
-            if (fuoco-stanza * passo-stanza + elenco-stanze.content-y < 0) {
-                elenco-stanze.content-y = -fuoco-stanza * passo-stanza;
-            } else if ((fuoco-stanza + 1) * passo-stanza + elenco-stanze.content-y > elenco-stanze.height) {
-                elenco-stanze.content-y = elenco-stanze.height - (fuoco-stanza + 1) * passo-stanza;
+    // La voce col fuoco da tastiera scorre in vista.
+    changed riga-col-fuoco => {
+        if (riga-col-fuoco >= 0) {
+            if (riga-col-fuoco * passo-stanza + elenco-stanze.content-y < 0) {
+                elenco-stanze.content-y = -riga-col-fuoco * passo-stanza;
+            } else if ((riga-col-fuoco + 1) * passo-stanza + elenco-stanze.content-y > elenco-stanze.height) {
+                elenco-stanze.content-y = elenco-stanze.height - (riga-col-fuoco + 1) * passo-stanza;
             }
         }
     }
@@ -258,7 +300,7 @@ export component VistaCasa inherits Rectangle {
         y: 0;
         width: griglia-l * 0.4;
         height: 28px;
-        text: in-stanza ? stanze[stanza-aperta].nome : "PREFERITI";
+        text: in-stanza ? stanze[stanza-aperta].nome : "Preferiti";
         overflow: elide;
     }
 

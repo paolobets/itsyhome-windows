@@ -1,18 +1,19 @@
-// Il pannello unico dell'assistente (spec §3bis). Riga alta: «‹ Indietro» a sinistra solo dentro
-// un'app, occhi al centro (dove stavano quelli della pillola), l'ora a destra. Centro: la
+// Il pannello unico dell'assistente (spec §3bis). Riga alta: occhi al centro (dove stavano quelli
+// della pillola), l'ora a destra; niente «‹ Indietro» (Task 14g: alla Panoramica si torna dal
+// dock, con Backspace o Alt+←; nella vista Casa «Preferiti» è la prima voce dell'elenco). Centro: la
 // Panoramica (riga «In attesa» se c'è qualcosa, poi il layout Orologio o Quadranti, cambiabili
 // con i puntini, le frecce e la rotella) o la vista di un'app. In basso il dock di sole icone.
 //
-// Tastiera: Tab / Maiusc+Tab fra «Indietro», «In attesa», contenuto e dock; frecce dentro la zona
+// Tastiera: Tab / Maiusc+Tab fra «In attesa», contenuto e dock; frecce dentro la zona
 // (in «In attesa» ←/→ fra le voci e, a voce espansa, ↓ ai pulsanti e ↑ di nuovo alla voce; nella
-// Panoramica ←/→ cambiano layout, nel dock cambiano icona; in Casa Tab passa dalle stanze alle
-// card: ↑/↓ fra le stanze e → alle card, le frecce fra le card, ← dalla prima colonna alle stanze
+// Panoramica ←/→ cambiano layout, nel dock cambiano icona; in Casa Tab passa dall'elenco alle
+// card: ↑/↓ fra «Preferiti» e le stanze e → alle card, le frecce fra le card, ← dalla prima colonna all'elenco
 // e ↑ dalla prima riga a «Riprova» quando c'è; Casa vuota e non connessa: «Apri Impostazioni»);
 // In Collegamenti le frecce fra le card, ↑ dalla prima riga a «Modifica»; Invio apre la pagina.
 // Invio o Spazio attivano (su una stanza: la apre o la chiude; su una voce: la espande o la
 // riduce; un permesso, «Consenti», solo con Ctrl+Invio, e la voce che lo chiede si apre col fuoco
-// su «Nega»); Backspace o Alt+← = Indietro (prima chiude la stanza aperta); Esc un livello alla
-// volta: riduce la voce espansa, chiude la stanza, poi il pannello; ↑/↓ sulla voce espansa
+// su «Nega»); Backspace o Alt+← = indietro (prima torna a «Preferiti»); Esc un livello alla
+// volta: riduce la voce espansa, torna a «Preferiti», poi chiude il pannello; ↑/↓ sulla voce espansa
 // scorrono il testo lungo.
 // Un unico FocusScope tiene il fuoco e l'anello (visibile solo da tastiera) segue la
 // zona scelta.
@@ -104,7 +105,7 @@ component Scheda inherits Rectangle {
 }
 
 // Zona del pannello col fuoco da tastiera.
-enum Zona { indietro, attesa, stanze, contenuto, dock }
+enum Zona { attesa, stanze, contenuto, dock }
 
 export component Pannello inherits Window {
     in property <UmoreUi> umore: UmoreUi.tranquillo;
@@ -199,7 +200,7 @@ export component Pannello inherits Window {
     property <bool> occhi-al-centro: partenza-occhi == 0px && partenza-occhi-y == 0px;
 
     // ─── Tastiera ───
-    // Zona col fuoco: Zona.indietro, Zona.contenuto o Zona.dock. All'apertura il fuoco va sul contenuto.
+    // Zona col fuoco. All'apertura il fuoco va sul contenuto.
     property <Zona> zona: Zona.contenuto;
     // L'anello si vede solo dopo un tasto; un clic lo spegne.
     property <bool> da-tastiera: false;
@@ -210,8 +211,9 @@ export component Pannello inherits Window {
     property <bool> in-stanza: stanza-aperta >= 0 && stanza-aperta < stanze.length;
     property <[PreferitoUi]> griglia: in-stanza ? dispositivi : preferiti;
     property <int> fuoco-casa-valido: min(fuoco-casa, griglia.length - 1);
-    property <int> fuoco-stanza: 0;
-    property <int> fuoco-stanza-valido: min(fuoco-stanza, stanze.length - 1);
+    // Voce dell'elenco della vista Casa col fuoco: -1 = «Preferiti», poi l'indice della stanza.
+    property <int> fuoco-stanza: -1;
+    property <int> fuoco-stanza-valido: max(-1, min(fuoco-stanza, stanze.length - 1));
     // Collegamenti: card col fuoco (-1 = «Modifica» nella testata), 3 colonne.
     property <int> fuoco-collegamento: 0;
     property <int> fuoco-collegamento-valido: min(fuoco-collegamento, collegamenti.length - 1);
@@ -241,9 +243,6 @@ export component Pannello inherits Window {
     forward-focus: tasti;
 
     pure function ha-zona(z: Zona) -> bool {
-        if (z == Zona.indietro) {
-            return vista != "panoramica";
-        }
         if (z == Zona.attesa) {
             return con-attese;
         }
@@ -264,19 +263,16 @@ export component Pannello inherits Window {
 
     pure function zona-dopo(z: Zona, avanti: bool) -> Zona {
         if (avanti) {
-            return z == Zona.indietro ? Zona.attesa : z == Zona.attesa ? Zona.stanze : z == Zona.stanze ? Zona.contenuto
-                : z == Zona.contenuto ? Zona.dock : Zona.indietro;
+            return z == Zona.attesa ? Zona.stanze : z == Zona.stanze ? Zona.contenuto
+                : z == Zona.contenuto ? Zona.dock : Zona.attesa;
         }
         return z == Zona.dock ? Zona.contenuto : z == Zona.contenuto ? Zona.stanze : z == Zona.stanze ? Zona.attesa
-            : z == Zona.attesa ? Zona.indietro : Zona.dock;
+            : Zona.dock;
     }
 
     // Tab: la zona seguente che esiste in questa vista (il dock c'è sempre).
     function passa-zona(avanti: bool) {
         zona = zona-dopo(zona, avanti);
-        if (!ha-zona(zona)) {
-            zona = zona-dopo(zona, avanti);
-        }
         if (!ha-zona(zona)) {
             zona = zona-dopo(zona, avanti);
         }
@@ -351,13 +347,13 @@ export component Pannello inherits Window {
         }
     }
 
-    // Chiude la stanza aperta: tornano i preferiti; da tastiera il fuoco torna sulla stanza.
+    // Chiude la stanza aperta: torna «Preferiti» (selezionata, e col fuoco da tastiera).
     function chiudi-stanza-ora() {
         if (stanza-aperta >= 0) {
             if (zona == Zona.contenuto) {
                 tasti.focus();
             }
-            fuoco-stanza = stanza-aperta;
+            fuoco-stanza = -1;
             stanza-aperta = -1;
             fuoco-casa = 0;
             root.chiudi-stanza();
@@ -376,6 +372,17 @@ export component Pannello inherits Window {
         }
     }
 
+    // Clic o Invio su «Preferiti»: la stanza aperta si chiude; da tastiera il fuoco passa alle
+    // card, come scegliendo una stanza.
+    function scegli-preferiti(alle-card: bool) {
+        chiudi-stanza-ora();
+        fuoco-stanza = -1;
+        if (alle-card && griglia.length > 0 && ha-zona(Zona.contenuto)) {
+            zona = Zona.contenuto;
+            fuoco-casa = 0;
+        }
+    }
+
     function vai(v: string) {
         // La vista che se ne va (con «In attesa» e «Indietro») può avere l'elemento col fuoco:
         // distrutto lui, il pannello resterebbe senza fuoco e senza tastiera. Il fuoco passa prima
@@ -389,13 +396,14 @@ export component Pannello inherits Window {
         }
         vista = v;
         fuoco-casa = 0;
+        fuoco-stanza = -1;
         fuoco-collegamento = 0;
         if (!ha-zona(zona)) {
             zona = ha-zona(Zona.contenuto) ? Zona.contenuto : Zona.dock;
         }
     }
 
-    // «‹ Indietro» un livello alla volta: prima la stanza aperta, poi la Panoramica.
+    // Backspace o Alt+←, un livello alla volta: prima la stanza aperta, poi la Panoramica.
     function indietro() {
         if (stanza-aperta >= 0) {
             chiudi-stanza-ora();
@@ -462,7 +470,7 @@ export component Pannello inherits Window {
             }
         } else if (zona == Zona.stanze) {
             if (k == Key.UpArrow) {
-                fuoco-stanza = max(0, fuoco-stanza-valido - 1);
+                fuoco-stanza = max(-1, fuoco-stanza-valido - 1);
             } else if (k == Key.DownArrow) {
                 fuoco-stanza = min(stanze.length - 1, fuoco-stanza-valido + 1);
             } else if (k == Key.RightArrow && ha-zona(Zona.contenuto)) {
@@ -493,11 +501,10 @@ export component Pannello inherits Window {
                     fuoco-casa = 0;
                 }
             } else if (k == Key.LeftArrow && mod(fuoco-casa-valido, colonne-casa) == 0 && ha-zona(Zona.stanze)) {
-                // Dalla prima colonna alle stanze, su quella aperta se c'è.
+                // Dalla prima colonna all'elenco, sulla voce selezionata (la stanza aperta o
+                // «Preferiti»).
                 zona = Zona.stanze;
-                if (stanza-aperta >= 0) {
-                    fuoco-stanza = stanza-aperta;
-                }
+                fuoco-stanza = stanza-aperta;
             } else if (k == Key.LeftArrow) {
                 fuoco-casa = max(0, fuoco-casa-valido - 1);
             } else if (k == Key.RightArrow) {
@@ -522,9 +529,7 @@ export component Pannello inherits Window {
             }
             return;
         }
-        if (zona == Zona.indietro) {
-            indietro();
-        } else if (zona == Zona.attesa && espansa) {
+        if (zona == Zona.attesa && espansa) {
             if (fuoco-pulsante >= 0 && indice-aperta >= 0) {
                 if (!attese[indice-aperta].pulsanti[fuoco-pulsante].delicato) {
                     root.azione(voce-aperta, attese[indice-aperta].pulsanti[fuoco-pulsante].id);
@@ -536,6 +541,8 @@ export component Pannello inherits Window {
             apri-voce(min(fuoco-attesa, attese.length - 1));
         } else if (zona == Zona.dock) {
             apri(fuoco-dock, app[fuoco-dock].id);
+        } else if (zona == Zona.stanze && fuoco-stanza-valido < 0) {
+            scegli-preferiti(true);
         } else if (zona == Zona.stanze) {
             scegli-stanza(fuoco-stanza-valido, true);
         } else if (vista == "panoramica") {
@@ -566,7 +573,7 @@ export component Pannello inherits Window {
         accessible-label: "Pannello di ItsyHome";
         capture-key-pressed(evento) => {
             // Un livello alla volta: con una voce espansa il primo Esc la riduce; con una stanza
-            // aperta la chiude; poi chiude il pannello.
+            // aperta torna a «Preferiti»; poi chiude il pannello.
             if (evento.text == Key.Escape) {
                 if (espansa) {
                     riduci-voce();
@@ -664,7 +671,7 @@ export component Pannello inherits Window {
                 }
             }
 
-            // Riga alta: occhi al centro, ora a destra («Indietro» a sinistra è più sotto).
+            // Riga alta: occhi al centro, ora a destra.
             // Il battito di ciglia (dentro Occhi) solo a pannello aperto.
             occhi := Occhi {
                 umore: root.umore;
@@ -702,44 +709,6 @@ export component Pannello inherits Window {
                 font-family: Tema.carattere-mono;
                 font-size: Tema.testo-corpo;
                 color: Tema.testo-ora;
-            }
-
-            // «‹ Indietro» a sinistra della riga alta, solo dentro un'app: torna alla Panoramica.
-            // Alto 28 nella riga da 32: 2 px sopra e sotto, così né lo sfondo dell'hover né l'anello
-            // del fuoco toccano il filo colorato del bordo (1,5 px) o la curva dell'angolo.
-            if vista != "panoramica": Rectangle {
-                x: margine - 8px;
-                y: (altezza-riga - self.height) / 2;
-                height: 28px;
-                width: etichetta-indietro.preferred-width + 20px;
-                border-radius: self.height / 2;
-                background: area-indietro.has-hover ? Tema.scheda-sopra : transparent;
-                accessible-role: button;
-                accessible-label: "Indietro";
-                accessible-action-default => { indietro(); }
-
-                Fuoco { chiede: da-tastiera && zona == Zona.indietro; }
-
-                etichetta-indietro := Text {
-                    text: "‹ Indietro";
-                    font-size: Tema.testo-corpo;
-                    color: Tema.testo-ora;
-                }
-
-                area-indietro := TouchArea {
-                    mouse-cursor: pointer;
-                    clicked => {
-                        da-tastiera = false;
-                        indietro();
-                    }
-                }
-
-                // Anello del fuoco sul contorno del pulsante (dentro, non fuori): fuori sarebbe
-                // tagliato dal bordo alto del pannello, che ha `clip`.
-                if da-tastiera && zona == Zona.indietro: Anello {
-                    raggio: parent.border-radius;
-                    distanza: -2px;
-                }
             }
 
             // «In attesa»: in cima alla Panoramica, solo se c'è qualcosa.
@@ -843,7 +812,9 @@ export component Pannello inherits Window {
                     // zona nuova non deve accendere il fuoco su un elemento che sta sparendo (il suo
                     // `changed` girerebbe dopo, su un elemento distrutto, e il pannello resterebbe
                     // senza tastiera).
-                    fuoco-stanza: da-tastiera && zona == Zona.stanze && vista == "casa" ? fuoco-stanza-valido : -1;
+                    fuoco-stanza: da-tastiera && zona == Zona.stanze && vista == "casa" && fuoco-stanza-valido >= 0 ? fuoco-stanza-valido : -1;
+                    fuoco-preferiti: da-tastiera && zona == Zona.stanze && vista == "casa" && fuoco-stanza-valido < 0;
+                    numero-preferiti: root.preferiti.length;
                     stato-casa: root.stato-casa;
                     casa-pronta: root.casa-pronta;
                     dati-delle: root.dati-delle;
@@ -859,6 +830,10 @@ export component Pannello inherits Window {
                     scegli-stanza(i) => {
                         da-tastiera = false;
                         scegli-stanza(i, false);
+                    }
+                    scegli-preferiti => {
+                        da-tastiera = false;
+                        scegli-preferiti(false);
                     }
                     riprova-casa => {
                         da-tastiera = false;
@@ -1059,8 +1034,7 @@ export component Pannello inherits Window {
 
     // C'è un elemento per la zona e l'indice col fuoco da tastiera? Se no (clic col mouse, voce
     // sparita, Casa svuotata) il fuoco torna a `tasti`, che tiene comunque la tastiera.
-    property <bool> bersaglio: zona == Zona.indietro ? vista != "panoramica"
-        : zona == Zona.attesa ? (espansa || (con-attese && (fuoco-attesa < min(3, attese.length) || (fuoco-attesa == 3 && attese.length > 3))))
+    property <bool> bersaglio: zona == Zona.attesa ? (espansa || (con-attese && (fuoco-attesa < min(3, attese.length) || (fuoco-attesa == 3 && attese.length > 3))))
         : zona == Zona.stanze ? ha-zona(Zona.stanze)
         : zona == Zona.contenuto ? ha-zona(Zona.contenuto) && (vista == "panoramica" || vista == "collegamenti"
             || (griglia.length > 0 ? (fuoco-casa >= 0 || riprova-visibile) : !casa-pronta))

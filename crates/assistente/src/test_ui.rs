@@ -563,34 +563,78 @@ mod accessibilita {
         (p, eventi)
     }
 
-    /// Task 14e: le stanze sono pulsanti che si aprono (con nome e quanti dispositivi per Narrator).
+    /// Task 14e/14g: le stanze sono schede di un elenco (nome e quanti dispositivi per Narrator):
+    /// una sola selezionata, «Preferiti» o la stanza aperta.
     #[test]
     fn stanze_della_casa_accessibili() {
         let (p, _) = pannello_casa();
         let cucina = elemento(&p, "Cucina, 2 dispositivi");
-        assert_eq!(cucina.accessible_role(), Some(AccessibleRole::Button));
-        assert_eq!(cucina.accessible_expanded(), Some(false));
+        assert_eq!(cucina.accessible_role(), Some(AccessibleRole::Tab));
+        assert_eq!(cucina.accessible_item_selected(), Some(false));
         assert!(elemento(&p, "Soggiorno, 1 dispositivo").accessible_role().is_some());
         cucina.invoke_accessible_default_action();
         assert_eq!(p.get_stanza_aperta(), 0);
-        assert_eq!(elemento(&p, "Cucina, 2 dispositivi").accessible_expanded(), Some(true));
+        assert_eq!(elemento(&p, "Cucina, 2 dispositivi").accessible_item_selected(), Some(true));
         // La griglia mostra i dispositivi della stanza al posto dei preferiti.
         assert!(ElementHandle::find_by_accessible_label(&p, "Luce A, Spento").next().is_some());
         assert!(ElementHandle::find_by_accessible_label(&p, "Preferita, Spento").next().is_none());
-        // Un secondo clic sulla stanza aperta la chiude (come la v2).
+        // Un secondo clic sulla stanza aperta la chiude (come la v2): tornano i preferiti.
         elemento(&p, "Cucina, 2 dispositivi").invoke_accessible_default_action();
         assert_eq!(p.get_stanza_aperta(), -1);
         assert!(ElementHandle::find_by_accessible_label(&p, "Preferita, Spento").next().is_some());
     }
 
-    /// Task 14e: da tastiera si va dalle card alle stanze (←), si sceglie (↓) e si apre (Invio);
-    /// il fuoco passa ai dispositivi, Invio tocca. Esc a livelli: prima chiude la stanza, poi il
-    /// pannello; Backspace chiude prima la stanza, poi torna alla Panoramica.
+    /// Task 14g: la prima voce dell'elenco delle stanze è «Preferiti» (stella, numero dei
+    /// preferiti), selezionata all'apertura; toccandola la griglia torna ai preferiti col titolo
+    /// «Preferiti». Nella riga alta non c'è più «‹ Indietro».
+    #[test]
+    fn preferiti_prima_voce_delle_stanze() {
+        let (p, eventi) = pannello_casa();
+        let elenco = elemento(&p, "Stanze");
+        assert_eq!(elenco.accessible_role(), Some(AccessibleRole::TabList));
+        let preferiti = elemento(&p, "Preferiti, 1 dispositivo");
+        assert_eq!(preferiti.accessible_role(), Some(AccessibleRole::Tab));
+        assert_eq!(preferiti.accessible_item_selected(), Some(true), "selezionata all'apertura");
+        assert_eq!((preferiti.accessible_item_index(), preferiti.accessible_item_count()), (Some(0), Some(3)));
+        let cucina = elemento(&p, "Cucina, 2 dispositivi");
+        assert_eq!((cucina.accessible_item_index(), cucina.accessible_item_count()), (Some(1), Some(3)));
+        assert!(ElementHandle::find_by_accessible_label(&p, "Preferiti").next().is_some(), "titolo della griglia");
+        assert!(ElementHandle::find_by_accessible_label(&p, "Indietro").next().is_none(), "niente «Indietro»");
+
+        cucina.invoke_accessible_default_action();
+        assert_eq!(elemento(&p, "Preferiti, 1 dispositivo").accessible_item_selected(), Some(false));
+        assert!(ElementHandle::find_by_accessible_label(&p, "Preferiti").next().is_none(), "titolo: la stanza");
+        assert!(ElementHandle::find_by_accessible_label(&p, "Cucina").next().is_some());
+
+        elemento(&p, "Preferiti, 1 dispositivo").invoke_accessible_default_action();
+        assert_eq!(p.get_stanza_aperta(), -1);
+        assert_eq!(elemento(&p, "Preferiti, 1 dispositivo").accessible_item_selected(), Some(true));
+        assert!(ElementHandle::find_by_accessible_label(&p, "Preferita, Spento").next().is_some());
+        // «Preferiti» già selezionata: toccarla di nuovo non cambia nulla.
+        elemento(&p, "Preferiti, 1 dispositivo").invoke_accessible_default_action();
+        assert_eq!(*eventi.borrow(), ["apri cucina", "chiudi stanza"]);
+    }
+
+    /// Task 14g: «‹ Indietro» non c'è in nessuna vista (si torna alla Panoramica dal dock, con
+    /// Backspace o Alt+←).
+    #[test]
+    fn nessun_indietro_nelle_viste() {
+        let (p, _) = pannello_casa();
+        for vista in ["casa", "pc", "collegamenti", "panoramica"] {
+            p.set_vista(vista.into());
+            assert!(ElementHandle::find_by_accessible_label(&p, "Indietro").next().is_none(), "«Indietro» in {vista}");
+        }
+    }
+
+    /// Task 14e/14g: da tastiera si va dalle card alle stanze (←, su «Preferiti»), si sceglie (↓) e
+    /// si apre (Invio); il fuoco passa ai dispositivi, Invio tocca. Esc a livelli: prima torna a
+    /// «Preferiti», poi chiude il pannello; Backspace torna prima a «Preferiti», poi alla Panoramica.
     #[test]
     fn stanza_da_tastiera_ed_esc_a_livelli() {
         use slint::platform::Key;
         let (p, eventi) = pannello_casa();
         tasto(&p, Key::LeftArrow);
+        tasto(&p, Key::DownArrow);
         tasto(&p, Key::DownArrow);
         tasto(&p, Key::Return);
         assert_eq!(p.get_stanza_aperta(), 1);
@@ -598,13 +642,15 @@ mod accessibilita {
         tasto(&p, Key::Return);
         assert_eq!(*eventi.borrow(), ["apri soggiorno", "tocca light.b"]);
         tasto(&p, Key::Escape);
-        assert_eq!(p.get_stanza_aperta(), -1, "il primo Esc chiude la stanza");
+        assert_eq!(p.get_stanza_aperta(), -1, "il primo Esc torna a «Preferiti»");
         assert_eq!(eventi.borrow().last().map(String::as_str), Some("chiudi stanza"));
-        // Il fuoco è tornato sulla stanza: Invio la riapre.
+        assert_eq!(elemento(&p, "Preferiti, 1 dispositivo").accessible_item_selected(), Some(true));
+        // Il fuoco è su «Preferiti»: ↓ e Invio riaprono la prima stanza.
+        tasto(&p, Key::DownArrow);
         tasto(&p, Key::Return);
-        assert_eq!(p.get_stanza_aperta(), 1);
+        assert_eq!(p.get_stanza_aperta(), 0);
         tasto(&p, Key::Backspace);
-        assert_eq!((p.get_stanza_aperta(), p.get_vista().as_str()), (-1, "casa"), "Backspace chiude prima la stanza");
+        assert_eq!((p.get_stanza_aperta(), p.get_vista().as_str()), (-1, "casa"), "Backspace torna prima a «Preferiti»");
         tasto(&p, Key::Backspace);
         assert_eq!(p.get_vista(), "panoramica");
         // Il pannello ha ancora la tastiera (prima il fuoco finiva su una card che spariva).
@@ -616,16 +662,38 @@ mod accessibilita {
         assert_eq!(eventi.borrow().last().map(String::as_str), Some("chiudi pannello"), "{:?}", eventi.borrow());
     }
 
+    /// Task 14g: Invio su «Preferiti» (già selezionata) porta il fuoco alle card; con una stanza
+    /// aperta la chiude. ↑ dalla prima stanza torna a «Preferiti».
+    #[test]
+    fn preferiti_da_tastiera() {
+        use slint::platform::Key;
+        let (p, eventi) = pannello_casa();
+        tasto(&p, Key::LeftArrow);
+        tasto(&p, Key::Return);
+        tasto(&p, Key::Return);
+        assert_eq!(*eventi.borrow(), ["tocca light.preferita"], "Invio su «Preferiti» porta alle card");
+        tasto(&p, Key::LeftArrow);
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::Return);
+        assert_eq!(p.get_stanza_aperta(), 0);
+        tasto(&p, Key::LeftArrow);
+        tasto(&p, Key::UpArrow);
+        tasto(&p, Key::Return);
+        assert_eq!(p.get_stanza_aperta(), -1, "Invio su «Preferiti» chiude la stanza");
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("chiudi stanza"));
+    }
+
     /// Task 14e: Tab passa dalle stanze alle card e al dock; Maiusc+Tab torna indietro.
     #[test]
     fn tab_fra_stanze_card_e_dock() {
         use slint::platform::Key;
         let (p, eventi) = pannello_casa();
-        // Contenuto (card) → Maiusc+Tab: stanze; Invio apre la prima.
+        // Contenuto (card) → Maiusc+Tab: stanze, su «Preferiti»; ↓ e Invio aprono la prima.
         con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
+        tasto(&p, Key::DownArrow);
         tasto(&p, Key::Return);
         assert_eq!(*eventi.borrow(), ["apri cucina"]);
-        // Esc chiude la stanza e il fuoco resta sulle stanze; Tab porta alle card.
+        // Esc torna a «Preferiti» e il fuoco resta sulle stanze; Tab porta alle card.
         tasto(&p, Key::Escape);
         tasto(&p, Key::Tab);
         tasto(&p, Key::Return);
@@ -896,8 +964,8 @@ mod accessibilita {
         }
         tasto(&p, Key::Return);
         assert_eq!(p.get_vista(), "collegamenti");
-        // Il fuoco va sul contenuto: prima card; ↓ porta alla quarta (sotto la prima), Invio.
-        tasto(&p, Key::Tab);
+        // Il fuoco va sul contenuto (dal dock un Tab: «Indietro» non c'è più): prima card; ↓ porta
+        // alla quarta (sotto la prima), Invio.
         tasto(&p, Key::Tab);
         tasto(&p, Key::DownArrow);
         tasto(&p, Key::Return);
