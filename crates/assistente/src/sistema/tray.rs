@@ -17,7 +17,7 @@ mod windows {
 
     /// Finché vive, l'icona sta nella barra; lasciarla la toglie subito.
     pub struct Tray {
-        _icona: TrayIcon,
+        icona: TrayIcon,
     }
 
     fn icona() -> Result<Icon, String> {
@@ -32,7 +32,7 @@ mod windows {
     impl Tray {
         /// Il menu nuovo (ricostruito per un altro elenco di monitor).
         pub fn menu(&self, menu: &MenuIsola) {
-            self._icona.set_menu(Some(Box::new(menu.menu().clone())));
+            self.icona.set_menu(Some(Box::new(menu.menu().clone())));
         }
     }
 
@@ -50,7 +50,7 @@ mod windows {
             .with_menu_on_left_click(false)
             .build()
             .map_err(|e| e.to_string())?;
-        Ok(Tray { _icona: icona })
+        Ok(Tray { icona })
     }
 }
 

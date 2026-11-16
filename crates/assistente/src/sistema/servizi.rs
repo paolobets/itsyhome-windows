@@ -237,8 +237,16 @@ fn scegli_schermo(i: usize) {
     let Some(s) = servizi() else { return };
     let Some(monitor) = s.monitor() else { return };
     let Some(scelto) = monitor.get(i) else { return };
-    // Un nome illeggibile (vuoto) non si può ritrovare: vale come «il principale».
-    let nome = (!scelto.nome.is_empty()).then(|| scelto.nome.clone());
+    // Un menu costruito per un altro elenco (monitor aggiunto, tolto o spostato dall'ultimo giro):
+    // `i` potrebbe indicare un altro schermo. Si rifà il menu e non si muove nulla.
+    let schermi = schermi_del_menu(&monitor, finestre::monitor_in_uso(&monitor));
+    if !s.menu.borrow().as_ref().is_some_and(|m| m.stesso_elenco(&schermi)) {
+        s.schermi_nel_menu(Some(monitor));
+        return;
+    }
+    // Il principale si salva come «nessuna scelta» (segue il principale di Windows); un nome
+    // illeggibile (vuoto) non si può ritrovare e vale lo stesso.
+    let nome = (!scelto.principale && !scelto.nome.is_empty()).then(|| scelto.nome.clone());
     s.ponte.casa().aggiorna_config(|c| c.schermo = nome.clone());
     finestre::imposta_schermo_preferito(nome);
     if let Some(p) = s.pillola.upgrade() {
@@ -383,6 +391,11 @@ impl Servizi {
                 self.zona.set(zona_della_linea(&p));
             }
         }
+        // Il pannello aperto segue il monitor scelto come la pillola (scollegato o ricollegato a
+        // pannello aperto): `sposta` e `scrivi_scala` agiscono solo se qualcosa cambia, e a pannello
+        // chiuso non c'e' nulla da fare.
+        #[cfg(windows)]
+        self.apertura.riposiziona();
         if let Some(d) = inattivita::durata() {
             self.ponte.inattivo(d);
         }

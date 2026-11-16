@@ -294,6 +294,11 @@ mod windows {
             Ok(true)
         }
 
+        /// I menu sono costruiti per questi stessi monitor (stessi testi, spunta a parte)?
+        pub fn stesso_elenco(&self, schermi: &[(String, bool)]) -> bool {
+            self.schermi.len() == schermi.len() && self.schermi.iter().zip(schermi).all(|(a, b)| a.0 == b.0)
+        }
+
         pub fn ritirata(&self, attiva: bool) {
             let testo = testo_ritirata(attiva);
             for voce in [&self.ritirata, &self.ritirata_pannello] {
