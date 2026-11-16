@@ -146,7 +146,7 @@ pub struct StatPc {
 pub struct Fonti {
     pub disco: bool,
     pub rete: bool,
-    /// La GPU (M2, Task 10, solo Windows): la query PDH esiste solo finché è vero.
+    /// La GPU (M2, Task 10, solo Windows): il lettore della GPU esiste solo finché è vero.
     pub gpu: bool,
 }
 
@@ -239,8 +239,8 @@ pub struct Campionatore {
     batterie: Option<Manager>,
     ultimo: Instant,
     campioni: u32,
-    /// La query della GPU: nasce quando la GPU si mostra (`usa_gpu`), muore (con `PdhCloseQuery`)
-    /// appena non si mostra più o col campionatore, alla chiusura del pannello.
+    /// Il lettore della GPU: nasce quando la GPU si mostra (`usa_gpu`), muore appena non si
+    /// mostra più o col campionatore, alla chiusura del pannello.
     #[cfg(windows)]
     gpu: StatoGpu,
 }
@@ -248,14 +248,14 @@ pub struct Campionatore {
 /// Lo stato della lettura della GPU nel campionatore del pannello.
 #[cfg(windows)]
 enum StatoGpu {
-    /// Nessuna query: la GPU non si mostra.
+    /// Nessun lettore: la GPU non si mostra.
     Spenta,
-    /// Query aperta. L'utilizzo è una differenza fra due raccolte: la prima la fa `apri`; il
-    /// campione in cui la query nasce non legge (sarebbe a pochi millisecondi dalla base) e porta
+    /// Lettore acceso. L'utilizzo è una differenza fra due letture: la prima la fa `apri`; il
+    /// campione in cui il lettore nasce non legge (sarebbe a pochi millisecondi dalla base) e porta
     /// `letture` a 1; dal campione dopo si legge (`letture` 2).
     Accesa { lettore: gpu::LettoreGpu, letture: u8 },
-    /// Apertura fallita (niente contatori della GPU, PDH rotto): non si riprova a ogni campione,
-    /// solo dopo averla spenta (vista lasciata, pannello chiuso).
+    /// Apertura fallita (nessun adattatore con nodi, API assente o in errore): non si riprova a
+    /// ogni campione, solo dopo averla spenta (vista lasciata, pannello chiuso).
     Fallita,
 }
 
@@ -282,8 +282,8 @@ impl Campionatore {
         c
     }
 
-    /// Accende o spegne la lettura della GPU: con `si` la query PDH nasce (se non c'è già), senza
-    /// si chiude (`PdhCloseQuery`). Fuori da Windows non fa nulla (la GPU non c'è).
+    /// Accende o spegne la lettura della GPU: con `si` il lettore nasce (se non c'è già), senza
+    /// si butta. Fuori da Windows non fa nulla (la GPU non c'è).
     pub fn usa_gpu(&mut self, si: bool) {
         #[cfg(windows)]
         match (&self.gpu, si) {
@@ -300,7 +300,7 @@ impl Campionatore {
         let _ = si;
     }
 
-    /// Vero se la query della GPU è aperta (solo a GPU mostrata).
+    /// Vero se il lettore della GPU è acceso (solo a GPU mostrata).
     #[cfg(all(test, windows))]
     pub fn legge_gpu(&self) -> bool {
         matches!(self.gpu, StatoGpu::Accesa { .. })
@@ -466,192 +466,202 @@ fn tempi_cpu() -> Option<TempiCpu> {
     Some(TempiCpu { inattivo: valore(inattivo), kernel: valore(kernel), utente: valore(utente) })
 }
 
-/// L'utilizzo della GPU dalle istanze del contatore PDH «GPU Engine» (nome dell'istanza e
-/// valore, come `pid_1234_luid_0x…_phys_0_eng_0_engtype_3D`): si sommano i valori per tipo di
-/// motore (`engtype_*`: 3D, VideoDecode, Copy…, tutti i processi insieme) e si prende il tipo più
-/// occupato, come Gestione attività (che mostra il motore più occupato); fuori scala 100. `None`
-/// se l'elenco è vuoto (nessun motore: niente GPU o lettura vuota).
+/// L'utilizzo della GPU fra due letture dei tempi di esecuzione dei nodi (motori) della GPU:
+/// per ogni nodo il tempo di esecuzione passato fra `prima` e `ora` diviso il tempo trascorso
+/// (tutto in unità di 100 ns), poi il nodo più occupato, come Gestione attività; fuori scala 100.
+/// `None` senza nodi, con elenchi di lunghezza diversa (adattatori cambiati) o senza tempo
+/// trascorso. Un contatore che torna indietro conta zero.
 #[cfg_attr(not(windows), allow(dead_code))]
-pub fn gpu_da_istanze(istanze: &[(String, f64)]) -> Option<f32> {
-    if istanze.is_empty() {
+pub fn gpu_da_tempi(prima: &[i64], ora: &[i64], trascorso_100ns: u64) -> Option<f32> {
+    if prima.is_empty() || prima.len() != ora.len() || trascorso_100ns == 0 {
         return None;
     }
-    let mut per_tipo: Vec<(&str, f64)> = Vec::new();
-    for (nome, valore) in istanze {
-        let tipo = nome.rsplit_once("engtype_").map_or("", |(_, t)| t);
-        let valore = if valore.is_finite() { valore.max(0.0) } else { 0.0 };
-        match per_tipo.iter_mut().find(|(t, _)| *t == tipo) {
-            Some((_, somma)) => *somma += valore,
-            None => per_tipo.push((tipo, valore)),
-        }
-    }
-    let massimo = per_tipo.iter().map(|(_, v)| *v).fold(0.0, f64::max);
+    let massimo = prima
+        .iter()
+        .zip(ora)
+        .map(|(p, o)| o.saturating_sub(*p).max(0) as f64 / trascorso_100ns as f64 * 100.0)
+        .fold(0.0, f64::max);
     Some(massimo.clamp(0.0, 100.0) as f32)
 }
 
-/// La GPU su Windows con PDH (M2, Task 10).
+/// La GPU su Windows dai contatori del kernel grafico (M2, Task 10, decisione D7).
 ///
-/// Documentazione letta (learn.microsoft.com, 16/11/2026):
-/// - `PdhOpenQueryW` (pdh.h, Pdh.lib): `szDataSource` NULL = dati in tempo reale; restituisce
-///   `ERROR_SUCCESS` (0) o un codice PDH; la query si chiude con `PdhCloseQuery`.
-/// - `PdhAddEnglishCounterW` (da Windows Vista): percorso indipendente dalla lingua (il Windows
-///   di casa è in italiano: `PdhAddCounterW` vorrebbe i nomi tradotti). Un'istanza che non
-///   esiste ancora non è un errore. Errori: `PDH_CSTATUS_NO_OBJECT`, `PDH_CSTATUS_NO_COUNTER`
-///   (senza driver grafico WDDM l'oggetto «GPU Engine» non c'è: la riga resta assente).
-/// - `PdhCollectQueryData`: PDH tiene il valore grezzo di adesso e quello di prima; i contatori
-///   a velocità (come «Utilization Percentage») hanno bisogno di **due** raccolte per un valore.
-///   `PDH_NO_DATA` se la query non ha contatori. Con il carattere jolly nell'istanza i valori si
-///   leggono tutti insieme con `PdhGetFormattedCounterArrayW`.
-/// - `PdhGetFormattedCounterArrayW`: due chiamate, la prima con buffer NULL e dimensione 0 →
-///   `PDH_MORE_DATA` e la dimensione in byte; la seconda col buffer. Con una dimensione > 0 ma
-///   troppo piccola non ci si deve fidare della dimensione restituita (qui si riparte da zero).
-///   I nomi delle istanze stanno nello stesso buffer, dopo le strutture. `PDH_FMT_DOUBLE`; senza
-///   `PDH_FMT_NOCAP100` ogni valore è già limitato a 100. I dati sono bloccati durante la
-///   chiamata. Si usano solo le istanze con `CStatus` valido (`PDH_CSTATUS_VALID_DATA` o
-///   `PDH_CSTATUS_NEW_DATA`): un processo appena nato ha un solo valore grezzo.
-/// - `PdhCloseQuery`: chiude tutti i contatori della query, i suoi handle e libera la sua
-///   memoria; dopo, i suoi handle non si usano più (qui: `Drop`).
-/// - Il contatore «\GPU Engine(*)\Utilization Percentage» non ha una pagina sua su
-///   learn.microsoft.com (solo risposte di Microsoft Q&A, secondo cui Gestione attività usa
-///   proprio questo percorso col jolly); il blog DirectX «GPUs in the Task Manager» spiega che
-///   l'utilizzo complessivo è quello del motore più occupato (vedi `gpu_da_istanze`).
-/// - Thread: le funzioni PDH non chiedono COM né un thread particolare; la query vive e muore
-///   sul thread dei campioni del pannello (`campioni-pc`), mai su quello dell'interfaccia.
-/// - Memoria: PDH al primo uso carica tabelle che non libera più (nota in testa al file). La
-///   decisione D7 vuole al massimo +2 MB dopo aver chiuso la vista PC: la misura è nel test
-///   `gpu_memoria_dopo_cinque_cicli` (numeri nel CHANGELOG).
-/// - Alternativa D7: `D3DKMTEnumAdapters2` (WDK, d3dkmthk.h, Gdi32, da Windows 8: due chiamate,
-///   prima con `pAdapters` NULL per il numero massimo; gli handle degli adattatori vanno chiusi
-///   con `D3DKMTCloseAdapter`) e `D3DKMTQueryStatistics`, che la pagina del WDK dice «Reserved
-///   for system use. Do not use in your driver.»: struttura e significato dei campi non sono
-///   documentati.
+/// Perché non PDH: il contatore «\GPU Engine(*)\Utilization Percentage» con PDH lasciava
+/// +6,00 MB di memoria privata dopo il primo ciclo apri/chiudi (tabelle che PDH carica e non
+/// libera, come per la CPU in M1); D7 ne ammette al massimo 2. PDH è tolto del tutto.
+///
+/// Documentazione letta (learn.microsoft.com, sezione driver, WDK `d3dkmthk.h`, 16/11/2026):
+/// - `D3DKMTEnumAdapters2` (Gdi32, da Windows 8): due chiamate, la prima con `pAdapters` NULL dà
+///   in `NumAdapters` il numero massimo, la seconda riempie l'elenco e dice quanti; errori
+///   `STATUS_BUFFER_TOO_SMALL`, `STATUS_INVALID_PARAMETER`, `STATUS_NO_MEMORY`. Gli handle degli
+///   adattatori restituiti vanno chiusi da chi chiama con `D3DKMTCloseAdapter`.
+/// - `D3DKMT_ADAPTERINFO`: `hAdapter`, `AdapterLuid` (unico fino al riavvio, cambia anche se il
+///   driver si aggiorna o l'adattatore si toglie), `NumOfSources`, `bPrecisePresentRegionsPreferred`.
+/// - `D3DKMTCloseAdapter` (da Vista): `STATUS_SUCCESS` o `STATUS_INVALID_PARAMETER`.
+/// - `D3DKMTQueryStatistics` e le sue strutture (`D3DKMT_QUERYSTATISTICS`,
+///   `D3DKMT_QUERYSTATISTICS_PROCESS_NODE_INFORMATION`): la pagina dice **«Reserved for system
+///   use. Do not use.»** La struttura è pubblicata nell'header (tipo, `AdapterLuid`, `hProcess`,
+///   `QueryResult`, l'unione delle richieste con `QueryNode.NodeId`), ma il significato dei campi
+///   no. Si usa come System Informer: `D3DKMT_QUERYSTATISTICS_ADAPTER` per
+///   `AdapterInformation.NodeCount`, poi `D3DKMT_QUERYSTATISTICS_NODE` per nodo e
+///   `NodeInformation.GlobalInformation.RunningTime` (tempo di esecuzione cumulativo, in unità di
+///   100 ns come lo tratta System Informer: l'unità non è documentata).
+/// - Tipi da `windows-sys` 0.52 (feature `Wdk_Graphics_Direct3D`, funzioni da gdi32.dll): le
+///   posizioni dei campi usati si controllano con `const` (sotto) contro l'ordine dell'header.
+///   Il kernel potrebbe conoscere un'unione dei risultati più grande di quella dei metadati:
+///   la richiesta ha 4 KB di margine dopo la struttura, così non si scrive mai fuori.
+/// - Nessun handle resta aperto: gli adattatori si chiudono subito dopo averne letto il LUID
+///   (`D3DKMTQueryStatistics` vuole il LUID, non l'handle). Niente COM, nessun thread
+///   particolare: tutto sul thread dei campioni del pannello (`campioni-pc`).
+/// - Se l'API manca o fallisce la GPU è `None` (riga assente): mai un panico.
 #[cfg(windows)]
 mod gpu {
-    use windows_sys::Win32::System::Performance::{
-        PdhAddEnglishCounterW, PdhCloseQuery, PdhCollectQueryData, PdhGetFormattedCounterArrayW, PdhOpenQueryW,
-        PDH_CSTATUS_NEW_DATA, PDH_CSTATUS_VALID_DATA, PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE, PDH_MORE_DATA,
+    use std::time::Instant;
+    use windows_sys::Wdk::Graphics::Direct3D::{
+        D3DKMTCloseAdapter, D3DKMTEnumAdapters2, D3DKMTQueryStatistics, D3DKMT_ADAPTERINFO, D3DKMT_CLOSEADAPTER,
+        D3DKMT_ENUMADAPTERS2, D3DKMT_QUERYSTATISTICS, D3DKMT_QUERYSTATISTICS_ADAPTER,
+        D3DKMT_QUERYSTATISTICS_ADAPTER_INFORMATION, D3DKMT_QUERYSTATISTICS_NODE,
+        D3DKMT_QUERYSTATISTICS_NODE_INFORMATION, D3DKMT_QUERYSTATISTICS_PROCESS_NODE_INFORMATION,
+        D3DKMT_QUERYSTATISTICS_TYPE,
+    };
+    use windows_sys::Win32::Foundation::LUID;
+
+    // Le posizioni dei campi usati, contro l'ordine di `d3dkmthk.h`: `Type` (4 byte), `AdapterLuid`
+    // (8, allineato a 4), `hProcess` (puntatore), poi `QueryResult`; `NodeCount` è il secondo
+    // `ULONG` delle informazioni dell'adattatore; `RunningTime` è il primo campo del nodo.
+    const _: () = {
+        use std::mem::offset_of;
+        assert!(offset_of!(D3DKMT_QUERYSTATISTICS, Type) == 0);
+        assert!(offset_of!(D3DKMT_QUERYSTATISTICS, AdapterLuid) == 4);
+        #[cfg(target_pointer_width = "64")]
+        assert!(offset_of!(D3DKMT_QUERYSTATISTICS, hProcess) == 16);
+        #[cfg(target_pointer_width = "64")]
+        assert!(offset_of!(D3DKMT_QUERYSTATISTICS, QueryResult) == 24);
+        assert!(offset_of!(D3DKMT_QUERYSTATISTICS_ADAPTER_INFORMATION, NodeCount) == 4);
+        assert!(offset_of!(D3DKMT_QUERYSTATISTICS_NODE_INFORMATION, GlobalInformation) == 0);
+        assert!(offset_of!(D3DKMT_QUERYSTATISTICS_PROCESS_NODE_INFORMATION, RunningTime) == 0);
+        assert!(std::mem::size_of::<D3DKMT_ADAPTERINFO>() == 20);
+        assert!(std::mem::size_of::<D3DKMT_CLOSEADAPTER>() == 4);
     };
 
-    /// Il percorso del contatore, in inglese (`PdhAddEnglishCounterW`).
-    const PERCORSO: &str = r"\GPU Engine(*)\Utilization Percentage";
-    const SUCCESSO: u32 = 0;
+    /// Margine dopo la richiesta: il kernel scrive il risultato con la sua dimensione.
+    const MARGINE: usize = 4096;
 
-    /// Una query PDH aperta con il contatore della GPU; `Drop` la chiude.
+    /// La richiesta a `D3DKMTQueryStatistics`, con il margine.
+    #[repr(C)]
+    struct Richiesta {
+        q: D3DKMT_QUERYSTATISTICS,
+        _margine: [u8; MARGINE],
+    }
+
+    /// Una richiesta azzerata per l'adattatore `luid`.
+    fn richiesta(tipo: D3DKMT_QUERYSTATISTICS_TYPE, luid: LUID) -> Box<Richiesta> {
+        // SAFETY: strutture e unioni di soli numeri e puntatori: lo zero è un valore valido.
+        let mut r: Box<Richiesta> = Box::new(unsafe { std::mem::zeroed() });
+        r.q.Type = tipo;
+        r.q.AdapterLuid = luid;
+        r
+    }
+
+    /// Chiede al kernel; vero se `NT_SUCCESS`.
+    fn chiedi(r: &mut Richiesta) -> bool {
+        // Il puntatore viene dall'intera richiesta (margine compreso) e da un riferimento
+        // mutabile: il kernel ci scrive il risultato, anche se la firma dice `*const`.
+        let p = (r as *mut Richiesta).cast::<D3DKMT_QUERYSTATISTICS>().cast_const();
+        // SAFETY: richiesta valida e scrivibile, con 4 KB di margine dopo la struttura.
+        unsafe { D3DKMTQueryStatistics(p) >= 0 }
+    }
+
+    /// Il tempo di esecuzione cumulativo di un nodo; `None` se il kernel non risponde.
+    fn tempo(luid: LUID, nodo: u32) -> Option<i64> {
+        let mut r = richiesta(D3DKMT_QUERYSTATISTICS_NODE, luid);
+        r.q.Anonymous.QueryNode.NodeId = nodo;
+        if !chiedi(&mut r) {
+            return None;
+        }
+        // SAFETY: con `D3DKMT_QUERYSTATISTICS_NODE` il kernel riempie `NodeInformation`.
+        Some(unsafe { r.q.QueryResult.NodeInformation.GlobalInformation.RunningTime })
+    }
+
+    /// I nodi (motori) di tutti gli adattatori grafici e la base dei loro tempi di esecuzione.
     pub struct LettoreGpu {
-        query: isize,
-        contatore: isize,
-        /// Buffer delle istanze, allineato a 8 byte (le strutture hanno un `f64`).
-        buffer: Vec<u64>,
+        /// Adattatore e numero di ogni nodo che ha risposto all'apertura.
+        nodi: Vec<(LUID, u32)>,
+        tempi: Vec<i64>,
+        quando: Instant,
     }
 
     impl LettoreGpu {
-        /// Apre la query, aggiunge il contatore e fa la prima raccolta (la base della
-        /// differenza). `None` se una delle tre non riesce (la query aperta si chiude).
+        /// Elenca gli adattatori (chiudendone subito gli handle), ne conta i nodi e legge la base
+        /// dei tempi. Tiene solo i nodi che rispondono: sul PC di casa un adattatore su tre dice
+        /// 13 nodi ma rifiuta la richiesta del nodo (`STATUS_INVALID_PARAMETER`). `None` se l'API
+        /// manca o fallisce o se nessun nodo risponde.
         pub fn apri() -> Option<LettoreGpu> {
-            let mut query: isize = 0;
-            // SAFETY: origine NULL (tempo reale), puntatore a una variabile locale.
-            if unsafe { PdhOpenQueryW(std::ptr::null(), 0, &mut query) } != SUCCESSO {
-                return None;
-            }
-            // Da qui in poi la query si chiude da sola (`Drop`), anche negli errori.
-            let mut lettore = LettoreGpu { query, contatore: 0, buffer: Vec::new() };
-            let percorso: Vec<u16> = PERCORSO.encode_utf16().chain(std::iter::once(0)).collect();
-            // SAFETY: query aperta sopra, stringa terminata da zero che vive per tutta la chiamata.
-            if unsafe { PdhAddEnglishCounterW(query, percorso.as_ptr(), 0, &mut lettore.contatore) } != SUCCESSO {
-                return None;
-            }
-            // SAFETY: query aperta, con un contatore.
-            if unsafe { PdhCollectQueryData(query) } != SUCCESSO {
-                return None;
-            }
-            Some(lettore)
-        }
-
-        /// Una raccolta e l'utilizzo fra la raccolta di prima e questa; `None` se non riesce o
-        /// se non c'è nessun motore.
-        pub fn gpu(&mut self) -> Option<f32> {
-            // SAFETY: query aperta in `apri`, chiusa solo in `Drop`.
-            if unsafe { PdhCollectQueryData(self.query) } != SUCCESSO {
-                return None;
-            }
-            super::gpu_da_istanze(&self.istanze()?)
-        }
-
-        /// Le istanze valide (nome e valore). Due chiamate come vuole la documentazione; se alla
-        /// seconda il buffer non bastasse (`PDH_MORE_DATA`) si riparte, al più tre volte.
-        fn istanze(&mut self) -> Option<Vec<(String, f64)>> {
-            for _ in 0..3 {
-                let (mut dimensione, mut quante) = (0u32, 0u32);
-                // SAFETY: contatore della query aperta; buffer NULL con dimensione 0 (prima chiamata).
-                let esito = unsafe {
-                    PdhGetFormattedCounterArrayW(
-                        self.contatore,
-                        PDH_FMT_DOUBLE,
-                        &mut dimensione,
-                        &mut quante,
-                        std::ptr::null_mut(),
-                    )
-                };
-                if esito == SUCCESSO {
-                    // Nessuna istanza: nessun motore.
-                    return Some(Vec::new());
-                }
-                if esito != PDH_MORE_DATA {
-                    return None;
-                }
-                let parole = (dimensione as usize).div_ceil(8);
-                self.buffer.clear();
-                self.buffer.resize(parole, 0);
-                let mut dimensione = (parole * 8) as u32;
-                let elementi = self.buffer.as_mut_ptr().cast::<PDH_FMT_COUNTERVALUE_ITEM_W>();
-                // SAFETY: buffer di `dimensione` byte allineato a 8, vivo per tutta la chiamata.
-                let esito = unsafe {
-                    PdhGetFormattedCounterArrayW(self.contatore, PDH_FMT_DOUBLE, &mut dimensione, &mut quante, elementi)
-                };
-                if esito == PDH_MORE_DATA {
+            let mut nodi = Vec::new();
+            let mut tempi = Vec::new();
+            for luid in elenca()? {
+                let mut r = richiesta(D3DKMT_QUERYSTATISTICS_ADAPTER, luid);
+                if !chiedi(&mut r) {
                     continue;
                 }
-                if esito != SUCCESSO {
-                    return None;
+                // SAFETY: con `D3DKMT_QUERYSTATISTICS_ADAPTER` il kernel riempie `AdapterInformation`.
+                // Un limite largo: un valore assurdo non deve far fare migliaia di richieste.
+                let quanti = unsafe { r.q.QueryResult.AdapterInformation.NodeCount }.min(64);
+                for nodo in 0..quanti {
+                    if let Some(t) = tempo(luid, nodo) {
+                        nodi.push((luid, nodo));
+                        tempi.push(t);
+                    }
                 }
-                // SAFETY: PDH ha scritto `quante` strutture all'inizio del buffer e i nomi (stringhe
-                // terminate da zero) più avanti nello stesso buffer, che non si tocca fino a qui.
-                let elementi = unsafe { std::slice::from_raw_parts(elementi.cast_const(), quante as usize) };
-                let istanze = elementi
-                    .iter()
-                    .filter(|e| matches!(e.FmtValue.CStatus, PDH_CSTATUS_VALID_DATA | PDH_CSTATUS_NEW_DATA))
-                    // SAFETY: con `PDH_FMT_DOUBLE` il valore è in `doubleValue`; il nome è una
-                    // stringa terminata da zero nel buffer.
-                    .map(|e| unsafe { (stringa(e.szName), e.FmtValue.Anonymous.doubleValue) })
-                    .collect();
-                return Some(istanze);
             }
-            None
+            if nodi.is_empty() {
+                return None;
+            }
+            Some(LettoreGpu { nodi, tempi, quando: Instant::now() })
+        }
+
+        /// L'utilizzo dalla lettura di prima a questa; `None` se una lettura fallisce (la base
+        /// resta quella di prima).
+        pub fn gpu(&mut self) -> Option<f32> {
+            let ora: Vec<i64> = self.nodi.iter().map(|&(luid, nodo)| tempo(luid, nodo)).collect::<Option<_>>()?;
+            let adesso = Instant::now();
+            let trascorso = (adesso.duration_since(self.quando).as_nanos() / 100) as u64;
+            let valore = super::gpu_da_tempi(&self.tempi, &ora, trascorso);
+            self.tempi = ora;
+            self.quando = adesso;
+            valore
         }
     }
 
-    impl Drop for LettoreGpu {
-        fn drop(&mut self) {
-            // SAFETY: query aperta in `apri`; chiude anche il contatore, che dopo non si usa più.
-            unsafe { PdhCloseQuery(self.query) };
+    /// I LUID degli adattatori grafici; gli handle si chiudono subito. `None` se l'elenco fallisce.
+    fn elenca() -> Option<Vec<LUID>> {
+        let mut e = D3DKMT_ENUMADAPTERS2 { NumAdapters: 0, pAdapters: std::ptr::null_mut() };
+        // SAFETY: prima chiamata con `pAdapters` NULL: scrive solo il numero massimo.
+        if unsafe { D3DKMTEnumAdapters2(&mut e) } < 0 {
+            return None;
         }
-    }
-
-    /// Una stringa UTF-16 terminata da zero (vuota se il puntatore è NULL).
-    ///
-    /// # Safety
-    /// `p` è NULL o punta a una stringa terminata da zero valida.
-    unsafe fn stringa(p: *const u16) -> String {
-        if p.is_null() {
-            return String::new();
+        let massimo = e.NumAdapters.min(64);
+        if massimo == 0 {
+            return Some(Vec::new());
         }
-        let mut n = 0;
-        // SAFETY: la stringa è terminata da zero (contratto della funzione).
-        while unsafe { *p.add(n) } != 0 {
-            n += 1;
+        // SAFETY: strutture di soli numeri: lo zero è un valore valido.
+        let mut info: Vec<D3DKMT_ADAPTERINFO> = vec![unsafe { std::mem::zeroed() }; massimo as usize];
+        e.NumAdapters = massimo;
+        e.pAdapters = info.as_mut_ptr();
+        // SAFETY: elenco di `NumAdapters` strutture, vivo per tutta la chiamata.
+        if unsafe { D3DKMTEnumAdapters2(&mut e) } < 0 {
+            return None;
         }
-        // SAFETY: i primi `n` caratteri sono validi (letti sopra).
-        String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(p, n) })
+        let quanti = (e.NumAdapters as usize).min(info.len());
+        let luid = info[..quanti]
+            .iter()
+            .map(|a| {
+                // SAFETY: handle restituito da `D3DKMTEnumAdapters2`, chiuso una volta sola.
+                unsafe { D3DKMTCloseAdapter(&D3DKMT_CLOSEADAPTER { hAdapter: a.hAdapter }) };
+                a.AdapterLuid
+            })
+            .collect();
+        Some(luid)
     }
 }
 
@@ -807,34 +817,39 @@ mod test {
 
     // ─── M2, Task 10: GPU ───
 
-    fn istanza(tipo: &str, valore: f64) -> (String, f64) {
-        (format!("pid_1234_luid_0x00000000_0x0000D1A5_phys_0_eng_0_engtype_{tipo}"), valore)
-    }
+    /// Un secondo in unità di 100 ns.
+    const SECONDO: u64 = 10_000_000;
 
     #[test]
-    fn gpu_massimo_fra_i_tipi() {
-        // Due istanze 3D (processi diversi) si sommano: 55; il decodificatore video è a 40.
-        let v = [istanza("3D", 30.0), istanza("3D", 25.0), istanza("VideoDecode", 40.0)];
-        assert_eq!(gpu_da_istanze(&v), Some(55.0));
-        let v = [istanza("3D", 5.0), istanza("VideoDecode", 40.0), istanza("Copy", 1.0)];
-        assert_eq!(gpu_da_istanze(&v), Some(40.0));
+    fn gpu_massimo_fra_i_nodi() {
+        // In un secondo: il nodo 0 ha lavorato 0,3 s, il nodo 1 0,55 s, il nodo 2 0,4 s →
+        // il più occupato, 55%, non la media né la somma.
+        let prima = [1_000, 50_000, 7];
+        let ora = [1_000 + 3_000_000, 50_000 + 5_500_000, 7 + 4_000_000];
+        let g = gpu_da_tempi(&prima, &ora, SECONDO).expect("valore");
+        assert!((g - 55.0).abs() < 1e-4, "gpu {g}");
+        // Fermi: 0, non `None` (la GPU c'è).
+        assert_eq!(gpu_da_tempi(&prima, &prima, SECONDO), Some(0.0));
+        // Il tempo trascorso conta: lo stesso lavoro in 2 s è la metà.
+        let g = gpu_da_tempi(&[0], &[5_000_000], 2 * SECONDO).expect("valore");
+        assert!((g - 25.0).abs() < 1e-4, "gpu {g}");
     }
 
     #[test]
     fn gpu_vuota_e_fuori_scala() {
-        assert_eq!(gpu_da_istanze(&[]), None);
-        assert_eq!(gpu_da_istanze(&[istanza("3D", 180.0)]), Some(100.0));
-        // Somme oltre 100 (più processi sullo stesso motore): mai fuori da 0..100.
-        assert_eq!(gpu_da_istanze(&[istanza("3D", 70.0), istanza("3D", 60.0)]), Some(100.0));
-        // Valori impossibili non diventano NaN né negativi.
-        assert_eq!(gpu_da_istanze(&[istanza("3D", f64::NAN), istanza("Copy", -5.0)]), Some(0.0));
-        // Motori tutti fermi: 0, non `None` (la GPU c'è).
-        assert_eq!(gpu_da_istanze(&[istanza("3D", 0.0)]), Some(0.0));
+        assert_eq!(gpu_da_tempi(&[], &[], SECONDO), None, "nessun nodo");
+        assert_eq!(gpu_da_tempi(&[0, 0], &[1], SECONDO), None, "adattatori cambiati fra le letture");
+        assert_eq!(gpu_da_tempi(&[0], &[1], 0), None, "nessun tempo trascorso");
+        // Più tempo di esecuzione che tempo trascorso (arrotondamenti del kernel): 100.
+        assert_eq!(gpu_da_tempi(&[0], &[18_000_000], SECONDO), Some(100.0));
+        // Un contatore che torna indietro (adattatore riavviato): 0, mai negativo.
+        assert_eq!(gpu_da_tempi(&[9_000_000], &[1_000], SECONDO), Some(0.0));
+        assert_eq!(gpu_da_tempi(&[i64::MIN], &[i64::MAX], SECONDO), Some(100.0), "nessun trabocco");
     }
 
-    /// La query della GPU c'è solo finché la GPU si mostra: nasce con `Fonti::gpu`, si chiude
-    /// appena non si mostra più. Il primo campione non ha valore (è la base), dal secondo sì
-    /// (se il PC ha un driver grafico con i contatori «GPU Engine»).
+    /// Il lettore della GPU c'è solo finché la GPU si mostra: nasce con `Fonti::gpu`, si butta
+    /// appena non si mostra più. Il primo campione non ha valore (è la base), dal secondo sì (se
+    /// il PC ha un adattatore grafico WDDM con nodi).
     #[cfg(windows)]
     #[test]
     fn gpu_solo_finche_si_vede() {
@@ -842,24 +857,23 @@ mod test {
         let con = Fonti { gpu: true, ..Fonti::default() };
         let mut c = Campionatore::new(senza);
         let s = c.campiona(senza);
-        assert!(!c.legge_gpu(), "GPU non mostrata: nessuna query");
+        assert!(!c.legge_gpu(), "GPU non mostrata: nessun lettore");
         assert_eq!(s.gpu_pct, None);
         assert!(!c.gpu_in_attesa());
         let s = c.campiona(con);
         assert_eq!(s.gpu_pct, None, "il primo campione è la base");
         if !c.legge_gpu() {
-            // Nessun contatore della GPU (macchina senza driver WDDM): la riga resta assente.
+            // Nessun adattatore con nodi (macchina senza driver WDDM): la riga resta assente.
             return;
         }
         assert!(c.gpu_in_attesa(), "il valore arriva al campione dopo");
         std::thread::sleep(Duration::from_millis(300));
         let s = c.campiona(con);
         assert!(!c.gpu_in_attesa());
-        if let Some(g) = s.gpu_pct {
-            assert!((0.0..=100.0).contains(&g), "gpu {g}");
-        }
+        let g = s.gpu_pct.expect("dal secondo campione la GPU ha un valore");
+        assert!((0.0..=100.0).contains(&g), "gpu {g}");
         let s = c.campiona(senza);
-        assert!(!c.legge_gpu(), "GPU non più mostrata: query chiusa");
+        assert!(!c.legge_gpu(), "GPU non più mostrata: lettore buttato");
         assert_eq!(s.gpu_pct, None);
     }
 
@@ -880,11 +894,20 @@ mod test {
         }
     }
 
+    /// Handle aperti dal processo di test.
+    #[cfg(windows)]
+    fn handle_aperti() -> u32 {
+        use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetProcessHandleCount};
+        let mut n = 0u32;
+        // SAFETY: pseudo-handle del processo corrente, puntatore a una variabile locale.
+        assert_ne!(unsafe { GetProcessHandleCount(GetCurrentProcess(), &mut n) }, 0);
+        n
+    }
+
     /// Cancello di memoria della decisione D7, nel processo di test (l'assistente vero è aperto e
-    /// non si misura): cinque cicli «vista PC aperta» (query aperta, dieci campioni) e «vista
-    /// lasciata» (query chiusa), memoria privata prima, dopo il primo ciclo e dopo il quinto.
-    /// Il primo ciclo paga le tabelle che PDH carica e non libera (nota in testa al file); fra il
-    /// primo e il quinto la crescita deve stare entro 2 MB. Si lancia a mano, da solo:
+    /// non si misura): cinque cicli «vista PC aperta» (lettore acceso, dieci campioni) e «vista
+    /// lasciata» (lettore buttato). La memoria privata dopo i cinque cicli deve stare entro 2 MB
+    /// da quella di PRIMA del primo ciclo (con PDH erano +6 MB). Si lancia a mano, da solo:
     /// `cargo test -p assistente gpu_memoria -- --ignored --nocapture --test-threads=1`.
     #[cfg(windows)]
     #[test]
@@ -892,7 +915,7 @@ mod test {
     fn gpu_memoria_dopo_cinque_cicli() {
         const MB: f64 = 1024.0 * 1024.0;
         let ciclo = || {
-            let mut lettore = gpu::LettoreGpu::apri().expect("contatori della GPU");
+            let mut lettore = gpu::LettoreGpu::apri().expect("adattatore grafico con nodi");
             let mut ultimo = None;
             for _ in 0..10 {
                 std::thread::sleep(Duration::from_millis(100));
@@ -901,28 +924,27 @@ mod test {
             drop(lettore);
             ultimo
         };
-        let prima = memoria_privata();
+        let (prima, handle_prima) = (memoria_privata(), handle_aperti());
         let valore = ciclo();
         let dopo_il_primo = memoria_privata();
         for _ in 0..4 {
             ciclo();
         }
-        let dopo_cinque = memoria_privata();
+        let (dopo_cinque, handle_dopo) = (memoria_privata(), handle_aperti());
         let mb = |b: u64| b as f64 / MB;
+        let crescita = |dopo: u64| (dopo as f64 - prima as f64) / MB;
         println!(
-            "GPU {valore:?}; memoria privata: prima {:.2} MB, dopo il primo ciclo {:.2} MB (+{:.2}), \
-             dopo cinque cicli {:.2} MB (+{:.2} dal primo, +{:.2} da prima)",
+            "GPU {valore:?}; memoria privata: prima {:.2} MB, dopo il primo ciclo {:.2} MB ({:+.2}), \
+             dopo cinque cicli {:.2} MB ({:+.2} da prima); handle {handle_prima} → {handle_dopo}",
             mb(prima),
             mb(dopo_il_primo),
-            mb(dopo_il_primo.saturating_sub(prima)),
+            crescita(dopo_il_primo),
             mb(dopo_cinque),
-            mb(dopo_cinque.saturating_sub(dopo_il_primo)),
-            mb(dopo_cinque.saturating_sub(prima)),
+            crescita(dopo_cinque),
         );
-        assert!(
-            dopo_cinque.saturating_sub(dopo_il_primo) as f64 <= 2.0 * MB,
-            "la memoria cresce a ogni ciclo: serve la via D3DKMT (D7)"
-        );
+        assert!(valore.is_some(), "la GPU si legge");
+        assert!(crescita(dopo_cinque) <= 2.0, "oltre +2 MB da prima del primo ciclo (D7)");
+        assert!(handle_dopo <= handle_prima + 2, "handle che restano aperti: {handle_prima} → {handle_dopo}");
     }
 
     #[test]

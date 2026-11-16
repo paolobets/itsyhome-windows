@@ -299,7 +299,7 @@ impl Apertura {
 
     /// Le fonti lente che la vista di adesso mostra: la vista PC tutte, i Quadranti quelle dei
     /// quadranti scelti, il resto nessuna (CPU e RAM si leggono sempre). Se cambiano, il thread
-    /// dei campioni si sveglia subito: la GPU si accende (o la sua query si chiude) senza
+    /// dei campioni si sveglia subito: la GPU si accende (o il suo lettore si butta) senza
     /// aspettare i 2 s.
     fn aggiorna_fonti(&self, p: &Pannello) {
         let fonti = fonti_della_vista(p.get_vista().as_str(), Layout::da_indice(p.get_layout()), || {

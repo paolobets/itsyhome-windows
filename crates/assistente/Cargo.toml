@@ -34,8 +34,9 @@ windows-sys = { version = "0.52", features = [
     # Batteria dei dispositivi Bluetooth (M2, Task 9): SetupAPI e proprietà dei dispositivi.
     "Win32_Devices_DeviceAndDriverInstallation",
     "Win32_Devices_Properties",
-    # Utilizzo della GPU (M2, Task 10): PDH, contatore «GPU Engine», solo a GPU mostrata.
-    "Win32_System_Performance",
+    # Utilizzo della GPU (M2, Task 10): contatori del kernel grafico (D3DKMT, gdi32.dll), solo a
+    # GPU mostrata. Non PDH: lasciava +6 MB dopo la prima apertura (decisione D7).
+    "Wdk_Graphics_Direct3D",
 ] }
 # Registro (solo HKCU): avvio con il sistema e identificativo dei toast.
 windows-registry = "0.6"
