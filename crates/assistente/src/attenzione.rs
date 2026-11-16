@@ -281,6 +281,8 @@ pub const PULSANTE_APRI: &str = "apri";
 /// Voci dei servizi di sistema (scorciatoia occupata): «Ho capito» le toglie.
 pub const PREFISSO_SISTEMA: &str = "sistema.";
 pub const PULSANTE_HO_CAPITO: &str = "ho-capito";
+/// Prefisso dell'id delle voci dei dispositivi Bluetooth scarichi («pc.bt.<impronta>»).
+pub const PREFISSO_BT: &str = "pc.bt.";
 
 /// Dopo quanto tempo senza Home Assistant la cosa diventa un'attenzione.
 pub const CASA_OFFLINE_DOPO: Duration = Duration::from_secs(5 * 60);

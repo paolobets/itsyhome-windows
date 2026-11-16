@@ -4,7 +4,7 @@
 
 use crate::attenzione::{
     self, avanzamento_mostrato, livello_massimo, notifica_sistema, prossimo_cambio_aspetto, Attese, Avanzamento, Fonte, Livello, SorveglianzaCasa,
-    SorveglianzaBatteria, Voce, ID_BATTERIA, ID_CASA_OFFLINE, ID_CASA_TOKEN, PREFISSO_NOTIFICA, PREFISSO_SISTEMA,
+    SorveglianzaBatteria, Voce, ID_BATTERIA, ID_CASA_OFFLINE, ID_CASA_TOKEN, PREFISSO_BT, PREFISSO_NOTIFICA, PREFISSO_SISTEMA,
     PULSANTE_ARCHIVIA, PULSANTE_APRI, PULSANTE_HO_CAPITO, PULSANTE_IMPOSTAZIONI, PULSANTE_RIPROVA,
 };
 use crate::lati::{self, Lato};
@@ -14,7 +14,7 @@ use crate::pc_stats::{Fonti, LetturaBatteria};
 use crate::sorgenti_lati;
 use crate::sistema::{autoavvio, servizi, volume};
 #[cfg(windows)]
-use crate::{connessioni, sistema::radio};
+use crate::{connessioni, sistema::{batterie_bt, radio}};
 #[cfg(windows)]
 use crate::sistema::volume::{StatoVolume, Volume};
 use crate::impostazioni::{self, Modulo, Tono};
@@ -871,6 +871,10 @@ pub struct Ponte {
     nome_rete: RefCell<Option<String>>,
     #[cfg(windows)]
     vista_pc: Cell<bool>,
+    /// Le batterie dei dispositivi Bluetooth (M2, Task 9, solo Windows): il thread `batterie-bt`
+    /// (che dorme; c'è solo con l'interruttore acceso).
+    #[cfg(windows)]
+    sorveglia_bt: RefCell<Option<batterie_bt::SorveglianzaBt>>,
     /// `ITSYHOME_TRACCIA_TOCCO=1`: tempi del tocco sullo stderr (icona cambiata nel modello,
     /// conferma di Home Assistant). Il fotogramma si misura da fuori, sulle foto della zona: il
     /// renderer software di Skia non chiama il notificatore di rendering.
@@ -958,6 +962,8 @@ pub fn collega(
         nome_rete: RefCell::new(None),
         #[cfg(windows)]
         vista_pc: Cell::new(false),
+        #[cfg(windows)]
+        sorveglia_bt: RefCell::new(None),
     });
     PONTE.with(|p| *p.borrow_mut() = Some(ponte.clone()));
     // I pulsanti della pillola allargata agiscono sulla voce che sta chiamando; «Apri» (un
@@ -1001,6 +1007,10 @@ pub fn collega(
                 p.rotella_volume(delta);
             }
         });
+        // Le cuffie Bluetooth scariche (Task 9): il thread c'è solo con l'interruttore acceso.
+        if ponte.casa.con_config(|c| c.avvisi_bt) {
+            ponte.accendi_bt();
+        }
     }
     ponte.aggiorna_umore();
     ponte
@@ -1432,6 +1442,9 @@ impl Ponte {
         if p.get_volume_rotella() != config.volume_rotella {
             p.set_volume_rotella(config.volume_rotella);
         }
+        if p.get_avvisi_bt() != config.avvisi_bt {
+            p.set_avvisi_bt(config.avvisi_bt);
+        }
         p.set_config_non_salvata(self.errore_config.borrow().is_some());
         self.aggiorna_righe();
         self.riempi_isola(p);
@@ -1701,6 +1714,14 @@ impl Ponte {
         f.on_cambia_volume_rotella(|si| {
             if let Some(p) = ponte() {
                 p.cambia_volume_rotella(si);
+            }
+        });
+        // Impostazioni › Isola: «Avvisa quando le cuffie Bluetooth sono scariche», solo su Windows.
+        f.set_avvisi_bt_disponibile(cfg!(windows));
+        #[cfg(windows)]
+        f.on_cambia_avvisi_bt(|si| {
+            if let Some(p) = ponte() {
+                p.cambia_avvisi_bt(si);
             }
         });
         // Fuori da Windows menu e icona non ci sono: «Esci» di Sistema chiude come `Comando::Esci`.
@@ -2244,6 +2265,9 @@ impl Ponte {
             // Zitta fino alla ricarica: il glifo nella vista PC continua a dire com'è la batteria.
             self.batteria.borrow_mut().zittisci();
             self.togli_voce(voce);
+        } else if voce.starts_with(PREFISSO_BT) && pulsante == PULSANTE_HO_CAPITO {
+            // Il dispositivo è già segnato come avvisato oggi: non torna fino a domani.
+            self.togli_voce(voce);
         } else if voce.starts_with(PREFISSO_SISTEMA) {
             self.togli_voce(voce);
         } else if self.attese.borrow().voce(voce).is_some_and(|v| v.fonte == Fonte::Prova) {
@@ -2385,6 +2409,14 @@ impl Ponte {
             }
             if si {
                 *self.radio.borrow_mut() = Some(radio::Radio::avvia(consegna_radio));
+                // Una lettura sola per ingresso, su un thread di lavoro: niente timer a vista aperta.
+                batterie_bt::leggi_una_volta(|letture| {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(p) = ponte() {
+                            p.cuffie_lette(&letture);
+                        }
+                    });
+                });
             } else {
                 // `Drop` ferma il thread `radio`: toglie i gestori e libera le radio.
                 self.radio.borrow_mut().take();
@@ -2393,6 +2425,7 @@ impl Ponte {
                 if let Some(p) = self.pannello.borrow().upgrade() {
                     connessioni::dimentica_radio(&p);
                     connessioni::scrivi_nome(&p, None);
+                    batterie_bt::scrivi_cuffie(&p, None);
                 }
             }
             self.aggiorna_lati();
@@ -2472,6 +2505,101 @@ impl Ponte {
         let pagina = connessioni::esito(&p, seguite.then_some(stati.as_slice()), tipo, esito);
         if let Some(pagina) = pagina {
             apri_pagina(pagina);
+        }
+    }
+}
+
+// ─── Le batterie dei dispositivi Bluetooth (M2, Task 9, solo Windows) ────────
+
+/// La lettura periodica del thread `batterie-bt`: solo accodata al thread dell'interfaccia.
+/// `false` se il ciclo eventi non c'è più (il thread allora finisce).
+#[cfg(windows)]
+fn consegna_bt(letture: Vec<batterie_bt::LetturaBt>) -> bool {
+    slint::invoke_from_event_loop(move || {
+        if let Some(p) = ponte() {
+            p.bt_lette(&letture);
+        }
+    })
+    .is_ok()
+}
+
+#[cfg(windows)]
+impl Ponte {
+    fn accendi_bt(&self) {
+        let mut s = self.sorveglia_bt.borrow_mut();
+        if s.is_none() {
+            *s = Some(batterie_bt::SorveglianzaBt::avvia(consegna_bt));
+        }
+    }
+
+    /// Impostazioni › Isola: l'avviso acceso o spento, salvato e subito in vigore. Spento il thread
+    /// si ferma e le voci dei dispositivi scompaiono.
+    fn cambia_avvisi_bt(&self, si: bool) {
+        self.casa.aggiorna_config(|c| c.avvisi_bt = si);
+        if si {
+            self.accendi_bt();
+        } else {
+            // `Drop` fa finire il thread `batterie-bt`.
+            self.sorveglia_bt.borrow_mut().take();
+            self.togli_voci_bt(|_| true);
+        }
+    }
+
+    fn togli_voci_bt(&self, da_togliere: impl Fn(&str) -> bool) {
+        let ids: Vec<String> = self
+            .attese
+            .borrow()
+            .ordinate()
+            .iter()
+            .filter(|v| v.id.starts_with(PREFISSO_BT) && da_togliere(&v.id))
+            .map(|v| v.id.clone())
+            .collect();
+        for id in ids {
+            self.togli_voce(&id);
+        }
+    }
+
+    /// Una lettura periodica: via le voci non più valide, avviso (e data salvata) per chi è
+    /// scarico e non è stato avvisato oggi. Dopo lo spegnimento dell'interruttore si ignora.
+    fn bt_lette(&self, letture: &[batterie_bt::LetturaBt]) {
+        if self.sorveglia_bt.borrow().is_none() {
+            return;
+        }
+        let presenti: Vec<String> = self
+            .attese
+            .borrow()
+            .ordinate()
+            .iter()
+            .filter(|v| v.id.starts_with(PREFISSO_BT))
+            .map(|v| v.id.clone())
+            .collect();
+        let via = batterie_bt::da_togliere(letture, &presenti);
+        self.togli_voci_bt(|id| via.iter().any(|x| x == id));
+        let oggi = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let nuovi = self.casa.con_config(|c| batterie_bt::da_avvisare(letture, &c.bt_avvisati, &oggi));
+        if nuovi.is_empty() {
+            return;
+        }
+        let ora = Instant::now();
+        for l in &nuovi {
+            self.metti_voce(batterie_bt::voce_bt(l, ora), true);
+        }
+        self.casa.aggiorna_config(|c| {
+            for l in &nuovi {
+                c.bt_avvisati.insert(l.impronta.clone(), oggi.clone());
+            }
+            batterie_bt::pota_avvisati(&mut c.bt_avvisati, &oggi);
+        });
+    }
+
+    /// La lettura fatta entrando nella vista PC: la riga «CUFFIE». Arrivata dopo aver lasciato la
+    /// vista, nessuno la guarda.
+    fn cuffie_lette(&self, letture: &[batterie_bt::LetturaBt]) {
+        if !self.vista_pc.get() {
+            return;
+        }
+        if let Some(p) = self.pannello.borrow().upgrade() {
+            batterie_bt::scrivi_cuffie(&p, batterie_bt::riga_cuffie(letture).as_ref());
         }
     }
 }
@@ -3314,6 +3442,20 @@ pub(crate) mod test {
         p.batteria(&lettura(18.0, StatoBatteria::InCarica));
         p.batteria(&lettura(19.0, StatoBatteria::Scarica));
         assert_eq!(livello(), Some(Livello::Informazione), "dopo la ricarica torna");
+    }
+
+    /// «Ho capito» sulla voce di un dispositivo Bluetooth la toglie (senza toast: `avvisa` falso).
+    #[test]
+    fn ho_capito_sulla_voce_bluetooth_la_toglie() {
+        use crate::sistema::batterie_bt::{voce_bt, LetturaBt};
+        let (_spegni, p, _pillola, _cartella) = ponte_di_prova();
+        let l = LetturaBt { impronta: "0123456789abcdef".into(), nome: "Cuffie finte".into(), percentuale: 18, connesso: true };
+        let voce = voce_bt(&l, Instant::now());
+        let id = voce.id.clone();
+        p.metti_voce(voce, false);
+        assert!(p.attese.borrow().contiene(&id));
+        p.azione(&id, PULSANTE_HO_CAPITO);
+        assert!(!p.attese.borrow().contiene(&id));
     }
 
     #[test]

@@ -1,13 +1,16 @@
 //! Servizi di sistema: istanza unica, menu dell'isola e icona nella barra, scorciatoie globali,
 //! avvio con il sistema, notifiche, schermo intero, inattività, modalità «ritirata» (spec §3bis),
 //! apertura dei collegamenti nel browser predefinito e delle pagine di Windows, Wi-Fi, Bluetooth e
-//! icona della rete (`radio`).
+//! icona della rete (`radio`), batteria dei dispositivi Bluetooth (`batterie_bt`).
 //!
 //! Qui le decisioni pure (tempo e osservazioni arrivano dal chiamante); `servizi` le applica alla
 //! pillola con un solo timer da 5 s più sveglie singole, e un sondaggio del mouse (100 ms) solo
 //! mentre la pillola è ritirata.
 
 pub mod autoavvio;
+// Fuori da Windows il modulo c'è solo per i test (la lettura e il thread sono solo Windows).
+#[cfg(any(windows, test))]
+pub mod batterie_bt;
 pub mod browser;
 pub mod inattivita;
 pub mod istanza;

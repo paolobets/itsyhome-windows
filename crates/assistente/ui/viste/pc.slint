@@ -1,6 +1,6 @@
 // Vista PC, la «card del PC»: tutta la gestione del PC in tre colonne (M2, Task 8, decisione di
 // Paolo che sostituisce il pannellino sopra il dock). «Sistema»: CPU, RAM, disco (poi la GPU,
-// Task 10). «Energia e audio»: batteria (se c'è) e volume (Task 7; poi le cuffie BT, Task 9).
+// Task 10). «Energia e audio»: batteria (se c'è), volume (Task 7) e cuffie Bluetooth (Task 9).
 // «Connessioni»: la rete (icona con le tacche e velocità), i riquadri Wi-Fi e Bluetooth e le
 // righe che aprono le pagine di Windows (solo su Windows: altrove la colonna ha solo la rete).
 // Le righe sono alte 38 (testi ≥ 12 px): con l'intestazione stanno quattro righe per colonna nei
@@ -47,13 +47,16 @@ component Riga inherits Rectangle {
     // Batteria: glifo accanto al valore, con la sua tinta (vedi `GlifoBatteria`).
     in property <bool> con-glifo: false;
     in property <TintaBatteriaUi> tinta: TintaBatteriaUi.normale;
+    // Cuffie: il glifo dice la carica ma senza la barra sotto; per Narrator l'elenco intero.
+    in property <bool> senza-barra: false;
+    in property <string> descrizione;
     property <length> colonna-x: root.width - MisurePc.margine - MisurePc.colonna;
     height: MisurePc.alto-riga;
     // Per Narrator: nome, valore e dettaglio (FE16).
     accessible-role: progress-indicator;
     accessible-label: etichetta;
     accessible-value: valore;
-    accessible-description: dettaglio;
+    accessible-description: descrizione != "" ? descrizione : dettaglio;
 
     Etichetta {
         x: MisurePc.margine;
@@ -110,7 +113,7 @@ component Riga inherits Rectangle {
         }
     }
 
-    if frazione >= 0: Rectangle {
+    if frazione >= 0 && !senza-barra: Rectangle {
         x: colonna-x;
         y: 27px;
         width: MisurePc.colonna;
@@ -458,6 +461,14 @@ export component VistaPc inherits Rectangle {
     in property <bool> wifi-acceso;
     in property <bool> bt-presente;
     in property <bool> bt-acceso;
+    // Le cuffie Bluetooth (M2, Task 9, solo Windows): la riga c'è solo con almeno un dispositivo
+    // connesso con la batteria leggibile; letta una volta entrando nella vista.
+    in property <bool> cuffie-presenti: false;
+    in property <string> cuffie-dettaglio;
+    in property <string> cuffie-testo;
+    in property <float> cuffie-frazione;
+    in property <TintaBatteriaUi> cuffie-tinta: TintaBatteriaUi.normale;
+    in property <string> cuffie-descrizione;
     // Il nome della rete Wi-Fi (solo qui, mai nella pillola né nei log); vuoto se non si sa.
     in property <string> nome-rete;
     in property <bool> rete-nota;
@@ -518,7 +529,7 @@ export component VistaPc inherits Rectangle {
                 }
             }
 
-            // Energia e audio (le cuffie BT del Task 9 andranno sotto il volume).
+            // Energia e audio.
             VerticalLayout {
                 width: largo-colonna;
                 alignment: start;
@@ -543,6 +554,18 @@ export component VistaPc inherits Rectangle {
                     fuoco: root.fuoco == 0;
                     imposta(v) => { root.imposta-volume(v); }
                     cambia-muto(si) => { root.muto-volume(si); }
+                }
+
+                if cuffie-presenti: Riga {
+                    etichetta: "CUFFIE";
+                    valore: cuffie-testo;
+                    dettaglio: cuffie-dettaglio;
+                    descrizione: cuffie-descrizione;
+                    frazione: cuffie-frazione;
+                    senza-barra: true;
+                    invertita: true;
+                    con-glifo: true;
+                    tinta: cuffie-tinta;
                 }
             }
 

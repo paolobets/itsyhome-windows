@@ -54,6 +54,16 @@ pub struct Config {
     /// serie (D2), anche per un file di prima senza la chiave.
     #[serde(default = "vero")]
     pub volume_rotella: bool,
+    /// Avvisa quando le cuffie (o un altro dispositivo) Bluetooth sono scariche (M2, Task 9, solo
+    /// Windows): acceso di serie, anche per un file di prima senza la chiave.
+    #[serde(default = "vero")]
+    pub avvisi_bt: bool,
+    /// I dispositivi Bluetooth già avvisati: impronta (FNV-1a 64 bit dell'id di istanza, mai
+    /// l'indirizzo in chiaro) → data dell'avviso («2026-11-15»); così l'avviso è uno al giorno
+    /// anche dopo un riavvio dell'app. Le impronte più vecchie di 7 giorni si tolgono a ogni
+    /// salvataggio. Un file di prima, senza la chiave, si legge vuoto.
+    #[serde(default)]
+    pub bt_avvisati: HashMap<String, String>,
 }
 
 fn vero() -> bool {
@@ -85,6 +95,8 @@ impl Default for Config {
             massimi_quadranti: HashMap::new(),
             schermo: None,
             volume_rotella: vero(),
+            avvisi_bt: vero(),
+            bt_avvisati: HashMap::new(),
         }
     }
 }
@@ -259,5 +271,8 @@ pub fn importa_v2(v2: &Path, segreti: &dyn Segreti) -> Result<Option<Config>, St
         schermo: None,
         // Né il volume: la rotella sulla pillola accesa, come di serie.
         volume_rotella: vero(),
+        // Né i Bluetooth: l'avviso acceso, come di serie, e nessun dispositivo già avvisato.
+        avvisi_bt: vero(),
+        bt_avvisati: HashMap::new(),
     }))
 }

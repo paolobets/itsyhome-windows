@@ -229,3 +229,23 @@ fn volume_con_la_rotella_acceso_di_serie() {
     st.salva(&c).unwrap();
     assert!(!st.leggi().volume_rotella, "spenta resta spenta");
 }
+
+/// M2 Task 9: l'avviso delle cuffie Bluetooth è acceso di serie, anche per un file di prima senza
+/// le chiavi; le impronte già avvisate (con la data) si salvano e si rileggono.
+#[test]
+fn avvisi_bt_accesi_di_serie_e_impronte_salvate() {
+    assert!(Config::default().avvisi_bt, "configurazione nuova: acceso");
+    assert!(Config::default().bt_avvisati.is_empty());
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("assistente.json"), r#"{ "favorites": ["light.a"] }"#).unwrap();
+    let st = ConfigStore::apri(d.path());
+    let mut c = st.leggi();
+    assert!(c.avvisi_bt, "file di prima: acceso");
+    assert!(c.bt_avvisati.is_empty(), "file di prima: nessun avviso dato");
+    c.avvisi_bt = false;
+    c.bt_avvisati.insert("0123456789abcdef".into(), "2026-11-15".into());
+    st.salva(&c).unwrap();
+    let riletta = st.leggi();
+    assert!(!riletta.avvisi_bt, "spento resta spento");
+    assert_eq!(riletta.bt_avvisati.get("0123456789abcdef").map(String::as_str), Some("2026-11-15"));
+}

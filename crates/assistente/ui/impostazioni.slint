@@ -685,6 +685,10 @@ export component FinestraImpostazioni inherits Window {
     in-out property <bool> volume-rotella: true;
     in property <bool> volume-rotella-disponibile: false;
     callback cambia-volume-rotella(bool);
+    // L'avviso delle cuffie Bluetooth scariche (M2, Task 9): solo su Windows; acceso di serie.
+    in-out property <bool> avvisi-bt: true;
+    in property <bool> avvisi-bt-disponibile: false;
+    callback cambia-avvisi-bt(bool);
 
     // 0 Home Assistant, 1 Dispositivi, 2 Collegamenti, 3 Isola, 4 Sistema, 5 Informazioni.
     in-out property <int> sezione: 0;
@@ -1936,6 +1940,51 @@ export component FinestraImpostazioni inherits Window {
                             commutato => {
                                 volume-rotella = !volume-rotella;
                                 root.cambia-volume-rotella(volume-rotella);
+                            }
+                            changed has-focus => {
+                                if (self.has-focus) {
+                                    isola.porta-in-vista(parent.y, parent.height);
+                                }
+                            }
+                        }
+                    }
+
+                    if avvisi-bt-disponibile: Rectangle {
+                        height: 64px;
+                        border-radius: Tema.raggio-xl;
+                        background: Tema.card-fondo;
+                        border-width: 1px;
+                        border-color: Tema.vetro-bordo;
+
+                        Text {
+                            x: 16px;
+                            y: 12px;
+                            width: interruttore-bt.x - self.x - 12px;
+                            text: "Avvisa quando le cuffie Bluetooth sono scariche";
+                            overflow: elide;
+                            font-weight: 500;
+                            font-size: Tema.testo-medio;
+                            color: Tema.testo;
+                        }
+
+                        Text {
+                            x: 16px;
+                            y: 35px;
+                            width: interruttore-bt.x - self.x - 12px;
+                            text: "Una volta al giorno, al 20% o meno; mai a dispositivo spento. Solo su Windows.";
+                            overflow: elide;
+                            font-size: Tema.testo-piccolo;
+                            color: Tema.testo-tenue;
+                        }
+
+                        interruttore-bt := Interruttore {
+                            x: parent.width - self.width - 18px;
+                            y: (parent.height - self.height) / 2;
+                            nome: "Avvisa quando le cuffie Bluetooth sono scariche";
+                            acceso: avvisi-bt;
+                            commutato => {
+                                avvisi-bt = !avvisi-bt;
+                                root.cambia-avvisi-bt(avvisi-bt);
                             }
                             changed has-focus => {
                                 if (self.has-focus) {

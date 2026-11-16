@@ -1883,6 +1883,62 @@ mod accessibilita {
         assert_eq!(i.accessible_checked(), Some(false));
     }
 
+    /// Impostazioni › Isola: «Avvisa quando le cuffie Bluetooth sono scariche» solo su Windows,
+    /// acceso di serie; il commutatore lo dice a Rust.
+    #[test]
+    fn interruttore_degli_avvisi_bt_nella_sezione_isola() {
+        let (f, _) = scheda_isola();
+        let nome = "Avvisa quando le cuffie Bluetooth sono scariche";
+        let interruttore = |f: &FinestraImpostazioni| {
+            ElementHandle::find_by_accessible_label(f, nome).find(|e| e.accessible_role() == Some(AccessibleRole::Switch))
+        };
+        assert!(interruttore(&f).is_none(), "fuori da Windows la riga non c'è");
+        f.set_avvisi_bt_disponibile(true);
+        let i = interruttore(&f).expect("interruttore");
+        assert_eq!(i.accessible_checked(), Some(true), "acceso di serie");
+        let cambi = std::rc::Rc::new(std::cell::RefCell::new(Vec::<bool>::new()));
+        let c = cambi.clone();
+        f.on_cambia_avvisi_bt(move |si| c.borrow_mut().push(si));
+        i.invoke_accessible_default_action();
+        assert_eq!(*cambi.borrow(), [false]);
+        assert_eq!(i.accessible_checked(), Some(false));
+    }
+
+    // ─── M2, Task 9: le cuffie Bluetooth nella vista PC ───
+
+    fn lettura_bt(imp: &str, nome: &str, percentuale: u8) -> crate::sistema::batterie_bt::LetturaBt {
+        crate::sistema::batterie_bt::LetturaBt { impronta: imp.into(), nome: nome.into(), percentuale, connesso: true }
+    }
+
+    /// La riga «CUFFIE» sta in «Energia e audio»: valore e glifo con la tinta informazione a 20%
+    /// o meno; con più dispositivi «+N» e per Narrator l'elenco; senza dispositivi non c'è.
+    #[test]
+    fn riga_cuffie_nella_vista_pc() {
+        use crate::sistema::batterie_bt::{riga_cuffie, scrivi_cuffie};
+        piattaforma_di_prova();
+        let p = pannello_connessioni();
+        let cuffie = |p: &Pannello| ElementHandle::find_by_accessible_label(p, "CUFFIE").next();
+        assert!(cuffie(&p).is_none(), "senza lettura la riga non c'è");
+        scrivi_cuffie(&p, riga_cuffie(&[lettura_bt("a", "Cuffie finte", 18)]).as_ref());
+        let c = cuffie(&p).expect("riga");
+        assert_eq!(c.accessible_value().as_deref(), Some("18%"));
+        assert_eq!(c.accessible_description().as_deref(), Some("Cuffie finte al 18%"));
+        assert_eq!(p.get_cuffie_tinta(), crate::TintaBatteriaUi::Informazione);
+        assert_eq!(p.get_cuffie_dettaglio(), "Cuffie finte");
+        // Più dispositivi: il più scarico, «+1» e l'elenco per Narrator.
+        scrivi_cuffie(
+            &p,
+            riga_cuffie(&[lettura_bt("a", "Cuffie finte", 60), lettura_bt("b", "Mouse finto", 30)]).as_ref(),
+        );
+        let c = cuffie(&p).expect("riga");
+        assert_eq!(p.get_cuffie_dettaglio(), "Mouse finto +1");
+        assert_eq!(p.get_cuffie_tinta(), crate::TintaBatteriaUi::Normale);
+        assert_eq!(c.accessible_description().as_deref(), Some("Mouse finto al 30%, Cuffie finte al 60%"));
+        // Nessun dispositivo connesso con la batteria leggibile: la riga sparisce.
+        scrivi_cuffie(&p, None);
+        assert!(cuffie(&p).is_none());
+    }
+
     // ─── M2, Task 8: Wi-Fi, Bluetooth e icona della rete ───
 
     use crate::sistema::radio::{EsitoRadio, StatoRadio, TipoRadio};
@@ -1939,6 +1995,16 @@ mod accessibilita {
         piattaforma_di_prova();
         let p = pannello_connessioni();
         p.set_errore_radio(true);
+        // Il caso più pieno anche per le cuffie: nome lungo e due dispositivi in più.
+        crate::sistema::batterie_bt::scrivi_cuffie(
+            &p,
+            crate::sistema::batterie_bt::riga_cuffie(&[
+                lettura_bt("a", "Cuffie finte con un nome lunghissimo", 18),
+                lettura_bt("b", "Mouse finto", 50),
+                lettura_bt("c", "Tastiera finta", 90),
+            ])
+            .as_ref(),
+        );
         let vista = ElementHandle::find_by_element_type_name(&p, "VistaPc").next().expect("vista PC");
         let dentro = |contenitore: &ElementHandle, nome: &str| {
             let (cp, cs) = (contenitore.absolute_position(), contenitore.size());

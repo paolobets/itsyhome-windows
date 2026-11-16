@@ -31,6 +31,9 @@ windows-sys = { version = "0.52", features = [
     "Win32_System_ProcessStatus",
     "Win32_Security",
     "Win32_UI_Accessibility",
+    # Batteria dei dispositivi Bluetooth (M2, Task 9): SetupAPI e proprietà dei dispositivi.
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Devices_Properties",
 ] }
 # Registro (solo HKCU): avvio con il sistema e identificativo dei toast.
 windows-registry = "0.6"

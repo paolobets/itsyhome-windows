@@ -29,7 +29,7 @@ import { Tema, Movimento } from "tema.slint";
 import { Faccia, Occhi } from "faccia.slint";
 import { Anello, Fuoco, Fuochi } from "componenti.slint";
 import { Icone } from "icone.slint";
-import { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, UmoreUi, StanzaUi, CollegamentoUi, QuadranteUi, FonteQuadranteUi, TipoReteUi } from "voci.slint";
+import { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, UmoreUi, StanzaUi, CollegamentoUi, QuadranteUi, FonteQuadranteUi, TipoReteUi, TintaBatteriaUi } from "voci.slint";
 import { RigaAttesa, VoceEspansa } from "attesa.slint";
 import { VistaPc } from "viste/pc.slint";
 import { VistaCasa } from "viste/casa.slint";
@@ -166,6 +166,14 @@ export component Pannello inherits Window {
     // (0 Wi-Fi / 1 Bluetooth, acceso voluto) e la pagina di Windows (0 reti Wi-Fi, 1 Bluetooth).
     callback commuta-radio(int, bool);
     callback apri-pagina(int);
+    // La riga «CUFFIE» della vista PC (M2, Task 9, solo Windows): la scrive Rust dopo una lettura
+    // fatta entrando nella vista; senza dispositivi connessi con la batteria leggibile non c'è.
+    in property <bool> cuffie-presenti: false;
+    in property <string> cuffie-dettaglio;
+    in property <string> cuffie-testo;
+    in property <float> cuffie-frazione: 0;
+    in property <TintaBatteriaUi> cuffie-tinta: TintaBatteriaUi.normale;
+    in property <string> cuffie-descrizione;
     // Vero mentre il pannello è aperto: guida l'animazione di apertura e il battito degli occhi.
     in-out property <bool> aperto;
     // Casa: i preferiti (al massimo 8), la riga di stato, i sensori dei Quadranti (al massimo 3).
@@ -1150,6 +1158,12 @@ export component Pannello inherits Window {
                     rete: root.rete;
                     tacche: root.tacche;
                     errore-radio: root.errore-radio;
+                    cuffie-presenti: root.cuffie-presenti;
+                    cuffie-dettaglio: root.cuffie-dettaglio;
+                    cuffie-testo: root.cuffie-testo;
+                    cuffie-frazione: root.cuffie-frazione;
+                    cuffie-tinta: root.cuffie-tinta;
+                    cuffie-descrizione: root.cuffie-descrizione;
                     // Come nelle altre viste, il fuoco chiede anche la vista (lasciandola non si
                     // accende su un elemento che sta sparendo).
                     fuoco: da-tastiera && zona == Zona.contenuto && vista == "pc" ? fuoco-pc-valido : -1;
