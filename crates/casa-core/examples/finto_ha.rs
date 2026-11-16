@@ -14,8 +14,11 @@
 //!         più qualche cambio su entità mostrate (vedi `raffica`);
 //!     --casa-grande <n>: <n> entità in più con attributi da casa vera (vedi `casa_grande`).
 //!     --lenta <ms>: ogni comando risponde (e manda il suo state_changed) dopo <ms> millisecondi.
-//!     --registro <s>: ogni <s> secondi un `entity_registry_updated` (a chi vi è iscritto), come
+//!     --registro <s>: ogni <s> secondi un evento del registro (a chi vi è iscritto), come
 //!         un'integrazione che riscrive il registro; serve a provare il registro diagnostico.
+//!     --registro-tipo <t>: quale evento (Task 14h): «nome» (di serie: il nome di una luce
+//!         mostrata, fa rileggere i soli registri), «inutile» (la versione di un dispositivo e le
+//!         opzioni di un'entità: si scartano), «nuova» (un'entità creata: rilettura completa).
 //! cargo run -p casa-core --example finto_ha -- pulisci
 //!     cancella il token finto dal portachiavi
 //! ```
@@ -657,6 +660,12 @@ fn main() -> Result<(), String> {
             let raffica_al_secondo = numero("--raffica");
             let lenta = Duration::from_millis(numero("--lenta").unwrap_or(0).into());
             let registro_ogni = secondi("--registro");
+            let registro_tipo = argomenti
+                .iter()
+                .position(|a| a == "--registro-tipo")
+                .and_then(|i| argomenti.get(i + 1))
+                .cloned()
+                .unwrap_or_else(|| "nome".into());
             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
             rt.block_on(async move {
                 let listener = TcpListener::bind(("127.0.0.1", porta)).await.map_err(|e| e.to_string())?;
@@ -680,9 +689,19 @@ fn main() -> Result<(), String> {
                         let mut passo = tokio::time::interval_at(tokio::time::Instant::now() + ogni, ogni);
                         loop {
                             passo.tick().await;
-                            let data = json!({ "action": "update", "entity_id": "light.soggiorno", "changes": { "name": null } });
-                            let e = json!({ "type": "event", "event": { "event_type": "entity_registry_updated", "data": data } });
-                            let _ = tx.send(e.to_string());
+                            // Come HA: `changes` coi valori di prima dei soli campi cambiati.
+                            let eventi = match registro_tipo.as_str() {
+                                "inutile" => vec![
+                                    ("device_registry_updated", json!({ "action": "update", "device_id": "finto", "changes": { "sw_version": "1.0" } })),
+                                    ("entity_registry_updated", json!({ "action": "update", "entity_id": "light.soggiorno", "changes": { "options": {} } })),
+                                ],
+                                "nuova" => vec![("entity_registry_updated", json!({ "action": "create", "entity_id": "light.soggiorno" }))],
+                                _ => vec![("entity_registry_updated", json!({ "action": "update", "entity_id": "light.soggiorno", "changes": { "name": null } }))],
+                            };
+                            for (tipo, data) in eventi {
+                                let e = json!({ "type": "event", "event": { "event_type": tipo, "data": data } });
+                                let _ = tx.send(e.to_string());
+                            }
                         }
                     });
                 }
@@ -712,6 +731,6 @@ fn main() -> Result<(), String> {
                 }
             })
         }
-        None => Err("uso: finto_ha <porta> [--con-notifica] [--notifica-dopo <s>] [--rimuovi-dopo <s>] [--raffica <n>] [--casa-grande <n>] [--lenta <ms>] [--registro <s>] | prepara <cartella> <porta> [--preferiti] | pulisci".into()),
+        None => Err("uso: finto_ha <porta> [--con-notifica] [--notifica-dopo <s>] [--rimuovi-dopo <s>] [--raffica <n>] [--casa-grande <n>] [--lenta <ms>] [--registro <s>] [--registro-tipo nome|inutile|nuova] | prepara <cartella> <porta> [--preferiti] | pulisci".into()),
     }
 }
