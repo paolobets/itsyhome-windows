@@ -537,6 +537,13 @@ mod gpu {
         assert!(offset_of!(D3DKMT_QUERYSTATISTICS, hProcess) == 16);
         #[cfg(target_pointer_width = "64")]
         assert!(offset_of!(D3DKMT_QUERYSTATISTICS, QueryResult) == 24);
+        // `Anonymous` porta `QueryNode.NodeId`, il campo che il kernel LEGGE: un suo spostamento
+        // silenzioso in `windows-sys` chiederebbe un nodo sbagliato. Misurati dal vivo dalla
+        // revisione del Task 10: `Anonymous` a 800, struttura da 808 byte.
+        #[cfg(target_pointer_width = "64")]
+        assert!(offset_of!(D3DKMT_QUERYSTATISTICS, Anonymous) == 800);
+        #[cfg(target_pointer_width = "64")]
+        assert!(std::mem::size_of::<D3DKMT_QUERYSTATISTICS>() == 808);
         assert!(offset_of!(D3DKMT_QUERYSTATISTICS_ADAPTER_INFORMATION, NodeCount) == 4);
         assert!(offset_of!(D3DKMT_QUERYSTATISTICS_NODE_INFORMATION, GlobalInformation) == 0);
         assert!(offset_of!(D3DKMT_QUERYSTATISTICS_PROCESS_NODE_INFORMATION, RunningTime) == 0);
@@ -894,16 +901,6 @@ mod test {
         }
     }
 
-    /// Handle aperti dal processo di test.
-    #[cfg(windows)]
-    fn handle_aperti() -> u32 {
-        use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetProcessHandleCount};
-        let mut n = 0u32;
-        // SAFETY: pseudo-handle del processo corrente, puntatore a una variabile locale.
-        assert_ne!(unsafe { GetProcessHandleCount(GetCurrentProcess(), &mut n) }, 0);
-        n
-    }
-
     /// Cancello di memoria della decisione D7, nel processo di test (l'assistente vero è aperto e
     /// non si misura): cinque cicli «vista PC aperta» (lettore acceso, dieci campioni) e «vista
     /// lasciata» (lettore buttato). La memoria privata dopo i cinque cicli deve stare entro 2 MB
@@ -924,18 +921,18 @@ mod test {
             drop(lettore);
             ultimo
         };
-        let (prima, handle_prima) = (memoria_privata(), handle_aperti());
+        let prima = memoria_privata();
         let valore = ciclo();
         let dopo_il_primo = memoria_privata();
         for _ in 0..4 {
             ciclo();
         }
-        let (dopo_cinque, handle_dopo) = (memoria_privata(), handle_aperti());
+        let dopo_cinque = memoria_privata();
         let mb = |b: u64| b as f64 / MB;
         let crescita = |dopo: u64| (dopo as f64 - prima as f64) / MB;
         println!(
             "GPU {valore:?}; memoria privata: prima {:.2} MB, dopo il primo ciclo {:.2} MB ({:+.2}), \
-             dopo cinque cicli {:.2} MB ({:+.2} da prima); handle {handle_prima} → {handle_dopo}",
+             dopo cinque cicli {:.2} MB ({:+.2} da prima)",
             mb(prima),
             mb(dopo_il_primo),
             crescita(dopo_il_primo),
@@ -944,7 +941,12 @@ mod test {
         );
         assert!(valore.is_some(), "la GPU si legge");
         assert!(crescita(dopo_cinque) <= 2.0, "oltre +2 MB da prima del primo ciclo (D7)");
-        assert!(handle_dopo <= handle_prima + 2, "handle che restano aperti: {handle_prima} → {handle_dopo}");
+        // Nessun controllo sugli handle: gli adattatori aperti con `D3DKMTOpenAdapterFromLuid`
+        // sono handle del kernel grafico, non oggetti del processo, e `GetProcessHandleCount` non
+        // li conta (la revisione del Task 10 l'ha provato: 82 → 82 anche senza
+        // `D3DKMTCloseAdapter`). Un controllo così non potrebbe fallire per la perdita che
+        // dichiara di cercare; la chiusura è provata dalla lettura del codice (`Drop` di
+        // `LettoreGpu`).
     }
 
     #[test]

@@ -75,15 +75,28 @@ pub struct LetturaBt {
     pub connesso: bool,
 }
 
-/// FNV-1a a 64 bit dell'id di istanza, in 16 cifre esadecimali minuscole: l'id contiene
-/// l'indirizzo del dispositivo e non si salva mai in chiaro.
-pub fn impronta(id_istanza: &str) -> String {
+/// FNV-1a a 64 bit della chiave del dispositivo (`chiave_dispositivo`: il contenitore, o l'id di
+/// istanza del nodo se il contenitore manca), in 16 cifre esadecimali minuscole: l'id contiene
+/// l'indirizzo del dispositivo e la chiave non si salva mai in chiaro.
+pub fn impronta(chiave: &str) -> String {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in id_istanza.bytes() {
+    for b in chiave.bytes() {
         h ^= u64::from(b);
         h = h.wrapping_mul(0x0000_0100_0000_01b3);
     }
     format!("{h:016x}")
+}
+
+/// Da che cosa nasce l'impronta di un nodo: il contenitore (`DEVPKEY_Device_ContainerId`, il
+/// dispositivo fisico, uguale per tutti i suoi nodi) se c'è; senza contenitore (assente o GUID
+/// tutto zero) l'id di istanza del nodo. Il testo per il contenitore non va cambiato: le impronte
+/// già salvate in `Config::bt_avvisati` ne dipendono.
+#[cfg(any(windows, test))]
+pub fn chiave_dispositivo(contenitore: Option<[u8; 16]>, id: &str) -> String {
+    match contenitore.filter(|g| g.iter().any(|&x| x != 0)) {
+        Some(g) => format!("contenitore:{g:02x?}"),
+        None => id.to_string(),
+    }
 }
 
 /// L'id della voce di un dispositivo.
@@ -352,11 +365,9 @@ pub fn leggi() -> Vec<LetturaBt> {
             // contenitore (assente o tutto zero) si ripiega sull'id del nodo.
             let mut g = [0u8; 16];
             let contenitore = proprieta(set, &dati, &DEVPKEY_Device_ContainerId, DEVPROP_TYPE_GUID, &mut g)
-                .filter(|&n| n == 16 && g.iter().any(|&x| x != 0));
-            let chiave = match contenitore {
-                Some(_) => format!("contenitore:{g:02x?}"),
-                None => id,
-            };
+                .filter(|&n| n == 16)
+                .map(|_| g);
+            let chiave = chiave_dispositivo(contenitore, &id);
             let nome = stringa(set, &dati, &DEVPKEY_Device_FriendlyName).filter(|n| !n.trim().is_empty());
             let (mut stato, mut problema) = (0u32, 0u32);
             let avviato = CM_Get_DevNode_Status(&mut stato, &mut problema, dati.DevInst, 0) == CR_SUCCESS
@@ -479,18 +490,49 @@ mod tests {
         assert_eq!(riga_cuffie(&u).unwrap().altri, 1);
     }
 
+    /// Due nodi dello stesso dispositivo fisico (HFP e GATT): stesso contenitore, id diversi.
+    const CONTENITORE: [u8; 16] = [0x8c, 0x7e, 0xd2, 0x06, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    const NODO_HFP: &str = r"BTHENUM\{0000111E-0000-1000-8000-00805F9B34FB}_VID&0001_PID&0002\7&AA:BB:CC:DD:EE:FF";
+    const NODO_GATT: &str = r"BTHLEDEVICE\{0000180F-0000-1000-8000-00805F9B34FB}_DEV_VID&0001\8&AA:BB:CC:DD:EE:FF";
+
+    /// Una lettura come la fa `leggi`: impronta dalla chiave del nodo.
+    fn nodo(contenitore: Option<[u8; 16]>, id: &str, percentuale: u8) -> LetturaBt {
+        lettura(&impronta(&chiave_dispositivo(contenitore, id)), "Cuffie finte", percentuale, true)
+    }
+
+    #[test]
+    fn chiave_dal_contenitore_altrimenti_dal_nodo() {
+        // Stesso contenitore, nodi diversi: una chiave sola (col vecchio «per id di istanza» no).
+        assert_eq!(chiave_dispositivo(Some(CONTENITORE), NODO_HFP), chiave_dispositivo(Some(CONTENITORE), NODO_GATT));
+        // Contenitore assente o tutto zero: ogni nodo per conto suo, con l'id.
+        assert_eq!(chiave_dispositivo(None, NODO_HFP), NODO_HFP);
+        assert_eq!(chiave_dispositivo(Some([0; 16]), NODO_GATT), NODO_GATT);
+        assert_ne!(chiave_dispositivo(None, NODO_HFP), chiave_dispositivo(None, NODO_GATT));
+        // Due dispositivi diversi (stesso nome, contenitori diversi): due chiavi.
+        let mut altro = CONTENITORE;
+        altro[15] ^= 0xff;
+        assert_ne!(chiave_dispositivo(Some(CONTENITORE), NODO_HFP), chiave_dispositivo(Some(altro), NODO_HFP));
+        // Il testo resta quello delle impronte già salvate.
+        assert_eq!(chiave_dispositivo(Some([0xab; 16]), "x"), format!("contenitore:{:02x?}", [0xabu8; 16]));
+    }
+
     /// Lo scambio fra nodi dello stesso dispositivo (HFP a passi di 10%, GATT al punto) non cambia
-    /// l'impronta: la voce resta e nello stesso giorno non nasce un secondo avviso.
+    /// l'impronta: la voce resta e nello stesso giorno non nasce un secondo avviso. Le letture
+    /// nascono dalla chiave dei nodi (id diversi, stesso contenitore), come in `leggi`: con
+    /// l'impronta per id di istanza i nodi sarebbero due dispositivi e il test fallirebbe.
     #[test]
     fn scambio_fra_nodi_nessun_secondo_avviso() {
         let oggi = "2026-11-15";
-        let prima = unifica(vec![lettura("a", "Cuffie finte", 20, true), lettura("a", "Cuffie finte", 18, true)]);
+        let c = Some(CONTENITORE);
+        let prima = unifica(vec![nodo(c, NODO_HFP, 20), nodo(c, NODO_GATT, 18)]);
+        assert_eq!(prima.len(), 1, "un dispositivo solo");
         assert_eq!(prima[0].percentuale, 18);
         let da_avvisare_prima = da_avvisare(&prima, &HashMap::new(), oggi);
         assert_eq!(da_avvisare_prima.len(), 1);
         // L'avviso dato è registrato; il giro dopo l'altro nodo è il più basso.
         let avvisati: HashMap<String, String> = [(da_avvisare_prima[0].impronta.clone(), oggi.to_string())].into();
-        let dopo = unifica(vec![lettura("a", "Cuffie finte", 10, true), lettura("a", "Cuffie finte", 17, true)]);
+        let dopo = unifica(vec![nodo(c, NODO_HFP, 10), nodo(c, NODO_GATT, 17)]);
+        assert_eq!(dopo.len(), 1);
         assert_eq!(dopo[0].impronta, prima[0].impronta, "stessa impronta");
         assert!(da_avvisare(&dopo, &avvisati, oggi).is_empty(), "nessun secondo avviso");
         assert!(da_togliere(&dopo, &[id_voce(&prima[0].impronta)]).is_empty(), "la voce non si toglie");
