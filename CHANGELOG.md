@@ -167,7 +167,7 @@ Riposo non rimisurato a schermo libero: durante tutta la prova lo schermo era bl
 |---|---|---|
 | 10 min, un evento ogni 180 s sul nome di una luce mostrata | 545 KB per evento (lettura completa + iscrizione rifatta, 328 entità), media 182 KB/min; RAM 10,9 → 13,1 MB | **148 KB** per evento (soli registri, nessuna iscrizione), media **50 KB/min**; RAM 11,7 → 12,7 MB |
 | 10 min, ogni 180 s versione di un dispositivo + opzioni di un'entità (il caso della casa vera) | 545 KB per evento, media 182 KB/min; RAM 10,7 → 13,8 MB | **scartati**: 350 byte per evento, media **150 byte/min**; RAM **10,8 → 11,0 MB** |
-| Una lettura ogni 20 s per 5 min (~14 di fila) | complete: 12,7 MB dopo la prima, 12,5 alla fine | complete: 13,2 → 13,05 MB; soli registri: 11,4 → 12,3 MB (oscilla 11,3–12,5, nessuna crescita continua) |
+| Una lettura ogni 20 s per 5 min (~14 di fila) | complete: 12,7 MB dopo la prima, 12,5 alla fine | complete: 13,2 → 13,05 MB; soli registri: 11,4 → 12,3 MB (vedi sotto le prove più lunghe) |
 | Riposo 5 min, casa piccola, 7 preferiti, `--umore calm` | 14g: 0,016%, 8,0–8,2 MB | **0,015%** (max 0,33), **8,0–8,1 MB** |
 | Raffica anti-glitch (raffica 20/s + un evento del registro al secondo, 20 s a 60 fps) | — | soli registri 1199 fotogrammi **0 difettosi**; letture complete 1199 **0 difettosi**; controllo negativo 299 su 299 |
 
@@ -182,6 +182,12 @@ Riposo non rimisurato a schermo libero: durante tutta la prova lo schermo era bl
 
 ### Limiti noti (Task 14h)
 - Il buffer di ricezione del WebSocket (`tungstenite`) resta grande quanto il messaggio più grande ricevuto, per tutta la connessione: sulla casa vera la risposta di `get_states`, circa 1–3 MB, una volta sola.
+- Memoria con le letture dei soli registri: ogni lettura fa un picco (indici e mappatura vecchi e nuovi insieme). Con 14 letture di fila (una ogni 12 s) la memoria è salita da 11,9 a 12,9 MB, cioè +1,0 MB dopo la prima, oltre il ±0,5 chiesto. Con ~38 letture di fila (una ogni 8 s, 5,5 min) oscilla fra 11,4 e 13,3 MB senza salire: media 12,1 MB nella prima metà, 12,3 nella seconda, righe al minuto da 12,5 a 12,0 MB. Si assesta, non cresce. Le letture complete di fila (14, una ogni 12 s) restano piatte: 13,6 → 13,3 MB.
+
+### Fixed (Task 14h, giro di correzioni 2)
+- Una lettura completa o dei soli registri che fallisce si riprova da sola anche dopo una lettura riuscita (2, 4 … 60 s); prima, una lettura chiesta da un evento (entità nuova o rinominata) si perdeva fino all'evento successivo.
+- I nomi che HA riscrive nello stato (`original_name`, `translation_key`, `has_entity_name`, `changes` vuoto, nome del dispositivo proprio) non rileggono più i registri. Restano il nome scelto (`name`) e il nome di un dispositivo padre con figli mostrati.
+- Registro diagnostico: contatori anche per `translation_key`, `has_entity_name` e `parent_device_id`.
 
 ### Changed (Task 14i: decisione di Paolo, 16/11/2026)
 - Riga alta del pannello: dopo l'ora il pulsante **«⋯»** («Altre opzioni», 28 × 28, anello da tastiera) apre lo stesso menu nativo del clic destro sulla pillola, senza «Apri» e con «Impostazioni» in testa (Impostazioni, Informazioni, Ritira/Mostra l'isola, Esci), sotto il pulsante e allineato al suo bordo destro dentro l'area di lavoro. Esc lo chiude e il fuoco resta su «⋯»; «Ritira l'isola» da qui chiude il pannello e ritira subito la pillola.
