@@ -41,6 +41,8 @@ export struct StatPcUi {
     batteria-testo: string,
     batteria-frazione: float,
     in-carica: bool,
+    // Tinta del glifo: 0 carica, 1 normale, 2 informazione, 3 attenzione (ordine di `TintaBatteria`).
+    tinta-batteria: int,
 }
 
 // Un preferito della casa, già pronto per l'interfaccia (vedi `ponte::voce_ui`).

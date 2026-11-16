@@ -251,6 +251,27 @@ mod accessibilita {
         assert_eq!(elemento(&p, "CASA, Casa non connessa").accessible_role(), Some(AccessibleRole::ProgressIndicator));
     }
 
+    /// M2 Task 1: la riga BATTERIA col glifo dice ancora nome, valore e stato per Narrator; il
+    /// glifo non è un elemento accessibile (il testo accanto dice tutto).
+    #[test]
+    fn riga_batteria_col_glifo() {
+        piattaforma_di_prova();
+        let p = pannello();
+        p.set_vista("pc".into());
+        p.set_pc(StatPcUi {
+            pronta: true,
+            ha_batteria: true,
+            batteria_testo: "18%".into(),
+            batteria_frazione: 0.18,
+            tinta_batteria: 2,
+            ..Default::default()
+        });
+        let riga = elemento(&p, "BATTERIA");
+        assert_eq!(riga.accessible_role(), Some(AccessibleRole::ProgressIndicator));
+        assert_eq!(riga.accessible_value().as_deref(), Some("18%"));
+        assert_eq!(riga.accessible_description().as_deref(), Some("A batteria"));
+    }
+
     #[test]
     fn pillola_e_un_pulsante_col_nome_giusto() {
         piattaforma_di_prova();

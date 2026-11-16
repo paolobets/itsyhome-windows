@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — v3 «assistente isola» (ramo `v3-assistente`, milestone M1)
 
+### Added (M2, Task 1: batteria)
+- Vista PC: glifo della batteria accanto al valore (verde in carica, tinta normale, blu «informazione» a 20% o meno, ambra «attenzione» a 10% o meno); riempimento proporzionale, solo decorativo (il testo dice già percentuale e stato).
+- Voce «Batteria al N%» di livello *informazione* sotto il 20% a batteria (isteresi fino al 22%), con «Ho capito» che la zittisce fino alla ricarica; sotto il 10% resta l'*attenzione* di M1, senza pulsanti. Lettura, tinta e voce valgono anche su macOS e Linux.
+
 ### Added
 - Assistente sempre presente in alto al centro: pillola con occhi e umori, pannello 800 × 300 (Panoramica Orologio/Quadranti, Casa, PC), Impostazioni in finestra dedicata, finestra di gestione in processo separato (`itsyhome-gestione`).
 - Workflow CI `v3-build` (Windows, macOS, Ubuntu): `cargo build -p assistente -p gestione` e `cargo test --workspace`.

@@ -1,6 +1,7 @@
 // Componenti comuni dell'assistente e della cornice della gestione (FE8): un solo anello del
 // fuoco, un solo pulsante di testo, una sola etichetta maiuscola. Gli occhi stanno in faccia.slint.
 import { Tema } from "tema.slint";
+import { LivelloUi } from "voci.slint";
 
 // Il pannello tiene i tasti in un solo FocusScope (`tasti`, che li intercetta tutti) ma porta il
 // fuoco vero sull'elemento scelto da tastiera, perché Narrator lo legga (FE13). Falso nei primi
@@ -155,6 +156,54 @@ export component Pulsante inherits FocusScope {
     }
 
     if root.anello: Anello { raggio: root.raggio; }
+}
+
+// Il glifo della batteria: corpo 17 × 8 col bordo al pixel fisico, beccuccio 2 × 4, riempimento
+// proporzionale a `frazione` (0..1). `tinta` come `StatPcUi.tinta-batteria`: 0 in carica (verde),
+// 1 normale (testo), 2 informazione, 3 attenzione. Solo decorativo: il testo accanto dice già
+// percentuale e stato, per Narrator il glifo non esiste.
+export component GlifoBatteria inherits Rectangle {
+    in property <float> frazione;
+    in property <int> tinta: 1;
+    property <color> colore: tinta == 0 ? Tema.batteria-carica
+        : tinta == 2 ? Tema.colore-livello(LivelloUi.informazione)
+        : tinta == 3 ? Tema.colore-livello(LivelloUi.attenzione)
+        : Tema.testo;
+    property <length> filo: Tema.sul-pixel(1px);
+    accessible-role: none;
+    width: 19px;
+    height: 8px;
+
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: 17px;
+        height: 8px;
+        border-radius: 2px;
+        border-width: root.filo;
+        border-color: root.colore;
+
+        // Il riempimento sta dentro il bordo, con un pixel di respiro.
+        Rectangle {
+            x: root.filo + 1px;
+            y: root.filo + 1px;
+            width: max(0px, (parent.width - 2 * (root.filo + 1px)) * min(max(root.frazione, 0), 1));
+            height: parent.height - 2 * (root.filo + 1px);
+            border-radius: 1px;
+            background: root.colore;
+        }
+    }
+
+    // Il beccuccio.
+    Rectangle {
+        x: 17px;
+        y: 2px;
+        width: 2px;
+        height: 4px;
+        border-top-right-radius: 1px;
+        border-bottom-right-radius: 1px;
+        background: root.colore;
+    }
 }
 
 // Etichetta di sezione in maiuscoletto mono (12 px, spaziata).

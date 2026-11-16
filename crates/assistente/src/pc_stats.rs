@@ -15,11 +15,81 @@ use std::time::{Duration, Instant};
 /// Ogni quanto si legge la batteria a pannello chiuso.
 pub const PERIODO_BATTERIA: Duration = Duration::from_secs(60);
 
+/// In che stato è la batteria (dal `State` di starship_battery).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatoBatteria {
+    InCarica,
+    Piena,
+    Scarica,
+    Sconosciuto,
+}
+
+impl From<State> for StatoBatteria {
+    fn from(s: State) -> Self {
+        match s {
+            State::Charging => StatoBatteria::InCarica,
+            State::Full => StatoBatteria::Piena,
+            State::Discharging => StatoBatteria::Scarica,
+            _ => StatoBatteria::Sconosciuto,
+        }
+    }
+}
+
+/// Una lettura della batteria: percentuale (0..100) e stato.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LetturaBatteria {
+    pub percentuale: f32,
+    pub stato: StatoBatteria,
+}
+
+impl LetturaBatteria {
+    /// Si sta scaricando: l'alimentatore non c'è.
+    pub fn scollegata(&self) -> bool {
+        self.stato == StatoBatteria::Scarica
+    }
+
+    /// Alimentatore collegato (in carica o piena).
+    pub fn collegata(&self) -> bool {
+        matches!(self.stato, StatoBatteria::InCarica | StatoBatteria::Piena)
+    }
+}
+
+/// Tinta del glifo della batteria. Numerazione fissa: è `tinta-batteria` di `StatPcUi` (0..3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TintaBatteria {
+    Carica = 0,
+    Normale = 1,
+    Informazione = 2,
+    Attenzione = 3,
+}
+
+/// Da questa percentuale in giù (scollegata) il glifo vira all'informazione (≤: a 20% esatti è
+/// già ambra, mentre la voce parte solo sotto il 20%).
+pub const SOGLIA_BATTERIA_INFO: f32 = 20.0;
+/// Una voce «informazione» già presente sparisce solo da questa percentuale in su.
+pub const SOGLIA_BATTERIA_INFO_FINE: f32 = 22.0;
+
+/// In carica o piena: `Carica`; scarica ≤ 10: `Attenzione`; scarica ≤ 20: `Informazione`; il resto
+/// `Normale` (anche con stato sconosciuto: nessun allarme senza sapere se è scollegata).
+pub fn tinta_batteria(l: &LetturaBatteria) -> TintaBatteria {
+    if l.collegata() {
+        TintaBatteria::Carica
+    } else if !l.scollegata() {
+        TintaBatteria::Normale
+    } else if l.percentuale <= crate::attenzione::SOGLIA_BATTERIA {
+        TintaBatteria::Attenzione
+    } else if l.percentuale <= SOGLIA_BATTERIA_INFO {
+        TintaBatteria::Informazione
+    } else {
+        TintaBatteria::Normale
+    }
+}
+
 /// Legge la batteria subito e poi ogni 60 s su un thread che per il resto dorme, e consegna
-/// (percentuale, scollegata) a `consegna`; si ferma quando `consegna` dà falso (interfaccia
+/// la lettura a `consegna`; si ferma quando `consegna` dà falso (interfaccia
 /// chiusa). Senza batteria alla prima lettura (PC fisso) o senza accesso alle batterie il thread
 /// finisce subito; più avanti una lettura mancata si riprova al minuto dopo.
-pub fn sorveglia_batteria(consegna: impl Fn(f32, bool) -> bool + Send + 'static) {
+pub fn sorveglia_batteria(consegna: impl Fn(LetturaBatteria) -> bool + Send + 'static) {
     let avviato = std::thread::Builder::new().name("batteria".into()).spawn(move || {
         let Ok(gestore) = Manager::new() else { return };
         // Nessuna batteria alla prima lettura = PC fisso: il thread finisce. Dopo, una lettura
@@ -28,8 +98,8 @@ pub fn sorveglia_batteria(consegna: impl Fn(f32, bool) -> bool + Send + 'static)
             return;
         }
         loop {
-            if let Some((percentuale, scollegata)) = leggi_batteria(&gestore) {
-                if !consegna(percentuale, scollegata) {
+            if let Some(lettura) = leggi_batteria(&gestore) {
+                if !consegna(lettura) {
                     return;
                 }
             }
@@ -41,11 +111,11 @@ pub fn sorveglia_batteria(consegna: impl Fn(f32, bool) -> bool + Send + 'static)
     }
 }
 
-/// La prima batteria: percentuale e se si sta scaricando (scollegata). `None` senza batteria.
-fn leggi_batteria(gestore: &Manager) -> Option<(f32, bool)> {
+/// La prima batteria: percentuale e stato. `None` senza batteria.
+fn leggi_batteria(gestore: &Manager) -> Option<LetturaBatteria> {
     let b = gestore.batteries().ok()?.next()?.ok()?;
     let percentuale = (b.state_of_charge().get::<ratio>() * 100.0).clamp(0.0, 100.0);
-    Some((percentuale, b.state() == State::Discharging))
+    Some(LetturaBatteria { percentuale, stato: b.state().into() })
 }
 use sysinfo::{DiskRefreshKind, Disks, MemoryRefreshKind, Networks, System};
 
@@ -59,8 +129,8 @@ pub struct StatPc {
     pub disco_totale: u64,
     pub rete_giu_bps: u64,
     pub rete_su_bps: u64,
-    pub batteria_pct: Option<f32>,
-    pub in_carica: Option<bool>,
+    /// `None` senza batteria (PC fisso) o se non si legge.
+    pub batteria: Option<LetturaBatteria>,
 }
 
 pub struct Campionatore {
@@ -140,7 +210,7 @@ impl Campionatore {
             disco_libero = disco_libero.saturating_add(d.available_space());
         }
 
-        let (batteria_pct, in_carica) = self.batteria();
+        let batteria = self.batteria();
         self.campioni = self.campioni.saturating_add(1);
 
         let ram_totale = self.sistema.total_memory();
@@ -152,8 +222,7 @@ impl Campionatore {
             disco_totale,
             rete_giu_bps,
             rete_su_bps,
-            batteria_pct,
-            in_carica,
+            batteria,
         }
     }
 
@@ -176,17 +245,9 @@ impl Campionatore {
         Some(self.sistema.global_cpu_usage().clamp(0.0, 100.0))
     }
 
-    /// La prima batteria del PC; `(None, None)` se il PC non ne ha (desktop) o non si legge.
-    fn batteria(&self) -> (Option<f32>, Option<bool>) {
-        let Some(gestore) = &self.batterie else { return (None, None) };
-        let Ok(mut batterie) = gestore.batteries() else { return (None, None) };
-        match batterie.next() {
-            Some(Ok(b)) => {
-                let pct = (b.state_of_charge().get::<ratio>() * 100.0).clamp(0.0, 100.0);
-                (Some(pct), Some(matches!(b.state(), State::Charging | State::Full)))
-            }
-            _ => (None, None),
-        }
+    /// La prima batteria del PC; `None` se il PC non ne ha (desktop) o non si legge.
+    fn batteria(&self) -> Option<LetturaBatteria> {
+        leggi_batteria(self.batterie.as_ref()?)
     }
 }
 
@@ -308,10 +369,20 @@ mod test {
         assert!(s.ram_totale > 0);
         assert!(s.ram_usata <= s.ram_totale);
         assert!(s.disco_usato <= s.disco_totale);
-        if let Some(p) = s.batteria_pct {
-            assert!((0.0..=100.0).contains(&p));
-            assert!(s.in_carica.is_some());
+        if let Some(b) = s.batteria {
+            assert!((0.0..=100.0).contains(&b.percentuale));
         }
+    }
+
+    #[test]
+    fn tinta_della_batteria() {
+        let tinta = |percentuale, stato| tinta_batteria(&LetturaBatteria { percentuale, stato });
+        assert_eq!(tinta(50.0, StatoBatteria::InCarica), TintaBatteria::Carica);
+        assert_eq!(tinta(15.0, StatoBatteria::Piena), TintaBatteria::Carica);
+        assert_eq!(tinta(10.0, StatoBatteria::Scarica), TintaBatteria::Attenzione);
+        assert_eq!(tinta(20.0, StatoBatteria::Scarica), TintaBatteria::Informazione);
+        assert_eq!(tinta(21.0, StatoBatteria::Scarica), TintaBatteria::Normale);
+        assert_eq!(tinta(5.0, StatoBatteria::Sconosciuto), TintaBatteria::Normale);
     }
 
     #[test]

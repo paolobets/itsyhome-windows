@@ -4,9 +4,10 @@
 
 use crate::attenzione::{
     self, livello_massimo, notifica_sistema, prossimo_cambio_aspetto, Attese, Fonte, Livello, SorveglianzaCasa,
-    Voce, ID_BATTERIA, ID_CASA_OFFLINE, ID_CASA_TOKEN, PREFISSO_NOTIFICA, PREFISSO_SISTEMA, PULSANTE_ARCHIVIA,
-    PULSANTE_APRI, PULSANTE_IMPOSTAZIONI, PULSANTE_RIPROVA,
+    SorveglianzaBatteria, Voce, ID_BATTERIA, ID_CASA_OFFLINE, ID_CASA_TOKEN, PREFISSO_NOTIFICA, PREFISSO_SISTEMA,
+    PULSANTE_ARCHIVIA, PULSANTE_APRI, PULSANTE_HO_CAPITO, PULSANTE_IMPOSTAZIONI, PULSANTE_RIPROVA,
 };
+use crate::pc_stats::LetturaBatteria;
 use crate::sistema::{autoavvio, servizi};
 use crate::impostazioni::{self, Modulo, Tono};
 use crate::ottimismo::Ottimismo;
@@ -517,9 +518,9 @@ pub fn ascoltatore() -> Ascoltatore {
 }
 
 /// La batteria letta dal thread `batteria` (ogni 60 s, anche a pannello chiuso).
-pub fn batteria(percentuale: f32, scollegata: bool) {
+pub fn batteria(lettura: LetturaBatteria) {
     if let Some(p) = ponte() {
-        p.batteria(percentuale, scollegata);
+        p.batteria(&lettura);
     }
 }
 
@@ -596,6 +597,8 @@ pub struct Ponte {
     modello_attese: Rc<VecModel<VoceAttesaUi>>,
     /// Da quanto la casa non è connessa; la sua sveglia suona solo allo scadere dei 5 minuti.
     sorveglianza: RefCell<SorveglianzaCasa>,
+    /// La voce della batteria (due livelli) e il «Ho capito» che la zittisce fino alla ricarica.
+    batteria: RefCell<SorveglianzaBatteria>,
     sveglia_casa: slint::Timer,
     /// Vero da `Connesso` ai primi dati: le notifiche di HA che arrivano lì sono quelle già
     /// presenti (elenco "current" dell'iscrizione) e non meritano una notifica di sistema.
@@ -665,6 +668,7 @@ pub fn collega(
         attese: RefCell::new(Attese::default()),
         modello_attese: Rc::new(VecModel::default()),
         sorveglianza: RefCell::new(SorveglianzaCasa::new(Instant::now())),
+        batteria: RefCell::new(SorveglianzaBatteria::default()),
         sveglia_casa: slint::Timer::default(),
         appena_connesso: Cell::new(false),
         non_archiviate: RefCell::new(std::collections::HashSet::new()),
@@ -1705,6 +1709,10 @@ impl Ponte {
                 }
                 self.casa.archivia_notifica(id);
             }
+        } else if voce == ID_BATTERIA && pulsante == PULSANTE_HO_CAPITO {
+            // Zitta fino alla ricarica: il glifo nella vista PC continua a dire com'è la batteria.
+            self.batteria.borrow_mut().zittisci();
+            self.togli_voce(voce);
         } else if voce.starts_with(PREFISSO_SISTEMA) {
             self.togli_voce(voce);
         } else if self.attese.borrow().voce(voce).is_some_and(|v| v.fonte == Fonte::Prova) {
@@ -1747,9 +1755,12 @@ impl Ponte {
         }
     }
 
-    fn batteria(&self, percentuale: f32, scollegata: bool) {
-        let presente = self.attese.borrow().contiene(ID_BATTERIA);
-        match attenzione::voce_batteria_con_isteresi(percentuale, scollegata, presente, Instant::now()) {
+    fn batteria(&self, lettura: &LetturaBatteria) {
+        let presente = self.attese.borrow().voce(ID_BATTERIA).map(|v| v.livello);
+        let voce = self.batteria.borrow_mut().osserva(lettura, presente, Instant::now());
+        match voce {
+            // Cambia solo il livello (titolo o dettaglio uguali non ridisegnano): metti_voce
+            // avvisa solo se la voce è nuova.
             Some(v) => self.metti_voce(v, true),
             None => self.togli_voce(ID_BATTERIA),
         }

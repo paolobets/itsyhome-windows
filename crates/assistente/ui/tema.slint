@@ -122,6 +122,9 @@ export global Tema {
     out property <color> attenzione: #fbbf24;
     out property <color> informazione: #60a5fa;
 
+    // Glifo della batteria collegata all'alimentatore (verde, dal petalo 5 un po' più verso il verde).
+    out property <color> batteria-carica: #34d399;
+
     // `nessuno` (linea della ritirata senza voci in attesa): grigio neutro.
     public pure function colore-livello(livello: LivelloUi) -> color {
         if (livello == LivelloUi.bloccante) { return bloccante; }

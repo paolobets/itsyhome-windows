@@ -8,10 +8,11 @@
 //! - *informazione* (blu, quando vuoi): solo il puntino, l'umore non cambia.
 //!
 //! Fonti di M1: notifiche persistenti di Home Assistant (informazione, «Archivia»), batteria del PC
-//! sotto il 10% e scollegata (attenzione), Home Assistant irraggiungibile da oltre 5 minuti
+//! sotto il 10% e scollegata (attenzione; da M2 anche sotto il 20%: informazione con «Ho capito»), Home Assistant irraggiungibile da oltre 5 minuti
 //! (attenzione, «Riprova»), token di Home Assistant rifiutato o mancante (attenzione, subito,
 //! «Impostazioni»), e `--prova-avviso <livello>`.
 
+use crate::pc_stats::{LetturaBatteria, SOGLIA_BATTERIA_INFO, SOGLIA_BATTERIA_INFO_FINE};
 use casa_core::eventi::StatoConnessione;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -330,25 +331,56 @@ impl SorveglianzaCasa {
     }
 }
 
-/// La batteria del PC sotto il 10% e scollegata: un'attenzione. In carica o sopra soglia: nulla.
-#[cfg(test)]
-pub fn voce_batteria(percentuale: f32, scollegata: bool, ora: Instant) -> Option<Voce> {
-    voce_batteria_con_isteresi(percentuale, scollegata, false, ora)
+/// La voce della batteria del PC, con due livelli sullo stesso `ID_BATTERIA`:
+/// - scollegata sotto il 10% (12% se la voce è già un'attenzione): *attenzione*, senza pulsanti;
+/// - scollegata sotto il 20% (22% se la voce è già presente) e non zittita: *informazione*, con
+///   «Ho capito» (zittisce fino alla ricarica);
+/// - in carica, piena o da 22% in su: nessuna voce, e il «Ho capito» si dimentica.
+///
+/// Le due isteresi evitano che una batteria che oscilla attorno alla soglia faccia comparire e
+/// sparire la voce ogni minuto.
+#[derive(Debug, Default)]
+pub struct SorveglianzaBatteria {
+    zittita: bool,
 }
 
-/// Come `voce_batteria`, ma una voce già presente resta fino al 12% (o finché non è in carica):
-/// una batteria che oscilla attorno al 10% non fa comparire e sparire la voce ogni minuto.
-pub fn voce_batteria_con_isteresi(percentuale: f32, scollegata: bool, gia_presente: bool, ora: Instant) -> Option<Voce> {
-    let soglia = if gia_presente { SOGLIA_BATTERIA_FINE } else { SOGLIA_BATTERIA };
-    (scollegata && percentuale < soglia).then(|| Voce {
-        id: ID_BATTERIA.into(),
-        livello: Livello::Attenzione,
-        fonte: Fonte::Pc,
-        titolo: format!("Batteria al {}%", percentuale.round() as i32),
-        dettaglio: "Collega l'alimentatore: il PC si spegnerà presto.".into(),
-        pulsanti: vec![],
-        creata: ora,
-    })
+impl SorveglianzaBatteria {
+    /// `presente`: il livello con cui la voce sta ora tra le attese (`None` se non c'è).
+    pub fn osserva(&mut self, l: &LetturaBatteria, presente: Option<Livello>, ora: Instant) -> Option<Voce> {
+        let p = l.percentuale;
+        if !l.scollegata() || p >= SOGLIA_BATTERIA_INFO_FINE {
+            self.zittita = false;
+            return None;
+        }
+        let soglia_attenzione = if presente == Some(Livello::Attenzione) { SOGLIA_BATTERIA_FINE } else { SOGLIA_BATTERIA };
+        let soglia_info = if presente.is_some() { SOGLIA_BATTERIA_INFO_FINE } else { SOGLIA_BATTERIA_INFO };
+        let titolo = format!("Batteria al {}%", p.round() as i32);
+        if p < soglia_attenzione {
+            return Some(Voce {
+                id: ID_BATTERIA.into(),
+                livello: Livello::Attenzione,
+                fonte: Fonte::Pc,
+                titolo,
+                dettaglio: "Collega l'alimentatore: il PC si spegnerà presto.".into(),
+                pulsanti: vec![],
+                creata: ora,
+            });
+        }
+        (p < soglia_info && !self.zittita).then(|| Voce {
+            id: ID_BATTERIA.into(),
+            livello: Livello::Informazione,
+            fonte: Fonte::Pc,
+            titolo,
+            dettaglio: "Collega l'alimentatore quando puoi.".into(),
+            pulsanti: vec![Pulsante::new(PULSANTE_HO_CAPITO, "Ho capito")],
+            creata: ora,
+        })
+    }
+
+    /// «Ho capito»: niente più voce informativa finché la batteria non torna in carica (o ≥ 22%).
+    pub fn zittisci(&mut self) {
+        self.zittita = true;
+    }
 }
 
 /// Una notifica persistente di Home Assistant: informazione, con «Archivia».
@@ -644,25 +676,86 @@ pub(crate) mod test {
         assert_eq!(s.voce(t + S(11 * 60)).map(|v| v.id), Some(ID_CASA_OFFLINE.to_owned()));
     }
 
+    use crate::pc_stats::StatoBatteria;
+
+    fn lettura(percentuale: f32, stato: StatoBatteria) -> LetturaBatteria {
+        LetturaBatteria { percentuale, stato }
+    }
+
     #[test]
     fn batteria_sotto_dieci_scollegata() {
         let t = Instant::now();
-        let v = voce_batteria(9.0, true, t).expect("9% scollegata");
+        let mut s = SorveglianzaBatteria::default();
+        let v = s.osserva(&lettura(9.0, StatoBatteria::Scarica), None, t).expect("9% scollegata");
         assert_eq!(v.livello, Livello::Attenzione);
         assert_eq!(v.fonte, Fonte::Pc);
         assert!(v.titolo.contains("9%"), "{}", v.titolo);
-        assert_eq!(voce_batteria(9.0, false, t), None);
-        assert_eq!(voce_batteria(11.0, true, t), None);
+        assert_eq!(s.osserva(&lettura(9.0, StatoBatteria::InCarica), None, t), None);
+        // L'11% non è più attenzione: da M2 è l'informazione sotto il 20%.
+        let v = s.osserva(&lettura(11.0, StatoBatteria::Scarica), None, t).expect("11% scollegata");
+        assert_eq!(v.livello, Livello::Informazione);
     }
 
     #[test]
     fn batteria_con_isteresi() {
         let t = Instant::now();
-        // Già presente: resta all'11% scollegata, sparisce sopra il 12% o in carica.
-        assert!(voce_batteria_con_isteresi(11.0, true, true, t).is_some());
-        assert_eq!(voce_batteria_con_isteresi(12.5, true, true, t), None);
-        assert_eq!(voce_batteria_con_isteresi(5.0, false, true, t), None);
-        // Non presente: compare solo sotto il 10%.
-        assert_eq!(voce_batteria_con_isteresi(11.0, true, false, t), None);
+        let mut s = SorveglianzaBatteria::default();
+        let scarica = |p| lettura(p, StatoBatteria::Scarica);
+        // Già un'attenzione: resta all'11% scollegata, sopra il 12% scende a informazione.
+        let v = s.osserva(&scarica(11.0), Some(Livello::Attenzione), t).expect("11% già attenzione");
+        assert_eq!(v.livello, Livello::Attenzione);
+        let v = s.osserva(&scarica(12.5), Some(Livello::Attenzione), t).expect("12,5% già attenzione");
+        assert_eq!(v.livello, Livello::Informazione);
+        assert_eq!(s.osserva(&lettura(5.0, StatoBatteria::InCarica), Some(Livello::Attenzione), t), None);
+        // Non presente: l'attenzione compare solo sotto il 10%.
+        let v = s.osserva(&scarica(11.0), None, t).expect("11% nuova");
+        assert_eq!(v.livello, Livello::Informazione);
+    }
+
+    #[test]
+    fn venti_per_cento_e_informazione_con_ho_capito() {
+        let mut s = SorveglianzaBatteria::default();
+        let v = s.osserva(&lettura(19.0, StatoBatteria::Scarica), None, Instant::now()).expect("19% scollegata");
+        assert_eq!(v.livello, Livello::Informazione);
+        assert_eq!(v.id, ID_BATTERIA);
+        assert_eq!(v.pulsanti, vec![Pulsante::new(PULSANTE_HO_CAPITO, "Ho capito")]);
+        assert_eq!(v.titolo, "Batteria al 19%");
+        assert_eq!(v.dettaglio, "Collega l'alimentatore quando puoi.");
+        // A 20% esatti la voce non parte (il glifo sì).
+        assert_eq!(s.osserva(&lettura(20.0, StatoBatteria::Scarica), None, Instant::now()), None);
+    }
+
+    #[test]
+    fn dieci_per_cento_resta_attenzione() {
+        let mut s = SorveglianzaBatteria::default();
+        let v = s.osserva(&lettura(9.0, StatoBatteria::Scarica), None, Instant::now()).expect("9% scollegata");
+        assert_eq!(v.livello, Livello::Attenzione);
+        assert!(v.pulsanti.is_empty());
+        // A 10% esatti non è più attenzione (come in M1: «sotto» il 10%).
+        let v = s.osserva(&lettura(10.0, StatoBatteria::Scarica), None, Instant::now()).expect("10% scollegata");
+        assert_eq!(v.livello, Livello::Informazione);
+    }
+
+    #[test]
+    fn ho_capito_zittisce_fino_alla_ricarica() {
+        let t = Instant::now();
+        let mut s = SorveglianzaBatteria::default();
+        s.zittisci();
+        assert_eq!(s.osserva(&lettura(18.0, StatoBatteria::Scarica), None, t), None);
+        let v = s.osserva(&lettura(9.0, StatoBatteria::Scarica), None, t).expect("l'attenzione non si zittisce");
+        assert_eq!(v.livello, Livello::Attenzione);
+        assert_eq!(s.osserva(&lettura(9.0, StatoBatteria::InCarica), None, t), None);
+        let v = s.osserva(&lettura(19.0, StatoBatteria::Scarica), None, t).expect("dopo la ricarica torna");
+        assert_eq!(v.livello, Livello::Informazione);
+    }
+
+    #[test]
+    fn isteresi_ventidue() {
+        let t = Instant::now();
+        let mut s = SorveglianzaBatteria::default();
+        let scarica = |p| lettura(p, StatoBatteria::Scarica);
+        assert!(s.osserva(&scarica(21.5), Some(Livello::Informazione), t).is_some());
+        assert_eq!(s.osserva(&scarica(22.0), Some(Livello::Informazione), t), None);
+        assert_eq!(s.osserva(&scarica(21.0), None, t), None);
     }
 }

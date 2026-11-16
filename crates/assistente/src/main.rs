@@ -151,8 +151,8 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     // La batteria si controlla ogni 60 s anche a pannello chiuso (unica eccezione al campionamento
     // solo a pannello aperto): un thread che dorme, niente su senza batteria.
-    pc_stats::sorveglia_batteria(|percentuale, scollegata| {
-        slint::invoke_from_event_loop(move || ponte::batteria(percentuale, scollegata)).is_ok()
+    pc_stats::sorveglia_batteria(|lettura| {
+        slint::invoke_from_event_loop(move || ponte::batteria(lettura)).is_ok()
     });
 
     let apertura = pannello::Apertura::collega(&pillola, ponte);
