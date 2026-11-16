@@ -20,6 +20,8 @@ pub const FILE: &str = "diagnosi.log";
 /// Oltre questa dimensione il file ruota.
 pub const TETTO: u64 = 1024 * 1024;
 const OGNI: Duration = Duration::from_secs(60);
+/// La riga scritta quando la rotazione non riesce e il file si svuota sul posto.
+pub const ROTAZIONE_NON_RIUSCITA: &str = "rotazione_non_riuscita=1 file_svuotato=1";
 
 /// Acceso solo con la variabile a «1».
 pub fn acceso(valore: Option<&OsStr>) -> bool {
@@ -27,13 +29,21 @@ pub fn acceso(valore: Option<&OsStr>) -> bool {
 }
 
 /// Aggiunge una riga al file; se con la riga supererebbe `tetto`, il file diventa `<file>.1`
-/// (quello di prima si perde) e la riga apre un file nuovo.
+/// (quello di prima si perde) e la riga apre un file nuovo. Se il file non si può rinominare (un
+/// lettore lo tiene aperto senza permetterlo, come `Get-Content -Wait`), si svuota sul posto e lo
+/// dice con una riga: il registro non si ferma. La cartella si crea se manca.
 pub fn scrivi(file: &Path, riga: &str, tetto: u64) -> std::io::Result<()> {
+    if let Some(cartella) = file.parent() {
+        std::fs::create_dir_all(cartella)?;
+    }
     let lungo = std::fs::metadata(file).map(|m| m.len()).unwrap_or(0);
     if lungo > 0 && lungo + riga.len() as u64 + 1 > tetto {
         let vecchio = vecchio(file);
         let _ = std::fs::remove_file(&vecchio);
-        std::fs::rename(file, &vecchio)?;
+        if std::fs::rename(file, &vecchio).is_err() {
+            let mut f = std::fs::OpenOptions::new().write(true).truncate(true).open(file)?;
+            writeln!(f, "{ROTAZIONE_NON_RIUSCITA}")?;
+        }
     }
     let mut f = std::fs::OpenOptions::new().create(true).append(true).open(file)?;
     writeln!(f, "{riga}")
@@ -143,15 +153,52 @@ mod test {
         assert_eq!(nomi.len(), 2, "{nomi:?}");
     }
 
+    /// Il file si scrive anche in una cartella che non esiste ancora (configurazione mai salvata).
+    #[test]
+    fn la_cartella_si_crea() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("nuova").join("sotto").join(FILE);
+        scrivi(&file, "riga", TETTO).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "riga\n");
+    }
+
+    /// Un lettore che tiene il file aperto senza permettere di rinominarlo (`Get-Content -Wait`, un
+    /// visualizzatore): la rotazione non riesce, ma il registro non si ferma. Il file si svuota e
+    /// lo dice, poi la riga si scrive.
+    #[cfg(windows)]
+    #[test]
+    fn rotazione_con_il_file_aperto_da_un_lettore() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(FILE);
+        let riga = "x".repeat(39);
+        scrivi(&file, &riga, 100).unwrap();
+        scrivi(&file, &riga, 100).unwrap();
+        // Condivisione lettura e scrittura, niente cancellazione (né rinomina).
+        let _lettore = std::fs::OpenOptions::new().read(true).share_mode(0x1 | 0x2).open(&file).unwrap();
+        // Oltre il tetto (80 + 40 > 100): andrebbe ruotato.
+        let nuova = "y".repeat(39);
+        scrivi(&file, &nuova, 100).unwrap();
+        let testo = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(testo, format!("{ROTAZIONE_NON_RIUSCITA}\n{nuova}\n"));
+        assert!(!vecchio(&file).exists());
+    }
+
+    /// `cpu_ms` cresce mentre il processo lavora (la risoluzione dei tempi di Windows è di circa
+    /// 15,6 ms: si lavora finché cresce, al più 2 s).
+    #[cfg(windows)]
     #[test]
     fn misure_del_processo_plausibili() {
         assert!(processo::privata_kb() > 100);
         let prima = processo::cpu_ms();
+        let inizio = std::time::Instant::now();
         let mut x = 0u64;
-        for i in 0..30_000_000u64 {
-            x = x.wrapping_add(i * i);
+        while processo::cpu_ms() <= prima && inizio.elapsed() < Duration::from_secs(2) {
+            for i in 0..1_000_000u64 {
+                x = x.wrapping_add(i * i);
+            }
+            std::hint::black_box(x);
         }
-        std::hint::black_box(x);
-        assert!(processo::cpu_ms() >= prima);
+        assert!(processo::cpu_ms() > prima, "cpu_ms fermo a {prima} dopo {:?} di lavoro", inizio.elapsed());
     }
 }
