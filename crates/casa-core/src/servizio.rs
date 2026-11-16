@@ -1013,8 +1013,10 @@ impl Motore {
                 self.mappa_tutto();
                 self.consegna();
                 self.segui(true);
-                // HA ancora in avvio: molte entità non ci sono ancora; si rilegge poco dopo.
-                if in_avvio {
+                // HA ancora in avvio: molte entità non ci sono ancora; si rilegge poco dopo, ma solo
+                // a connessione attiva (come ogni altra riprova: alla riconnessione la lettura
+                // parte comunque).
+                if in_avvio && self.connesso {
                     self.riprova.arma(Instant::now(), ATTESA_AVVIO);
                     self.riprova_per_avvio = true;
                 }
@@ -1252,6 +1254,31 @@ mod test {
         g.config = config("RUNNING");
         m.letti(Ok(g));
         assert_eq!(m.riprova.scadenza(), None);
+    }
+
+    /// Giro finale, N1 del 14h: con HA in avvio la rilettura dei 5 s non si arma a connessione
+    /// caduta (la lettura arrivata dopo la caduta è di prima); a connessione attiva sì.
+    #[test]
+    fn ha_in_avvio_a_connessione_caduta_non_arma_la_rilettura() {
+        let (mut m, _c) = motore();
+        let avvio = || {
+            let mut g = grezzi_vuoti();
+            g.config = Some(HaConfig {
+                unit_system: crate::ha::models::HaUnitSystem { temperature: "°C".into() },
+                location_name: "Casa".into(),
+                state: Some("STARTING".into()),
+            });
+            g
+        };
+        let caduta = StatoConnessione::Errore("connessione chiusa da Home Assistant".into());
+        m.interno(Interno::Client(m.generazione, DalClient::Stato(caduta)));
+        m.letti(Ok(avvio()));
+        assert_eq!(m.riprova.scadenza(), None, "nessun tentativo a connessione caduta");
+        assert!(!m.riprova_per_avvio);
+        m.interno(Interno::Client(m.generazione, DalClient::Stato(StatoConnessione::Connesso)));
+        m.letti(Ok(avvio()));
+        assert!(m.riprova.scadenza().is_some(), "a connessione attiva sì");
+        assert!(m.riprova_per_avvio);
     }
 
     /// Gli eventi di un'iscrizione alle entità già sostituita (arrivati dopo che il servizio ne
