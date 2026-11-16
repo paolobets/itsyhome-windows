@@ -156,6 +156,21 @@ Riposo non rimisurato a schermo libero: durante tutta la prova lo schermo era bl
 | Casa grande + un evento del registro ogni 3 s | 20 riletture complete al minuto, 10,9 MB ricevuti al minuto, 375–484 ms di CPU al minuto, 13,3–13,9 MB |
 | Raffica anti-glitch (raffica 20/s + registro ogni secondo, 20 s a 60 fps) | 1199 fotogrammi, **0 difettosi**; controllo negativo (maschera stretta) 300 su 300 |
 
+### Changed (Task 14h: dai contatori della casa vera, 16/11/2026)
+- Gli eventi dei registri di Home Assistant si leggono (`action`, id, campi di `changes`, `old_entity_id`): quelli che non toccano ciò che l'app mostra o segue (versioni e connessioni dei dispositivi, opzioni e capacità delle entità, entità non mostrate, stanze nuove o riordinate) si scartano; quelli che cambiano nomi, stanze o visibilità fanno rileggere **i soli tre registri** e rimappare in memoria, senza `get_states` e senza rifare l'iscrizione se le entità seguite non cambiano. Entità nuove o rinominate, entità che diventano visibili col solo stato alleggerito, eventi illeggibili e `core_config_updated` rileggono tutto come prima.
+- A pannello chiuso i dati della casa non ricostruiscono più i modelli della vista Casa (la pillola mostra solo umore e voci in attesa): si rifanno una volta all'apertura.
+- Registro diagnostico: contatori `registro_scartati`, `rilettura_solo_registri`, `letture_registri`.
+- `finto_ha --registro-tipo nome|inutile|nuova`.
+
+### Misure del Task 14h (16/11/2026, build release, finto HA con casa grande da 807 entità in più)
+| Prova | Prima (build del 14g) | Dopo |
+|---|---|---|
+| 10 min, un evento ogni 180 s sul nome di una luce mostrata | 545 KB per evento (lettura completa + iscrizione rifatta, 328 entità), media 182 KB/min; RAM 10,9 → 13,1 MB | **148 KB** per evento (soli registri, nessuna iscrizione), media **50 KB/min**; RAM 11,7 → 12,7 MB |
+| 10 min, ogni 180 s versione di un dispositivo + opzioni di un'entità (il caso della casa vera) | 545 KB per evento, media 182 KB/min; RAM 10,7 → 13,8 MB | **scartati**: 350 byte per evento, media **150 byte/min**; RAM **10,8 → 11,0 MB** |
+| Una lettura ogni 20 s per 5 min (~14 di fila) | complete: 12,7 MB dopo la prima, 12,5 alla fine | complete: 13,2 → 13,05 MB; soli registri: 11,4 → 12,3 MB (oscilla 11,3–12,5, nessuna crescita continua) |
+| Riposo 5 min, casa piccola, 7 preferiti, `--umore calm` | 14g: 0,016%, 8,0–8,2 MB | **0,015%** (max 0,33), **8,0–8,1 MB** |
+| Raffica anti-glitch (raffica 20/s + un evento del registro al secondo, 20 s a 60 fps) | — | soli registri 1199 fotogrammi **0 difettosi**; letture complete 1199 **0 difettosi**; controllo negativo 299 su 299 |
+
 ---
 
 ## [2.1.2] - 2026-03-24
