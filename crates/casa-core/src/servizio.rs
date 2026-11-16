@@ -395,8 +395,6 @@ struct Motore {
     /// riuscita, e l'attesa del prossimo (cresce fino al tetto).
     riprova: Attesa,
     attesa_riprova: Duration,
-    /// La connessione corrente ha già fatto una lettura completa riuscita.
-    letta: bool,
     /// Notifiche persistenti dell'ambiente connesso già consegnate all'applicazione.
     notifiche: BTreeSet<String>,
     /// L'ambiente a cui appartengono quelle notifiche.
@@ -439,7 +437,6 @@ impl Motore {
             rilettura_registri: Rilettura::Niente,
             riprova: Attesa::default(),
             attesa_riprova: RIPROVA_LETTURA,
-            letta: false,
             notifiche: BTreeSet::new(),
             ambiente_notifiche: None,
             riprova_per_avvio: false,
@@ -676,7 +673,6 @@ impl Motore {
                     // Una (ri)connessione consegna sempre i dati, anche se uguali a prima, e
                     // deve fare la sua lettura (finché non riesce si riprova).
                     self.consegnato = None;
-                    self.letta = false;
                     // La sessione nuova non ha ancora nessuna iscrizione agli stati.
                     self.seguite = None;
                     self.diagnosi.conta(Contatore::rilettura_connessione);
@@ -921,7 +917,10 @@ impl Motore {
             Err(e) => {
                 self.diagnosi.conta(Contatore::letture_fallite);
                 eprintln!("lettura dei registri di Home Assistant non riuscita: {e}");
-                true
+                // Come una lettura completa fallita: nuovo tentativo (completo) con l'attesa
+                // crescente, non subito (HA che rifiuta ripeterebbe il rifiuto a raffica).
+                self.arma_riprova();
+                return self.dopo_lettura();
             }
             Ok(r) => match &mut self.casa {
                 None => true,
@@ -969,25 +968,19 @@ impl Motore {
             Err(e) => {
                 self.diagnosi.conta(Contatore::letture_fallite);
                 eprintln!("lettura di Home Assistant non riuscita: {e}");
-                // Finché la connessione non ha fatto una lettura riuscita (anche se ci sono i dati
-                // di una connessione precedente) si riprova, ogni volta aspettando il doppio fino
-                // al tetto. Intanto, con i dati di prima, ci si iscrive comunque agli stati: il
-                // primo evento porta quelli di adesso.
-                if !self.letta {
-                    let attesa = self.attesa_riprova;
-                    self.riprova.rinvia(Instant::now(), attesa, attesa);
-                    self.riprova_per_avvio = false;
-                    self.attesa_riprova = (attesa * 2).min(TETTO_RIPROVA);
-                    if self.casa.is_some() && self.seguite.is_none() {
-                        self.segui(true);
-                    }
+                // Si riprova, ogni volta aspettando il doppio fino al tetto, anche dopo una lettura
+                // riuscita (giro di correzioni 2 del 14h: una lettura chiesta da un evento non si
+                // perde). Intanto si tengono i dati di prima e, dopo una riconnessione, ci si
+                // iscrive comunque agli stati: il primo evento porta quelli di adesso.
+                self.arma_riprova();
+                if self.casa.is_some() && self.seguite.is_none() {
+                    self.segui(true);
                 }
             }
             Ok(g) => {
                 // Riuscita (anche da una riconnessione): il tentativo in sospeso non serve più.
                 self.riprova.annulla();
                 self.attesa_riprova = RIPROVA_LETTURA;
-                self.letta = true;
                 self.diagnosi.prima_lettura();
                 let in_avvio = g.config.as_ref().and_then(|c| c.state.as_deref()).is_some_and(|s| s != "RUNNING");
                 // Senza `get_config` (fallita) lo stato del core non è noto: «nessuna», non quello
@@ -1012,6 +1005,15 @@ impl Motore {
         // Anche una lettura dei soli registri chiesta intanto parte: quelli di questa lettura
         // possono essere di prima dell'evento.
         self.dopo_lettura();
+    }
+
+    /// Arma il nuovo tentativo di una lettura fallita (una lettura completa) con l'attesa di adesso,
+    /// e raddoppia la prossima fino al tetto; la prima lettura completa riuscita la riporta a 2 s.
+    fn arma_riprova(&mut self) {
+        let attesa = self.attesa_riprova;
+        self.riprova.rinvia(Instant::now(), attesa, attesa);
+        self.riprova_per_avvio = false;
+        self.attesa_riprova = (attesa * 2).min(TETTO_RIPROVA);
     }
 
     /// Ricostruisce tutto `MenuData` dai dati in memoria con la configurazione corrente.
@@ -1156,7 +1158,6 @@ mod test {
         }
         assert_eq!(attese, [2, 4, 8, 16, 32, 60, 60, 60]);
         m.letti(Ok(grezzi_vuoti()));
-        m.letta = false; // una riconnessione: la sua lettura è ancora da fare
         let prima = Instant::now();
         m.letti(Err("rifiutata".into()));
         let scade = m.riprova.scadenza().unwrap();
@@ -1183,16 +1184,24 @@ mod test {
         let (mut m, _c) = motore();
         m.letti(Ok(grezzi_vuoti()));
         m.interno(Interno::Client(m.generazione, DalClient::Stato(StatoConnessione::Connesso)));
-        assert!(!m.letta, "la connessione nuova deve fare la sua lettura");
         m.letti(Err("HA si sta avviando".into()));
         assert!(m.riprova.scadenza().is_some(), "nuovo tentativo anche con i dati di prima");
         m.riprova.annulla();
         m.letti(Err("ancora".into()));
         assert!(m.riprova.scadenza().is_some());
         m.riprova.annulla();
+        // Giro di correzioni 2 del 14h: anche dopo una lettura riuscita, una lettura fallita (chiesta
+        // da un evento: entità nuova, rinominata) si riprova, ripartendo da 2 s; i dati restano.
         m.letti(Ok(grezzi_vuoti()));
+        let prima = Instant::now();
         m.letti(Err("dopo una riuscita".into()));
-        assert_eq!(m.riprova.scadenza(), None, "letta in questa connessione: si tengono i dati");
+        let scade = m.riprova.scadenza().expect("nuovo tentativo anche dopo una lettura riuscita");
+        assert_eq!((scade - prima).as_secs_f32().round() as u64, 2);
+        assert!(m.casa.is_some(), "si tengono i dati");
+        m.riprova.annulla();
+        m.letti(Err("ancora".into()));
+        let scade = m.riprova.scadenza().unwrap();
+        assert_eq!((scade - Instant::now()).as_secs_f32().round() as u64, 4, "attesa crescente");
     }
 
     /// B1: con HA ancora in avvio (`get_config` → «STARTING») si rilegge dopo 5 s; pronto no.

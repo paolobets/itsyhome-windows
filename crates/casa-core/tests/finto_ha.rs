@@ -1003,7 +1003,32 @@ async fn evento_durante_la_lettura_dei_registri_non_si_perde() {
     assert_eq!(ha.get_states(), 1, "solo registri");
 }
 
-/// Giro di correzioni 1 del 14h, M4: se la lettura dei soli registri fallisce si rilegge tutto.
+/// Giro di correzioni 2 del 14h: una lettura completa chiesta da un evento (entità nuova) che
+/// fallisce dopo la prima lettura riuscita si riprova da sola, senza aspettare un altro evento.
+#[tokio::test]
+async fn lettura_completa_fallita_dopo_la_prima_si_riprova() {
+    let ha = FintoHa::avvia().await;
+    let mut p = prepara(&ha.url, Some(TOKEN));
+    p.servizio.connetti_attivo();
+    aspetta_dati(&mut p).await;
+    aspetta_iscrizione(&ha, 1).await;
+    ha.contatori.stati_da_rifiutare.store(1, Ordering::SeqCst);
+    cambio(&ha, "switch.nuova", stato_nuovo("switch.nuova", "on", "Nuova"));
+    ha.manda_evento("entity_registry_updated", json!({ "action": "create", "entity_id": "switch.nuova" }));
+    aspetta(|| ha.get_states() == 2, "lettura chiesta dall'evento (rifiutata)").await;
+    let fine = Instant::now() + Duration::from_secs(8);
+    loop {
+        let d = timeout_at(fine, aspetta_dati(&mut p)).await.expect("l'entità nuova non è mai arrivata");
+        if acceso(&d, "switch.nuova") == Some(true) {
+            break;
+        }
+    }
+    assert_eq!(ha.get_states(), 3, "un nuovo tentativo");
+    assert_eq!(ha.connessioni(), 1, "sulla stessa connessione");
+}
+
+/// Giro di correzioni 1 del 14h, M4: se la lettura dei soli registri fallisce si rilegge tutto
+/// (giro 2: col ritentativo crescente, dopo 2 s).
 #[tokio::test]
 async fn lettura_dei_registri_fallita_rilegge_tutto() {
     let ha = FintoHa::avvia().await;
