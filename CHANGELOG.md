@@ -140,7 +140,7 @@ Riposo non rimisurato a schermo libero: durante tutta la prova lo schermo era bl
 - Test di HA in avvio non più instabile.
 
 ### Changed (Task 14g: dalla prova di Paolo sulla casa vera, 16/11/2026)
-- Vista Casa: «★ Preferiti» (con il numero) è la prima voce dell'elenco, selezionata all'apertura; toccandola tornano i preferiti col titolo «Preferiti». Voci dell'elenco come schede per Narrator (nome, numero, selezionata, posizione). Esc con una stanza aperta torna a «Preferiti», poi chiude il pannello.
+- Vista Casa: «★ Preferiti» (senza numero) è la prima voce dell'elenco, senza l'intestazione «STANZE», selezionata all'apertura; la stanza già aperta non si chiude toccandola di nuovo (si torna con «Preferiti», Esc o Backspace); toccandola tornano i preferiti col titolo «Preferiti». Voci dell'elenco come schede per Narrator (nome, numero, selezionata, posizione). Esc con una stanza aperta torna a «Preferiti», poi chiude il pannello.
 - «‹ Indietro» tolto dalla riga alta in tutte le viste: alla Panoramica si torna dal dock, con Backspace o Alt+←.
 - Le risposte di Home Assistant (stati e registri) si leggono dal testo nei loro tipi, senza l'albero `Value` intero: meno memoria dopo ogni lettura completa.
 
