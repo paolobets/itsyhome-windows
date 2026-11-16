@@ -51,6 +51,8 @@ contatori!(
     effetto_sostituita,
     effetto_nascosta,
     effetto_rimappa,
+    // Task 2 della M2: cambio del meteo scelto, pubblicato come una sostituzione.
+    effetto_meteo,
     // Raffiche chiuse (pubblicazioni), mappature complete, `Dati` consegnati all'app e quelli
     // non consegnati perché uguali all'ultimo.
     pubblicazioni,

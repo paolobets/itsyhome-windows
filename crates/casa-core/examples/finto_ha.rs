@@ -24,6 +24,8 @@
 //! ```
 //! Poi: `ITSYHOME_ASSISTENTE_DIR=<cartella>` per l'assistente (niente import dalla v2).
 //!
+//! Meteo: `weather.casa` (`cloudy`, 9 °C); `weather.imposta` ne cambia condizione e temperatura.
+//!
 //! Entità: 2 luci (una accesa), 1 interruttore, 1 scena, 1 sensore di temperatura, una luce non
 //! disponibile senza stanza (→ "Altro") e un interruttore che rifiuta ogni comando; in più sei
 //! stanze (camera, cameretta, bagno, studio, ingresso, terrazzo) con luci, prese, sensori, una
@@ -176,6 +178,9 @@ fn entita_iniziali() -> BTreeMap<String, Entita> {
     let (v, a) = temperatura("9.4");
     e("sensor.temperatura_esterna", &v, "Temperatura esterna", Some("terrazzo"), a);
     e("scene.notte", "2026-11-13T10:00:00+00:00", "Notte", None, json!({}));
+    // Il meteo (Task 2 della M2): non entra in stanze né preferiti. Per cambiarlo:
+    // `weather.imposta` con `service_data` `{ "state": "rainy", "temperature": 12 }`.
+    e("weather.casa", "cloudy", "Meteo casa", None, json!({ "temperature": 9, "temperature_unit": "°C" }));
     m
 }
 
@@ -463,6 +468,14 @@ fn servizio(v: &Value, id: &Value, stati: &Stati) -> (Value, Option<Value>) {
         (Some("light" | "switch"), "toggle") => if e.stato == "on" { "off" } else { "on" }.into(),
         (Some("light" | "switch"), "turn_on") => "on".into(),
         (Some("light" | "switch"), "turn_off") => "off".into(),
+        // Solo del finto HA (in HA le `weather.*` non hanno servizi per questo): cambia condizione
+        // e temperatura del meteo.
+        (Some("weather"), "imposta") => {
+            if let Some(t) = v["service_data"]["temperature"].as_f64() {
+                e.attributi["temperature"] = json!(t);
+            }
+            v["service_data"]["state"].as_str().map_or_else(|| e.stato.clone(), str::to_owned)
+        }
         _ => return (errore(id, "not_supported", "Servizio non supportato"), None),
     };
     e.aggiornata = adesso();

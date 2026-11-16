@@ -12,6 +12,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Con Home Assistant ancora in avvio la rilettura dei 5 s non si arma più a connessione caduta (come ogni altra riprova).
 - CI `v3-build`: parte anche su `main`; voci usate solo da Windows non fanno più fallire clippy (`-D warnings`) su macOS e Ubuntu.
 
+### Added (M2, Task 2: meteo da Home Assistant in `casa-core`)
+- `MenuData::meteo` (condizione, temperatura, unità) dalla prima `weather.*` disponibile, o da quella scelta con `Config::meteo_entita` (`None` = automatico; una scelta non disponibile dà «nessun meteo», non quello di un'altra); `MenuData::meteo_elenco` per il selettore delle Impostazioni. Le `weather.*` restano fuori da stanze e preferiti.
+- Un cambio del meteo si pubblica come una sostituzione (niente mappatura completa, né letture); nel registro diagnostico lo conta `effetto_meteo`. Cambiare `meteo_entita` rimappa solo in memoria.
+- Finto HA: `weather.casa` (`cloudy`, 9 °C) e il servizio `weather.imposta` per cambiarlo. Su tutte le piattaforme.
+
 ### Added (M2, Task 1: batteria)
 - Vista PC: glifo della batteria accanto al valore (verde in carica, tinta normale, blu «informazione» a 20% o meno, ambra «attenzione» a 10% o meno); riempimento proporzionale, solo decorativo (il testo dice già percentuale e stato).
 - Voce «Batteria al N%» di livello *informazione* sotto il 20% a batteria (isteresi fino al 22%), con «Ho capito» che la zittisce fino alla ricarica; sotto il 10% resta l'*attenzione* di M1, senza pulsanti. Lettura, tinta e voce valgono anche su macOS e Linux.

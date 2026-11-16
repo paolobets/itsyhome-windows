@@ -27,6 +27,9 @@ pub struct Config {
     /// prima, senza la chiave, si legge con l'elenco vuoto.
     #[serde(default)]
     pub collegamenti: Vec<Collegamento>,
+    /// L'entità `weather.*` scelta per il meteo; `None` = automatico (la prima disponibile).
+    #[serde(default)]
+    pub meteo_entita: Option<String>,
 }
 
 /// Un collegamento veloce: si apre nel browser predefinito. `url` è già controllato e
@@ -171,5 +174,7 @@ pub fn importa_v2(v2: &Path, segreti: &dyn Segreti) -> Result<Option<Config>, St
         importata_da_v2: true,
         // La v2 non aveva collegamenti.
         collegamenti: Vec::new(),
+        // La v2 non aveva il meteo: automatico.
+        meteo_entita: None,
     }))
 }

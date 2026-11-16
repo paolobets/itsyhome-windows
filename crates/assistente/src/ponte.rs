@@ -1857,6 +1857,8 @@ pub(crate) mod test {
             notification_count: 0,
             update_count: 0,
             catalogo: Default::default(),
+            meteo: None,
+            meteo_elenco: vec![],
         }
     }
 

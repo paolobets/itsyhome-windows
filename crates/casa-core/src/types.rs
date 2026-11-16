@@ -244,6 +244,20 @@ pub struct StanzaCatalogo {
     pub voci: Vec<VoceCatalogo>,
 }
 
+/// Il tempo di adesso da un'entità `weather.*` di Home Assistant (Task 2 della M2): solo la
+/// condizione e la temperatura, le previsioni non servono.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Meteo {
+    pub entity_id: String,
+    /// Lo stato dell'entità: una delle condizioni di HA («cloudy», «rainy», «sunny»…).
+    pub condizione: String,
+    /// `None` se HA non la dà o non è un numero.
+    pub temperatura: Option<f64>,
+    /// «°C» o «°F»: quella dell'entità, altrimenti quella della casa.
+    pub unita: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MenuData {
@@ -263,6 +277,14 @@ pub struct MenuData {
     /// le sostituzioni di un'entità (`Arc::make_mut` sul `MenuData`) non lo copiano.
     #[serde(default)]
     pub catalogo: Arc<Vec<StanzaCatalogo>>,
+    /// Il meteo scelto (`Config::meteo_entita`, o la prima `weather.*` disponibile). `None`: nessuna
+    /// entità meteo, o quella preferita non disponibile. Le `weather.*` non entrano mai in stanze
+    /// e preferiti.
+    #[serde(default)]
+    pub meteo: Option<Meteo>,
+    /// Tutte le `weather.*` per `entity_id`, per il selettore delle Impostazioni (`kind` «weather»).
+    #[serde(default)]
+    pub meteo_elenco: Vec<VoceCatalogo>,
 }
 
 // ─── Config / environment ─────────────────────────────────────────────────────

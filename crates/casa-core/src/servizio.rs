@@ -36,11 +36,13 @@ use crate::diagnosi::{Contatore, Diagnosi};
 use crate::eventi::{Ascoltatore, CasaEvento, StatoConnessione};
 use crate::ha::client::{self, Client, DalClient, NON_CONNESSO};
 use crate::ha::eventi::{applica_diff, Aggiornamento, EventoWs};
-use crate::ha::mapper::{aggiornamento_disponibile, sostituisci_in_menu, EntityMapper, Indici, Preferenze};
+use crate::ha::mapper::{
+    aggiornamento_disponibile, meteo_da, scegli_meteo, sostituisci_in_menu, EntityMapper, Indici, Preferenze,
+};
 use crate::ha::models::{HaArea, HaConfig, HaDevice, HaEntityEntry, HaState};
 use crate::ha::registri::{Azione, CambioRegistro, Rilettura};
 use crate::segreti::Segreti;
-use crate::types::{AppEntity, MenuData, TestConnectionResult};
+use crate::types::{AppEntity, MenuData, Meteo, TestConnectionResult};
 
 /// Cambi visibili a raffica (una scena che accende sei luci, un gruppo, un'automazione che
 /// tocca più entità) arrivano entro pochi millisecondi: si aspetta che si calmino per 50 ms e
@@ -71,7 +73,8 @@ enum Comando {
     Servizio { entity_id: String, dominio: String, servizio: String, numero: u64 },
     Archivia(String),
     Prova { url: String, token: String, fatto: Fatto },
-    Salva { config: Config, rimappa: bool },
+    // In una `Box`: con `Config` in linea la variante supera le altre (`clippy::large_enum_variant`).
+    Salva { config: Box<Config>, rimappa: bool },
     Ferma,
 }
 
@@ -192,9 +195,10 @@ impl CasaService {
         let rimappa = prima.favorites != config.favorites
             || prima.hidden_entities != config.hidden_entities
             || prima.room_order != config.room_order
-            || prima.device_order != config.device_order;
+            || prima.device_order != config.device_order
+            || prima.meteo_entita != config.meteo_entita;
         // Inviato sotto il lucchetto: i salvataggi arrivano nell'ordine delle modifiche.
-        self.manda(Comando::Salva { config: config.clone(), rimappa });
+        self.manda(Comando::Salva { config: Box::new(config.clone()), rimappa });
     }
 
     fn manda(&self, c: Comando) {
@@ -258,6 +262,9 @@ enum Effetto {
     Sostituisci(AppEntity),
     /// Cambiano presenza, nome o conteggi: serve la mappatura completa (in memoria, niente letture).
     Rimappa,
+    /// Cambia solo il meteo scelto (`None`: non disponibile): si scrive in `MenuData::meteo` e si
+    /// pubblica come una sostituzione, senza mappatura completa (Task 2 della M2).
+    Meteo(Option<Meteo>),
 }
 
 /// I dati di Home Assistant in memoria per la connessione corrente: stati, registri indicizzati
@@ -268,6 +275,8 @@ struct Casa {
     indici: Indici,
     config: Option<HaConfig>,
     menu: Arc<MenuData>,
+    /// `Config::meteo_entita` all'ultima mappatura completa (cambiarla fa rimappare).
+    meteo_preferita: Option<String>,
 }
 
 impl Casa {
@@ -283,25 +292,33 @@ impl Casa {
             })
             .collect();
         let posizione = stati.iter().enumerate().map(|(i, s)| (s.entity_id.clone(), i)).collect();
-        Casa { stati, posizione, indici, config: g.config, menu: Arc::new(MenuData::default()) }
+        Casa {
+            stati,
+            posizione,
+            indici,
+            config: g.config,
+            menu: Arc::new(MenuData::default()),
+            meteo_preferita: None,
+        }
+    }
+
+    /// Il meteo scelto adesso: l'entità e ciò che se ne mostra.
+    fn meteo_scelto(&self, unita: &str) -> (Option<String>, Option<Meteo>) {
+        let scelta = scegli_meteo(&self.stati, self.meteo_preferita.as_deref());
+        (scelta.map(|s| s.entity_id.clone()), scelta.and_then(|s| meteo_da(s, unita)))
     }
 
     fn stato(&self, entity_id: &str) -> Option<&HaState> {
         self.posizione.get(entity_id).map(|&i| &self.stati[i])
     }
 
-    /// Mette in memoria lo stato nuovo di un'entità (`None`: tolta) e dice cosa cambia per l'app.
-    fn applica(&mut self, mapper: &EntityMapper, entity_id: &str, nuovo: Option<HaState>) -> Effetto {
-        let vecchio = self.stato(entity_id);
-        let prima = vecchio.and_then(|s| mapper.mappa_entita(&self.indici, s));
-        let aggiornamento_prima = vecchio.is_some_and(aggiornamento_disponibile);
-        let dopo = nuovo.as_ref().and_then(|s| mapper.mappa_entita(&self.indici, s));
-        let aggiornamento_dopo = nuovo.as_ref().is_some_and(aggiornamento_disponibile);
+    /// Scrive lo stato nuovo di un'entità (`None`: tolta); `mostrata`: se no, lo si tiene alleggerito.
+    fn memorizza(&mut self, entity_id: &str, nuovo: Option<HaState>, mostrata: bool) {
         match (self.posizione.get(entity_id).copied(), nuovo) {
-            (Some(i), Some(s)) => self.stati[i] = alleggerisci(s, dopo.is_some()),
+            (Some(i), Some(s)) => self.stati[i] = alleggerisci(s, mostrata),
             (None, Some(s)) => {
                 self.posizione.insert(entity_id.to_owned(), self.stati.len());
-                self.stati.push(alleggerisci(s, dopo.is_some()));
+                self.stati.push(alleggerisci(s, mostrata));
             }
             (Some(i), None) => {
                 // Raro (un'entità tolta): si rifà l'indice.
@@ -310,6 +327,39 @@ impl Casa {
             }
             (None, None) => {}
         }
+    }
+
+    /// Il cambio di un'entità `weather.*`. Solo il meteo scelto cambia ciò che si vede; la mappatura
+    /// completa serve se un'entità meteo compare, sparisce o cambia nome (l'elenco del selettore) o
+    /// se cambia quella scelta (la prima disponibile in automatico).
+    fn applica_meteo(&mut self, mapper: &EntityMapper, entity_id: &str, nuovo: Option<HaState>) -> Effetto {
+        let nome = |s: Option<&HaState>| s.map(|s| s.attributes["friendly_name"].as_str().map(str::to_owned));
+        let nome_prima = nome(self.stato(entity_id));
+        let (scelta_prima, meteo_prima) = self.meteo_scelto(mapper.unita());
+        let nome_dopo = nome(nuovo.as_ref());
+        self.memorizza(entity_id, nuovo, true);
+        let (scelta_dopo, meteo_dopo) = self.meteo_scelto(mapper.unita());
+        if nome_prima != nome_dopo || scelta_prima != scelta_dopo {
+            return Effetto::Rimappa;
+        }
+        if meteo_prima == meteo_dopo {
+            Effetto::Niente
+        } else {
+            Effetto::Meteo(meteo_dopo)
+        }
+    }
+
+    /// Mette in memoria lo stato nuovo di un'entità (`None`: tolta) e dice cosa cambia per l'app.
+    fn applica(&mut self, mapper: &EntityMapper, entity_id: &str, nuovo: Option<HaState>) -> Effetto {
+        if entity_id.starts_with("weather.") {
+            return self.applica_meteo(mapper, entity_id, nuovo);
+        }
+        let vecchio = self.stato(entity_id);
+        let prima = vecchio.and_then(|s| mapper.mappa_entita(&self.indici, s));
+        let aggiornamento_prima = vecchio.is_some_and(aggiornamento_disponibile);
+        let dopo = nuovo.as_ref().and_then(|s| mapper.mappa_entita(&self.indici, s));
+        let aggiornamento_dopo = nuovo.as_ref().is_some_and(aggiornamento_disponibile);
+        self.memorizza(entity_id, nuovo, dopo.is_some());
         if aggiornamento_prima != aggiornamento_dopo {
             return Effetto::Rimappa;
         }
@@ -324,12 +374,14 @@ impl Casa {
 
 /// Uno stato che l'app non mostra si tiene senza i suoi attributi (un lettore multimediale o
 /// un'automazione ne hanno tanti): resta solo `device_class`, che decide se un sensore si mostra.
+/// Fanno eccezione le `weather.*` (poche, mai mostrate in stanze): l'entità scelta per il meteo
+/// ha bisogno dei suoi attributi, e scegliere un'altra dalle Impostazioni non deve rileggere tutto.
 /// Un'entità può diventare visibile in due modi: per il suo stato (un sensore che diventa di
 /// temperatura), e allora lo stato nuovo arriva intero con lo `state_changed`; o per un
 /// registro (un'entità non più nascosta o disattivata), e allora nessuno `state_changed` arriva
 /// ma l'evento del registro fa rileggere tutto, stati interi compresi.
 fn alleggerisci(mut s: HaState, mostrata: bool) -> HaState {
-    if !mostrata {
+    if !mostrata && !s.entity_id.starts_with("weather.") {
         let classe = s.attributes.get_mut("device_class").map(Value::take);
         s.attributes = match classe {
             Some(c) => json!({ "device_class": c }),
@@ -812,6 +864,11 @@ impl Motore {
                 self.diagnosi.conta(if visibile { Contatore::effetto_sostituita } else { Contatore::effetto_nascosta });
                 visibile
             }
+            Effetto::Meteo(meteo) => {
+                Arc::make_mut(&mut casa.menu).meteo = meteo;
+                self.diagnosi.conta(Contatore::effetto_meteo);
+                true
+            }
             Effetto::Rimappa => {
                 self.diagnosi.conta(Contatore::effetto_rimappa);
                 self.rimappa = true;
@@ -826,7 +883,7 @@ impl Motore {
     /// aggiornamenti in `MenuData`. Le nascoste dall'utente si seguono (giro di correzioni 1 del
     /// 14h): il loro nome nelle Impostazioni viene dal `friendly_name` dello stato, che HA riscrive
     /// quando l'integrazione o il dispositivo cambiano nome; e mostrandole lo stato è già quello di
-    /// adesso.
+    /// adesso. Più le `weather.*`, per il meteo (Task 2 della M2).
     fn da_seguire(casa: &Casa) -> BTreeSet<String> {
         let m = &casa.menu;
         m.favorites
@@ -837,6 +894,10 @@ impl Motore {
             .chain(m.scenes.iter().map(|s| s.base.entity_id.clone()))
             .chain(m.catalogo.iter().flat_map(|s| &s.voci).map(|v| v.entity_id.clone()))
             .chain(casa.indici.mostrabili_dal_registro().map(str::to_owned))
+            // Il meteo: tutte le `weather.*` (poche). Seguire solo la scelta perderebbe il ritorno
+            // di un'entità tornata disponibile (l'automatico passerebbe a un'altra e quella non
+            // sarebbe più seguita), e cambiare scelta dalle Impostazioni avrebbe stati vecchi.
+            .chain(casa.stati.iter().filter(|s| s.entity_id.starts_with("weather.")).map(|s| s.entity_id.clone()))
             .chain(casa.stati.iter().filter(|s| s.entity_id.starts_with("update.")).map(|s| s.entity_id.clone()))
             .collect()
     }
@@ -1045,9 +1106,15 @@ impl Motore {
     fn mappa_tutto(&mut self) {
         let Some(casa) = &mut self.casa else { return };
         self.diagnosi.conta(Contatore::mappature);
-        let (favorites, hidden, room_order, device_order) = {
+        let (favorites, hidden, room_order, device_order, meteo_entita) = {
             let c = blocca(&self.config);
-            (c.favorites.clone(), c.hidden_entities.clone(), c.room_order.clone(), c.device_order.clone())
+            (
+                c.favorites.clone(),
+                c.hidden_entities.clone(),
+                c.room_order.clone(),
+                c.device_order.clone(),
+                c.meteo_entita.clone(),
+            )
         };
         let dati = self.mapper.map_indicizzato(
             &casa.indici,
@@ -1059,9 +1126,11 @@ impl Motore {
                 hidden_entities: &hidden,
                 room_order: &room_order,
                 device_orders: &device_order,
+                meteo_entita: meteo_entita.as_deref(),
             },
         );
         casa.menu = Arc::new(dati);
+        casa.meteo_preferita = meteo_entita;
     }
 
     /// Consegna l'ultimo `MenuData` se è diverso da quello già consegnato.
@@ -1138,6 +1207,45 @@ mod test {
         assert_eq!(c.stato("switch.nuovo").unwrap().state, "on");
         assert_eq!(c.applica(&m, "update.core", Some(stato("update.core", "on", json!({})))), Effetto::Rimappa);
         assert_eq!(c.applica(&m, "update.core", Some(stato("update.core", "on", json!({ "x": 1 })))), Effetto::Niente);
+    }
+
+    fn tempo(id: &str, s: &str, temperatura: f64) -> HaState {
+        stato(id, s, json!({ "friendly_name": id, "temperature": temperatura, "temperature_unit": "°C" }))
+    }
+
+    #[test]
+    fn cambio_del_meteo_aggiorna_senza_rimappare() {
+        let (mut c, m) = casa(vec![tempo("weather.a", "cloudy", 9.0), luce("off")]);
+        let Effetto::Meteo(Some(meteo)) = c.applica(&m, "weather.a", Some(tempo("weather.a", "cloudy", 10.0))) else {
+            panic!("atteso Effetto::Meteo")
+        };
+        assert_eq!((meteo.entity_id.as_str(), meteo.condizione.as_str(), meteo.temperatura), ("weather.a", "cloudy", Some(10.0)));
+        assert_eq!(meteo.unita, "°C");
+        // Gli attributi dell'entità scelta restano (non si alleggerisce).
+        assert_eq!(c.stato("weather.a").unwrap().attributes["temperature"], json!(10.0));
+        // Stesso stato: niente. Non disponibile: il meteo diventa `None`.
+        assert_eq!(c.applica(&m, "weather.a", Some(tempo("weather.a", "cloudy", 10.0))), Effetto::Niente);
+        // Con la sola entità: non disponibile cambia la scelta automatica (nessuna), quindi rimappa.
+        assert_eq!(c.applica(&m, "weather.a", Some(tempo("weather.a", "unavailable", 10.0))), Effetto::Rimappa);
+    }
+
+    #[test]
+    fn meteo_preferita_non_disponibile_e_nessuno_senza_rimappare() {
+        let (mut c, m) = casa(vec![tempo("weather.a", "cloudy", 9.0), tempo("weather.b", "rainy", 5.0)]);
+        c.meteo_preferita = Some("weather.b".into());
+        assert_eq!(c.applica(&m, "weather.b", Some(tempo("weather.b", "unavailable", 5.0))), Effetto::Meteo(None));
+        // Un'altra entità meteo che cambia non si vede.
+        assert_eq!(c.applica(&m, "weather.a", Some(tempo("weather.a", "sunny", 12.0))), Effetto::Niente);
+        // Una nuova entità meteo (elenco del selettore) o un nome nuovo rimappano.
+        assert_eq!(c.applica(&m, "weather.c", Some(tempo("weather.c", "fog", 3.0))), Effetto::Rimappa);
+    }
+
+    #[test]
+    fn meteo_seguito_nell_iscrizione() {
+        let (c, _) = casa(vec![tempo("weather.a", "cloudy", 9.0), tempo("weather.b", "unavailable", 5.0), luce("on")]);
+        let seguite = Motore::da_seguire(&c);
+        assert!(seguite.contains("weather.a"));
+        assert!(seguite.contains("weather.b"), "anche non disponibile: se torna, il suo cambio arriva");
     }
 
     #[test]

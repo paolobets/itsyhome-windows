@@ -8,7 +8,7 @@ use super::models::{HaArea, HaConfig, HaDevice, HaEntityEntry, HaState};
 use crate::types::{
     AlarmEntity, AppEntity, BaseEntity, CameraEntity, ClimateEntity, CoverEntity, FanEntity,
     HumidifierEntity, LightEntity, LockEntity, MenuData, Room, SceneEntity, SensorEntity,
-    StanzaCatalogo, SwitchEntity, ValveEntity, VoceCatalogo, GRUPPO_SCENE,
+    Meteo, StanzaCatalogo, SwitchEntity, ValveEntity, VoceCatalogo, GRUPPO_SCENE,
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -82,6 +82,8 @@ pub struct Preferenze<'a> {
     pub hidden_entities: &'a [String],
     pub room_order: &'a [String],
     pub device_orders: &'a HashMap<String, Vec<String>>,
+    /// L'entità meteo scelta (`None`: automatico).
+    pub meteo_entita: Option<&'a str>,
 }
 
 /// I registri di Home Assistant (stanze, dispositivi, entità) indicizzati per id. Il servizio li
@@ -165,6 +167,52 @@ pub fn aggiornamento_disponibile(state: &HaState) -> bool {
     domain_of(&state.entity_id) == "update" && state.state == "on"
 }
 
+fn disponibile(state: &HaState) -> bool {
+    state.state != "unavailable" && state.state != "unknown"
+}
+
+/// L'entità meteo da usare: la `preferita` se c'è fra gli stati (anche se non disponibile: allora
+/// il meteo è `None`, non quello di un'altra entità); se no, o se non c'è, la prima `weather.*`
+/// disponibile per `entity_id`.
+pub fn scegli_meteo<'a>(stati: &'a [HaState], preferita: Option<&str>) -> Option<&'a HaState> {
+    if let Some(p) = preferita.filter(|p| domain_of(p) == "weather") {
+        if let Some(s) = stati.iter().find(|s| s.entity_id == p) {
+            return Some(s);
+        }
+    }
+    stati
+        .iter()
+        .filter(|s| domain_of(&s.entity_id) == "weather" && disponibile(s))
+        .min_by(|a, b| a.entity_id.cmp(&b.entity_id))
+}
+
+/// Il meteo di un'entità `weather.*`.
+///
+/// Documentazione di Home Assistant letta (regola: mai ipotesi su HA):
+/// - developers.home-assistant.io → «Weather entity» (ora contributors.home-assistant.io/core/entities/weather):
+///   lo stato è la condizione, una fra `clear-night`, `cloudy`, `exceptional`, `fog`, `hail`,
+///   `lightning`, `lightning-rainy`, `partlycloudy`, `pouring`, `rainy`, `snowy`, `snowy-rainy`,
+///   `sunny`, `windy`, `windy-variant`; la temperatura è già convertita nelle unità dell'utente
+///   (precisione: decimi in °C, interi in °F).
+/// - home-assistant.io → integrazione «Weather»: gli attributi di stato sono `temperature` e
+///   `temperature_unit` (con altri che qui non servono); un'entità «may not support all the state
+///   attributes», quindi la temperatura può mancare. Le previsioni (`weather.get_forecasts`) non servono.
+///
+/// `None` se lo stato è `unavailable` o `unknown`. La condizione si tiene come arriva (non si
+/// elencano gli stati ammessi: un valore nuovo di HA non deve far sparire il meteo).
+pub fn meteo_da(stato: &HaState, unita_casa: &str) -> Option<Meteo> {
+    if !disponibile(stato) {
+        return None;
+    }
+    let unita = stato.attributes["temperature_unit"].as_str().filter(|u| !u.is_empty()).unwrap_or(unita_casa);
+    Some(Meteo {
+        entity_id: stato.entity_id.clone(),
+        condizione: stato.state.clone(),
+        temperatura: stato.attributes["temperature"].as_f64(),
+        unita: unita.to_owned(),
+    })
+}
+
 /// Mette `nuova` al posto dell'entità con lo stesso id in preferiti, stanze, scene e telecamere,
 /// senza toccare l'ordine. Vale solo se l'ordine non può cambiare: stesso nome (le stanze senza
 /// ordine salvato vanno per nome), stessa stanza, stessa presenza. Vero se l'ha trovata almeno
@@ -229,7 +277,7 @@ impl EntityMapper {
         notification_count: u32,
         preferenze: Preferenze<'_>,
     ) -> MenuData {
-        let Preferenze { favorites_order, hidden_entities, room_order, device_orders } = preferenze;
+        let Preferenze { favorites_order, hidden_entities, room_order, device_orders, meteo_entita } = preferenze;
         if let Some(cfg) = ha_config {
             self.set_temp_unit(&cfg.unit_system.temperature);
         }
@@ -380,6 +428,18 @@ impl EntityMapper {
             });
         }
 
+        let meteo = scegli_meteo(states, meteo_entita).and_then(|s| meteo_da(s, &self.temp_unit));
+        let mut meteo_elenco: Vec<VoceCatalogo> = states
+            .iter()
+            .filter(|s| domain_of(&s.entity_id) == "weather")
+            .map(|s| VoceCatalogo {
+                entity_id: s.entity_id.clone(),
+                name: s.attributes["friendly_name"].as_str().unwrap_or(&s.entity_id).to_owned(),
+                kind: "weather".to_owned(),
+            })
+            .collect();
+        meteo_elenco.sort_by(|a, b| a.entity_id.cmp(&b.entity_id));
+
         MenuData {
             favorites: fav_list,
             rooms,
@@ -394,6 +454,8 @@ impl EntityMapper {
             notification_count,
             update_count,
             catalogo: std::sync::Arc::new(catalogo),
+            meteo,
+            meteo_elenco,
         }
     }
 
@@ -507,6 +569,11 @@ impl EntityMapper {
             indici.area_del_dispositivo(entry.device_id.as_deref()?).map(str::to_owned)
         });
         self.map_entity(state, entry, area_id)
+    }
+
+    /// L'unità di temperatura della casa («°C» o «°F»).
+    pub fn unita(&self) -> &str {
+        &self.temp_unit
     }
 
     /// Imposta l'unità di temperatura da `get_config` (per `mappa_entita` fuori da `map`).
@@ -923,6 +990,7 @@ mod tests {
                 hidden_entities: &nascosti,
                 room_order: &ordine_stanze,
                 device_orders: &HashMap::new(),
+                meteo_entita: None,
             },
         )
     }
@@ -1045,7 +1113,7 @@ mod tests {
         let (nascosti, ordine) = (s(&["light.a", "switch.c"]), s(&["sala", "cucina"]));
         let menu = EntityMapper::new().map(
             DatiHa { states: &stati, areas: &aree, devices: &[], entries: &voci, config: None, notification_count: 0 },
-            Preferenze { favorites_order: &[], hidden_entities: &nascosti, room_order: &ordine, device_orders: &ordini },
+            Preferenze { favorites_order: &[], hidden_entities: &nascosti, room_order: &ordine, device_orders: &ordini, meteo_entita: None },
         );
         let stanze: Vec<(&str, Vec<&str>)> = menu
             .catalogo
@@ -1100,5 +1168,80 @@ mod tests {
         let cfg = config("°F");
         let menu = mappa(&[], &[], &[], Some(&cfg), &[], &[], &[]);
         assert_eq!(menu.temp_unit, "°F");
+    }
+
+    // ─── Meteo (Task 2 della M2) ──────────────────────────────────────────────
+
+    fn tempo(id: &str, stato: &str, attributi: Value) -> HaState {
+        HaState { state: stato.to_owned(), attributes: attributi, ..self::stato(id) }
+    }
+
+    fn mappa_con_meteo(stati: &[HaState], preferiti: &[String], preferita: Option<&str>) -> MenuData {
+        EntityMapper::new().map(
+            DatiHa { states: stati, areas: &[area("sala", "Sala")], devices: &[], entries: &[voce("weather.a", Some("sala"))], config: None, notification_count: 0 },
+            Preferenze { favorites_order: preferiti, hidden_entities: &[], room_order: &[], device_orders: &HashMap::new(), meteo_entita: preferita },
+        )
+    }
+
+    #[test]
+    fn meteo_dalla_prima_weather_in_ordine() {
+        let stati = [
+            tempo("weather.b", "rainy", json!({ "temperature": 5 })),
+            tempo("weather.a", "cloudy", json!({ "temperature": 9 })),
+        ];
+        let m = scegli_meteo(&stati, None).unwrap();
+        assert_eq!(m.entity_id, "weather.a");
+        let menu = mappa_con_meteo(&stati, &[], None);
+        assert_eq!(menu.meteo.as_ref().unwrap().entity_id, "weather.a");
+        let elenco: Vec<&str> = menu.meteo_elenco.iter().map(|v| v.entity_id.as_str()).collect();
+        assert_eq!(elenco, ["weather.a", "weather.b"]);
+        assert!(menu.meteo_elenco.iter().all(|v| v.kind == "weather"));
+    }
+
+    #[test]
+    fn meteo_preferita_anche_se_seconda() {
+        let stati = [
+            tempo("weather.a", "cloudy", json!({ "temperature": 9 })),
+            tempo("weather.b", "rainy", json!({ "temperature": 5 })),
+        ];
+        assert_eq!(scegli_meteo(&stati, Some("weather.b")).unwrap().entity_id, "weather.b");
+        assert_eq!(mappa_con_meteo(&stati, &[], Some("weather.b")).meteo.unwrap().condizione, "rainy");
+        // Una preferita che non c'è (più) torna all'automatico.
+        assert_eq!(scegli_meteo(&stati, Some("weather.zeta")).unwrap().entity_id, "weather.a");
+        // Una preferita non disponibile resta quella: nessun meteo, non il meteo di un'altra.
+        let stati = [tempo("weather.a", "cloudy", json!({})), tempo("weather.b", "unavailable", json!({}))];
+        assert_eq!(scegli_meteo(&stati, Some("weather.b")).unwrap().entity_id, "weather.b");
+        assert_eq!(mappa_con_meteo(&stati, &[], Some("weather.b")).meteo, None);
+    }
+
+    #[test]
+    fn meteo_non_disponibile_e_nessuno() {
+        let non_disp = tempo("weather.a", "unavailable", json!({ "temperature": 9 }));
+        assert_eq!(meteo_da(&non_disp, "°C"), None);
+        assert_eq!(meteo_da(&tempo("weather.a", "unknown", json!({})), "°C"), None);
+        // Con solo entità non disponibili l'automatico non sceglie niente.
+        assert!(scegli_meteo(&[non_disp], None).is_none());
+        let strana = tempo("weather.a", "sunny", json!({ "temperature": "abc" }));
+        let m = meteo_da(&strana, "°C").unwrap();
+        assert_eq!((m.temperatura, m.condizione.as_str()), (None, "sunny"));
+    }
+
+    #[test]
+    fn meteo_unita_dalla_casa_se_manca() {
+        let senza = tempo("weather.a", "cloudy", json!({ "temperature": 48.2 }));
+        let m = meteo_da(&senza, "°F").unwrap();
+        assert_eq!((m.unita.as_str(), m.temperatura), ("°F", Some(48.2)));
+        let con = tempo("weather.a", "cloudy", json!({ "temperature": 9, "temperature_unit": "°C" }));
+        assert_eq!(meteo_da(&con, "°F").unwrap().unita, "°C");
+    }
+
+    #[test]
+    fn weather_fuori_da_stanze_e_preferiti() {
+        let stati = [tempo("weather.a", "cloudy", json!({ "temperature": 9 }))];
+        let menu = mappa_con_meteo(&stati, &["weather.a".to_owned()], None);
+        assert!(menu.favorites.is_empty());
+        assert!(menu.rooms.iter().all(|r| r.entities.is_empty()));
+        assert!(menu.catalogo.iter().all(|s| s.voci.is_empty()));
+        assert_eq!(menu.meteo.unwrap().entity_id, "weather.a");
     }
 }

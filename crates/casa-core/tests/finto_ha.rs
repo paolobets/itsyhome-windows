@@ -1635,3 +1635,53 @@ async fn diagnosi_conta_messaggi_cambi_e_riletture_senza_dati_della_casa() {
         }
     }
 }
+
+// ─── Meteo (Task 2 della M2) ──────────────────────────────────────────────────
+
+/// Un'entità meteo come la dà HA: stato = condizione, `temperature` e `temperature_unit`.
+fn meteo_finto(condizione: &str, temperatura: f64) -> Value {
+    let mut s = stato_nuovo("weather.casa", condizione, "Meteo casa");
+    s["attributes"]["temperature"] = json!(temperatura);
+    s["attributes"]["temperature_unit"] = json!("°C");
+    s
+}
+
+#[tokio::test]
+async fn il_finto_ha_porta_il_meteo() {
+    let ha = FintoHa::avvia().await;
+    ha.contatori.stati.lock().unwrap().insert("weather.casa".into(), meteo_finto("cloudy", 9.0));
+    let mut p = prepara(&ha.url, Some(TOKEN));
+    p.servizio.connetti_attivo();
+    let d = aspetta_dati(&mut p).await;
+    let meteo = d.meteo.as_ref().expect("meteo");
+    assert_eq!((meteo.condizione.as_str(), meteo.temperatura, meteo.unita.as_str()), ("cloudy", Some(9.0), "°C"));
+    assert_eq!(meteo.entity_id, "weather.casa");
+    assert_eq!(d.meteo_elenco.len(), 1);
+    assert_eq!(d.meteo_elenco[0].kind, "weather");
+    assert_eq!(conta_entita(&d), 2, "il meteo non entra nelle stanze");
+    aspetta_iscrizione(&ha, 1).await;
+    assert!(ha.iscrizioni_entita()[0].contains(&"weather.casa".to_string()));
+}
+
+/// Un cambio del meteo si pubblica come una sostituzione: niente mappatura completa, niente
+/// letture, e il contatore dedicato lo conta.
+#[tokio::test]
+async fn un_cambio_del_meteo_si_pubblica_senza_rimappare_ne_rileggere() {
+    use casa_core::diagnosi::{Contatore, Diagnosi};
+    let ha = FintoHa::avvia().await;
+    ha.contatori.stati.lock().unwrap().insert("weather.casa".into(), meteo_finto("cloudy", 9.0));
+    let diagnosi = Arc::new(Diagnosi::new(true));
+    let mut p = prepara_con_diagnosi(&ha.url, diagnosi.clone());
+    p.servizio.connetti_attivo();
+    aspetta_dati(&mut p).await;
+    aspetta_iscrizione(&ha, 1).await;
+    let mappature = diagnosi.valore(Contatore::mappature);
+
+    cambio(&ha, "weather.casa", meteo_finto("rainy", 10.0));
+    let d = aspetta_dati(&mut p).await;
+    let meteo = d.meteo.as_ref().expect("meteo");
+    assert_eq!((meteo.condizione.as_str(), meteo.temperatura), ("rainy", Some(10.0)));
+    assert_eq!(diagnosi.valore(Contatore::effetto_meteo), 1);
+    assert_eq!(diagnosi.valore(Contatore::mappature), mappature, "nessuna mappatura completa");
+    assert_eq!((ha.get_states(), ha.letture_registri(), ha.iscrizioni_entita().len()), (1, 1, 1));
+}
