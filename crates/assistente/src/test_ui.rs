@@ -154,7 +154,7 @@ mod accessibilita {
         VoceAttesaUi,
     };
     use i_slint_backend_testing::{AccessibleRole, ElementHandle};
-    use slint::{ComponentHandle, ModelRc, VecModel};
+    use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
     fn elemento(radice: &impl i_slint_backend_testing::ElementRoot, nome: &str) -> ElementHandle {
         ElementHandle::find_by_accessible_label(radice, nome)
@@ -1662,11 +1662,24 @@ mod accessibilita {
             .expect("voce «Disco»")
             .invoke_accessible_default_action();
         assert_eq!(*scelti.borrow(), [(10, 4)], "quadrante 1 → «Disco»");
-        let massimi: Vec<_> = ElementHandle::find_by_accessible_label(&f, "Massimo")
-            .filter(|e| e.accessible_role() == Some(AccessibleRole::TextInput))
-            .collect();
-        assert_eq!(massimi.len(), 1, "il campo «Massimo» solo accanto al sensore in watt");
+        let campi = |f: &FinestraImpostazioni| -> Vec<ElementHandle> {
+            ElementHandle::find_by_accessible_label(f, "Quadrante 3, massimo")
+                .filter(|e| e.accessible_role() == Some(AccessibleRole::TextInput))
+                .collect()
+        };
+        let massimi = campi(&f);
+        assert_eq!(massimi.len(), 1, "il campo «Massimo» solo accanto al sensore in watt, col nome del quadrante");
         assert_eq!(massimi[0].accessible_placeholder_text().as_deref(), Some("3000"));
+        // Giro di correzioni 1: scritto a mano e poi un altro sensore in watt, il campo mostra il
+        // massimo del sensore nuovo (il testo scritto non resta).
+        massimi[0].set_accessible_value("4500");
+        assert_eq!(massimi[0].accessible_value().as_deref(), Some("4500"));
+        let modello = f.get_quadranti_scelti();
+        modello.set_row_data(
+            2,
+            crate::SceltaQuadranteUi { indice: 4, con_massimo: true, massimo: "6000".into(), predefinito: "3000".into() },
+        );
+        assert_eq!(campi(&f)[0].accessible_value().as_deref(), Some("6000"));
     }
 
     /// Di serie il pannello mostra i tre quadranti di M1; il modello del ponte li sostituisce

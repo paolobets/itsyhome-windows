@@ -50,6 +50,8 @@ component Campo inherits Rectangle {
     in property <string> suggerimento;
     in property <bool> password;
     in property <string> errore;
+    // Il nome per Narrator, se dev'essere più preciso dell'etichetta («Quadrante 1, massimo»).
+    in property <string> nome-accessibile: etichetta;
     in-out property <string> testo <=> input.text;
     // Esc nel campo (il fuoco torna alla finestra) e Invio (salva).
     callback esci();
@@ -107,7 +109,7 @@ component Campo inherits Rectangle {
             selection-background-color: Tema.selezione;
             selection-foreground-color: Tema.testo;
             accessible-role: text-input;
-            accessible-label: etichetta;
+            accessible-label: nome-accessibile;
             accessible-placeholder-text: suggerimento;
             accessible-description: errore;
             edited => { root.modificato(); }
@@ -573,11 +575,16 @@ component RigaScelta inherits Rectangle {
         fuoco-preso => { root.fuoco-preso(); }
     }
 
-    if con-massimo: Campo {
+    // Rifatto a ogni scelta nuova (`indice`): il testo scritto a mano scollega `testo` da
+    // `massimo`, e passando da un sensore in watt a un altro il campo deve mostrare il massimo di
+    // quello nuovo.
+    changed indice => { root.errore = ""; }
+    for _ in con-massimo ? [root.indice] : []: Campo {
         x: 16px;
         y: 60px;
         width: parent.width - 32px;
         etichetta: "Massimo";
+        nome-accessibile: root.titolo + ", massimo";
         suggerimento: predefinito;
         errore: root.errore;
         testo: root.massimo;
