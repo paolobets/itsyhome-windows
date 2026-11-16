@@ -13,6 +13,8 @@
 // card: ↑/↓ fra «Preferiti» e le stanze e → alle card, le frecce fra le card, ← dalla prima colonna all'elenco
 // e ↑ dalla prima riga a «Riprova» quando c'è; Casa vuota e non connessa: «Apri Impostazioni»);
 // In Collegamenti le frecce fra le card, ↑ dalla prima riga a «Modifica»; Invio apre la pagina.
+// Nella vista PC (con il volume) il contenuto è il cursore del volume: ←/→ ±2 punti, Home/Fine
+// 0/100, Invio o Spazio muto sì/no.
 // Invio o Spazio attivano (su una stanza o «Preferiti»: la sceglie e porta alle card; su una voce: la espande o la
 // riduce; un permesso, «Consenti», solo con Ctrl+Invio, e la voce che lo chiede si apre col fuoco
 // su «Nega»); Backspace o Alt+← = indietro (prima torna a «Preferiti»); Esc un livello alla
@@ -133,6 +135,15 @@ export component Pannello inherits Window {
     in property <[VoceAppUi]> app;
     // Statistiche del PC, aggiornate ogni 2 s solo a pannello aperto.
     in property <StatPcUi> pc;
+    // Il volume del PC nella vista PC (M2, Task 7): `volume-disponibile` solo su Windows con
+    // un'uscita audio (altrimenti la riga non c'è); `volume` 0..1 lo scrive Rust (stato letto) e
+    // il cursore (subito, senza aspettare Windows).
+    in property <bool> volume-disponibile: false;
+    in-out property <float> volume: 0;
+    in property <bool> volume-muto: false;
+    // Un livello 0..1 scelto col cursore o con la tastiera; muto sì/no dall'altoparlante o Invio.
+    callback imposta-volume(float);
+    callback muto-volume(bool);
     // Vero mentre il pannello è aperto: guida l'animazione di apertura e il battito degli occhi.
     in-out property <bool> aperto;
     // Casa: i preferiti (al massimo 8), la riga di stato, i sensori dei Quadranti (al massimo 3).
@@ -313,7 +324,9 @@ export component Pannello inherits Window {
             }
             // Casa vuota e non connessa: il fuoco va su «Apri Impostazioni». Collegamenti: le card,
             // o «Aggiungi un collegamento» se non ce ne sono.
-            return vista == "panoramica" || vista == "collegamenti" || (vista == "casa" && (griglia.length > 0 || !casa-pronta));
+            // PC: il cursore del volume, se c'è.
+            return vista == "panoramica" || vista == "collegamenti" || (vista == "casa" && (griglia.length > 0 || !casa-pronta))
+                || (vista == "pc" && volume-disponibile);
         }
         return true;
     }
@@ -492,6 +505,17 @@ export component Pannello inherits Window {
         root.scegli-layout(i);
     }
 
+    // Il volume scelto da tastiera o dal cursore: subito nel pannello, poi a Rust.
+    function cambia-volume(v: float) {
+        volume = min(max(v, 0), 1);
+        root.imposta-volume(volume);
+    }
+
+    // ←/→ nella vista PC: ±`punti` dal punto intero di adesso.
+    function passo-volume(punti: int) {
+        cambia-volume((round(volume * 100) + punti) / 100);
+    }
+
     function freccia(k: string) {
         if (zona == Zona.dock) {
             if (k == Key.LeftArrow) {
@@ -540,6 +564,13 @@ export component Pannello inherits Window {
             } else if (k == Key.RightArrow && ha-zona(Zona.contenuto)) {
                 zona = Zona.contenuto;
                 fuoco-casa = 0;
+            }
+        } else if (zona == Zona.contenuto && vista == "pc" && volume-disponibile) {
+            // Il cursore del volume: ←/→ due punti.
+            if (k == Key.LeftArrow) {
+                passo-volume(-2);
+            } else if (k == Key.RightArrow) {
+                passo-volume(2);
             }
         } else if (zona == Zona.contenuto && vista == "collegamenti" && collegamenti.length > 0) {
             // -1 = «Modifica» nella testata: ↑ dalla prima riga, ↓ torna alle card.
@@ -619,6 +650,11 @@ export component Pannello inherits Window {
             } else {
                 root.apri-collegamento(collegamenti[fuoco-collegamento-valido].id);
             }
+        } else if (vista == "pc") {
+            // Sul cursore del volume: muto sì/no, come l'altoparlante.
+            if (volume-disponibile) {
+                root.muto-volume(!volume-muto);
+            }
         } else if (vista == "casa" && griglia.length == 0) {
             root.apri-app("impostazioni");
         } else if (vista == "casa" && fuoco-casa < 0) {
@@ -689,6 +725,13 @@ export component Pannello inherits Window {
             if (evento.text == Key.Return || evento.text == Key.Space) {
                 da-tastiera = true;
                 attiva(false);
+                return accept;
+            }
+            // Home/Fine sul cursore del volume: 0 e 100.
+            if ((evento.text == Key.Home || evento.text == Key.End) && zona == Zona.contenuto && vista == "pc"
+                    && volume-disponibile) {
+                da-tastiera = true;
+                cambia-volume(evento.text == Key.Home ? 0 : 1);
                 return accept;
             }
             return reject;
@@ -993,6 +1036,18 @@ export component Pannello inherits Window {
                     width: parent.width;
                     height: parent.height;
                     stat: root.pc;
+                    volume-disponibile: root.volume-disponibile;
+                    volume: root.volume;
+                    volume-muto: root.volume-muto;
+                    fuoco-volume: da-tastiera && zona == Zona.contenuto && vista == "pc";
+                    imposta-volume(v) => {
+                        da-tastiera = false;
+                        cambia-volume(v);
+                    }
+                    muto-volume(si) => {
+                        da-tastiera = false;
+                        root.muto-volume(si);
+                    }
                 }
 
                 // Vista di un'app senza contenuti propri: solo il titolo (oggi nessuna; le Impostazioni
@@ -1171,7 +1226,7 @@ export component Pannello inherits Window {
     // sparita, Casa svuotata) il fuoco torna a `tasti`, che tiene comunque la tastiera.
     property <bool> bersaglio: zona == Zona.attesa ? (espansa || (con-attese && (fuoco-attesa < min(3, attese.length) || (fuoco-attesa == 3 && attese.length > 3))))
         : zona == Zona.stanze ? ha-zona(Zona.stanze)
-        : zona == Zona.contenuto ? ha-zona(Zona.contenuto) && (vista == "panoramica" || vista == "collegamenti"
+        : zona == Zona.contenuto ? ha-zona(Zona.contenuto) && (vista == "panoramica" || vista == "collegamenti" || vista == "pc"
             || (griglia.length > 0 ? (fuoco-casa >= 0 || riprova-visibile) : !casa-pronta))
         : true;
     property <bool> fuoco-su-elemento: da-tastiera && bersaglio;

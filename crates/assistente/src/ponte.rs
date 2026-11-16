@@ -12,7 +12,9 @@ use crate::layout::Layout;
 use crate::orologio;
 use crate::pc_stats::{Fonti, LetturaBatteria};
 use crate::sorgenti_lati;
-use crate::sistema::{autoavvio, servizi};
+use crate::sistema::{autoavvio, servizi, volume};
+#[cfg(windows)]
+use crate::sistema::volume::{StatoVolume, Volume};
 use crate::impostazioni::{self, Modulo, Tono};
 use crate::ottimismo::Ottimismo;
 use crate::pillola::{self, VistaPillola};
@@ -838,6 +840,18 @@ pub struct Ponte {
     voci_meteo: Rc<VecModel<SharedString>>,
     voci_quadranti: Rc<VecModel<SharedString>>,
     scelte_quadranti: Rc<VecModel<SceltaQuadranteUi>>,
+    /// Il volume del PC (M2, Task 7, solo Windows): il thread `audio`, avviato alla prima
+    /// richiesta (rotella sulla pillola o prima apertura del pannello) e poi fermo su `recv`;
+    /// l'ultimo stato letto (`None`: nessuna uscita audio, o non ancora letto); la rotella
+    /// accumulata; la sveglia singola che riporta gli occhi al posto della barra.
+    #[cfg(windows)]
+    audio: std::cell::OnceCell<volume::Audio>,
+    #[cfg(windows)]
+    volume: Cell<Option<StatoVolume>>,
+    #[cfg(windows)]
+    rotella: Cell<volume::Rotella>,
+    #[cfg(windows)]
+    sveglia_barra: slint::Timer,
     /// `ITSYHOME_TRACCIA_TOCCO=1`: tempi del tocco sullo stderr (icona cambiata nel modello,
     /// conferma di Home Assistant). Il fotogramma si misura da fuori, sulle foto della zona: il
     /// renderer software di Skia non chiama il notificatore di rendering.
@@ -905,6 +919,14 @@ pub fn collega(
         voci_meteo: Rc::new(VecModel::default()),
         voci_quadranti: Rc::new(VecModel::default()),
         scelte_quadranti: Rc::new(VecModel::default()),
+        #[cfg(windows)]
+        audio: std::cell::OnceCell::new(),
+        #[cfg(windows)]
+        volume: Cell::new(None),
+        #[cfg(windows)]
+        rotella: Cell::new(volume::Rotella::default()),
+        #[cfg(windows)]
+        sveglia_barra: slint::Timer::default(),
     });
     PONTE.with(|p| *p.borrow_mut() = Some(ponte.clone()));
     // I pulsanti della pillola allargata agiscono sulla voce che sta chiamando; «Apri» (un
@@ -939,6 +961,16 @@ pub fn collega(
     // I lati della pillola scelti nelle Impostazioni › Isola (niente / niente: nessuna sorgente).
     let (sinistro, destro) = ponte.casa.con_config(|c| (Lato::da_str(&c.lato_sinistro), Lato::da_str(&c.lato_destro)));
     sorgenti_lati::collega(pillola, sinistro, destro);
+    // La rotella sulla pillola cambia il volume del PC (M2, Task 7, solo Windows), se accesa.
+    #[cfg(windows)]
+    {
+        pillola.set_rotella_attiva(ponte.casa.con_config(|c| c.volume_rotella));
+        pillola.on_rotella(|delta| {
+            if let Some(p) = self::ponte() {
+                p.rotella_volume(delta);
+            }
+        });
+    }
     ponte.aggiorna_umore();
     ponte
 }
@@ -1362,6 +1394,9 @@ impl Ponte {
         if p.get_icona_barra() != config.mostra_icona_barra {
             p.set_icona_barra(config.mostra_icona_barra);
         }
+        if p.get_volume_rotella() != config.volume_rotella {
+            p.set_volume_rotella(config.volume_rotella);
+        }
         p.set_config_non_salvata(self.errore_config.borrow().is_some());
         self.aggiorna_righe();
         self.riempi_isola(p);
@@ -1625,6 +1660,14 @@ impl Ponte {
         f.set_versione(env!("CARGO_PKG_VERSION").into());
         f.set_icona_barra_disponibile(cfg!(windows));
         f.set_fuori_da_windows(cfg!(not(windows)));
+        // Impostazioni › Isola: «Volume con la rotella sulla pillola», solo dove c'è il volume.
+        f.set_volume_rotella_disponibile(volume::disponibile());
+        #[cfg(windows)]
+        f.on_cambia_volume_rotella(|si| {
+            if let Some(p) = ponte() {
+                p.cambia_volume_rotella(si);
+            }
+        });
         // Fuori da Windows menu e icona non ci sono: «Esci» di Sistema chiude come `Comando::Esci`.
         f.on_esci(|| {
             let _ = slint::quit_event_loop();
@@ -1909,6 +1952,24 @@ impl Ponte {
                 ponte.riprova_casa();
             }
         });
+        // Il volume del PC nella vista PC (M2, Task 7, solo Windows): il thread `audio` parte alla
+        // prima apertura (lo stato arriva prima che si scelga la vista PC) e il pannello nuovo
+        // prende l'ultimo stato letto.
+        #[cfg(windows)]
+        {
+            self.avvia_volume();
+            self.scrivi_volume(p);
+            p.on_imposta_volume(|v| {
+                if let Some(ponte) = ponte() {
+                    ponte.imposta_volume(v);
+                }
+            });
+            p.on_muto_volume(|si| {
+                if let Some(ponte) = ponte() {
+                    ponte.audio().muto(si);
+                }
+            });
+        }
     }
 
     /// Posizione nella riga della voce che la pillola allargata sta chiamando: il pannello aperto
@@ -2209,6 +2270,117 @@ impl Ponte {
     /// `--prova-avviso <livello>`.
     pub fn prova_avviso(&self, livello: Livello, lungo: bool) {
         self.metti_voce(attenzione::voce_di_prova(livello, lungo, Instant::now()), true);
+    }
+}
+
+// ─── Il volume del PC (M2, Task 7, solo Windows) ─────────────────────────────
+
+/// Uno stato letto dal thread `audio` o da `OnNotify` (thread di Windows): solo accodato al
+/// thread dell'interfaccia, nessun altro lavoro qui.
+#[cfg(windows)]
+fn consegna_volume(s: Option<StatoVolume>) {
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(p) = ponte() {
+            p.volume_ricevuto(s);
+        }
+    });
+}
+
+/// La barra del volume della pillola (`None`: di nuovo gli occhi), al punto percentuale intero;
+/// ogni proprietà si riscrive solo se cambia.
+#[cfg(windows)]
+fn scrivi_barra(pl: &Pillola, s: Option<StatoVolume>) {
+    let (valore, muto) = match s {
+        Some(s) => (volume::percento(s.livello) as f32 / 100.0, s.muto),
+        None => (-1.0, false),
+    };
+    if pl.get_volume_mostrato() != valore {
+        pl.set_volume_mostrato(valore);
+    }
+    if pl.get_volume_muto() != muto {
+        pl.set_volume_muto(muto);
+    }
+}
+
+#[cfg(windows)]
+impl Ponte {
+    fn audio(&self) -> &volume::Audio {
+        self.audio.get_or_init(|| volume::Audio::avvia(consegna_volume))
+    }
+
+    /// Il thread `audio` parte (se non è già partito): il primo stato arriva da solo.
+    fn avvia_volume(&self) {
+        self.audio();
+    }
+
+    /// La rotella sopra la pillola: il volume cambia e la barra compare al posto degli occhi per
+    /// `BARRA_PER` dall'ultimo cambio. Il primo scatto avvia il thread `audio` e non fa altro
+    /// (lo stato non c'è ancora).
+    fn rotella_volume(&self, delta: f32) {
+        let audio = self.audio();
+        let mut rotella = self.rotella.get();
+        let nuovo = volume::muovi(&mut rotella, self.volume.get(), delta, audio);
+        self.rotella.set(rotella);
+        let Some(s) = nuovo else { return };
+        self.volume.set(Some(s));
+        let Some(pl) = self.pillola.upgrade() else { return };
+        scrivi_barra(&pl, Some(s));
+        let debole = self.pillola.clone();
+        self.sveglia_barra.start(slint::TimerMode::SingleShot, volume::BARRA_PER, move || {
+            if let Some(pl) = debole.upgrade() {
+                scrivi_barra(&pl, None);
+            }
+        });
+    }
+
+    /// Un nuovo stato da Windows (anche dai tasti del volume o da un altro dispositivo): la barra
+    /// già visibile lo segue (ma non compare: la mostra solo la rotella) e il pannello aperto lo
+    /// prende. Uguale all'ultimo: nulla.
+    fn volume_ricevuto(&self, s: Option<StatoVolume>) {
+        if self.volume.replace(s) == s {
+            return;
+        }
+        if let Some(pl) = self.pillola.upgrade().filter(|pl| pl.get_volume_mostrato() >= 0.0) {
+            if s.is_none() {
+                self.sveglia_barra.stop();
+            }
+            scrivi_barra(&pl, s);
+        }
+        if let Some(p) = self.pannello.borrow().upgrade() {
+            self.scrivi_volume(&p);
+        }
+    }
+
+    /// La riga del volume della vista PC: c'è solo con un'uscita audio; ogni proprietà si
+    /// riscrive solo se cambia (il livello al punto intero).
+    fn scrivi_volume(&self, p: &Pannello) {
+        let s = self.volume.get();
+        if p.get_volume_disponibile() != s.is_some() {
+            p.set_volume_disponibile(s.is_some());
+        }
+        let Some(s) = s else { return };
+        if volume::percento(p.get_volume()) != volume::percento(s.livello) {
+            p.set_volume(volume::percento(s.livello) as f32 / 100.0);
+        }
+        if p.get_volume_muto() != s.muto {
+            p.set_volume_muto(s.muto);
+        }
+    }
+
+    /// Un livello scelto col cursore o con la tastiera (il pannello lo mostra già).
+    fn imposta_volume(&self, livello: f32) {
+        if let Some(s) = self.volume.get() {
+            self.volume.set(Some(StatoVolume { livello, ..s }));
+        }
+        self.audio().imposta(livello);
+    }
+
+    /// Impostazioni › Isola: la rotella sulla pillola accesa o spenta, salvata e subito in vigore.
+    fn cambia_volume_rotella(&self, si: bool) {
+        self.casa.aggiorna_config(|c| c.volume_rotella = si);
+        if let Some(pl) = self.pillola.upgrade() {
+            pl.set_rotella_attiva(si);
+        }
     }
 }
 

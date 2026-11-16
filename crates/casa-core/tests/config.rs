@@ -214,3 +214,18 @@ fn schermo_scelto_salvato_e_file_di_prima_senza() {
     st.salva(&c).unwrap();
     assert_eq!(st.leggi().schermo.as_deref(), Some(r"\\.\DISPLAY2"));
 }
+
+/// M2 Task 7 (D2): la rotella del volume sulla pillola è accesa di serie, anche per un file di
+/// prima senza la chiave; spenta si salva e si rilegge spenta.
+#[test]
+fn volume_con_la_rotella_acceso_di_serie() {
+    assert!(Config::default().volume_rotella, "configurazione nuova: accesa");
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("assistente.json"), r#"{ "favorites": ["light.a"] }"#).unwrap();
+    let st = ConfigStore::apri(d.path());
+    let mut c = st.leggi();
+    assert!(c.volume_rotella, "file di prima: accesa");
+    c.volume_rotella = false;
+    st.salva(&c).unwrap();
+    assert!(!st.leggi().volume_rotella, "spenta resta spenta");
+}

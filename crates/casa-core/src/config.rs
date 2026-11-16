@@ -7,7 +7,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::io;
 use std::path::{Path, PathBuf};
 
-#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Config {
     pub environments: Vec<HaEnvironment>,
@@ -50,6 +50,43 @@ pub struct Config {
     /// non c'è. Un file di prima, senza la chiave, si legge con `None`.
     #[serde(default)]
     pub schermo: Option<String>,
+    /// La rotella sulla pillola cambia il volume del PC (M2, Task 7, solo Windows): accesa di
+    /// serie (D2), anche per un file di prima senza la chiave.
+    #[serde(default = "vero")]
+    pub volume_rotella: bool,
+}
+
+fn vero() -> bool {
+    true
+}
+
+/// Come il `Default` derivato (tutto vuoto, falso, `None`), salvo `volume_rotella` acceso: una
+/// configurazione nuova e un file senza la chiave dicono la stessa cosa.
+impl Default for Config {
+    fn default() -> Config {
+        Config {
+            environments: Vec::new(),
+            active_env_id: None,
+            favorites: Vec::new(),
+            hidden_entities: Vec::new(),
+            room_order: Vec::new(),
+            device_order: HashMap::new(),
+            area_icons: HashMap::new(),
+            cameras_enabled: false,
+            launch_at_login: false,
+            mostra_icona_barra: false,
+            ultimo_layout: String::new(),
+            importata_da_v2: false,
+            collegamenti: Vec::new(),
+            meteo_entita: None,
+            lato_sinistro: String::new(),
+            lato_destro: String::new(),
+            quadranti: Vec::new(),
+            massimi_quadranti: HashMap::new(),
+            schermo: None,
+            volume_rotella: vero(),
+        }
+    }
 }
 
 /// Il prefisso di una fonte che è un sensore di Home Assistant («sensore:sensor.sala_t»).
@@ -220,5 +257,7 @@ pub fn importa_v2(v2: &Path, segreti: &dyn Segreti) -> Result<Option<Config>, St
         massimi_quadranti: HashMap::new(),
         // La v2 non sceglieva il monitor.
         schermo: None,
+        // Né il volume: la rotella sulla pillola accesa, come di serie.
+        volume_rotella: vero(),
     }))
 }

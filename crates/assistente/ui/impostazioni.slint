@@ -680,6 +680,11 @@ export component FinestraImpostazioni inherits Window {
     callback scegli-quadrante(int, int);
     // (posizione del quadrante, testo scritto) → errore da mostrare (vuoto = salvato).
     callback cambia-massimo(int, string) -> string;
+    // Il volume del PC con la rotella sulla pillola (M2, Task 7): solo su Windows (altrove la
+    // riga non c'è); acceso di serie.
+    in-out property <bool> volume-rotella: true;
+    in property <bool> volume-rotella-disponibile: false;
+    callback cambia-volume-rotella(bool);
 
     // 0 Home Assistant, 1 Dispositivi, 2 Collegamenti, 3 Isola, 4 Sistema, 5 Informazioni.
     in-out property <int> sezione: 0;
@@ -1893,6 +1898,51 @@ export component FinestraImpostazioni inherits Window {
                         wrap: word-wrap;
                         font-size: Tema.testo-piccolo;
                         color: Tema.testo-tenue;
+                    }
+
+                    if volume-rotella-disponibile: Rectangle {
+                        height: 64px;
+                        border-radius: Tema.raggio-xl;
+                        background: Tema.card-fondo;
+                        border-width: 1px;
+                        border-color: Tema.vetro-bordo;
+
+                        Text {
+                            x: 16px;
+                            y: 12px;
+                            width: interruttore-volume.x - self.x - 12px;
+                            text: "Volume con la rotella sulla pillola";
+                            overflow: elide;
+                            font-weight: 500;
+                            font-size: Tema.testo-medio;
+                            color: Tema.testo;
+                        }
+
+                        Text {
+                            x: 16px;
+                            y: 35px;
+                            width: interruttore-volume.x - self.x - 12px;
+                            text: "Due punti a scatto; al posto degli occhi compare la barra del volume.";
+                            overflow: elide;
+                            font-size: Tema.testo-piccolo;
+                            color: Tema.testo-tenue;
+                        }
+
+                        interruttore-volume := Interruttore {
+                            x: parent.width - self.width - 18px;
+                            y: (parent.height - self.height) / 2;
+                            nome: "Volume con la rotella sulla pillola";
+                            acceso: volume-rotella;
+                            commutato => {
+                                volume-rotella = !volume-rotella;
+                                root.cambia-volume-rotella(volume-rotella);
+                            }
+                            changed has-focus => {
+                                if (self.has-focus) {
+                                    isola.porta-in-vista(parent.y, parent.height);
+                                }
+                            }
+                        }
                     }
 
                     Etichetta {

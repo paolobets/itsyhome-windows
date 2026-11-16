@@ -92,7 +92,18 @@ export component Pillola inherits Window {
     // Impostazioni › Isola. Rust li riscrive solo quando cambiano.
     in property <ContenutoLatoUi> lato-sinistro;
     in property <ContenutoLatoUi> lato-destro;
+    // Volume del PC (M2, Task 7, solo Windows): la rotella sulla pillola, a riposo o col puntino,
+    // lo cambia (`rotella-attiva`: Windows e interruttore delle Impostazioni › Isola acceso).
+    // `volume-mostrato` 0..1: al posto degli occhi la barra del volume (−1 = occhi normali); la
+    // riporta a −1 Rust, `BARRA_PER` dopo l'ultimo cambio. Da muto la barra è solo la traccia.
+    in property <bool> rotella-attiva: false;
+    in property <float> volume-mostrato: -1;
+    in property <bool> volume-muto: false;
+    property <bool> con-barra: volume-mostrato >= 0 && !allargata && !ritirata;
+    property <string> nome-volume: "Volume " + round(volume-mostrato * 100) + "%" + (volume-muto ? ", muto" : "");
     callback cliccata();
+    // La rotella sopra la pillola: lo spostamento in pixel logici (in su = positivo).
+    callback rotella(length);
     // Clic su un pulsante della pillola allargata: l'id del pulsante.
     callback azione(string);
 
@@ -326,12 +337,23 @@ export component Pillola inherits Window {
             // Per Narrator (FE16): un pulsante che apre il pannello, col messaggio se chiama (i
             // pulsanti della pillola allargata gli stanno accanto, non dentro).
             accessible-role: button;
+            // Durante la barra del volume: «Volume 40%» (con «, muto» se muto).
             accessible-label: allargata ? messaggio
+                : con-barra ? nome-volume
                 : "ItsyHome" + nome-lati + (aspetto == AspettoPillolaUi.puntino ? ", una voce in attesa" : "");
             accessible-action-default => { root.cliccata(); }
             // Il clic destro non fa nulla (16/11, Paolo): il menu sta nel «⋯» del pannello.
             clicked => {
                 root.cliccata();
+            }
+            // La rotella cambia il volume del PC solo a riposo o col puntino (non allargata né
+            // ritirata); altrimenti l'evento passa.
+            scroll-event(evento) => {
+                if (rotella-attiva && !allargata && !ritirata && evento.delta-y != 0) {
+                    root.rotella(evento.delta-y);
+                    return accept;
+                }
+                return reject;
             }
         }
 
@@ -348,8 +370,10 @@ export component Pillola inherits Window {
         }
 
         occhi := Occhi {
+            // Durante la barra del volume gli occhi non ci sono (il battito si ferma con loro).
+            visible: !con-barra;
             umore: root.umore;
-            attivo: attiva && !ritirata;
+            attivo: attiva && !ritirata && !con-barra;
             spazio: allerta ? spazio-allerta : Faccia.spazio-occhi;
             larghezza-occhio: allerta ? occhio-allerta : Faccia.larghezza-occhio;
             altezza-occhio: allerta ? altezza-occhio-allerta : Faccia.altezza-occhio;
@@ -383,6 +407,26 @@ export component Pillola inherits Window {
                 border-color: Tema.colore-livello(livello);
                 drop-shadow-blur: 3px;
                 drop-shadow-color: Tema.colore-livello(livello).with-alpha(0.5);
+            }
+        }
+
+        // La barra del volume (M2, Task 7): 40 × 6, raggio 3, centrata dove stanno gli occhi
+        // (anche con un lato solo); traccia e, se non è muto, il riempimento del colore degli occhi.
+        if con-barra: barra-volume := Rectangle {
+            x: occhi.dal-bordo + occhi.ingombro / 2 - self.width / 2;
+            y: (parent.height - self.height) / 2;
+            width: 40px;
+            height: 6px;
+            border-radius: 3px;
+            background: Tema.traccia;
+            // Per Narrator il nome sta sulla pillola (`nome-volume`).
+            accessible-role: none;
+
+            if !volume-muto: Rectangle {
+                x: 0;
+                width: parent.width * min(max(volume-mostrato, 0), 1);
+                border-radius: parent.border-radius;
+                background: Tema.occhio;
             }
         }
 

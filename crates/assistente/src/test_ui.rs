@@ -1723,4 +1723,158 @@ mod accessibilita {
         assert_eq!(elemento(&p, "CASA, Sala").accessible_value().as_deref(), Some("21,5 °C"));
         assert!(ElementHandle::find_by_accessible_label(&p, "DISCO").next().is_none(), "il disco non è più scelto");
     }
+
+    // ─── M2, Task 7: volume del PC ───
+
+    /// La barra del volume sta dove stanno gli occhi: con `volume-mostrato` 0.5 c'è la barra
+    /// (40 × 6, centrata sugli occhi) e gli occhi no, e la pillola per Narrator è «Volume 50%»;
+    /// con −1 tornano gli occhi.
+    #[test]
+    fn barra_del_volume_al_posto_degli_occhi() {
+        piattaforma_di_prova();
+        let p = Pillola::new().expect("pillola");
+        p.show().expect("pillola mostrata nel backend di prova");
+        let conta = |id: &str| ElementHandle::find_by_element_id(&p, id).count();
+        assert_eq!(conta("Pillola::occhi"), 1);
+        assert_eq!(conta("Pillola::barra-volume"), 0);
+
+        p.set_volume_mostrato(0.5);
+        assert_eq!(conta("Pillola::barra-volume"), 1, "barra visibile");
+        assert_eq!(conta("Pillola::occhi"), 0, "occhi nascosti");
+        let barra = ElementHandle::find_by_element_id(&p, "Pillola::barra-volume").next().expect("barra");
+        assert_eq!((barra.size().width, barra.size().height), (40.0, 6.0));
+        let centro = barra.absolute_position().x + barra.size().width / 2.0;
+        assert_eq!(centro, p.get_larghezza_finestra() / 2.0, "senza lati gli occhi (e la barra) stanno al centro");
+        assert_eq!(elemento(&p, "Volume 50%").accessible_role(), Some(AccessibleRole::Button));
+        p.set_volume_muto(true);
+        assert!(ElementHandle::find_by_accessible_label(&p, "Volume 50%, muto").next().is_some());
+
+        p.set_volume_mostrato(-1.0);
+        assert_eq!(conta("Pillola::occhi"), 1, "occhi di nuovo visibili");
+        assert_eq!(conta("Pillola::barra-volume"), 0);
+        assert!(ElementHandle::find_by_accessible_label(&p, "ItsyHome").next().is_some());
+    }
+
+    /// La rotella sopra la pillola arriva a Rust solo se accesa (Windows e interruttore) e solo a
+    /// riposo o col puntino, mai da allargata.
+    #[test]
+    fn rotella_sulla_pillola_solo_a_riposo() {
+        piattaforma_di_prova();
+        let p = Pillola::new().expect("pillola");
+        p.show().expect("pillola mostrata nel backend di prova");
+        let ricevuti = std::rc::Rc::new(std::cell::RefCell::new(Vec::<f32>::new()));
+        let r = ricevuti.clone();
+        p.on_rotella(move |d| r.borrow_mut().push(d));
+        elemento(&p, "ItsyHome").scroll(0.0, 60.0);
+        assert!(ricevuti.borrow().is_empty(), "spenta di serie");
+        p.set_rotella_attiva(true);
+        elemento(&p, "ItsyHome").scroll(0.0, 60.0);
+        elemento(&p, "ItsyHome").scroll(0.0, -60.0);
+        p.set_aspetto(AspettoPillolaUi::Puntino);
+        elemento(&p, "ItsyHome, una voce in attesa").scroll(0.0, 60.0);
+        assert_eq!(*ricevuti.borrow(), [60.0, -60.0, 60.0]);
+        p.set_aspetto(AspettoPillolaUi::Allargata);
+        p.set_messaggio("La casa chiede di te".into());
+        elemento(&p, "La casa chiede di te").scroll(0.0, 60.0);
+        assert_eq!(ricevuti.borrow().len(), 3, "allargata la rotella non cambia il volume");
+    }
+
+    /// Quanti elementi accessibili parlano di volume nel pannello.
+    fn elementi_volume(p: &Pannello) -> usize {
+        i_slint_backend_testing::ElementQuery::from_root(p)
+            .match_descendants()
+            .find_all()
+            .iter()
+            .filter(|e| e.accessible_label().is_some_and(|l| l.to_lowercase().contains("volume")))
+            .count()
+    }
+
+    /// Vista PC (D3 di Paolo): senza volume disponibile la riga non c'è (nessun elemento
+    /// «Volume», non una riga spenta); con il volume ci sono l'altoparlante (pulsante, muto sì/no
+    /// anche con Narrator) e il cursore (slider col valore).
+    #[test]
+    fn altoparlante_assente_senza_volume() {
+        piattaforma_di_prova();
+        let p = pannello();
+        p.set_vista("pc".into());
+        assert!(ElementHandle::find_by_accessible_label(&p, "RETE").next().is_some(), "vista PC caricata");
+        assert_eq!(elementi_volume(&p), 0, "senza volume nessun elemento «Volume»");
+
+        p.set_volume_disponibile(true);
+        p.set_volume(0.4);
+        let altoparlante = elemento(&p, "Volume 40%");
+        assert_eq!(altoparlante.accessible_role(), Some(AccessibleRole::Button));
+        let cursore = elemento(&p, "Volume");
+        assert_eq!(cursore.accessible_role(), Some(AccessibleRole::Slider));
+        assert_eq!(cursore.accessible_value().as_deref(), Some("40%"));
+        assert_eq!((cursore.accessible_value_minimum(), cursore.accessible_value_maximum()), (Some(0.0), Some(100.0)));
+        assert_eq!(cursore.size().width, 150.0, "largo quanto le barre delle altre righe");
+        let muti = std::rc::Rc::new(std::cell::RefCell::new(Vec::<bool>::new()));
+        let m = muti.clone();
+        p.on_muto_volume(move |si| m.borrow_mut().push(si));
+        altoparlante.invoke_accessible_default_action();
+        assert_eq!(*muti.borrow(), [true]);
+        p.set_volume_muto(true);
+        assert!(ElementHandle::find_by_accessible_label(&p, "Volume 40%, muto").next().is_some());
+
+        p.set_volume_disponibile(false);
+        assert_eq!(elementi_volume(&p), 0, "dispositivo sparito: la riga sparisce");
+    }
+
+    /// Il cursore della vista PC da tastiera: il fuoco del contenuto è sul cursore, → due volte
+    /// danno +4 punti, Home e Fine 0 e 100, Invio muto sì/no; Narrator lo sposta di 2 punti.
+    #[test]
+    fn cursore_da_tastiera() {
+        use slint::platform::Key;
+        piattaforma_di_prova();
+        let p = pannello();
+        p.set_app(app());
+        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        p.global::<crate::Fuochi>().set_pronti(true);
+        p.set_volume_disponibile(true);
+        p.set_volume(0.40);
+        p.set_vista("pc".into());
+        let livelli = std::rc::Rc::new(std::cell::RefCell::new(Vec::<i32>::new()));
+        let l = livelli.clone();
+        p.on_imposta_volume(move |v| l.borrow_mut().push((v * 100.0).round() as i32));
+        let muti = std::rc::Rc::new(std::cell::RefCell::new(Vec::<bool>::new()));
+        let m = muti.clone();
+        p.on_muto_volume(move |si| m.borrow_mut().push(si));
+
+        tasto(&p, Key::RightArrow);
+        assert!(col_fuoco_pannello(&p).ends_with("::fuoco-volume"), "fuoco sul cursore: «{}»", col_fuoco_pannello(&p));
+        tasto(&p, Key::RightArrow);
+        assert_eq!(*livelli.borrow(), [42, 44], "+4 punti");
+        assert_eq!(elemento(&p, "Volume").accessible_value().as_deref(), Some("44%"), "il cursore segue subito");
+        tasto(&p, Key::LeftArrow);
+        tasto(&p, Key::Home);
+        tasto(&p, Key::End);
+        assert_eq!(*livelli.borrow(), [42, 44, 42, 0, 100]);
+        tasto(&p, Key::Return);
+        assert_eq!(*muti.borrow(), [true], "Invio: muto");
+        elemento(&p, "Volume").invoke_accessible_decrement_action();
+        assert_eq!(livelli.borrow().last(), Some(&98), "Narrator: 2 punti in meno");
+        assert_eq!(p.get_vista(), "pc", "le frecce non cambiano vista");
+    }
+
+    /// Impostazioni › Isola: «Volume con la rotella sulla pillola» solo dove c'è il volume
+    /// (Windows), acceso di serie; il commutatore lo dice a Rust.
+    #[test]
+    fn interruttore_del_volume_nella_sezione_isola() {
+        let (f, _) = scheda_isola();
+        let interruttore = |f: &FinestraImpostazioni| {
+            ElementHandle::find_by_accessible_label(f, "Volume con la rotella sulla pillola")
+                .find(|e| e.accessible_role() == Some(AccessibleRole::Switch))
+        };
+        assert!(interruttore(&f).is_none(), "senza volume la riga non c'è");
+        f.set_volume_rotella_disponibile(true);
+        let i = interruttore(&f).expect("interruttore");
+        assert_eq!(i.accessible_checked(), Some(true), "acceso di serie");
+        let cambi = std::rc::Rc::new(std::cell::RefCell::new(Vec::<bool>::new()));
+        let c = cambi.clone();
+        f.on_cambia_volume_rotella(move |si| c.borrow_mut().push(si));
+        i.invoke_accessible_default_action();
+        assert_eq!(*cambi.borrow(), [false]);
+        assert_eq!(i.accessible_checked(), Some(false));
+    }
 }

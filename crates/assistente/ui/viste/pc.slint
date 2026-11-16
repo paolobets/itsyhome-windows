@@ -1,8 +1,9 @@
-// Vista PC: l'elenco dettagliato delle statistiche (CPU, RAM, disco, rete, batteria se c'è).
+// Vista PC, la «card del PC»: l'elenco dettagliato delle statistiche (CPU, RAM, disco, rete,
+// batteria se c'è) e i comandi del PC (M2, Task 7: il volume; poi Wi-Fi/Bluetooth, cuffie, GPU).
 import { Tema } from "../tema.slint";
 import { Icone, Icona, Vetro } from "../icone.slint";
 import { StatPcUi, TintaBatteriaUi } from "../voci.slint";
-import { Etichetta, GlifoBatteria } from "../componenti.slint";
+import { Etichetta, GlifoBatteria, Fuoco, Anello } from "../componenti.slint";
 
 // Una riga: etichetta, valore e (se serve) una barra sottile con la frazione usata.
 component Riga inherits Rectangle {
@@ -96,11 +97,173 @@ component Riga inherits Rectangle {
     }
 }
 
+// La riga del volume del PC (M2, Task 7; solo Windows con un'uscita audio, altrimenti non c'è):
+// alta e impaginata come le altre righe (etichetta a sinistra; nella colonna del valore,
+// larga 150, l'altoparlante e la percentuale in alto e il cursore al posto della barra). Il cursore
+// è sempre visibile. Altoparlante: clic o Narrator = muto sì/no. Cursore: clic o trascinamento;
+// la tastiera la tiene il pannello (←/→ ±2 punti, Home/Fine 0/100, Invio o Spazio muto sì/no),
+// qui solo il fuoco vero (`fuoco`, per Narrator) e l'anello.
+component RigaVolume inherits Rectangle {
+    // 0..1 come lo dice Rust (l'ultimo stato letto, o l'ultimo comando dato da qui).
+    in property <float> livello;
+    in property <bool> muto;
+    in property <bool> fuoco;
+    callback imposta(float);
+    callback cambia-muto(bool);
+    // Durante il trascinamento il cursore segue il mouse, non gli stati che tornano da Windows
+    // (arrivano in ritardo e lo farebbero tremare).
+    property <bool> trascina: false;
+    property <float> posizione;
+    property <float> mostrato: trascina ? posizione : min(max(livello, 0), 1);
+    property <int> pct: round(mostrato * 100);
+    property <length> colonna-x: root.width - 14px - 150px;
+    property <length> lato-pomello: 12px;
+    height: 44px;
+
+    function al-punto(x: length) {
+        posizione = round(min(max(x / 150px, 0), 1) * 100) / 100;
+        root.imposta(posizione);
+    }
+
+    function passo(punti: int) {
+        root.imposta(min(max((round(livello * 100) + punti) / 100, 0), 1));
+    }
+
+    Etichetta {
+        x: 14px;
+        y: 7px;
+        text: "VOLUME";
+    }
+
+    if muto: Text {
+        x: 14px;
+        y: 24px;
+        width: max(0px, colonna-x - 14px - 22px);
+        text: "Audio disattivato";
+        overflow: elide;
+        font-size: Tema.testo-piccolo;
+        color: Tema.testo-tenue;
+        accessible-role: none;
+    }
+
+    // L'altoparlante: bersaglio 28 × 24, icona 18, all'inizio della colonna del valore.
+    Rectangle {
+        x: colonna-x - 6px;
+        y: 4px;
+        width: 28px;
+        height: 24px;
+        border-radius: Tema.raggio-s;
+        background: tocco-altoparlante.has-hover ? Tema.scheda-sopra : transparent;
+        accessible-role: button;
+        accessible-label: "Volume " + pct + "%" + (muto ? ", muto" : "");
+        accessible-description: muto ? "Riattiva l'audio" : "Disattiva l'audio";
+        accessible-action-default => { root.cambia-muto(!muto); }
+
+        Image {
+            width: 18px;
+            height: 18px;
+            source: muto ? Icone.altoparlante-muto : Icone.altoparlante;
+            colorize: Tema.icona;
+            image-rendering: smooth;
+            accessible-role: none;
+        }
+
+        tocco-altoparlante := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.cambia-muto(!muto); }
+        }
+    }
+
+    Text {
+        x: root.width - 14px - self.width;
+        y: 7px;
+        width: 100px;
+        text: pct + "%";
+        horizontal-alignment: right;
+        font-weight: 500;
+        font-size: Tema.testo-titolo;
+        color: muto ? Tema.testo-tenue : Tema.testo;
+        accessible-role: none;
+    }
+
+    // Il cursore: traccia 150 × 4 dove le altre righe hanno la barra, riempimento e pomello.
+    cursore := Rectangle {
+        x: colonna-x;
+        y: 21px;
+        width: 150px;
+        height: 20px;
+        accessible-role: slider;
+        accessible-label: "Volume";
+        accessible-value: pct + "%";
+        accessible-value-minimum: 0;
+        accessible-value-maximum: 100;
+        accessible-value-step: 2;
+        accessible-action-increment => { passo(2); }
+        accessible-action-decrement => { passo(-2); }
+        accessible-action-set-value(v) => { root.imposta(min(max(v.to-float() / 100, 0), 1)); }
+
+        fuoco-volume := Fuoco { chiede: fuoco; }
+
+        Rectangle {
+            y: 8px;
+            height: 4px;
+            border-radius: self.height / 2;
+            background: Tema.traccia;
+
+            if !muto: Rectangle {
+                x: 0;
+                width: parent.width * mostrato;
+                border-radius: parent.border-radius;
+                background: Tema.petalo-2;
+            }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) * mostrato;
+            y: (parent.height - self.height) / 2;
+            width: lato-pomello;
+            height: lato-pomello;
+            border-radius: self.height / 2;
+            background: muto ? Tema.testo-tenue : Tema.testo;
+        }
+
+        // Più larga della traccia di mezzo pomello per lato: gli estremi si prendono bene.
+        TouchArea {
+            x: -6px;
+            width: parent.width + 12px;
+            mouse-cursor: pointer;
+            pointer-event(evento) => {
+                if (evento.button == PointerEventButton.left && evento.kind == PointerEventKind.down) {
+                    trascina = true;
+                    al-punto(self.mouse-x - 6px);
+                } else if (evento.button == PointerEventButton.left && evento.kind == PointerEventKind.up) {
+                    trascina = false;
+                }
+            }
+            moved => {
+                if (self.pressed) {
+                    al-punto(self.mouse-x - 6px);
+                }
+            }
+        }
+
+        if fuoco: Anello { raggio: Tema.raggio-s; }
+    }
+}
+
 export component VistaPc inherits Rectangle {
     in property <StatPcUi> stat;
+    // Il volume del PC (M2, Task 7): la riga c'è solo se disponibile (Windows con un'uscita
+    // audio); `fuoco-volume`: il cursore ha il fuoco da tastiera del pannello.
+    in property <bool> volume-disponibile: false;
+    in property <float> volume;
+    in property <bool> volume-muto;
+    in property <bool> fuoco-volume;
+    callback imposta-volume(float);
+    callback muto-volume(bool);
     property <length> alto-riga: 44px;
 
-    // Pannello basso: le righe stanno su due colonne (PC a sinistra, rete e batteria a destra),
+    // Pannello basso: le righe stanno su due colonne (PC a sinistra, rete, batteria e volume a destra),
     // tre posti per colonna distribuiti su tutta l'altezza della card (UX22: niente terzo
     // inferiore vuoto) e allineati fra le colonne (i posti senza riga restano vuoti).
     Vetro {
@@ -159,9 +322,18 @@ export component VistaPc inherits Rectangle {
                     tinta: stat.tinta-batteria;
                 }
 
-                // Posti vuoti: le righe restano allineate a quelle della colonna del PC.
-                if !stat.ha-batteria: Rectangle { height: alto-riga; }
-                Rectangle { height: alto-riga; }
+                if volume-disponibile: RigaVolume {
+                    livello: root.volume;
+                    muto: root.volume-muto;
+                    fuoco: root.fuoco-volume;
+                    imposta(v) => { root.imposta-volume(v); }
+                    cambia-muto(si) => { root.muto-volume(si); }
+                }
+
+                // Posti vuoti: le righe restano allineate a quelle della colonna del PC (tre posti
+                // per colonna).
+                if !stat.ha-batteria && !volume-disponibile: Rectangle { height: alto-riga; }
+                if !(stat.ha-batteria && volume-disponibile): Rectangle { height: alto-riga; }
             }
         }
     }

@@ -296,6 +296,8 @@ dependencies = [
  "tempfile",
  "tray-icon",
  "url",
+ "windows",
+ "windows-core",
  "windows-registry",
  "windows-sys 0.52.0",
 ]

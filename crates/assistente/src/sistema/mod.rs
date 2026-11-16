@@ -20,6 +20,7 @@ pub mod schermo_intero;
 pub mod scorciatoie;
 pub mod servizi;
 pub mod tray;
+pub mod volume;
 
 use std::time::{Duration, Instant};
 
