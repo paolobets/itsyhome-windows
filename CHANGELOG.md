@@ -171,6 +171,18 @@ Riposo non rimisurato a schermo libero: durante tutta la prova lo schermo era bl
 | Riposo 5 min, casa piccola, 7 preferiti, `--umore calm` | 14g: 0,016%, 8,0–8,2 MB | **0,015%** (max 0,33), **8,0–8,1 MB** |
 | Raffica anti-glitch (raffica 20/s + un evento del registro al secondo, 20 s a 60 fps) | — | soli registri 1199 fotogrammi **0 difettosi**; letture complete 1199 **0 difettosi**; controllo negativo 299 su 299 |
 
+### Fixed (Task 14h, giro di correzioni 1)
+- Le entità nascoste dall'utente restano seguite (sono nel catalogo delle Impostazioni): un nome cambiato dall'integrazione (`original_name`) o col dispositivo rinominato (`has_entity_name`, evento con `changes: {}`) arriva senza riconnettersi. Questi eventi, e il nome del dispositivo, fanno rileggere i soli registri.
+- Un evento dei registri arrivato mentre una lettura è in volo o in coda non si decide più sui registri vecchi: ciò che dipende dai registri li rilegge dopo (anche durante la prima lettura, senza una seconda lettura completa).
+- Dispositivi figli (HA 2026.9+, `parent_device_id`): senza stanza propria le loro entità prendono la stanza del padre, come in HA, invece di finire in «Altro».
+- Un pannello che non si riesce a mostrare spegne i modelli della vista Casa.
+
+### Added (Task 14h, giro di correzioni 1)
+- Registro diagnostico: `avvio_lettura_ms`, `avvio_consegna_ms`, `avvio_consegna_byte`, `avvio_consegna_cpu_ms` (il primo minuto, scritti una volta), `ui_pensa_ms`, `registro_campo_*` (campi di `changes` da un elenco fisso).
+
+### Limiti noti (Task 14h)
+- Il buffer di ricezione del WebSocket (`tungstenite`) resta grande quanto il messaggio più grande ricevuto, per tutta la connessione: sulla casa vera la risposta di `get_states`, circa 1–3 MB, una volta sola.
+
 ### Changed (Task 14i: decisione di Paolo, 16/11/2026)
 - Riga alta del pannello: dopo l'ora il pulsante **«⋯»** («Altre opzioni», 28 × 28, anello da tastiera) apre lo stesso menu nativo del clic destro sulla pillola, senza «Apri» e con «Impostazioni» in testa (Impostazioni, Informazioni, Ritira/Mostra l'isola, Esci), sotto il pulsante e allineato al suo bordo destro dentro l'area di lavoro. Esc lo chiude e il fuoco resta su «⋯»; «Ritira l'isola» da qui chiude il pannello e ritira subito la pillola.
 - Dock di sole app: via l'ingranaggio delle Impostazioni. Tab gira fra «In attesa», contenuto, dock e «⋯».
