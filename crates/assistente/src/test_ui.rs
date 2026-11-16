@@ -348,6 +348,50 @@ mod accessibilita {
         assert!(ElementHandle::find_by_accessible_label(&f, "Avvia con il sistema").next().is_some());
     }
 
+    /// Fuori da Windows (nessun menu né icona nella barra) Impostazioni › Sistema ha «Esci
+    /// dall'assistente» con il pulsante «Esci»: si vede solo con il flag acceso, ha ruolo e nome per
+    /// Narrator, si raggiunge con Tab e si preme con Invio, e chiama il callback che chiude l'app.
+    #[test]
+    fn esci_nelle_impostazioni_fuori_da_windows() {
+        use slint::platform::{Key, WindowEvent};
+        piattaforma_di_prova();
+        let f = FinestraImpostazioni::new().expect("impostazioni");
+        f.set_sezione(3);
+        f.show().expect("impostazioni mostrate nel backend di prova");
+        f.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
+        let chiamate = std::rc::Rc::new(std::cell::Cell::new(0));
+        let c = chiamate.clone();
+        f.on_esci(move || c.set(c.get() + 1));
+        let ce = |nome: &str| ElementHandle::find_by_accessible_label(&f, nome).next().is_some();
+        // Spento (di serie, e su Windows): né riga né pulsante.
+        assert!(!ce("Esci dall'assistente") && !ce("Esci"));
+        f.set_fuori_da_windows(true);
+        assert!(ce("Esci dall'assistente"), "la riga si vede");
+        let esci = ElementHandle::find_by_accessible_label(&f, "Esci")
+            .find(|e| e.accessible_role() == Some(AccessibleRole::Button))
+            .expect("pulsante «Esci»");
+        // Come lo aziona Narrator.
+        esci.invoke_accessible_default_action();
+        assert_eq!(chiamate.get(), 1, "il pulsante chiama il callback");
+        // Da tastiera: Tab fino al pulsante (al più 20 passi), poi Invio.
+        let tasto = |t: Key| {
+            f.window().dispatch_event(WindowEvent::KeyPressed { text: t.into() });
+            f.window().dispatch_event(WindowEvent::KeyReleased { text: t.into() });
+        };
+        for _ in 0..20 {
+            if chiamate.get() == 2 {
+                break;
+            }
+            tasto(Key::Tab);
+            tasto(Key::Return);
+            // Invio su una voce del menu laterale cambia sezione: si torna a Sistema, il fuoco resta.
+            f.set_sezione(3);
+        }
+        assert_eq!(chiamate.get(), 2, "Tab raggiunge il pulsante e Invio lo preme");
+        f.set_fuori_da_windows(false);
+        assert!(!ce("Esci dall'assistente") && !ce("Esci"), "spento di nuovo: sparito");
+    }
+
     #[test]
     fn sezioni_delle_impostazioni_selezionate() {
         piattaforma_di_prova();

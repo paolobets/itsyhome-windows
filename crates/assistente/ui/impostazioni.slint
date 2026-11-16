@@ -526,6 +526,8 @@ export component FinestraImpostazioni inherits Window {
     // L'icona nell'area di notifica (fuori da Windows non c'è: l'interruttore non si mostra).
     in-out property <bool> icona-barra;
     in property <bool> icona-barra-disponibile: true;
+    // Fuori da Windows non c'è il menu né l'icona nella barra: qui sta l'unico «Esci» (Sistema).
+    in property <bool> fuori-da-windows: false;
     in property <bool> config-non-salvata;
     in property <string> versione;
     in property <string> dettagli-tecnici;
@@ -542,6 +544,8 @@ export component FinestraImpostazioni inherits Window {
     callback disconnetti-casa();
     callback cambia-avvio(bool);
     callback cambia-icona-barra(bool);
+    // «Esci» di Impostazioni › Sistema (solo fuori da Windows): Rust chiude l'applicazione.
+    callback esci();
     callback annulla-prova();
     // Esc fuori da un campo: Rust chiude (e distrugge) la finestra.
     callback chiudi();
@@ -1821,8 +1825,44 @@ export component FinestraImpostazioni inherits Window {
                 }
             }
 
-            if config-non-salvata: Text {
+            // Fuori da Windows (niente menu né icona nella barra) l'unico modo per uscire.
+            if fuori-da-windows: Rectangle {
                 y: icona-barra-disponibile ? 196px : 120px;
+                height: 64px;
+                border-radius: Tema.raggio-xl;
+                background: Tema.card-fondo;
+                border-width: 1px;
+                border-color: Tema.vetro-bordo;
+
+                Text {
+                    x: 16px;
+                    y: 12px;
+                    text: "Esci dall'assistente";
+                    font-weight: 500;
+                    font-size: Tema.testo-medio;
+                    color: Tema.testo;
+                }
+
+                Text {
+                    x: 16px;
+                    y: 35px;
+                    width: pulsante-esci.x - self.x - 12px;
+                    text: "Chiude pillola e pannello. Per riaprirlo, avvialo di nuovo.";
+                    overflow: elide;
+                    font-size: Tema.testo-piccolo;
+                    color: Tema.testo-tenue;
+                }
+
+                pulsante-esci := Bottone {
+                    x: parent.width - self.width - 18px;
+                    y: (parent.height - self.height) / 2;
+                    testo: "Esci";
+                    premuto => { root.esci(); }
+                }
+            }
+
+            if config-non-salvata: Text {
+                y: (icona-barra-disponibile ? 196px : 120px) + (fuori-da-windows ? 76px : 0px);
                 width: parent.width;
                 text: "Le impostazioni non sono state salvate su disco: il dettaglio è in Informazioni.";
                 wrap: word-wrap;

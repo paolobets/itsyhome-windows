@@ -1276,6 +1276,11 @@ impl Ponte {
         f.set_ambienti(ModelRc::from(self.modello_ambienti.clone()));
         f.set_versione(env!("CARGO_PKG_VERSION").into());
         f.set_icona_barra_disponibile(cfg!(windows));
+        f.set_fuori_da_windows(cfg!(not(windows)));
+        // Fuori da Windows menu e icona non ci sono: «Esci» di Sistema chiude come `Comando::Esci`.
+        f.on_esci(|| {
+            let _ = slint::quit_event_loop();
+        });
         f.set_righe_dispositivi(ModelRc::from(self.righe.clone()));
         f.set_collegamenti(ModelRc::from(self.collegamenti.clone()));
         f.on_controlla_nome_collegamento(|nome| collegamenti::valida_nome(&nome).err().unwrap_or_default().into());
