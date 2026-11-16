@@ -249,11 +249,10 @@ impl Apertura {
         self.aggiorna_fonti(pannello);
         let fonti = self.fonti.clone();
         let thread = std::thread::Builder::new().name("campioni-pc".into()).spawn(move || {
-            let leggi = |f: &Mutex<Fonti>| f.lock().map(|g| *g).unwrap_or(Fonti::TUTTE);
-            let mut campionatore = Campionatore::new(leggi(&fonti));
+            let mut campionatore = Campionatore::new(fonti_lette(&fonti));
             let mut attesa = SECONDO_CAMPIONE;
             while !stop.load(Ordering::Relaxed) {
-                let stat = campionatore.campiona(leggi(&fonti));
+                let stat = campionatore.campiona(fonti_lette(&fonti));
                 let pronta = campionatore.cpu_pronta();
                 let debole = debole.clone();
                 let consegnato = slint::invoke_from_event_loop(move || {
@@ -581,9 +580,30 @@ impl Apertura {
     }
 }
 
+/// Le fonti che il thread `campioni-pc` deve leggere adesso. Con il `Mutex` avvelenato (solo dopo
+/// un panico) le fonti lente restano spente (`Fonti::default()`): accenderle tutte aprirebbe anche
+/// il lettore della GPU senza che nessuno l'abbia chiesto.
+fn fonti_lette(f: &Mutex<Fonti>) -> Fonti {
+    f.lock().map(|g| *g).unwrap_or_default()
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn mutex_avvelenato_fonti_lente_spente() {
+        let fonti = Arc::new(Mutex::new(Fonti::TUTTE));
+        assert_eq!(fonti_lette(&fonti), Fonti::TUTTE);
+        let f = fonti.clone();
+        let _ = std::thread::spawn(move || {
+            let _g = f.lock().unwrap();
+            panic!("avvelena il Mutex (panico voluto nel test)");
+        })
+        .join();
+        assert!(fonti.is_poisoned());
+        assert_eq!(fonti_lette(&fonti), Fonti::default(), "GPU, dischi e reti spenti");
+    }
 
     fn stat(cpu: Option<f32>) -> StatPc {
         StatPc {

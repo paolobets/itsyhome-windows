@@ -3,8 +3,8 @@
 // solo se c'è il dato). «Energia e audio»: batteria (se c'è), volume (Task 7) e cuffie Bluetooth (Task 9).
 // «Connessioni»: la rete (icona con le tacche e velocità), i riquadri Wi-Fi e Bluetooth e le
 // righe che aprono le pagine di Windows (solo su Windows: altrove la colonna ha solo la rete).
-// Le righe sono alte 38 (testi ≥ 12 px): con l'intestazione stanno quattro righe per colonna nei
-// 172 px della card.
+// Le righe sono alte 38 (testi ≥ 12 px). Che la colonna più piena (intestazione e quattro righe)
+// stia nel pannello lo prova il test `vista_pc_entra_nel_pannello`, col caso più pieno.
 import { Tema } from "../tema.slint";
 import { Icone, Icona, Vetro } from "../icone.slint";
 import { StatPcUi, TintaBatteriaUi, TipoReteUi } from "../voci.slint";
@@ -273,6 +273,10 @@ component RigaVolume inherits Rectangle {
                     trascina = true;
                     al-punto(self.mouse-x - 6px);
                 } else if (evento.button == PointerEventButton.left && evento.kind == PointerEventKind.up) {
+                    trascina = false;
+                } else if (evento.kind == PointerEventKind.cancel) {
+                    // Il sistema ha tolto il puntatore (finestra persa, tocco annullato): senza
+                    // questo il cursore resterebbe «in trascinamento» e non seguirebbe più Windows.
                     trascina = false;
                 }
             }

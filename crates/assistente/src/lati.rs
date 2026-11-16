@@ -263,10 +263,12 @@ pub fn contenuto(l: &Lato, d: &DatiLati) -> ContenutoLato {
     }
 }
 
-/// I lati che cambiano col tempo (ora, CPU, RAM): in «dorme» restano vuoti, perché fermi
-/// sarebbero sbagliati (giro di correzioni 1). Batteria, meteo e sensori restano.
+/// I lati che in «dorme» restano vuoti, perché fermi sarebbero sbagliati (giro di correzioni 1):
+/// ora, CPU e RAM, che cambiano col tempo, e la rete, perché in «dorme» `OsservaRete` è spento e
+/// un Wi-Fi caduto non si vedrebbe (m1 della revisione finale di M2; il posto dell'icona resta,
+/// `con_rete`, quindi la larghezza non cambia). Batteria, meteo e sensori restano.
 pub fn a_tempo(l: &Lato) -> bool {
-    matches!(l, Lato::Ora | Lato::Cpu | Lato::Ram)
+    matches!(l, Lato::Ora | Lato::Cpu | Lato::Ram | Lato::Rete)
 }
 
 /// Il campione per misurare un lato: la pillola si misura su questo e non sul valore vero, così
@@ -559,7 +561,7 @@ mod test {
         assert_eq!(contenuto(&Lato::Rete, &d), ContenutoLato::Rete(StatoRete::WiFi { tacche: 2 }));
         // Nessun testo: niente campione da misurare (il posto dell'icona lo tiene l'interfaccia).
         assert_eq!(campione(&Lato::Rete, &d), None);
-        assert!(!a_tempo(&Lato::Rete), "in «dorme» l'icona resta");
+        assert!(a_tempo(&Lato::Rete), "in «dorme» l'osservatore è spento: l'icona si svuota");
         d.rete = None;
         assert_eq!(contenuto(&Lato::Rete, &d), ContenutoLato::Vuoto, "non ancora letta");
         assert!(bisogni(&Lato::Rete, &Lato::Niente).rete);
@@ -606,7 +608,7 @@ mod test {
         let ContenutoLato::Testo(t) = contenuto(&id, &d) else { panic!() };
         assert!(caratteri(&t) <= caratteri(&campione(&id, &d).unwrap()), "{t}");
         // I lati a tempo, quelli che in «dorme» restano vuoti.
-        assert!(a_tempo(&Lato::Ora) && a_tempo(&Lato::Cpu) && a_tempo(&Lato::Ram));
+        assert!(a_tempo(&Lato::Ora) && a_tempo(&Lato::Cpu) && a_tempo(&Lato::Ram) && a_tempo(&Lato::Rete));
         assert!(!a_tempo(&Lato::Batteria) && !a_tempo(&Lato::Meteo) && !a_tempo(&id));
     }
 

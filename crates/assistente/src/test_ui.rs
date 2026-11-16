@@ -2266,10 +2266,15 @@ mod accessibilita {
         assert!(ElementHandle::find_by_accessible_label(&p, "ItsyHome, Wi-Fi, 2 tacche su 3").next().is_some());
         assert_eq!(ElementHandle::find_by_element_type_name(&p, "IconaRete").count(), 1);
         d.rete = Some(StatoRete::Cavo);
+        p.set_lato_destro(lato_ui(&Lato::Rete, &d, false));
+        assert!(ElementHandle::find_by_accessible_label(&p, "ItsyHome, rete via cavo").next().is_some());
+        // In «dorme» `OsservaRete` è spento: l'icona si svuota (non mostra una rete forse caduta),
+        // ma il posto resta e la pillola non cambia larghezza (m1 della revisione finale di M2).
+        let larghezza = p.get_larghezza_pillola();
         p.set_lato_destro(lato_ui(&Lato::Rete, &d, true));
-        assert!(
-            ElementHandle::find_by_accessible_label(&p, "ItsyHome, rete via cavo").next().is_some(),
-            "in «dorme» l'icona resta"
-        );
+        assert_eq!(ElementHandle::find_by_element_type_name(&p, "IconaRete").count(), 0, "in «dorme» l'icona si svuota");
+        assert!(ElementHandle::find_by_accessible_label(&p, "ItsyHome").next().is_some(), "Narrator non legge la rete ferma");
+        assert_eq!(p.get_ingombro_lato_destro(), 16.0, "il posto resta");
+        assert_eq!(p.get_larghezza_pillola(), larghezza, "stessa larghezza");
     }
 }
