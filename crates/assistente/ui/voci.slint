@@ -47,6 +47,12 @@ export struct StatPcUi {
     // Tinta del glifo della batteria (vedi `pc_stats::TintaBatteria`); il valore predefinito è
     // il neutro.
     tinta-batteria: TintaBatteriaUi,
+    // GPU (M2, Task 10, solo Windows): `ha-gpu` falso = nessun dato (fuori da Windows, GPU non
+    // mostrata, lettura fallita o primo campione), e allora riga e arco non ci sono; `gpu` è la
+    // frazione 0..1, `gpu-testo` «37%».
+    ha-gpu: bool,
+    gpu: float,
+    gpu-testo: string,
 }
 
 // Un preferito della casa, già pronto per l'interfaccia (vedi `ponte::voce_ui`).
@@ -172,7 +178,7 @@ export struct ContenutoLatoUi {
 }
 
 // La fonte di un quadrante configurabile (vedi `lati::Lato`).
-export enum FonteQuadranteUi { niente, cpu, ram, disco, rete-giu, rete-su, batteria, ora, meteo, sensore }
+export enum FonteQuadranteUi { niente, cpu, ram, disco, rete-giu, rete-su, batteria, ora, meteo, sensore, gpu }
 
 // Un quadrante configurabile dei Quadranti (vedi `ponte::quadranti_ui`). Per le fonti del PC e
 // per l'ora i valori li legge l'interfaccia (`StatPcUi`, l'ora del pannello); per meteo e sensori

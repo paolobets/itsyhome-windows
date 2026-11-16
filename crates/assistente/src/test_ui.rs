@@ -1966,6 +1966,9 @@ mod accessibilita {
             batteria_testo: "100%".into(),
             batteria_frazione: 1.0,
             in_carica: true,
+            ha_gpu: true,
+            gpu: 1.0,
+            gpu_testo: "100%".into(),
             ..Default::default()
         });
         p.set_volume_disponibile(true);
@@ -1988,8 +1991,8 @@ mod accessibilita {
     }
 
     /// Il pannello è 800 × 300 fisso: nella vista PC, col caso più pieno (batteria, volume muto,
-    /// rete veloce, nome della rete lungo, riga del rifiuto), nulla esce dalla card né dalla sua
-    /// colonna.
+    /// rete veloce, nome della rete lungo, riga del rifiuto, GPU al 100%), nulla esce dalla card né
+    /// dalla sua colonna.
     #[test]
     fn vista_pc_entra_nel_pannello() {
         piattaforma_di_prova();
@@ -2031,6 +2034,12 @@ mod accessibilita {
         for colonna in ["Sistema", "Energia e audio", "Connessioni"] {
             dentro(&elemento(&p, colonna), colonna);
         }
+        // La riga GPU (Task 10) c'è, è l'ultima della colonna «Sistema» e sta nella card.
+        let gpu = elemento(&p, "GPU");
+        let (gp, gs) = (gpu.absolute_position(), gpu.size());
+        let disco = elemento(&p, "DISCO");
+        assert!(gp.y >= disco.absolute_position().y + disco.size().height - 0.5, "GPU sotto il disco");
+        assert!(gp.y + gs.height <= pos.y + lato.height + 0.5, "GPU dentro la card");
         // La riga del rifiuto c'è e il nome della rete si vede (accorciato).
         assert!(ElementHandle::find_by_accessible_label(&p, "Non riuscito: apro le Impostazioni di Windows").next().is_some());
         assert_eq!(
@@ -2041,6 +2050,46 @@ mod accessibilita {
             elemento(&p, "RETE").accessible_value().as_deref(),
             Some("↓ 999,9 MB/s · ↑ 999,9 MB/s, Wi-Fi, 2 tacche su 3")
         );
+    }
+
+    /// M2, Task 10: nella vista PC la riga «GPU» (indicatore col valore, barra come la CPU) c'è
+    /// solo se c'è il dato; senza (fuori da Windows, lettura fallita) nessuna riga, mai «0%».
+    #[test]
+    fn riga_gpu_solo_se_c_e() {
+        piattaforma_di_prova();
+        let p = pannello();
+        p.set_vista("pc".into());
+        p.set_pc(StatPcUi { pronta: true, ha_gpu: false, gpu: 0.37, gpu_testo: "37%".into(), ..Default::default() });
+        assert!(ElementHandle::find_by_accessible_label(&p, "GPU").next().is_none(), "senza dato niente riga");
+        p.set_pc(StatPcUi { pronta: true, ha_gpu: true, gpu: 0.37, gpu_testo: "37%".into(), ..Default::default() });
+        let gpu = elemento(&p, "GPU");
+        assert_eq!(gpu.accessible_role(), Some(AccessibleRole::ProgressIndicator));
+        assert_eq!(gpu.accessible_value().as_deref(), Some("37%"));
+        // Il testo «37%» si vede nella riga.
+        let testo = gpu
+            .query_descendants()
+            .find_all()
+            .into_iter()
+            .any(|e| e.accessible_label().as_deref() == Some("37%"));
+        assert!(testo, "il valore della GPU si vede");
+    }
+
+    /// M2, Task 10: il quadrante «GPU» della Panoramica a Quadranti legge `StatPcUi`: col dato
+    /// valore e arco, senza «—».
+    #[test]
+    fn quadrante_gpu() {
+        piattaforma_di_prova();
+        let p = pannello();
+        p.set_layout(1);
+        p.set_quadranti(slint::ModelRc::new(slint::VecModel::from(crate::ponte::quadranti_ui(
+            &[crate::lati::Lato::Gpu],
+            None,
+            &std::collections::HashMap::new(),
+        ))));
+        let gpu = elemento(&p, "GPU");
+        assert_eq!(gpu.accessible_value().as_deref(), Some("—"));
+        p.set_pc(StatPcUi { pronta: true, ha_gpu: true, gpu: 0.37, gpu_testo: "37%".into(), ..Default::default() });
+        assert_eq!(elemento(&p, "GPU").accessible_value().as_deref(), Some("37%"));
     }
 
     /// Riquadri: interruttori per Narrator con lo stato; Bluetooth spento; senza radio

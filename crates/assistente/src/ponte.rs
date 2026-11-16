@@ -545,6 +545,7 @@ pub fn quadranti_ui(q: &[Lato], menu: Option<&MenuData>, massimi: &HashMap<Strin
                 Lato::Disco => pc(FonteQuadranteUi::Disco, "DISCO"),
                 Lato::ReteGiu => pc(FonteQuadranteUi::ReteGiu, "RETE ↓"),
                 Lato::ReteSu => pc(FonteQuadranteUi::ReteSu, "RETE ↑"),
+                Lato::Gpu => pc(FonteQuadranteUi::Gpu, "GPU"),
                 Lato::Batteria => pc(FonteQuadranteUi::Batteria, "BATTERIA"),
                 Lato::Ora => pc(FonteQuadranteUi::Ora, "ORA"),
                 Lato::Meteo => {
@@ -657,7 +658,8 @@ pub fn isola(config: &Config, menu: Option<&MenuData>, batteria: bool) -> Isola 
         },
     };
 
-    let mut cat_q = lati::scelte(meteo_c, &sensori_q, false, batteria, true);
+    // La GPU (Task 10) solo su Windows.
+    let mut cat_q = lati::scelte(meteo_c, &sensori_q, cfg!(windows), batteria, true);
     let mut scelte_quadranti = Vec::new();
     for l in lati::quadranti(&config.quadranti) {
         let indice = indice_in(&mut cat_q, &l);

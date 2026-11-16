@@ -136,6 +136,8 @@ export component LayoutQuadranti inherits Rectangle {
             return stat.rete-su != "" ? stat.rete-su : "—";
         } else if (q.fonte == FonteQuadranteUi.batteria) {
             return stat.ha-batteria ? stat.batteria-testo : "—";
+        } else if (q.fonte == FonteQuadranteUi.gpu) {
+            return stat.ha-gpu ? stat.gpu-testo : "—";
         } else if (q.fonte == FonteQuadranteUi.ora) {
             return ora != "" ? ora : "—";
         }
@@ -150,6 +152,8 @@ export component LayoutQuadranti inherits Rectangle {
             return stat.disco-testo != "" ? stat.disco : -1;
         } else if (q.fonte == FonteQuadranteUi.batteria) {
             return stat.ha-batteria ? stat.batteria-frazione : -1;
+        } else if (q.fonte == FonteQuadranteUi.gpu) {
+            return stat.ha-gpu ? stat.gpu : -1;
         } else if (q.fonte == FonteQuadranteUi.meteo || q.fonte == FonteQuadranteUi.sensore) {
             return q.frazione;
         }
@@ -162,6 +166,8 @@ export component LayoutQuadranti inherits Rectangle {
             return Icone.memoria;
         } else if (q.fonte == FonteQuadranteUi.disco) {
             return Icone.disco;
+        } else if (q.fonte == FonteQuadranteUi.gpu) {
+            return Icone.schermo;
         } else if (q.fonte == FonteQuadranteUi.rete-giu || q.fonte == FonteQuadranteUi.rete-su) {
             return Icone.onde;
         } else if (q.fonte == FonteQuadranteUi.meteo) {

@@ -1,6 +1,7 @@
 //! Apertura e chiusura del pannello: la pillola si nasconde e al suo posto scende il pannello,
 //! con gli occhi dove stavano i suoi. L'orologio (un risveglio al minuto) e il campionamento delle
-//! statistiche del PC (un campione ogni 2 s) girano solo a pannello aperto.
+//! statistiche del PC (un campione ogni 2 s) girano solo a pannello aperto; la GPU (Task 10) solo
+//! se la vista di adesso la mostra (vista PC, o un quadrante «GPU» della Panoramica).
 //!
 //! Il pannello nasce a ogni apertura e viene distrutto alla chiusura: da chiuso non restano né
 //! la sua finestra né i suoi buffer né animazioni in sospeso, e la pillola torna al suo peso.
@@ -58,9 +59,10 @@ pub struct Apertura {
     /// Il thread che campiona le statistiche del PC finché il pannello è aperto: il segnale di
     /// stop e il thread da svegliare.
     campionamento: RefCell<Option<(Arc<AtomicBool>, std::thread::Thread)>>,
-    /// Le fonti lente (dischi, reti) che il campionatore legge: solo quelle che la vista di adesso
-    /// mostra (vista PC, quadranti scelti). Le cambia il thread dell'interfaccia, le legge il
-    /// thread dei campioni a ogni giro.
+    /// Le fonti lente (dischi, reti, GPU) che il campionatore legge: solo quelle che la vista di
+    /// adesso mostra (vista PC, quadranti scelti). Le cambia il thread dell'interfaccia, le legge
+    /// il thread dei campioni a ogni giro. (Il brief del Task 10 chiedeva un `AtomicBool vista_pc`
+    /// per la GPU: è il campo `gpu` di queste fonti, che vale anche per il quadrante «GPU».)
     fonti: Arc<Mutex<Fonti>>,
 }
 
@@ -131,6 +133,7 @@ fn stat_ui(s: &StatPc, cpu_pronta: bool) -> StatPcUi {
     let ram = frazione(s.ram_usata, s.ram_totale);
     let disco = frazione(s.disco_usato, s.disco_totale);
     let batteria = s.batteria.map(|b| b.percentuale);
+    let gpu = s.gpu_pct.map(|g| g.clamp(0.0, 100.0));
     StatPcUi {
         pronta: cpu.is_some(),
         cpu: cpu.unwrap_or(0.0) / 100.0,
@@ -149,6 +152,10 @@ fn stat_ui(s: &StatPc, cpu_pronta: bool) -> StatPcUi {
         batteria_frazione: batteria.map(|b| b / 100.0).unwrap_or(0.0),
         in_carica: s.batteria.is_some_and(|b| b.collegata()),
         tinta_batteria: tinta_ui(s.batteria.map_or(TintaBatteria::Normale, |b| tinta_batteria(&b))),
+        // Senza dato la riga GPU non c'è (mai "0%").
+        ha_gpu: gpu.is_some(),
+        gpu: gpu.map_or(0.0, |g| g / 100.0),
+        gpu_testo: gpu.map(percentuale).unwrap_or_default().into(),
     }
 }
 
@@ -162,7 +169,7 @@ pub fn tinta_ui(t: TintaBatteria) -> TintaBatteriaUi {
     }
 }
 
-/// Le fonti lente che una vista mostra: la vista PC tutte (dischi e rete), la Panoramica a
+/// Le fonti lente che una vista mostra: la vista PC tutte (dischi, rete e GPU), la Panoramica a
 /// Quadranti quelle dei quadranti scelti (`quadranti`, chiesta solo lì), il resto nessuna.
 fn fonti_della_vista(vista: &str, layout: Layout, quadranti: impl FnOnce() -> Fonti) -> Fonti {
     match (vista, layout) {
@@ -261,9 +268,11 @@ impl Apertura {
                 if consegnato.is_err() {
                     break;
                 }
-                // Svegliato prima del tempo da `ferma_campionamento`.
+                // Svegliato prima del tempo da `ferma_campionamento` o da fonti cambiate
+                // (`aggiorna_fonti`). La GPU appena accesa ha il valore al campione dopo: poco
+                // tempo, come il secondo campione della CPU.
                 std::thread::park_timeout(attesa);
-                attesa = PERIODO_CAMPIONI;
+                attesa = if campionatore.gpu_in_attesa() { SECONDO_CAMPIONE } else { PERIODO_CAMPIONI };
             }
         });
         match thread {
@@ -289,14 +298,21 @@ impl Apertura {
     }
 
     /// Le fonti lente che la vista di adesso mostra: la vista PC tutte, i Quadranti quelle dei
-    /// quadranti scelti, il resto nessuna (CPU e RAM si leggono sempre). Cambiando vista o layout
-    /// il thread dei campioni le prende al giro dopo.
+    /// quadranti scelti, il resto nessuna (CPU e RAM si leggono sempre). Se cambiano, il thread
+    /// dei campioni si sveglia subito: la GPU si accende (o la sua query si chiude) senza
+    /// aspettare i 2 s.
     fn aggiorna_fonti(&self, p: &Pannello) {
         let fonti = fonti_della_vista(p.get_vista().as_str(), Layout::da_indice(p.get_layout()), || {
             self.ponte.fonti_dei_quadranti()
         });
-        if let Ok(mut f) = self.fonti.lock() {
-            *f = fonti;
+        let cambiate = match self.fonti.lock() {
+            Ok(mut f) => std::mem::replace(&mut *f, fonti) != fonti,
+            Err(_) => false,
+        };
+        if cambiate {
+            if let Some((_, thread)) = self.campionamento.borrow().as_ref() {
+                thread.unpark();
+            }
         }
     }
 
@@ -579,6 +595,7 @@ mod test {
             rete_giu_bps: 0,
             rete_su_bps: 0,
             batteria: None,
+            gpu_pct: None,
         }
     }
 
@@ -614,11 +631,38 @@ mod test {
 
     #[test]
     fn fonti_lente_solo_dove_si_vedono() {
-        let solo_disco = || Fonti { disco: true, rete: false };
+        let solo_disco = || Fonti { disco: true, ..Fonti::default() };
         assert_eq!(fonti_della_vista("pc", Layout::Orologio, solo_disco), Fonti::TUTTE);
         assert_eq!(fonti_della_vista("panoramica", Layout::Quadranti, solo_disco), solo_disco());
         assert_eq!(fonti_della_vista("panoramica", Layout::Orologio, solo_disco), Fonti::default());
         assert_eq!(fonti_della_vista("casa", Layout::Quadranti, solo_disco), Fonti::default());
+    }
+
+    /// M2, Task 10: la GPU si legge solo nella vista PC o con un quadrante «GPU» nella Panoramica
+    /// a Quadranti; nell'Orologio, nella Casa e nei Collegamenti mai.
+    #[test]
+    fn gpu_solo_dove_si_vede() {
+        let con_gpu = || crate::lati::fonti_dei_quadranti(&[crate::lati::Lato::Gpu]);
+        let senza_gpu = || crate::lati::fonti_dei_quadranti(&[crate::lati::Lato::Cpu]);
+        assert!(fonti_della_vista("pc", Layout::Orologio, senza_gpu).gpu);
+        assert!(fonti_della_vista("panoramica", Layout::Quadranti, con_gpu).gpu);
+        assert!(!fonti_della_vista("panoramica", Layout::Quadranti, senza_gpu).gpu);
+        assert!(!fonti_della_vista("panoramica", Layout::Orologio, con_gpu).gpu);
+        assert!(!fonti_della_vista("casa", Layout::Quadranti, con_gpu).gpu);
+        assert!(!fonti_della_vista("collegamenti", Layout::Quadranti, con_gpu).gpu);
+    }
+
+    #[test]
+    fn gpu_nell_interfaccia() {
+        let mut s = stat(Some(10.0));
+        let ui = stat_ui(&s, true);
+        assert!(!ui.ha_gpu, "senza dato niente riga");
+        assert_eq!(ui.gpu_testo, "");
+        s.gpu_pct = Some(36.6);
+        let ui = stat_ui(&s, true);
+        assert!(ui.ha_gpu);
+        assert_eq!(ui.gpu_testo, "37%");
+        assert!((ui.gpu - 0.366).abs() < 1e-6);
     }
 
     #[test]

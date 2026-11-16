@@ -32,6 +32,8 @@ pub enum Lato {
     Disco,
     ReteGiu,
     ReteSu,
+    /// Solo per i quadranti e solo su Windows (M2, Task 10): l'utilizzo della GPU, 0..100 %.
+    Gpu,
 }
 
 impl Lato {
@@ -47,6 +49,7 @@ impl Lato {
             "disco" => Lato::Disco,
             "rete_giu" => Lato::ReteGiu,
             "rete_su" => Lato::ReteSu,
+            "gpu" => Lato::Gpu,
             _ => match s.strip_prefix(PREFISSO_SENSORE) {
                 Some(id) if !id.is_empty() => Lato::Sensore(id.to_owned()),
                 _ => Lato::Niente,
@@ -67,6 +70,7 @@ impl Lato {
             Lato::Disco => "disco".into(),
             Lato::ReteGiu => "rete_giu".into(),
             Lato::ReteSu => "rete_su".into(),
+            Lato::Gpu => "gpu".into(),
             Lato::Sensore(id) => format!("{PREFISSO_SENSORE}{id}"),
         }
     }
@@ -102,13 +106,14 @@ fn nome_sensore(s: &SensoreNumerico) -> String {
 }
 
 /// Le scelte del selettore, nell'ordine: «Niente», «Ora», «Batteria» (solo se il PC ne ha una),
-/// «CPU», «RAM», poi per i quadranti disco e rete in arrivo e in uscita; «Rete» solo se `rete`
-/// (`cfg!(windows)`, Task 8) e solo per i lati; «Temperatura esterna» solo se c'è un meteo; un
-/// sensore per voce (`sensori`, già filtrati da `sensori_disponibili`).
+/// «CPU», «RAM», poi per i quadranti disco, rete in arrivo e in uscita e (solo se `windows`, Task
+/// 10) «GPU»; «Rete» solo se `windows` (Task 8) e solo per i lati; «Temperatura esterna» solo se
+/// c'è un meteo; un sensore per voce (`sensori`, già filtrati da `sensori_disponibili`).
+/// `windows`: le fonti che esistono solo su Windows ci sono (`cfg!(windows)`).
 pub fn scelte(
     meteo: bool,
     sensori: &[&SensoreNumerico],
-    rete: bool,
+    windows: bool,
     batteria: bool,
     per_quadranti: bool,
 ) -> Vec<(Lato, String)> {
@@ -122,7 +127,10 @@ pub fn scelte(
         v.push((Lato::Disco, "Disco".into()));
         v.push((Lato::ReteGiu, "Rete in arrivo".into()));
         v.push((Lato::ReteSu, "Rete in uscita".into()));
-    } else if rete {
+        if windows {
+            v.push((Lato::Gpu, "GPU".into()));
+        }
+    } else if windows {
         v.push((Lato::Rete, "Rete".into()));
     }
     if meteo {
@@ -152,7 +160,7 @@ pub fn bisogni(sinistro: &Lato, destro: &Lato) -> Bisogni {
             Lato::Cpu | Lato::Ram => b.cpu_ram = true,
             Lato::Rete => b.rete = true,
             Lato::Meteo | Lato::Sensore(_) => b.casa = true,
-            Lato::Niente | Lato::Disco | Lato::ReteGiu | Lato::ReteSu => {}
+            Lato::Niente | Lato::Disco | Lato::ReteGiu | Lato::ReteSu | Lato::Gpu => {}
         }
     }
     b
@@ -269,7 +277,7 @@ pub fn a_tempo(l: &Lato) -> bool {
 /// l'interfaccia). La batteria riserva anche il posto del glifo.
 pub fn campione(l: &Lato, d: &DatiLati) -> Option<String> {
     Some(match l {
-        Lato::Niente | Lato::Rete | Lato::Disco | Lato::ReteGiu | Lato::ReteSu => return None,
+        Lato::Niente | Lato::Rete | Lato::Disco | Lato::ReteGiu | Lato::ReteSu | Lato::Gpu => return None,
         Lato::Ora => "00:00".into(),
         Lato::Batteria => "100%".into(),
         Lato::Cpu => "CPU 100%".into(),
@@ -357,6 +365,7 @@ pub fn fonti_dei_quadranti(q: &[Lato]) -> Fonti {
     Fonti {
         disco: q.contains(&Lato::Disco),
         rete: q.iter().any(|l| matches!(l, Lato::ReteGiu | Lato::ReteSu)),
+        gpu: q.contains(&Lato::Gpu),
     }
 }
 
@@ -377,7 +386,7 @@ pub fn chiede_massimo(unita: Option<&str>) -> bool {
 pub fn scala(fonte: &Lato, unita: Option<&str>, massimo_utente: Option<f64>, valore: f64) -> (f64, f64) {
     let utente = massimo_utente.filter(|m| m.is_finite() && *m > 0.0);
     match fonte {
-        Lato::Cpu | Lato::Ram | Lato::Disco | Lato::Batteria => (0.0, 100.0),
+        Lato::Cpu | Lato::Ram | Lato::Disco | Lato::Batteria | Lato::Gpu => (0.0, 100.0),
         Lato::Meteo if unita.map(str::trim) == Some("°F") => (14.0, 104.0),
         Lato::Meteo => (-10.0, 40.0),
         _ => match unita.map(str::trim) {
@@ -442,6 +451,7 @@ mod test {
             Lato::Disco,
             Lato::ReteGiu,
             Lato::ReteSu,
+            Lato::Gpu,
         ] {
             assert_eq!(Lato::da_str(&l.come_str()), l, "andata e ritorno di {l:?}");
         }
@@ -465,6 +475,7 @@ mod test {
         }
         assert!(!s.contains(&Lato::Batteria), "senza batteria niente «Batteria»");
         assert!(!s.contains(&Lato::Disco), "il disco è solo per i quadranti");
+        assert!(!s.contains(&Lato::Gpu), "la GPU è solo per i quadranti");
     }
 
     #[test]
@@ -473,14 +484,17 @@ mod test {
         let v = scelte(true, &[&sala], true, true, false);
         let nomi: Vec<&str> = v.iter().map(|(_, n)| n.as_str()).collect();
         assert_eq!(nomi, ["Niente", "Ora", "Batteria", "CPU", "RAM", "Rete", "Temperatura esterna", "Temperatura · Sala"]);
-        // Per i quadranti: disco e rete in arrivo e in uscita, niente «Rete» (il nome della rete).
+        // Per i quadranti: disco, rete in arrivo e in uscita e GPU (solo Windows), niente «Rete».
         let fv = sensore("sensor.fv", "Fotovoltaico", Some(1500.0), "W");
         let q = scelte(true, &[&sala, &fv], true, false, true);
         let nomi: Vec<&str> = q.iter().map(|(_, n)| n.as_str()).collect();
         assert_eq!(
             nomi,
-            ["Niente", "Ora", "CPU", "RAM", "Disco", "Rete in arrivo", "Rete in uscita", "Temperatura esterna", "Temperatura · Sala", "Potenza · Fotovoltaico"]
+            ["Niente", "Ora", "CPU", "RAM", "Disco", "Rete in arrivo", "Rete in uscita", "GPU", "Temperatura esterna", "Temperatura · Sala", "Potenza · Fotovoltaico"]
         );
+        // Fuori da Windows la GPU non c'è (assente, non spenta).
+        let q = scelte(false, &[], false, false, true);
+        assert!(!q.iter().any(|(l, _)| *l == Lato::Gpu));
     }
 
     /// Giro di correzioni 1: il catalogo viene dai sensori numerici della casa. Per i quadranti
@@ -635,14 +649,17 @@ mod test {
         let q = quadranti(&["sensore:sensor.fv".into(), "ram".into()]);
         assert_eq!(q, [Lato::Sensore("sensor.fv".into()), Lato::Ram, Lato::Niente]);
         assert_eq!(fonti_dei_quadranti(&q), Fonti::default(), "niente disco né rete");
-        assert_eq!(fonti_dei_quadranti(&QUADRANTI_DI_M1), Fonti { disco: true, rete: false });
-        assert_eq!(fonti_dei_quadranti(&[Lato::ReteSu]), Fonti { disco: false, rete: true });
+        assert_eq!(fonti_dei_quadranti(&QUADRANTI_DI_M1), Fonti { disco: true, ..Fonti::default() });
+        assert_eq!(fonti_dei_quadranti(&[Lato::ReteSu]), Fonti { rete: true, ..Fonti::default() });
+        // Task 10: la GPU si legge solo se un quadrante la mostra.
+        assert_eq!(fonti_dei_quadranti(&[Lato::Cpu, Lato::Gpu]), Fonti { gpu: true, ..Fonti::default() });
     }
 
     #[test]
     fn scala_per_unita() {
         let s = Lato::Sensore("sensor.x".into());
         assert_eq!(scala(&Lato::Cpu, None, None, 50.0), (0.0, 100.0));
+        assert_eq!(scala(&Lato::Gpu, None, None, 50.0), (0.0, 100.0));
         assert_eq!(scala(&s, Some("%"), None, 50.0), (0.0, 100.0));
         assert_eq!(scala(&s, Some("°C"), None, 21.0), (-10.0, 40.0));
         assert_eq!(scala(&Lato::Meteo, None, None, 9.0), (-10.0, 40.0));
