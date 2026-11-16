@@ -322,6 +322,8 @@ impl Servizi {
         if let Some(m) = self.menu.borrow().as_ref() {
             m.ritirata(self.ritirata.borrow().attiva());
         }
+        // I lati della pillola campionano solo mentre la pillola si vede.
+        self.ponte.pillola_visibile(nuova == Visibilita::Pillola);
         let passi = passi(prima, nuova, aperto);
         if passi.ferma_sondaggio {
             self.mouse.stop();

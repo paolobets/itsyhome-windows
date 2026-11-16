@@ -200,6 +200,21 @@ pub fn imposta(ui: &Pillola, v: &VistaPillola) {
         }
     }
 
+    ritaglia_dopo_il_cambio(ui, prima);
+}
+
+/// I lati della pillola sono cambiati (M2, Task 4): se la pillola si allarga o si stringe, il
+/// ritaglio segue come per un cambio d'aspetto (cresce subito, cala a fine animazione).
+pub fn lati_cambiati(ui: &Pillola) {
+    let prima = RITAGLIO.with(Cell::get);
+    if prima != visibile(ui) {
+        ritaglia_dopo_il_cambio(ui, prima);
+    }
+}
+
+/// Dal ritaglio `prima` a quello della pillola di adesso: subito il più grande, a fine animazione
+/// quello giusto (solo se nel frattempo non è arrivato un altro cambio).
+fn ritaglia_dopo_il_cambio(ui: &Pillola, prima: (f32, f32)) {
     let dopo = visibile(ui);
     let giro = GIRO.with(|g| {
         g.set(g.get() + 1);

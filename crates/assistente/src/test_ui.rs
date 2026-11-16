@@ -330,7 +330,7 @@ mod accessibilita {
     fn interruttore_dell_icona_nella_barra() {
         piattaforma_di_prova();
         let f = FinestraImpostazioni::new().expect("impostazioni");
-        f.set_sezione(3);
+        f.set_sezione(4);
         f.show().expect("impostazioni mostrate nel backend di prova");
         let chiesti = std::rc::Rc::new(std::cell::RefCell::new(Vec::<bool>::new()));
         let c = chiesti.clone();
@@ -356,7 +356,7 @@ mod accessibilita {
         use slint::platform::{Key, WindowEvent};
         piattaforma_di_prova();
         let f = FinestraImpostazioni::new().expect("impostazioni");
-        f.set_sezione(3);
+        f.set_sezione(4);
         f.show().expect("impostazioni mostrate nel backend di prova");
         f.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
         let chiamate = std::rc::Rc::new(std::cell::Cell::new(0));
@@ -385,7 +385,7 @@ mod accessibilita {
             tasto(Key::Tab);
             tasto(Key::Return);
             // Invio su una voce del menu laterale cambia sezione: si torna a Sistema, il fuoco resta.
-            f.set_sezione(3);
+            f.set_sezione(4);
         }
         assert_eq!(chiamate.get(), 2, "Tab raggiunge il pulsante e Invio lo preme");
         f.set_fuori_da_windows(false);
@@ -398,7 +398,7 @@ mod accessibilita {
         let f = FinestraImpostazioni::new().expect("impostazioni");
         let ha = elemento(&f, "Home Assistant");
         assert_eq!(ha.accessible_role(), Some(AccessibleRole::Tab));
-        assert_eq!((ha.accessible_item_selected(), ha.accessible_item_count()), (Some(true), Some(5)));
+        assert_eq!((ha.accessible_item_selected(), ha.accessible_item_count()), (Some(true), Some(6)));
         assert_eq!(elemento(&f, "Collegamenti").accessible_item_index(), Some(2));
         f.set_sezione(crate::finestra_impostazioni::SEZIONE_INFORMAZIONI);
         assert_eq!(elemento(&f, "Informazioni").accessible_item_selected(), Some(true));
@@ -1487,5 +1487,212 @@ mod accessibilita {
         assert!(ElementHandle::find_by_accessible_label(&f, "Eliminare “NAS”?").next().is_none(), "il clic fuori annulla");
         assert_eq!(elemento(&f, "Elimina «Router»").accessible_enabled(), Some(true));
         assert!(eventi.borrow().is_empty(), "{:?}", eventi.borrow());
+    }
+
+    // ─── M2, Task 4: lati della pillola, sezione Isola, selettore, quadranti ───
+
+    fn testo_lato(t: &str) -> crate::ContenutoLatoUi {
+        crate::ContenutoLatoUi { tipo: 1, testo: t.into(), ..Default::default() }
+    }
+
+    /// Le misure della pillola coi lati sono quelle di `lati::larghezza_riposo` e
+    /// `lati::scarto_occhi_riposo`: un lato, due lati, la batteria col glifo; da allargata i lati
+    /// non contano. Il nome per Narrator dice i valori, nell'ordine.
+    #[test]
+    fn misure_dei_lati_slint_e_rust() {
+        use crate::lati::{larghezza_riposo, scarto_occhi_riposo};
+        piattaforma_di_prova();
+        let p = Pillola::new().expect("pillola");
+        p.show().expect("pillola mostrata nel backend di prova");
+        assert_eq!(p.get_larghezza_pillola(), larghezza_riposo(0.0, 0.0), "senza lati come M1");
+        assert_eq!(p.get_scarto_occhi_riposo(), 0.0);
+
+        p.set_lato_destro(testo_lato("CPU 23%"));
+        let destro = p.get_ingombro_lato_destro();
+        assert!(destro > 30.0, "il testo ha una larghezza: {destro}");
+        assert_eq!(p.get_larghezza_pillola(), larghezza_riposo(0.0, destro));
+        assert_eq!(p.get_scarto_occhi_riposo(), scarto_occhi_riposo(0.0, destro));
+        assert_eq!(elemento(&p, "ItsyHome, CPU 23%").accessible_role(), Some(AccessibleRole::Button));
+
+        p.set_lato_sinistro(crate::ContenutoLatoUi {
+            tipo: 2,
+            testo: "80%".into(),
+            frazione: 0.8,
+            tinta: crate::TintaBatteriaUi::Normale,
+        });
+        let sinistro = p.get_ingombro_lato_sinistro();
+        assert!(sinistro > 23.0, "glifo (19 + 4) più il testo: {sinistro}");
+        assert_eq!(p.get_larghezza_pillola(), larghezza_riposo(sinistro, destro));
+        assert_eq!(p.get_scarto_occhi_riposo(), 0.0, "due lati: occhi al centro");
+        assert!(elemento(&p, "ItsyHome, batteria 80%, CPU 23%").accessible_role().is_some());
+        assert_eq!(ElementHandle::find_by_element_type_name(&p, "GlifoBatteria").count(), 1);
+
+        // Col puntino i lati restano; allargata la larghezza è quella dell'attenzione.
+        p.set_aspetto(AspettoPillolaUi::Puntino);
+        assert!(elemento(&p, "ItsyHome, batteria 80%, CPU 23%, una voce in attesa").accessible_role().is_some());
+        assert_eq!(p.get_larghezza_pillola(), larghezza_riposo(sinistro, destro));
+        p.set_aspetto(AspettoPillolaUi::Allargata);
+        assert_eq!(p.get_larghezza_pillola(), crate::finestre::LARGHEZZA_ATTENZIONE);
+        assert!(p.get_larghezza_riposo() <= crate::finestre::LARGHEZZA_BLOCCANTE);
+    }
+
+    /// La sezione «Isola» sta fra Collegamenti e Sistema; «Informazioni» passa alla 5.
+    #[test]
+    fn sezione_isola_e_informazioni_spostata() {
+        let (f, _) = scheda_isola();
+        f.set_sezione(0);
+        assert_eq!(elemento(&f, "Isola").accessible_item_index(), Some(3));
+        assert_eq!(elemento(&f, "Sistema").accessible_item_index(), Some(4));
+        assert_eq!(elemento(&f, "Informazioni").accessible_item_index(), Some(5));
+        assert_eq!(crate::finestra_impostazioni::SEZIONE_INFORMAZIONI, 5);
+        f.set_sezione(3);
+        assert_eq!(elemento(&f, "Isola").accessible_item_selected(), Some(true));
+        for nome in ["A sinistra degli occhi", "A destra degli occhi", "Meteo da", "Quadrante 1", "Quadrante 3"] {
+            let e = ElementHandle::find_by_accessible_label(&f, nome)
+                .find(|e| e.accessible_role() == Some(AccessibleRole::Combobox))
+                .unwrap_or_else(|| panic!("selettore «{nome}»"));
+            assert_eq!(e.accessible_expandable(), Some(true));
+        }
+        assert!(ElementHandle::find_by_accessible_label(&f, "Il nome della rete non compare mai nella pillola.").next().is_some());
+    }
+
+    /// Le scelte arrivate a Rust: (0/1 lato o 10 + posizione del quadrante, indice).
+    type Scelte = std::rc::Rc<std::cell::RefCell<Vec<(i32, i32)>>>;
+
+    /// Impostazioni › Isola coi selettori riempiti come fa il ponte.
+    fn scheda_isola() -> (FinestraImpostazioni, Scelte) {
+        piattaforma_di_prova();
+        let f = FinestraImpostazioni::new().expect("impostazioni");
+        let voci = |v: &[&str]| -> ModelRc<slint::SharedString> {
+            ModelRc::new(VecModel::from(v.iter().map(|s| slint::SharedString::from(*s)).collect::<Vec<_>>()))
+        };
+        f.set_scelte_lati(voci(&["Niente", "Ora", "CPU", "RAM"]));
+        f.set_scelte_quadranti(voci(&["Niente", "Ora", "CPU", "RAM", "Disco", "Potenza · Fotovoltaico"]));
+        f.set_scelte_meteo(voci(&["Automatico"]));
+        let q = |indice, con_massimo| crate::SceltaQuadranteUi {
+            indice,
+            con_massimo,
+            massimo: "".into(),
+            predefinito: if con_massimo { "3000".into() } else { "".into() },
+        };
+        f.set_quadranti_scelti(ModelRc::new(VecModel::from(vec![q(2, false), q(3, false), q(5, true)])));
+        f.set_sezione(3);
+        f.show().expect("impostazioni mostrate nel backend di prova");
+        // Alta abbastanza da vedere tutte le righe (la ricerca salta ciò che lo scorrimento nasconde).
+        f.window().set_size(slint::LogicalSize::new(720.0, 900.0));
+        f.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        let scelti = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let s = scelti.clone();
+        f.on_scegli_lato(move |quale, i| s.borrow_mut().push((quale, i)));
+        let s = scelti.clone();
+        f.on_scegli_quadrante(move |posizione, i| s.borrow_mut().push((10 + posizione, i)));
+        (f, scelti)
+    }
+
+    fn selettore(f: &FinestraImpostazioni, nome: &str) -> ElementHandle {
+        ElementHandle::find_by_accessible_label(f, nome)
+            .find(|e| e.accessible_role() == Some(AccessibleRole::Combobox))
+            .unwrap_or_else(|| {
+                let tutti: Vec<String> = i_slint_backend_testing::ElementQuery::from_root(f)
+                    .match_descendants()
+                    .match_accessible_role(AccessibleRole::Combobox)
+                    .find_all()
+                    .iter()
+                    .map(|e| format!("{:?}", e.accessible_label()))
+                    .collect();
+                panic!("selettore «{nome}» (ci sono: {tutti:?})")
+            })
+    }
+
+    /// `Scelta` da tastiera: Tab ci arriva, Invio apre, ↓ e Invio scelgono la seconda voce, Esc
+    /// chiude senza scegliere e il fuoco resta sul pulsante.
+    #[test]
+    fn scelta_da_tastiera() {
+        use slint::platform::Key;
+        let (f, scelti) = scheda_isola();
+        f.set_indice_lato_sinistro(0);
+        let sinistra = selettore(&f, "A sinistra degli occhi");
+        assert_eq!(sinistra.accessible_value().as_deref(), Some("Niente"));
+        assert_eq!(sinistra.accessible_expanded(), Some(false));
+        // Tab fino al primo selettore (dopo le sei sezioni).
+        for _ in 0..12 {
+            if col_fuoco(&f).ends_with("selettore") {
+                break;
+            }
+            tasto_finestra(&f, Key::Tab);
+        }
+        assert!(col_fuoco(&f).ends_with("selettore"), "Tab arriva al selettore: {}", col_fuoco(&f));
+        tasto_finestra(&f, Key::Return);
+        assert_eq!(sinistra.accessible_expanded(), Some(true), "Invio apre l'elenco");
+        assert!(ElementHandle::find_by_accessible_label(&f, "Ora")
+            .any(|e| e.accessible_role() == Some(AccessibleRole::ListItem)), "le voci dell'elenco sono accessibili");
+        tasto_finestra(&f, Key::DownArrow);
+        tasto_finestra(&f, Key::Return);
+        assert_eq!(*scelti.borrow(), [(0, 1)], "↓ e Invio scelgono «Ora»");
+        assert_eq!(sinistra.accessible_expanded(), Some(false));
+        assert!(col_fuoco(&f).ends_with("selettore"), "il fuoco torna al pulsante: {}", col_fuoco(&f));
+        // Il ponte riscrive la scelta: il valore per Narrator la segue.
+        f.set_indice_lato_sinistro(1);
+        assert_eq!(sinistra.accessible_value().as_deref(), Some("Ora"));
+        // Riaperto: Esc chiude, nulla di scelto, il fuoco resta.
+        tasto_finestra(&f, Key::Return);
+        assert_eq!(sinistra.accessible_expanded(), Some(true));
+        tasto_finestra(&f, Key::DownArrow);
+        tasto_finestra(&f, Key::Escape);
+        assert_eq!(sinistra.accessible_expanded(), Some(false));
+        assert_eq!(scelti.borrow().len(), 1, "Esc non sceglie");
+        assert!(col_fuoco(&f).ends_with("selettore"), "Esc lascia il fuoco sul pulsante: {}", col_fuoco(&f));
+        // Un secondo Esc (fuori dall'elenco) arriva alla finestra, come altrove.
+        assert!(ElementHandle::find_by_accessible_label(&f, "Isola").next().is_some());
+    }
+
+    /// Il selettore di un quadrante: dice la scelta, Narrator lo apre e sceglie, e accanto a un
+    /// sensore in watt c'è il campo «Massimo» col predefinito come suggerimento.
+    #[test]
+    fn selettore_del_quadrante() {
+        let (f, scelti) = scheda_isola();
+        let primo = selettore(&f, "Quadrante 1");
+        assert_eq!(primo.accessible_value().as_deref(), Some("CPU"));
+        assert_eq!(selettore(&f, "Quadrante 3").accessible_value().as_deref(), Some("Potenza · Fotovoltaico"));
+        primo.invoke_accessible_default_action();
+        assert_eq!(primo.accessible_expanded(), Some(true));
+        ElementHandle::find_by_accessible_label(&f, "Disco")
+            .find(|e| e.accessible_role() == Some(AccessibleRole::ListItem))
+            .expect("voce «Disco»")
+            .invoke_accessible_default_action();
+        assert_eq!(*scelti.borrow(), [(10, 4)], "quadrante 1 → «Disco»");
+        let massimi: Vec<_> = ElementHandle::find_by_accessible_label(&f, "Massimo")
+            .filter(|e| e.accessible_role() == Some(AccessibleRole::TextInput))
+            .collect();
+        assert_eq!(massimi.len(), 1, "il campo «Massimo» solo accanto al sensore in watt");
+        assert_eq!(massimi[0].accessible_placeholder_text().as_deref(), Some("3000"));
+    }
+
+    /// Di serie il pannello mostra i tre quadranti di M1; il modello del ponte li sostituisce
+    /// (un sensore col suo valore, l'ora del pannello) e «niente» non c'è.
+    #[test]
+    fn quadranti_configurabili_nel_pannello() {
+        use crate::{FonteQuadranteUi, QuadranteUi};
+        piattaforma_di_prova();
+        let p = pannello();
+        p.set_layout(1);
+        for nome in ["CPU", "RAM", "DISCO"] {
+            assert_eq!(elemento(&p, nome).accessible_role(), Some(AccessibleRole::ProgressIndicator), "{nome} di serie");
+        }
+        p.set_ora("14:05".into());
+        p.set_quadranti(ModelRc::new(VecModel::from(vec![
+            QuadranteUi { fonte: FonteQuadranteUi::Ora, etichetta: "ORA".into(), frazione: -1.0, ..Default::default() },
+            QuadranteUi {
+                fonte: FonteQuadranteUi::Sensore,
+                etichetta: "CASA".into(),
+                valore: "21,5 °C".into(),
+                frazione: 0.63,
+                dettaglio: "Sala".into(),
+                genere: crate::GenereUi::Termo,
+            },
+        ])));
+        assert_eq!(elemento(&p, "ORA").accessible_value().as_deref(), Some("14:05"));
+        assert_eq!(elemento(&p, "CASA, Sala").accessible_value().as_deref(), Some("21,5 °C"));
+        assert!(ElementHandle::find_by_accessible_label(&p, "DISCO").next().is_none(), "il disco non è più scelto");
     }
 }

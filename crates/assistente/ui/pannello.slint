@@ -24,7 +24,7 @@ import { Tema, Movimento } from "tema.slint";
 import { Faccia, Occhi } from "faccia.slint";
 import { Anello, Fuoco, Fuochi } from "componenti.slint";
 import { Icone } from "icone.slint";
-import { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, UmoreUi, StanzaUi, CollegamentoUi } from "voci.slint";
+import { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, UmoreUi, StanzaUi, CollegamentoUi, QuadranteUi, FonteQuadranteUi } from "voci.slint";
 import { RigaAttesa, VoceEspansa } from "attesa.slint";
 import { VistaPc } from "viste/pc.slint";
 import { VistaCasa } from "viste/casa.slint";
@@ -138,6 +138,13 @@ export component Pannello inherits Window {
     // Casa: i preferiti (al massimo 8), la riga di stato, i sensori dei Quadranti (al massimo 3).
     in property <[PreferitoUi]> preferiti;
     in property <[SensoreUi]> sensori;
+    // I tre quadranti configurabili (Impostazioni › Isola): di serie quelli di M1. Rust li
+    // riscrive solo quando cambia la scelta o un valore della casa che mostrano.
+    in property <[QuadranteUi]> quadranti: [
+        { fonte: FonteQuadranteUi.cpu, etichetta: "CPU" },
+        { fonte: FonteQuadranteUi.ram, etichetta: "RAM" },
+        { fonte: FonteQuadranteUi.disco, etichetta: "DISCO" },
+    ];
     // Le stanze della vista Casa e i dispositivi della stanza aperta (li dà Rust a `apri-stanza`).
     in property <[StanzaUi]> stanze;
     in property <[PreferitoUi]> dispositivi;
@@ -171,6 +178,8 @@ export component Pannello inherits Window {
     // Frecce, rotella e Invio sui puntini: +1 il successivo, -1 il precedente (lo decide Rust).
     callback scorri-layout(int);
     callback apri-app(string);
+    // La vista è cambiata (Rust decide quali fonti lente del PC campionare).
+    callback vista-cambiata();
     callback chiudi();
     // «Riprova» nella testata della vista Casa (stessa azione della voce «Casa non raggiungibile»).
     callback riprova-casa();
@@ -228,6 +237,7 @@ export component Pannello inherits Window {
     }
 
     changed vista => {
+        root.vista-cambiata();
         let nuova = posizione(vista);
         if (nuova != posizione-prec) {
             // Prima il punto di partenza, senza animazione (`in-arrivo` falso = 0 ms); poi, 16 ms
@@ -890,6 +900,8 @@ export component Pannello inherits Window {
                     height: parent.height;
                     stat: root.pc;
                     sensori: root.sensori;
+                    quadranti: root.quadranti;
+                    ora: root.ora;
                     stato-casa: root.stato-casa;
                     casa-pronta: root.casa-pronta;
                 }

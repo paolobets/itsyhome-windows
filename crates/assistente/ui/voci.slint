@@ -148,3 +148,38 @@ export struct CollegamentoUi {
     url: string,
     corto: string,
 }
+
+// Che cosa mostra un lato della pillola a riposo (vedi `lati::ContenutoLato`): `tipo` 0 vuoto,
+// 1 testo («CPU 23%», «14:05», «21,5°»), 2 batteria (glifo + percentuale), 3 rete (Task 8).
+export struct ContenutoLatoUi {
+    tipo: int,
+    testo: string,
+    frazione: float,
+    tinta: TintaBatteriaUi,
+}
+
+// La fonte di un quadrante configurabile (vedi `lati::Lato`).
+export enum FonteQuadranteUi { niente, cpu, ram, disco, rete-giu, rete-su, batteria, ora, meteo, sensore }
+
+// Un quadrante configurabile dei Quadranti (vedi `ponte::quadranti_ui`). Per le fonti del PC e
+// per l'ora i valori li legge l'interfaccia (`StatPcUi`, l'ora del pannello); per meteo e sensori
+// li scrive Rust: `valore`, `frazione` 0..1 dell'arco (-1 = niente arco), `dettaglio` (il nome),
+// `genere` (l'icona del sensore).
+export struct QuadranteUi {
+    fonte: FonteQuadranteUi,
+    etichetta: string,
+    valore: string,
+    frazione: float,
+    dettaglio: string,
+    genere: GenereUi,
+}
+
+// Una riga «Quadrante n» di Impostazioni › Isola: la scelta (indice in `scelte-quadranti`) e,
+// se l'unità del sensore non ha una scala naturale (W, kW, ignota), il campo «Massimo»
+// (`massimo`: il valore scritto, vuoto = il predefinito, che sta in `predefinito`).
+export struct SceltaQuadranteUi {
+    indice: int,
+    con-massimo: bool,
+    massimo: string,
+    predefinito: string,
+}

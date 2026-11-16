@@ -8,7 +8,7 @@
 
 use crate::layout::Layout;
 use crate::registro::app_disponibili;
-use crate::pc_stats::{formatta_byte, formatta_velocita, tinta_batteria, Campionatore, StatPc, TintaBatteria};
+use crate::pc_stats::{formatta_byte, formatta_velocita, tinta_batteria, Campionatore, Fonti, StatPc, TintaBatteria};
 #[cfg(test)]
 use crate::pc_stats::{LetturaBatteria, StatoBatteria};
 use crate::ponte::Ponte;
@@ -23,7 +23,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use chrono::Timelike;
 use std::time::Duration;
 
@@ -58,6 +58,10 @@ pub struct Apertura {
     /// Il thread che campiona le statistiche del PC finché il pannello è aperto: il segnale di
     /// stop e il thread da svegliare.
     campionamento: RefCell<Option<(Arc<AtomicBool>, std::thread::Thread)>>,
+    /// Le fonti lente (dischi, reti) che il campionatore legge: solo quelle che la vista di adesso
+    /// mostra (vista PC, quadranti scelti). Le cambia il thread dell'interfaccia, le legge il
+    /// thread dei campioni a ogni giro.
+    fonti: Arc<Mutex<Fonti>>,
 }
 
 thread_local! {
@@ -144,12 +148,27 @@ fn stat_ui(s: &StatPc, cpu_pronta: bool) -> StatPcUi {
         batteria_testo: batteria.map(percentuale).unwrap_or_default().into(),
         batteria_frazione: batteria.map(|b| b / 100.0).unwrap_or(0.0),
         in_carica: s.batteria.is_some_and(|b| b.collegata()),
-        tinta_batteria: match s.batteria.map_or(TintaBatteria::Normale, |b| tinta_batteria(&b)) {
-            TintaBatteria::Carica => TintaBatteriaUi::Carica,
-            TintaBatteria::Normale => TintaBatteriaUi::Normale,
-            TintaBatteria::Informazione => TintaBatteriaUi::Informazione,
-            TintaBatteria::Attenzione => TintaBatteriaUi::Attenzione,
-        },
+        tinta_batteria: tinta_ui(s.batteria.map_or(TintaBatteria::Normale, |b| tinta_batteria(&b))),
+    }
+}
+
+/// La tinta del glifo della batteria come la conosce l'interfaccia (pannello e pillola).
+pub fn tinta_ui(t: TintaBatteria) -> TintaBatteriaUi {
+    match t {
+        TintaBatteria::Carica => TintaBatteriaUi::Carica,
+        TintaBatteria::Normale => TintaBatteriaUi::Normale,
+        TintaBatteria::Informazione => TintaBatteriaUi::Informazione,
+        TintaBatteria::Attenzione => TintaBatteriaUi::Attenzione,
+    }
+}
+
+/// Le fonti lente che una vista mostra: la vista PC tutte (dischi e rete), la Panoramica a
+/// Quadranti quelle dei quadranti scelti (`quadranti`, chiesta solo lì), il resto nessuna.
+fn fonti_della_vista(vista: &str, layout: Layout, quadranti: impl FnOnce() -> Fonti) -> Fonti {
+    match (vista, layout) {
+        ("pc", _) => Fonti::TUTTE,
+        ("panoramica", Layout::Quadranti) => quadranti(),
+        _ => Fonti::default(),
     }
 }
 
@@ -196,6 +215,7 @@ impl Apertura {
             aperture: Cell::new(0),
             orologio: slint::Timer::default(),
             campionamento: RefCell::new(None),
+            fonti: Arc::new(Mutex::new(Fonti::default())),
         });
         let a = Rc::downgrade(&apertura);
         pillola.on_cliccata(move || dopo(&a, Apertura::apri));
@@ -219,11 +239,14 @@ impl Apertura {
         let ferma = Arc::new(AtomicBool::new(false));
         let stop = ferma.clone();
         let debole = pannello.as_weak();
+        self.aggiorna_fonti(pannello);
+        let fonti = self.fonti.clone();
         let thread = std::thread::Builder::new().name("campioni-pc".into()).spawn(move || {
-            let mut campionatore = Campionatore::new();
+            let leggi = |f: &Mutex<Fonti>| f.lock().map(|g| *g).unwrap_or(Fonti::TUTTE);
+            let mut campionatore = Campionatore::new(leggi(&fonti));
             let mut attesa = SECONDO_CAMPIONE;
             while !stop.load(Ordering::Relaxed) {
-                let stat = campionatore.campiona();
+                let stat = campionatore.campiona(leggi(&fonti));
                 let pronta = campionatore.cpu_pronta();
                 let debole = debole.clone();
                 let consegnato = slint::invoke_from_event_loop(move || {
@@ -265,6 +288,18 @@ impl Apertura {
         });
     }
 
+    /// Le fonti lente che la vista di adesso mostra: la vista PC tutte, i Quadranti quelle dei
+    /// quadranti scelti, il resto nessuna (CPU e RAM si leggono sempre). Cambiando vista o layout
+    /// il thread dei campioni le prende al giro dopo.
+    fn aggiorna_fonti(&self, p: &Pannello) {
+        let fonti = fonti_della_vista(p.get_vista().as_str(), Layout::da_indice(p.get_layout()), || {
+            self.ponte.fonti_dei_quadranti()
+        });
+        if let Ok(mut f) = self.fonti.lock() {
+            *f = fonti;
+        }
+    }
+
     /// Ferma il thread senza aspettarlo: finisce da solo appena finito il campione in corso.
     fn ferma_campionamento(&self) {
         if let Some((ferma, thread)) = self.campionamento.borrow_mut().take() {
@@ -283,6 +318,14 @@ impl Apertura {
 
         let a = self.io.clone();
         pannello.on_chiudi(move || dopo(&a, Apertura::chiudi));
+        // Vista o layout cambiati: il campionatore legge dischi e reti solo se si vedono.
+        let a = self.io.clone();
+        let debole = pannello.as_weak();
+        pannello.on_vista_cambiata(move || {
+            if let (Some(a), Some(p)) = (a.upgrade(), debole.upgrade()) {
+                a.aggiorna_fonti(&p);
+            }
+        });
         let a = self.io.clone();
         pannello.on_scegli_layout(move |i| {
             if let Some(a) = a.upgrade() {
@@ -359,6 +402,7 @@ impl Apertura {
         // Nell'Orologio la riga alta ha solo il meteo (la data è già grande al centro).
         if let Some(p) = self.pannello.borrow().as_ref() {
             self.ponte.aggiorna_riga_sinistra(p);
+            self.aggiorna_fonti(p);
         }
     }
 
@@ -405,6 +449,9 @@ impl Apertura {
         if pillola.get_aspetto() == crate::AspettoPillolaUi::Allargata {
             pannello.set_partenza_occhi(pillola.get_scarto_occhi_allerta());
             pannello.set_partenza_occhi_y(pillola.get_scarto_occhi_allerta_y());
+        } else {
+            // A riposo con un lato solo gli occhi non stanno al centro (M2, Task 4): partono da lì.
+            pannello.set_partenza_occhi(pillola.get_scarto_occhi_riposo());
         }
         if let Some(indice) = self.ponte.voce_della_pillola() {
             // Espande la voce e porta lì il fuoco da tastiera (frecce e Invio agiscono su di lei).
@@ -542,6 +589,15 @@ mod test {
         assert!(ui.pronta);
         // Prima del secondo campione resta «—» anche con un numero.
         assert_eq!(stat_ui(&stat(Some(12.4)), false).cpu_testo, "—");
+    }
+
+    #[test]
+    fn fonti_lente_solo_dove_si_vedono() {
+        let solo_disco = || Fonti { disco: true, rete: false };
+        assert_eq!(fonti_della_vista("pc", Layout::Orologio, solo_disco), Fonti::TUTTE);
+        assert_eq!(fonti_della_vista("panoramica", Layout::Quadranti, solo_disco), solo_disco());
+        assert_eq!(fonti_della_vista("panoramica", Layout::Orologio, solo_disco), Fonti::default());
+        assert_eq!(fonti_della_vista("casa", Layout::Quadranti, solo_disco), Fonti::default());
     }
 
     #[test]

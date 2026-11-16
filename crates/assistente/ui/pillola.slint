@@ -1,8 +1,8 @@
 // La pillola: la faccia dell'assistente, sempre in alto al centro.
 // Pillola nera, due occhi di luce, aura con i colori dei petali lungo il bordo.
 import { Tema, Movimento } from "tema.slint";
-import { PulsanteUi, UmoreUi, AspettoPillolaUi, LivelloUi } from "voci.slint";
-import { Pulsante, TipoPulsante } from "componenti.slint";
+import { PulsanteUi, UmoreUi, AspettoPillolaUi, LivelloUi, ContenutoLatoUi } from "voci.slint";
+import { Pulsante, TipoPulsante, GlifoBatteria } from "componenti.slint";
 import { Faccia, Occhi } from "faccia.slint";
 
 // Uno strato dell'aura: la sagoma della pillola allargata di `espansione`.
@@ -15,6 +15,38 @@ component Velo inherits Rectangle {
     width: sagoma-larghezza + 2 * espansione;
     height: sagoma-altezza + 2 * espansione;
     border-radius: self.height / 2;
+}
+
+// Il valore di un lato a riposo (M2, Task 4): testo 13 px, peso 600, nel carattere mono (cifre a
+// larghezza fissa: il numero che cambia non fa ballare la pillola), o il glifo della batteria con
+// la percentuale. Largo quanto il suo contenuto (`ingombro`, 0 se vuoto). Per Narrator non esiste:
+// il suo valore sta nel nome della pillola.
+component ValoreLato inherits Rectangle {
+    in property <ContenutoLatoUi> contenuto;
+    property <length> glifo: contenuto.tipo == 2 ? 19px + 4px : 0px;
+    out property <length> ingombro: contenuto.tipo == 0 ? 0px : glifo + scritta.preferred-width;
+    width: ingombro;
+    accessible-role: none;
+
+    if contenuto.tipo == 2: GlifoBatteria {
+        x: 0;
+        y: (parent.height - self.height) / 2;
+        frazione: contenuto.frazione;
+        tinta: contenuto.tinta;
+    }
+
+    scritta := Text {
+        x: glifo;
+        width: self.preferred-width;
+        height: parent.height;
+        text: contenuto.tipo == 0 ? "" : contenuto.testo;
+        vertical-alignment: center;
+        font-family: Tema.carattere-mono;
+        font-size: Tema.testo-corpo;
+        font-weight: 600;
+        color: Tema.testo;
+        accessible-role: none;
+    }
 }
 
 export component Pillola inherits Window {
@@ -37,6 +69,10 @@ export component Pillola inherits Window {
     // (`livello-linea`; `nessuno`: colore neutro). Opaca: la finestra ritirata è layered.
     in property <bool> ritirata;
     in property <LivelloUi> livello-linea: LivelloUi.nessuno;
+    // Ai lati degli occhi, a riposo e col puntino (M2, Task 4): ciò che l'utente ha scelto nelle
+    // Impostazioni › Isola. Rust li riscrive solo quando cambiano.
+    in property <ContenutoLatoUi> lato-sinistro;
+    in property <ContenutoLatoUi> lato-destro;
     callback cliccata();
     // Clic su un pulsante della pillola allargata: l'id del pulsante.
     callback azione(string);
@@ -54,7 +90,34 @@ export component Pillola inherits Window {
     // La linea della ritirata (300 × 5 come TwoCode).
     out property <length> larghezza-linea: 300px;
     out property <length> altezza-linea: 5px;
-    out property <length> larghezza-riposo: Faccia.larghezza-pillola;
+    // A riposo (M2, Task 4, misure di TwoCode): margine 14, mezzi-occhi 19, distanza 12. Con due
+    // lati occhi al centro e pillola simmetrica sul lato più largo; con uno solo occhi e valore
+    // affiancati al centro; mai meno della pillola di M1 né più della finestra. Le stesse misure
+    // stanno in `lati::larghezza_riposo` (test `misure_dei_lati_slint_e_rust`).
+    property <length> margine-lato: 14px;
+    property <length> mezzi-occhi: 19px;
+    property <length> distanza-lato: 12px;
+    property <length> ingombro-occhi-riposo: 2 * Faccia.larghezza-occhio + Faccia.spazio-occhi;
+    out property <length> ingombro-lato-sinistro: valore-sinistro.ingombro;
+    out property <length> ingombro-lato-destro: valore-destro.ingombro;
+    property <bool> con-sinistro: ingombro-lato-sinistro > 0;
+    property <bool> con-destro: ingombro-lato-destro > 0;
+    property <length> lato-largo: max(ingombro-lato-sinistro, ingombro-lato-destro);
+    out property <length> larghezza-riposo: min(larghezza-bloccante, max(Faccia.larghezza-pillola,
+        con-sinistro && con-destro ? 2 * (margine-lato + lato-largo + distanza-lato + mezzi-occhi)
+        : con-sinistro || con-destro ? margine-lato + ingombro-occhi-riposo + distanza-lato + lato-largo + margine-lato
+        : 0px));
+    // Centro degli occhi a riposo rispetto al centro della pillola: 0 con due lati o nessuno; con
+    // un lato solo gli occhi stanno dalla parte opposta. Il pannello aperto dalla pillola a riposo
+    // fa partire i suoi occhi da qui.
+    out property <length> scarto-occhi-riposo: con-sinistro == con-destro ? 0px
+        : con-sinistro ? (distanza-lato + ingombro-lato-sinistro) / 2
+        : -(distanza-lato + ingombro-lato-destro) / 2;
+    // Il nome dei lati per Narrator, nell'ordine («, CPU 23%, batteria 80%»).
+    pure function nome-lato(c: ContenutoLatoUi) -> string {
+        return c.tipo == 0 ? "" : c.tipo == 2 ? ", batteria " + c.testo : ", " + c.testo;
+    }
+    property <string> nome-lati: nome-lato(lato-sinistro) + nome-lato(lato-destro);
     out property <length> altezza-riposo: Faccia.altezza-pillola;
     // Che chiama (attenzione): icona della fonte + occhi + una riga + fino a 2 pulsanti.
     out property <length> larghezza-attenzione: 400px;
@@ -230,7 +293,7 @@ export component Pillola inherits Window {
             // pulsanti della pillola allargata gli stanno accanto, non dentro).
             accessible-role: button;
             accessible-label: allargata ? messaggio
-                : aspetto == AspettoPillolaUi.puntino ? "ItsyHome, una voce in attesa" : "ItsyHome";
+                : "ItsyHome" + nome-lati + (aspetto == AspettoPillolaUi.puntino ? ", una voce in attesa" : "");
             accessible-action-default => { root.cliccata(); }
             // Il clic destro non fa nulla (16/11, Paolo): il menu sta nel «⋯» del pannello.
             clicked => {
@@ -262,9 +325,10 @@ export component Pillola inherits Window {
             // Allargata: il centro degli occhi è fisso (occhi-allerta-dal-bordo +
             // mezzo-ingombro-allerta) con qualunque umore, così il pannello aperto da lì li fa
             // partire dal punto giusto (`scarto-occhi-…`) anche se gli occhi sono più larghi.
+            // A riposo con un lato solo il centro si sposta di `scarto-occhi-riposo`.
             property <length> dal-bordo: allargata
                 ? occhi-allerta-dal-bordo + mezzo-ingombro-allerta - self.ingombro / 2
-                : (larghezza-pillola - self.ingombro) / 2;
+                : (larghezza-pillola - self.ingombro) / 2 + scarto-occhi-riposo;
             animate dal-bordo { duration: Movimento.ridotto ? 0ms : 220ms; easing: ease-out; }
             x: dal-bordo + sguardo-x;
             y: sguardo-y;
@@ -286,6 +350,22 @@ export component Pillola inherits Window {
                 drop-shadow-blur: 3px;
                 drop-shadow-color: Tema.colore-livello(livello).with-alpha(0.5);
             }
+        }
+
+        // I lati: a riposo e col puntino, accanto agli occhi (dal loro centro senza lo sguardo, che
+        // si muove quando pensa); nascosti da allargata (e da ritirata, con tutta la pillola).
+        // Sempre presenti perché la larghezza ne legge l'ingombro.
+        valore-sinistro := ValoreLato {
+            visible: !allargata;
+            contenuto: lato-sinistro;
+            x: occhi.dal-bordo + occhi.ingombro / 2 - (con-destro ? mezzi-occhi : ingombro-occhi-riposo / 2) - distanza-lato - self.width;
+            height: parent.height;
+        }
+        valore-destro := ValoreLato {
+            visible: !allargata;
+            contenuto: lato-destro;
+            x: occhi.dal-bordo + occhi.ingombro / 2 + (con-sinistro ? mezzi-occhi : ingombro-occhi-riposo / 2) + distanza-lato;
+            height: parent.height;
         }
 
         // La riga: sempre presente (nascosta da piccola) perché Rust ne legge `testo-tagliato`.

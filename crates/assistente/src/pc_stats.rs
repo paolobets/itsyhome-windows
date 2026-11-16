@@ -1,8 +1,10 @@
 //! Statistiche del PC (CPU, RAM, dischi, rete, batteria) per i quadranti e la vista PC.
 //!
 //! Il campionatore nasce all'apertura del pannello e muore alla chiusura: fuori da lì non si
-//! misura nulla, salvo la batteria (`sorveglia_batteria`, ogni 60 s). Refresh sempre mirati (mai
-//! `refresh_all`, mai l'elenco dei processi).
+//! misura nulla, salvo la batteria (`sorveglia_batteria`, ogni 60 s) e, solo se scelte per i lati
+//! della pillola e la pillola si vede, CPU e RAM (`CampionatoreLeggero`, ogni 5 s). Refresh sempre
+//! mirati (mai `refresh_all`, mai l'elenco dei processi); dischi e reti solo se una vista li mostra
+//! (`Fonti`).
 //!
 //! CPU su Windows da `GetSystemTimes`, non da sysinfo: sysinfo la legge con PDH (contatori delle
 //! prestazioni), che al primo uso carica le sue tabelle e non le libera più, nemmeno chiudendo la
@@ -133,7 +135,22 @@ pub struct StatPc {
     pub batteria: Option<LetturaBatteria>,
 }
 
-pub struct Campionatore {
+/// Quali fonti lente legge il campionatore del pannello: dischi e reti solo se qualcosa li mostra
+/// (la vista PC, o un quadrante scelto). CPU, RAM e batteria si leggono sempre (costano poco).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Fonti {
+    pub disco: bool,
+    pub rete: bool,
+}
+
+impl Fonti {
+    pub const TUTTE: Fonti = Fonti { disco: true, rete: true };
+}
+
+/// Il campionatore dei lati della pillola (M2, Task 4): solo CPU (GetSystemTimes su Windows) e
+/// RAM, nessun disco né rete. Vive sul thread dell'interfaccia: le due letture costano
+/// microsecondi.
+pub struct CampionatoreLeggero {
     sistema: System,
     /// Ultima lettura dei tempi di sistema (CPU su Windows).
     #[cfg(windows)]
@@ -141,89 +158,46 @@ pub struct Campionatore {
     /// L'ultima percentuale calcolata: resta se fra due letture non passa tempo di CPU.
     #[cfg(windows)]
     ultima_cpu: Option<f32>,
-    dischi: Disks,
-    reti: Networks,
-    batterie: Option<Manager>,
-    ultimo: Instant,
-    campioni: u32,
 }
 
-impl Default for Campionatore {
+/// Ogni quanto si campionano CPU e RAM per i lati della pillola (solo se scelte e visibili).
+pub const PERIODO_LATI: Duration = Duration::from_secs(5);
+
+impl Default for CampionatoreLeggero {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Campionatore {
+impl CampionatoreLeggero {
     pub fn new() -> Self {
         #[cfg_attr(windows, allow(unused_mut))]
         let mut sistema = System::new();
         // Base di partenza per la CPU: la percentuale è la differenza tra due letture.
         #[cfg(not(windows))]
         sistema.refresh_cpu_usage();
-        Campionatore {
+        CampionatoreLeggero {
             sistema,
             #[cfg(windows)]
             tempi: tempi_cpu(),
             #[cfg(windows)]
             ultima_cpu: None,
-            dischi: Disks::new_with_refreshed_list_specifics(disco_mirato()),
-            reti: Networks::new_with_refreshed_list(),
-            batterie: Manager::new().ok(),
-            ultimo: Instant::now(),
-            campioni: 0,
         }
     }
 
-    /// Vero dal secondo campione: la CPU è una differenza tra due letture, il primo valore non conta.
-    pub fn cpu_pronta(&self) -> bool {
-        self.campioni >= 2
+    /// CPU (`None` se illeggibile) e RAM occupata, in percentuale.
+    pub fn campiona(&mut self) -> (Option<f32>, f32) {
+        let cpu = self.cpu();
+        let (usata, totale) = self.ram();
+        let ram = if totale == 0 { 0.0 } else { (usata as f64 / totale as f64 * 100.0) as f32 };
+        (cpu, ram.clamp(0.0, 100.0))
     }
 
-    pub fn campiona(&mut self) -> StatPc {
-        let cpu_pct = self.cpu();
+    /// RAM usata e totale, in byte.
+    fn ram(&mut self) -> (u64, u64) {
         self.sistema.refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
-        self.dischi.refresh_specifics(true, disco_mirato());
-        self.reti.refresh(true);
-
-        // Byte arrivati/partiti dall'ultimo campione, divisi per il tempo trascorso.
-        let ora = Instant::now();
-        let secondi = ora.duration_since(self.ultimo).as_secs_f64().max(0.001);
-        self.ultimo = ora;
-        let (mut giu, mut su) = (0u64, 0u64);
-        for (nome, dati) in self.reti.iter() {
-            if e_loopback(nome) {
-                continue;
-            }
-            giu = giu.saturating_add(dati.received());
-            su = su.saturating_add(dati.transmitted());
-        }
-        let (rete_giu_bps, rete_su_bps) = if self.campioni == 0 {
-            (0, 0)
-        } else {
-            ((giu as f64 / secondi) as u64, (su as f64 / secondi) as u64)
-        };
-
-        let (mut disco_totale, mut disco_libero) = (0u64, 0u64);
-        for d in self.dischi.list().iter().filter(|d| !d.is_removable()) {
-            disco_totale = disco_totale.saturating_add(d.total_space());
-            disco_libero = disco_libero.saturating_add(d.available_space());
-        }
-
-        let batteria = self.batteria();
-        self.campioni = self.campioni.saturating_add(1);
-
-        let ram_totale = self.sistema.total_memory();
-        StatPc {
-            cpu_pct,
-            ram_usata: self.sistema.used_memory().min(ram_totale),
-            ram_totale,
-            disco_usato: disco_totale.saturating_sub(disco_libero),
-            disco_totale,
-            rete_giu_bps,
-            rete_su_bps,
-            batteria,
-        }
+        let totale = self.sistema.total_memory();
+        (self.sistema.used_memory().min(totale), totale)
     }
 
     /// Percentuale di CPU dall'ultima lettura; `None` se GetSystemTimes non risponde (adesso o
@@ -243,6 +217,119 @@ impl Campionatore {
     fn cpu(&mut self) -> Option<f32> {
         self.sistema.refresh_cpu_usage();
         Some(self.sistema.global_cpu_usage().clamp(0.0, 100.0))
+    }
+}
+
+pub struct Campionatore {
+    /// CPU e RAM: lo stesso codice dei lati della pillola.
+    leggero: CampionatoreLeggero,
+    /// Dischi e reti nascono solo quando una vista li mostra (`Fonti`), poi restano fino alla
+    /// chiusura del pannello.
+    dischi: Option<Disks>,
+    reti: Option<Networks>,
+    /// Campioni della rete da quando le reti ci sono: la velocità è una differenza fra due.
+    campioni_rete: u32,
+    batterie: Option<Manager>,
+    ultimo: Instant,
+    campioni: u32,
+}
+
+impl Default for Campionatore {
+    fn default() -> Self {
+        Self::new(Fonti::TUTTE)
+    }
+}
+
+impl Campionatore {
+    pub fn new(fonti: Fonti) -> Self {
+        let mut c = Campionatore {
+            leggero: CampionatoreLeggero::new(),
+            dischi: None,
+            reti: None,
+            campioni_rete: 0,
+            batterie: Manager::new().ok(),
+            ultimo: Instant::now(),
+            campioni: 0,
+        };
+        c.prepara(fonti);
+        c
+    }
+
+    /// Crea dischi e reti appena una vista li chiede (mai prima).
+    fn prepara(&mut self, fonti: Fonti) {
+        if fonti.disco && self.dischi.is_none() {
+            self.dischi = Some(Disks::new_with_refreshed_list_specifics(disco_mirato()));
+        }
+        if fonti.rete && self.reti.is_none() {
+            self.reti = Some(Networks::new_with_refreshed_list());
+            self.campioni_rete = 0;
+        }
+    }
+
+    /// Vero se il campionatore legge i dischi (nessun quadrante e nessuna vista li mostra: mai).
+    #[cfg(test)]
+    pub fn legge_dischi(&self) -> bool {
+        self.dischi.is_some()
+    }
+
+    /// Vero dal secondo campione: la CPU è una differenza tra due letture, il primo valore non conta.
+    pub fn cpu_pronta(&self) -> bool {
+        self.campioni >= 2
+    }
+
+    /// Un campione delle fonti chieste adesso: dischi e reti solo se `fonti` li vuole (a zero
+    /// altrimenti: l'interfaccia, allora, non li mostra).
+    pub fn campiona(&mut self, fonti: Fonti) -> StatPc {
+        self.prepara(fonti);
+        let cpu_pct = self.leggero.cpu();
+        let (ram_usata, ram_totale) = self.leggero.ram();
+
+        // Byte arrivati/partiti dall'ultimo campione, divisi per il tempo trascorso.
+        let ora = Instant::now();
+        let secondi = ora.duration_since(self.ultimo).as_secs_f64().max(0.001);
+        self.ultimo = ora;
+        let (mut giu, mut su) = (0u64, 0u64);
+        let mut rete_pronta = false;
+        if let Some(reti) = self.reti.as_mut().filter(|_| fonti.rete) {
+            reti.refresh(true);
+            for (nome, dati) in reti.iter() {
+                if e_loopback(nome) {
+                    continue;
+                }
+                giu = giu.saturating_add(dati.received());
+                su = su.saturating_add(dati.transmitted());
+            }
+            rete_pronta = self.campioni_rete > 0;
+            self.campioni_rete = self.campioni_rete.saturating_add(1);
+        }
+        let (rete_giu_bps, rete_su_bps) = if rete_pronta {
+            ((giu as f64 / secondi) as u64, (su as f64 / secondi) as u64)
+        } else {
+            (0, 0)
+        };
+
+        let (mut disco_totale, mut disco_libero) = (0u64, 0u64);
+        if let Some(dischi) = self.dischi.as_mut().filter(|_| fonti.disco) {
+            dischi.refresh_specifics(true, disco_mirato());
+            for d in dischi.list().iter().filter(|d| !d.is_removable()) {
+                disco_totale = disco_totale.saturating_add(d.total_space());
+                disco_libero = disco_libero.saturating_add(d.available_space());
+            }
+        }
+
+        let batteria = self.batteria();
+        self.campioni = self.campioni.saturating_add(1);
+
+        StatPc {
+            cpu_pct,
+            ram_usata,
+            ram_totale,
+            disco_usato: disco_totale.saturating_sub(disco_libero),
+            disco_totale,
+            rete_giu_bps,
+            rete_su_bps,
+            batteria,
+        }
     }
 
     /// La prima batteria del PC; `None` se il PC non ne ha (desktop) o non si legge.
@@ -358,11 +445,11 @@ mod test {
 
     #[test]
     fn campione_plausibile() {
-        let mut c = Campionatore::new();
+        let mut c = Campionatore::new(Fonti::TUTTE);
         assert!(!c.cpu_pronta());
-        c.campiona();
+        c.campiona(Fonti::TUTTE);
         std::thread::sleep(Duration::from_millis(300));
-        let s = c.campiona();
+        let s = c.campiona(Fonti::TUTTE);
         assert!(c.cpu_pronta());
         let cpu = s.cpu_pct.expect("GetSystemTimes leggibile");
         assert!((0.0..=100.0).contains(&cpu), "cpu {cpu}");
@@ -372,6 +459,35 @@ mod test {
         if let Some(b) = s.batteria {
             assert!((0.0..=100.0).contains(&b.percentuale));
         }
+    }
+
+    /// M2 Task 4: nessun quadrante né vista mostra il disco → il campionatore non lo legge
+    /// (l'elenco dei dischi nemmeno si crea); appena una vista lo chiede, lo legge.
+    #[test]
+    fn quadranti_leggono_solo_cio_che_mostrano() {
+        let solo_cpu_ram = Fonti::default();
+        let mut c = Campionatore::new(solo_cpu_ram);
+        let s = c.campiona(solo_cpu_ram);
+        assert!(!c.legge_dischi(), "nessun disco scelto: i dischi non si leggono");
+        assert_eq!((s.disco_totale, s.disco_usato), (0, 0));
+        assert_eq!((s.rete_giu_bps, s.rete_su_bps), (0, 0));
+        assert!(s.ram_totale > 0, "la RAM si legge sempre");
+        let s = c.campiona(Fonti { disco: true, rete: false });
+        assert!(c.legge_dischi());
+        assert!(s.disco_usato <= s.disco_totale);
+    }
+
+    #[test]
+    fn campionatore_leggero_cpu_e_ram() {
+        let mut c = CampionatoreLeggero::new();
+        let (_, ram) = c.campiona();
+        assert!((0.0..=100.0).contains(&ram) && ram > 0.0, "ram {ram}");
+        std::thread::sleep(Duration::from_millis(200));
+        let (cpu, ram) = c.campiona();
+        let cpu = cpu.expect("CPU leggibile dal secondo campione");
+        assert!((0.0..=100.0).contains(&cpu), "cpu {cpu}");
+        assert!((0.0..=100.0).contains(&ram));
+        assert_eq!(PERIODO_LATI, Duration::from_secs(5));
     }
 
     #[test]

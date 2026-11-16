@@ -10,6 +10,7 @@ mod finestra_impostazioni;
 mod finestre;
 mod gestione;
 mod impostazioni;
+mod lati;
 mod layout;
 mod orologio;
 mod ottimismo;
@@ -20,6 +21,7 @@ mod ponte;
 mod registro;
 mod scelte;
 mod sistema;
+mod sorgenti_lati;
 mod stanze;
 mod umore;
 #[cfg(test)]
@@ -201,6 +203,7 @@ fn main() -> Result<(), slint::PlatformError> {
     sistema::servizi::spegni();
     gestione::spegni();
     ponte::spegni();
+    sorgenti_lati::spegni();
     drop(apertura);
     let _ = pillola.hide();
     esito

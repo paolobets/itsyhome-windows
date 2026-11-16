@@ -20,12 +20,12 @@ thread_local! {
     static SEZIONE: Cell<Option<i32>> = const { Cell::new(None) };
 }
 
-/// Sezioni delle Impostazioni: 0 Home Assistant, 1 Dispositivi, 2 Collegamenti, 3 Sistema,
-/// 4 Informazioni. «Informazioni» la chiede il menu, «Collegamenti» il pannello.
+/// Sezioni delle Impostazioni: 0 Home Assistant, 1 Dispositivi, 2 Collegamenti, 3 Isola, 4 Sistema,
+/// 5 Informazioni. «Informazioni» la chiede il menu, «Collegamenti» il pannello.
 pub const SEZIONE_COLLEGAMENTI: i32 = 2;
 // Fuori da Windows non c'è il menu che la chiede: resta per i test.
 #[cfg_attr(not(windows), allow(dead_code))]
-pub const SEZIONE_INFORMAZIONI: i32 = 4;
+pub const SEZIONE_INFORMAZIONI: i32 = 5;
 
 /// La prossima `apri_impostazioni` mostra questa sezione (la si chiede dal menu, prima che il
 /// pannello si chiuda e la finestra si apra).

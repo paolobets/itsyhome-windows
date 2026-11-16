@@ -214,3 +214,206 @@ export component Etichetta inherits Text {
     color: Tema.testo-etichetta;
     vertical-alignment: center;
 }
+
+// Un selettore (M2, Task 4): un pulsante col valore scelto e «›» che apre l'elenco delle voci in
+// un `PopupWindow`. Invio, Spazio o ↓ lo aprono; nell'elenco ↑/↓ muovono, Invio o Spazio scelgono,
+// Esc chiude lasciando com'era; chiuso l'elenco, il fuoco torna al pulsante (lo riporta Slint).
+// Per Narrator è una casella combinata: nome = `etichetta`, valore = la voce scelta. Riusabile
+// (Impostazioni › Isola, e poi i Task 7 e 9).
+export component Scelta inherits FocusScope {
+    in property <string> etichetta;
+    in property <[string]> voci;
+    // La voce scelta adesso (-1 = nessuna): la cambia chi riceve `scelto`.
+    in property <int> indice;
+    // Quante voci si vedono nell'elenco prima di scorrere.
+    in property <int> visibili: 8;
+    callback scelto(int);
+    // Ha appena preso il fuoco (Tab): chi lo contiene lo porta in vista.
+    callback fuoco-preso();
+    // La voce evidenziata nell'elenco aperto e se l'elenco è aperto.
+    property <int> evidenziata;
+    property <bool> aperto;
+    property <length> alto-voce: 30px;
+    property <string> valore: indice >= 0 && indice < voci.length ? voci[indice] : "—";
+
+    height: 32px;
+    focus-on-click: false;
+    accessible-role: combobox;
+    accessible-label: etichetta;
+    accessible-value: valore;
+    accessible-expandable: true;
+    accessible-expanded: aperto;
+    accessible-action-default => { apri(); }
+    accessible-action-expand => { apri(); }
+    changed has-focus => {
+        if (self.has-focus) {
+            // Il fuoco torna qui quando l'elenco si chiude (anche per un clic fuori).
+            aperto = false;
+            root.fuoco-preso();
+        }
+    }
+    key-pressed(evento) => {
+        if (evento.modifiers.alt || evento.modifiers.control || evento.modifiers.meta || evento.modifiers.shift) {
+            return reject;
+        }
+        if (evento.text == Key.Return || evento.text == Key.Space || evento.text == Key.DownArrow) {
+            apri();
+            return accept;
+        }
+        return reject;
+    }
+
+    function apri() {
+        if (voci.length == 0) {
+            return;
+        }
+        evidenziata = max(0, min(indice, voci.length - 1));
+        aperto = true;
+        elenco.show();
+    }
+
+    // Chiude l'elenco e riporta il fuoco al pulsante (Slint lo ridà da sé solo in certi casi).
+    function chiudi() {
+        elenco.close();
+        aperto = false;
+        root.focus();
+    }
+
+    function scegli(i: int) {
+        chiudi();
+        if (i != indice) {
+            root.scelto(i);
+        }
+    }
+
+    Rectangle {
+        border-radius: Tema.raggio-m;
+        background: area.has-hover ? Tema.neutro-sopra : Tema.neutro-fondo;
+
+        Text {
+            x: 12px;
+            width: parent.width - 36px;
+            height: parent.height;
+            text: valore;
+            overflow: elide;
+            vertical-alignment: center;
+            font-family: Tema.carattere;
+            font-size: Tema.testo-corpo;
+            color: Tema.testo;
+            accessible-role: none;
+        }
+
+        Text {
+            x: parent.width - 22px;
+            width: 12px;
+            height: parent.height;
+            text: "›";
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            font-family: Tema.carattere;
+            font-size: Tema.testo-medio;
+            color: Tema.testo-tenue;
+            accessible-role: none;
+        }
+    }
+
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.focus();
+            apri();
+        }
+    }
+
+    if root.has-focus: Anello { raggio: Tema.raggio-m; }
+
+    elenco := PopupWindow {
+        x: 0;
+        y: root.height + 4px;
+        width: root.width;
+        height: min(voci.length, visibili) * alto-voce + 8px;
+        close-policy: close-on-click-outside;
+        forward-focus: tasti;
+
+        tasti := FocusScope {
+            key-pressed(evento) => {
+                if (evento.text == Key.Escape) {
+                    chiudi();
+                    return accept;
+                }
+                if (evento.modifiers.alt || evento.modifiers.control || evento.modifiers.meta) {
+                    return reject;
+                }
+                if (evento.text == Key.UpArrow) {
+                    evidenziata = max(0, evidenziata - 1);
+                } else if (evento.text == Key.DownArrow) {
+                    evidenziata = min(voci.length - 1, evidenziata + 1);
+                } else if (evento.text == Key.Return || evento.text == Key.Space) {
+                    scegli(evidenziata);
+                } else if (evento.text == Key.Tab || evento.text == Key.Backtab) {
+                    // Il fuoco resta nell'elenco finché non si sceglie o si chiude.
+                    return accept;
+                } else {
+                    return reject;
+                }
+                return accept;
+            }
+
+            Rectangle {
+                border-radius: Tema.raggio-m;
+                background: Tema.riquadro-pieno;
+                border-width: 1px;
+                border-color: Tema.vetro-bordo;
+            }
+
+            Flickable {
+                x: 4px;
+                y: 4px;
+                width: parent.width - 8px;
+                height: parent.height - 8px;
+                content-height: voci.length * alto-voce;
+                // L'evidenziata resta in vista.
+                content-y: -max(0px, min(evidenziata * alto-voce - (self.height - alto-voce) / 2, voci.length * alto-voce - self.height));
+
+                for voce[i] in voci: Rectangle {
+                    y: i * alto-voce;
+                    height: alto-voce;
+                    border-radius: Tema.raggio-s;
+                    background: i == evidenziata ? Tema.scheda-attiva : cella.has-hover ? Tema.scheda-sopra : transparent;
+                    accessible-role: list-item;
+                    accessible-label: voce;
+                    accessible-item-selectable: true;
+                    accessible-item-selected: i == root.indice;
+                    accessible-item-index: i;
+                    accessible-item-count: voci.length;
+                    accessible-action-default => { scegli(i); }
+
+                    // Il fuoco vero sulla voce evidenziata, perché Narrator la legga; i tasti li
+                    // prende comunque `tasti`.
+                    Fuoco { chiede: i == evidenziata && root.aperto; }
+
+                    Text {
+                        x: 10px;
+                        width: parent.width - 20px;
+                        height: parent.height;
+                        text: voce;
+                        overflow: elide;
+                        vertical-alignment: center;
+                        font-family: Tema.carattere;
+                        font-size: Tema.testo-corpo;
+                        font-weight: i == root.indice ? 600 : 400;
+                        color: Tema.testo;
+                        accessible-role: none;
+                    }
+
+                    cella := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { scegli(i); }
+                    }
+
+                    if i == evidenziata: Anello { raggio: Tema.raggio-s; distanza: -1px; }
+                }
+            }
+        }
+    }
+}

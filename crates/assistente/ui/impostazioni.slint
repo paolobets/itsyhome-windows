@@ -9,6 +9,10 @@
 // - Collegamenti: le pagine web delle gestioni (nome e indirizzo, solo http/https) che il pannello
 //   apre nel browser; aggiungi, modifica (il modulo prende il posto dell'elenco), elimina (con una
 //   conferma dentro la finestra che nomina il collegamento) e ordine con le frecce.
+// - Isola (M2, Task 4): che cosa mostra la pillola a sinistra e a destra degli occhi, da quale
+//   entità meteo viene la temperatura esterna, le fonti dei tre quadranti configurabili e il
+//   massimo dell'arco per le unità senza una scala naturale. I Task 7 e 9 ci aggiungono i loro
+//   interruttori.
 // - Sistema: «Avvia con il sistema» e «Mostra icona nella barra» (spenta di serie).
 // - Informazioni: nome, versione, «© Paolo Bets», il riquadro AboutSlint (la licenza Slint
 //   royalty-free 2.0, punto 2(a), chiede proprio quel widget in una schermata «Informazioni») e
@@ -21,9 +25,9 @@
 // Esc a livelli: prima la conferma o il campo, poi il modulo (ambienti o collegamenti), poi la
 // finestra.
 import { Tema, Movimento } from "tema.slint";
-import { AmbienteUi, TonoUi, RigaDispositivoUi, TipoRigaUi, CollegamentoUi } from "voci.slint";
+import { AmbienteUi, TonoUi, RigaDispositivoUi, TipoRigaUi, CollegamentoUi, SceltaQuadranteUi } from "voci.slint";
 import { AboutSlint, Palette } from "std-widgets.slint";
-import { Anello, Fuoco, Pulsante, TipoPulsante, Etichetta } from "componenti.slint";
+import { Anello, Fuoco, Pulsante, TipoPulsante, Etichetta, Scelta } from "componenti.slint";
 import { Icone } from "icone.slint";
 
 export { AmbienteUi, TonoUi, RigaDispositivoUi, TipoRigaUi, CollegamentoUi }
@@ -520,6 +524,81 @@ component ConfermaElimina inherits FocusScope {
     }
 }
 
+// Una riga di Impostazioni › Isola: il titolo a sinistra e il selettore a destra; per un
+// quadrante con un'unità senza scala naturale, sotto, il campo «Massimo» (vuoto = il
+// predefinito, scritto come suggerimento).
+component RigaScelta inherits Rectangle {
+    in property <string> titolo;
+    in property <[string]> voci;
+    in property <int> indice;
+    in property <bool> con-massimo;
+    in property <string> massimo;
+    in property <string> predefinito;
+    callback scelto(int);
+    // Il massimo scritto: Rust lo salva e restituisce l'errore da mostrare (vuoto = salvato).
+    callback massimo-scritto(string) -> string;
+    // Un controllo della riga ha preso il fuoco (Tab): chi la contiene la porta in vista.
+    callback fuoco-preso();
+    callback esci();
+    property <string> errore;
+
+    height: con-massimo ? 112px : 56px;
+    border-radius: Tema.raggio-xl;
+    background: Tema.card-fondo;
+    border-width: 1px;
+    border-color: Tema.vetro-bordo;
+
+    Text {
+        x: 16px;
+        y: 0;
+        width: selettore.x - self.x - 12px;
+        height: 56px;
+        text: titolo;
+        vertical-alignment: center;
+        overflow: elide;
+        font-weight: 500;
+        font-size: Tema.testo-medio;
+        color: Tema.testo;
+        accessible-role: none;
+    }
+
+    selettore := Scelta {
+        x: parent.width - self.width - 14px;
+        y: 12px;
+        width: min(240px, parent.width / 2);
+        etichetta: titolo;
+        voci: root.voci;
+        indice: root.indice;
+        scelto(i) => { root.scelto(i); }
+        fuoco-preso => { root.fuoco-preso(); }
+    }
+
+    if con-massimo: Campo {
+        x: 16px;
+        y: 60px;
+        width: parent.width - 32px;
+        etichetta: "Massimo";
+        suggerimento: predefinito;
+        errore: root.errore;
+        testo: root.massimo;
+        esci => { root.esci(); }
+        invio => { root.errore = root.massimo-scritto(self.testo); }
+        lasciato => { root.errore = root.massimo-scritto(self.testo); }
+    }
+
+    if con-massimo: Text {
+        x: 116px;
+        y: 94px;
+        width: parent.width - self.x - 16px;
+        height: 16px;
+        text: root.errore;
+        overflow: elide;
+        font-size: Tema.testo-piccolo;
+        color: Tema.caldo-2;
+        accessible-role: none;
+    }
+}
+
 export component FinestraImpostazioni inherits Window {
     in property <[AmbienteUi]> ambienti;
     in-out property <bool> avvio-con-sistema;
@@ -577,7 +656,25 @@ export component FinestraImpostazioni inherits Window {
     // (id, -1 su / +1 giù).
     callback sposta-collegamento(string, int);
 
-    // 0 Home Assistant, 1 Dispositivi, 2 Collegamenti, 3 Sistema, 4 Informazioni.
+    // Isola (M2, Task 4): le voci dei selettori (nell'ordine di `lati::scelte`) e le scelte di
+    // adesso; Rust le riscrive solo se cambiano.
+    in property <[string]> scelte-lati;
+    in property <int> indice-lato-sinistro;
+    in property <int> indice-lato-destro;
+    // «Automatico» e le entità meteo.
+    in property <[string]> scelte-meteo;
+    in property <int> indice-meteo;
+    in property <[string]> scelte-quadranti;
+    in property <[SceltaQuadranteUi]> quadranti-scelti;
+    // (0 sinistra / 1 destra, indice in `scelte-lati`).
+    callback scegli-lato(int, int);
+    callback scegli-meteo(int);
+    // (posizione del quadrante 0..2, indice in `scelte-quadranti`).
+    callback scegli-quadrante(int, int);
+    // (posizione del quadrante, testo scritto) → errore da mostrare (vuoto = salvato).
+    callback cambia-massimo(int, string) -> string;
+
+    // 0 Home Assistant, 1 Dispositivi, 2 Collegamenti, 3 Isola, 4 Sistema, 5 Informazioni.
     in-out property <int> sezione: 0;
     // L'elenco o il modulo (aggiungi/modifica).
     property <ModoAmbienti> modo: ModoAmbienti.elenco;
@@ -862,14 +959,14 @@ export component FinestraImpostazioni inherits Window {
         }
 
         // ─── Sezioni ───
-        for nome[i] in ["Home Assistant", "Dispositivi", "Collegamenti", "Sistema", "Informazioni"]: Sezione {
+        for nome[i] in ["Home Assistant", "Dispositivi", "Collegamenti", "Isola", "Sistema", "Informazioni"]: Sezione {
             x: margine - 8px;
             y: alto-testata + i * 42px;
             width: largo-sezioni;
             nome: nome;
             attiva: sezione == i;
             indice: i;
-            quante: 5;
+            quante: 6;
             scelta => { sezione = i; }
         }
 
@@ -1739,8 +1836,94 @@ export component FinestraImpostazioni inherits Window {
             }
         }
 
-        // ─── Sistema ───
+        // ─── Isola ───
         if sezione == 3: Rectangle {
+            x: contenuto-x;
+            y: alto-testata;
+            width: parent.width - self.x - margine;
+            height: parent.height - self.y - 24px;
+
+            isola := Flickable {
+                content-height: max(self.height, colonna.preferred-height + 8px);
+
+                // Tab su un selettore fuori vista: la sua riga scorre in vista.
+                function porta-in-vista(y: length, h: length) {
+                    if (y + self.content-y < 0) {
+                        self.content-y = -y;
+                    } else if (y + h + self.content-y > self.height) {
+                        self.content-y = self.height - y - h;
+                    }
+                }
+
+                colonna := VerticalLayout {
+                    width: parent.width;
+                    alignment: start;
+                    spacing: 8px;
+
+                    Etichetta {
+                        height: 30px;
+                        text: "PILLOLA";
+                    }
+
+                    sinistra := RigaScelta {
+                        titolo: "A sinistra degli occhi";
+                        voci: scelte-lati;
+                        indice: indice-lato-sinistro;
+                        scelto(i) => { root.scegli-lato(0, i); }
+                        fuoco-preso => { isola.porta-in-vista(self.y, self.height); }
+                    }
+
+                    destra := RigaScelta {
+                        titolo: "A destra degli occhi";
+                        voci: scelte-lati;
+                        indice: indice-lato-destro;
+                        scelto(i) => { root.scegli-lato(1, i); }
+                        fuoco-preso => { isola.porta-in-vista(self.y, self.height); }
+                    }
+
+                    Text {
+                        text: "Il nome della rete non compare mai nella pillola.";
+                        wrap: word-wrap;
+                        font-size: Tema.testo-piccolo;
+                        color: Tema.testo-tenue;
+                    }
+
+                    Etichetta {
+                        height: 30px;
+                        text: "METEO";
+                    }
+
+                    meteo := RigaScelta {
+                        titolo: "Meteo da";
+                        voci: scelte-meteo;
+                        indice: indice-meteo;
+                        scelto(i) => { root.scegli-meteo(i); }
+                        fuoco-preso => { isola.porta-in-vista(self.y, self.height); }
+                    }
+
+                    Etichetta {
+                        height: 30px;
+                        text: "QUADRANTI";
+                    }
+
+                    for q[i] in quadranti-scelti: RigaScelta {
+                        titolo: "Quadrante " + (i + 1);
+                        voci: scelte-quadranti;
+                        indice: q.indice;
+                        con-massimo: q.con-massimo;
+                        massimo: q.massimo;
+                        predefinito: q.predefinito;
+                        scelto(n) => { root.scegli-quadrante(i, n); }
+                        massimo-scritto(testo) => { return root.cambia-massimo(i, testo); }
+                        fuoco-preso => { isola.porta-in-vista(self.y, self.height); }
+                        esci => { radice.focus(); }
+                    }
+                }
+            }
+        }
+
+        // ─── Sistema ───
+        if sezione == 4: Rectangle {
             x: contenuto-x;
             y: alto-testata;
             width: parent.width - self.x - margine;
@@ -1872,7 +2055,7 @@ export component FinestraImpostazioni inherits Window {
         }
 
         // ─── Informazioni ───
-        if sezione == 4: Rectangle {
+        if sezione == 5: Rectangle {
             x: contenuto-x;
             y: alto-testata;
             width: parent.width - self.x - margine;

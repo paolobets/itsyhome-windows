@@ -1,9 +1,10 @@
-// Layout Quadranti della Panoramica: CPU, RAM e disco del PC e fino a 3 sensori fra i preferiti
-// della casa (senza sensori, un quadrante CASA con lo stato). Solo sintesi, nessun comando.
+// Layout Quadranti della Panoramica: tre quadranti configurabili (Impostazioni › Isola; di serie
+// CPU, RAM e disco del PC come in M1) e fino a 3 sensori fra i preferiti della casa (senza
+// sensori, un quadrante CASA con lo stato). Solo sintesi, nessun comando.
 // Senza dati l'arco è solo la traccia spenta e il valore è "—": nessun numero inventato.
 import { Tema } from "../tema.slint";
 import { Icone, Icona, Vetro } from "../icone.slint";
-import { StatPcUi, SensoreUi } from "../voci.slint";
+import { StatPcUi, SensoreUi, QuadranteUi, FonteQuadranteUi } from "../voci.slint";
 import { Etichetta } from "../componenti.slint";
 
 component Quadrante inherits Vetro {
@@ -111,11 +112,65 @@ component Quadrante inherits Vetro {
 export component LayoutQuadranti inherits Rectangle {
     in property <StatPcUi> stat;
     in property <[SensoreUi]> sensori;
+    // I quadranti configurabili (solo quelli da mostrare: «niente» non c'è) e l'ora del pannello.
+    in property <[QuadranteUi]> quadranti;
+    in property <string> ora;
     in property <string> stato-casa;
     // Casa connessa coi dati: altrimenti i valori dei sensori sono vecchi e si mostrano tenui.
     in property <bool> casa-pronta;
 
-    property <int> quanti: 3 + max(1, sensori.length);
+    property <int> quanti: quadranti.length + max(1, sensori.length);
+
+    // Valore, arco e icona di un quadrante configurabile: per il PC e l'ora li legge da qui, per
+    // meteo e sensori li ha già scritti Rust.
+    pure function valore-di(q: QuadranteUi) -> string {
+        if (q.fonte == FonteQuadranteUi.cpu) {
+            return stat.pronta ? stat.cpu-testo : "—";
+        } else if (q.fonte == FonteQuadranteUi.ram) {
+            return stat.ram-testo != "" ? stat.ram-testo : "—";
+        } else if (q.fonte == FonteQuadranteUi.disco) {
+            return stat.disco-testo != "" ? stat.disco-testo : "—";
+        } else if (q.fonte == FonteQuadranteUi.rete-giu) {
+            return stat.rete-giu != "" ? stat.rete-giu : "—";
+        } else if (q.fonte == FonteQuadranteUi.rete-su) {
+            return stat.rete-su != "" ? stat.rete-su : "—";
+        } else if (q.fonte == FonteQuadranteUi.batteria) {
+            return stat.ha-batteria ? stat.batteria-testo : "—";
+        } else if (q.fonte == FonteQuadranteUi.ora) {
+            return ora != "" ? ora : "—";
+        }
+        return q.valore != "" ? q.valore : "—";
+    }
+    pure function frazione-di(q: QuadranteUi) -> float {
+        if (q.fonte == FonteQuadranteUi.cpu) {
+            return stat.pronta ? stat.cpu : -1;
+        } else if (q.fonte == FonteQuadranteUi.ram) {
+            return stat.ram-testo != "" ? stat.ram : -1;
+        } else if (q.fonte == FonteQuadranteUi.disco) {
+            return stat.disco-testo != "" ? stat.disco : -1;
+        } else if (q.fonte == FonteQuadranteUi.batteria) {
+            return stat.ha-batteria ? stat.batteria-frazione : -1;
+        } else if (q.fonte == FonteQuadranteUi.meteo || q.fonte == FonteQuadranteUi.sensore) {
+            return q.frazione;
+        }
+        return -1;
+    }
+    pure function icona-di(q: QuadranteUi) -> image {
+        if (q.fonte == FonteQuadranteUi.cpu) {
+            return Icone.chip;
+        } else if (q.fonte == FonteQuadranteUi.ram) {
+            return Icone.memoria;
+        } else if (q.fonte == FonteQuadranteUi.disco) {
+            return Icone.disco;
+        } else if (q.fonte == FonteQuadranteUi.rete-giu || q.fonte == FonteQuadranteUi.rete-su) {
+            return Icone.onde;
+        } else if (q.fonte == FonteQuadranteUi.meteo) {
+            return Icone.sole;
+        } else if (q.fonte == FonteQuadranteUi.sensore) {
+            return Icone.di-genere(q.genere);
+        }
+        return Icone.pc;
+    }
     property <length> spazio: 10px;
     // Card uguali, qualunque sia la lunghezza dei valori; con poche card non diventano enormi.
     property <length> lato: min(170px, (self.width - (quanti - 1) * spazio) / quanti);
@@ -127,31 +182,16 @@ export component LayoutQuadranti inherits Rectangle {
         alignment: center;
         spacing: spazio;
 
-        Quadrante {
+        for q in quadranti: Quadrante {
             width: root.lato;
             arco: root.arco;
-            etichetta: "CPU";
-            icona: Icone.chip;
-            valore: stat.pronta ? stat.cpu-testo : "—";
-            frazione: stat.pronta ? stat.cpu : -1;
-        }
-
-        Quadrante {
-            width: root.lato;
-            arco: root.arco;
-            etichetta: "RAM";
-            icona: Icone.memoria;
-            valore: stat.ram-testo != "" ? stat.ram-testo : "—";
-            frazione: stat.ram-testo != "" ? stat.ram : -1;
-        }
-
-        Quadrante {
-            width: root.lato;
-            arco: root.arco;
-            etichetta: "DISCO";
-            icona: Icone.disco;
-            valore: stat.disco-testo != "" ? stat.disco-testo : "—";
-            frazione: stat.disco-testo != "" ? stat.disco : -1;
+            // I valori della casa (meteo, sensori) senza connessione sono vecchi: tenui.
+            tenue: (q.fonte == FonteQuadranteUi.meteo || q.fonte == FonteQuadranteUi.sensore) && !casa-pronta;
+            etichetta: q.etichetta;
+            icona: icona-di(q);
+            valore: valore-di(q);
+            frazione: frazione-di(q);
+            dettaglio: q.dettaglio;
         }
 
         for s in sensori: Quadrante {
