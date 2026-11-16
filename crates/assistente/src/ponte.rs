@@ -7,6 +7,8 @@ use crate::attenzione::{
     SorveglianzaBatteria, Voce, ID_BATTERIA, ID_CASA_OFFLINE, ID_CASA_TOKEN, PREFISSO_NOTIFICA, PREFISSO_SISTEMA,
     PULSANTE_ARCHIVIA, PULSANTE_APRI, PULSANTE_HO_CAPITO, PULSANTE_IMPOSTAZIONI, PULSANTE_RIPROVA,
 };
+use crate::layout::Layout;
+use crate::orologio;
 use crate::pc_stats::LetturaBatteria;
 use crate::sistema::{autoavvio, servizi};
 use crate::impostazioni::{self, Modulo, Tono};
@@ -23,7 +25,7 @@ use casa_core::diagnosi::Contatore;
 use casa_core::eventi::{Ascoltatore, CasaEvento, StatoConnessione};
 use casa_core::segreti::Segreti;
 use casa_core::servizio::CasaService;
-use casa_core::types::{AppEntity, BaseEntity, MenuData, SensorEntity, TestConnectionResult, GRUPPO_SCENE};
+use casa_core::types::{AppEntity, BaseEntity, MenuData, Meteo, SensorEntity, TestConnectionResult, GRUPPO_SCENE};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -363,6 +365,31 @@ fn tono_ui(t: Tono) -> TonoUi {
         Tono::Attesa => TonoUi::Attesa,
         Tono::Errore => TonoUi::Errore,
         Tono::Spento => TonoUi::Spento,
+    }
+}
+
+/// La parte sinistra della riga alta del pannello (nella Panoramica): `(testo, nome per Narrator)`.
+/// Quadranti: data e temperatura («VEN 13 NOV · 9°», senza meteo solo la data). Orologio: la data è
+/// già grande al centro, quindi solo il meteo («9° · Nuvoloso»; senza meteo niente). Una
+/// temperatura che manca non lascia «°»; una condizione sconosciuta non lascia il vuoto.
+pub fn riga_sinistra(layout: Layout, data: &str, meteo: Option<&Meteo>) -> (String, String) {
+    let temperatura = meteo.and_then(orologio::temperatura_breve);
+    let condizione = meteo.map(|m| orologio::condizione_italiana(&m.condizione)).filter(|c| !c.is_empty());
+    // Per chi ascolta: «9 gradi», senza il simbolo.
+    let gradi = temperatura.as_deref().map(|t| format!("{} gradi", t.trim_end_matches('°')));
+    let dati = |sep: &str, voci: [Option<&str>; 2]| voci.into_iter().flatten().collect::<Vec<_>>().join(sep);
+    match layout {
+        Layout::Quadranti => {
+            let testo = dati(" · ", [Some(data), temperatura.as_deref()]);
+            let esteso = orologio::data_per_esteso(data).unwrap_or_else(|| data.to_owned());
+            let minuscola = condizione.map(str::to_lowercase);
+            let nome = [Some(esteso.as_str()), gradi.as_deref(), minuscola.as_deref()].into_iter().flatten().collect::<Vec<_>>().join(", ");
+            (testo, nome)
+        }
+        Layout::Orologio => (
+            dati(" · ", [temperatura.as_deref(), condizione]),
+            dati(", ", [gradi.as_deref(), condizione.map(|c| c.to_lowercase()).as_deref()]),
+        ),
     }
 }
 
@@ -1459,7 +1486,24 @@ impl Ponte {
         }
     }
 
+    /// La parte sinistra della riga alta: data breve e meteo secondo il layout. Si riscrive solo
+    /// se cambia (un minuto nuovo, un meteo nuovo, un altro layout); il resto del tempo non tocca
+    /// niente e il pannello non ridisegna.
+    pub fn aggiorna_riga_sinistra(&self, p: &Pannello) {
+        let data = orologio::data_breve(chrono::Local::now().naive_local());
+        let menu = self.menu.borrow();
+        let meteo = menu.as_deref().and_then(|m| m.meteo.as_ref());
+        let (testo, nome) = riga_sinistra(Layout::da_indice(p.get_layout()), &data, meteo);
+        if p.get_riga_sinistra() != testo.as_str() {
+            p.set_riga_sinistra(testo.into());
+        }
+        if p.get_riga_sinistra_nome() != nome.as_str() {
+            p.set_riga_sinistra_nome(nome.into());
+        }
+    }
+
     fn riempi_stato(&self, p: &Pannello) {
+        self.aggiorna_riga_sinistra(p);
         let menu = self.menu.borrow();
         let stato = self.stato.borrow();
         let riga = riga_stato(&stato, menu.as_deref());
@@ -2519,5 +2563,41 @@ pub(crate) mod test {
         let v = sensori_quadranti(&m, MASSIMO_PREFERITI, MASSIMO_SENSORI);
         let ids: Vec<&str> = v.iter().map(|(p, _)| p.entity_id.as_str()).collect();
         assert_eq!(ids, ["sensor.s0", "sensor.s1", "sensor.s2"]);
+    }
+
+    fn nuvoloso(temperatura: Option<f64>) -> Meteo {
+        Meteo { entity_id: "weather.casa".into(), condizione: "cloudy".into(), temperatura, unita: "°C".into() }
+    }
+
+    #[test]
+    fn riga_alta_quadranti_con_e_senza_meteo() {
+        let m = nuvoloso(Some(9.0));
+        let (testo, nome) = riga_sinistra(Layout::Quadranti, "VEN 13 NOV", Some(&m));
+        assert_eq!(testo, "VEN 13 NOV · 9°");
+        assert_eq!(nome, "venerdì 13 novembre, 9 gradi, nuvoloso");
+        let (testo, nome) = riga_sinistra(Layout::Quadranti, "VEN 13 NOV", None);
+        assert_eq!((testo.as_str(), nome.as_str()), ("VEN 13 NOV", "venerdì 13 novembre"));
+    }
+
+    #[test]
+    fn riga_alta_orologio_solo_meteo() {
+        let m = nuvoloso(Some(9.0));
+        let (testo, nome) = riga_sinistra(Layout::Orologio, "VEN 13 NOV", Some(&m));
+        assert_eq!((testo.as_str(), nome.as_str()), ("9° · Nuvoloso", "9 gradi, nuvoloso"));
+        assert_eq!(riga_sinistra(Layout::Orologio, "VEN 13 NOV", None), (String::new(), String::new()));
+    }
+
+    #[test]
+    fn meteo_senza_temperatura_niente_gradi() {
+        let m = nuvoloso(None);
+        let (testo, nome) = riga_sinistra(Layout::Quadranti, "VEN 13 NOV", Some(&m));
+        assert_eq!(testo, "VEN 13 NOV");
+        assert!(!testo.contains('°') && !nome.contains("gradi"), "{nome}");
+        // Nell'Orologio resta la sola condizione; condizione sconosciuta e niente temperatura: nulla.
+        assert_eq!(riga_sinistra(Layout::Orologio, "VEN 13 NOV", Some(&m)).0, "Nuvoloso");
+        let strano = Meteo { condizione: "boh".into(), ..m };
+        assert_eq!(riga_sinistra(Layout::Orologio, "VEN 13 NOV", Some(&strano)).0, "");
+        let solo_gradi = Meteo { temperatura: Some(-3.0), ..strano };
+        assert_eq!(riga_sinistra(Layout::Orologio, "VEN 13 NOV", Some(&solo_gradi)).0, "-3°");
     }
 }

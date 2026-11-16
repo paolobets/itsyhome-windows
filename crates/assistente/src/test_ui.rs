@@ -804,6 +804,83 @@ mod accessibilita {
         }
     }
 
+    /// Fa passare `ms` millisecondi di tempo finto (timer e animazioni del backend di prova).
+    fn avanza(ms: u64) {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(ms));
+    }
+
+    /// Il timer da 16 ms fa partire l'arrivo, poi i 280 ms dell'animazione: in due passi, perché
+    /// l'animazione parte dall'istante in cui scatta il timer.
+    fn fine_scorrimento() {
+        avanza(20);
+        avanza(300);
+    }
+
+    /// M2 Task 3: la riga sinistra (data e meteo) c'è nella Panoramica; nelle app la parte
+    /// sinistra della riga alta resta vuota (niente «Indietro»).
+    #[test]
+    fn riga_sinistra_solo_nella_panoramica() {
+        let (p, _) = pannello_casa();
+        p.set_riga_sinistra("VEN 13 NOV · 9°".into());
+        p.set_riga_sinistra_nome("venerdì 13 novembre, 9 gradi".into());
+        assert!(ElementHandle::find_by_accessible_label(&p, "venerdì 13 novembre, 9 gradi").next().is_none(), "vista casa: vuota");
+        assert!(ElementHandle::find_by_accessible_label(&p, "Indietro").next().is_none());
+        p.set_vista("panoramica".into());
+        assert!(titolo(&p, "venerdì 13 novembre, 9 gradi"), "Panoramica: visibile");
+        p.set_vista("casa".into());
+        assert!(ElementHandle::find_by_accessible_label(&p, "venerdì 13 novembre, 9 gradi").next().is_none(), "vista casa: vuota");
+    }
+
+    /// M2 Task 3: il contenuto scorre dal lato della scheda scelta (280 ms) e la riga alta e il
+    /// dock restano fermi. Il ritorno alla Panoramica (dal dock, Backspace, Alt+←) va verso l'indice 0.
+    #[test]
+    fn scorrimento_dal_lato_della_scheda() {
+        let (p, _) = pannello_casa();
+        p.set_vista("panoramica".into());
+        avanza(400);
+        assert_eq!(p.get_scarto_contenuto(), 0.0);
+        p.set_vista("pc".into());
+        avanza(0);
+        assert_eq!(p.get_scarto_contenuto(), 26.0, "da destra, subito");
+        fine_scorrimento();
+        assert_eq!(p.get_scarto_contenuto(), 0.0, "arrivato");
+        p.set_vista("panoramica".into());
+        avanza(0);
+        assert_eq!(p.get_scarto_contenuto(), -26.0, "verso la Panoramica: da sinistra");
+        fine_scorrimento();
+        assert_eq!(p.get_scarto_contenuto(), 0.0);
+        // Fra due app: casa (1) → pc (2) da destra; pc → casa da sinistra.
+        p.set_vista("casa".into());
+        fine_scorrimento();
+        p.set_vista("pc".into());
+        avanza(0);
+        assert_eq!(p.get_scarto_contenuto(), 26.0);
+        fine_scorrimento();
+        p.set_vista("casa".into());
+        avanza(0);
+        assert_eq!(p.get_scarto_contenuto(), -26.0);
+        fine_scorrimento();
+        // Backspace dalla vista: verso la Panoramica.
+        tasto(&p, slint::platform::Key::Backspace);
+        avanza(0);
+        assert_eq!(p.get_vista(), "panoramica");
+        assert_eq!(p.get_scarto_contenuto(), -26.0);
+        fine_scorrimento();
+        assert_eq!(p.get_scarto_contenuto(), 0.0);
+    }
+
+    /// M2 Task 3: con «Effetti di animazione» spento nessuno scarto, solo la dissolvenza.
+    #[test]
+    fn scorrimento_spento_col_movimento_ridotto() {
+        let (p, _) = pannello_casa();
+        p.global::<crate::Movimento>().set_ridotto(true);
+        p.set_vista("pc".into());
+        avanza(0);
+        assert_eq!(p.get_scarto_contenuto(), 0.0);
+        fine_scorrimento();
+        assert_eq!(p.get_scarto_contenuto(), 0.0);
+    }
+
     /// Task 14e/14g: da tastiera si va dalle card alle stanze (←, su «Preferiti»), si sceglie (↓) e
     /// si apre (Invio); il fuoco passa ai dispositivi, Invio tocca. Esc a livelli: prima torna a
     /// «Preferiti», poi chiude il pannello; Backspace torna prima a «Preferiti», poi alla Panoramica.

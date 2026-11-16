@@ -94,7 +94,7 @@ pub(crate) fn voci_app() -> ModelRc<VoceAppUi> {
     ModelRc::new(VecModel::from(voci))
 }
 
-fn aggiorna_ora(pannello: &Pannello) {
+fn aggiorna_ora(ponte: &Ponte, pannello: &Pannello) {
     let (ora, data) = orologio::adesso();
     // Si riscrive solo se cambia: una proprietà invariata non deve ridisegnare nulla.
     if pannello.get_ora() != ora.as_str() {
@@ -103,16 +103,9 @@ fn aggiorna_ora(pannello: &Pannello) {
     if pannello.get_data() != data.as_str() {
         pannello.set_data(data.into());
     }
-}
-
-/// Margine dopo lo scatto del minuto: l'orologio si sveglia appena dopo, mai un attimo prima.
-const MARGINE_MINUTO: Duration = Duration::from_millis(20);
-
-/// Fra quanto scatta il prossimo minuto, dato il secondo e il nanosecondo di adesso.
-/// Un secondo intercalare (60) fa scattare subito il minuto dopo.
-fn al_prossimo_minuto(secondo: u32, nano: u32) -> Duration {
-    let passato = Duration::from_secs(u64::from(secondo.min(60))) + Duration::from_nanos(u64::from(nano.min(999_999_999)));
-    Duration::from_secs(60).saturating_sub(passato) + MARGINE_MINUTO
+    // La data breve cambia a mezzanotte, e nel minuto nuovo se ne approfitta per rileggere tutto:
+    // `riga_sinistra` si riscrive solo se il testo è diverso.
+    ponte.aggiorna_riga_sinistra(pannello);
 }
 
 fn percentuale(frazione: f32) -> String {
@@ -261,12 +254,12 @@ impl Apertura {
     /// tornerà un timer da 1 s solo per lui.
     fn programma_orologio(&self) {
         let adesso = chrono::Local::now();
-        let tra = al_prossimo_minuto(adesso.second(), adesso.nanosecond());
+        let tra = orologio::al_prossimo_minuto(adesso.second(), adesso.nanosecond());
         let a = self.io.clone();
         self.orologio.start(slint::TimerMode::SingleShot, tra, move || {
             let Some(a) = a.upgrade() else { return };
             if let Some(p) = a.pannello.borrow().as_ref() {
-                aggiorna_ora(p);
+                aggiorna_ora(&a.ponte, p);
             }
             a.programma_orologio();
         });
@@ -363,6 +356,10 @@ impl Apertura {
     fn scegli_layout(&self, l: Layout) {
         self.layout.set(l.indice());
         scelte::salva_layout(self.ponte.casa(), l);
+        // Nell'Orologio la riga alta ha solo il meteo (la data è già grande al centro).
+        if let Some(p) = self.pannello.borrow().as_ref() {
+            self.ponte.aggiorna_riga_sinistra(p);
+        }
     }
 
     /// Il movimento ridotto cambiato a pannello aperto (controllo da 5 s dei servizi).
@@ -415,7 +412,7 @@ impl Apertura {
         }
         // Parte con l'umore della pillola; il ponte glielo aggiorna appena la pillola è sparita.
         pannello.set_umore(pillola.get_umore());
-        aggiorna_ora(&pannello);
+        aggiorna_ora(&self.ponte, &pannello);
         self.programma_orologio();
 
         self.avvia_campionamento(&pannello);
@@ -545,16 +542,6 @@ mod test {
         assert!(ui.pronta);
         // Prima del secondo campione resta «—» anche con un numero.
         assert_eq!(stat_ui(&stat(Some(12.4)), false).cpu_testo, "—");
-    }
-
-    #[test]
-    fn l_orologio_scatta_al_minuto() {
-        // Alle 10:24:15,250 il prossimo scatto è fra 44,75 s (più il margine): mai prima del minuto.
-        assert_eq!(al_prossimo_minuto(15, 250_000_000), Duration::from_millis(44_750) + MARGINE_MINUTO);
-        assert_eq!(al_prossimo_minuto(0, 0), Duration::from_secs(60) + MARGINE_MINUTO);
-        assert_eq!(al_prossimo_minuto(59, 999_000_000), Duration::from_millis(1) + MARGINE_MINUTO);
-        // Secondo intercalare (60): subito al minuto dopo, mai una durata negativa.
-        assert_eq!(al_prossimo_minuto(60, 0), MARGINE_MINUTO);
     }
 
     #[test]

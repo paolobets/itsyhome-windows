@@ -12,6 +12,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Con Home Assistant ancora in avvio la rilettura dei 5 s non si arma più a connessione caduta (come ogni altra riprova).
 - CI `v3-build`: parte anche su `main`; voci usate solo da Windows non fanno più fallire clippy (`-D warnings`) su macOS e Ubuntu.
 
+### Added (M2, Task 3: riga alta con data e meteo, viste che scorrono)
+- Riga alta del pannello, a sinistra degli occhi e solo nella Panoramica: nei Quadranti «VEN 13 NOV · 9°» (senza meteo la sola data), nell'Orologio «9° · Nuvoloso» (la data è già grande al centro; senza meteo niente). Nelle app la parte sinistra resta vuota. Per Narrator il testo è per esteso («venerdì 13 novembre, 9 gradi, nuvoloso»). Si riscrive solo se cambia: minuto nuovo, meteo nuovo, altro layout.
+- Cambiando vista il contenuto scorre per 280 ms dal lato della scheda scelta (riga alta e dock fermi); il ritorno alla Panoramica (dock, Esc o Backspace, Alt+←) va verso la prima scheda. Con «Effetti di animazione» spento niente scorrimento, solo una dissolvenza da 120 ms. Nessun ridisegno fuori dall'animazione.
+- `al_prossimo_minuto` passa da `pannello.rs` a `orologio.rs`; condizioni di Home Assistant in italiano e temperatura arrotondata.
+
 ### Added (M2, Task 2: meteo da Home Assistant in `casa-core`)
 - `MenuData::meteo` (condizione, temperatura, unità) dalla prima `weather.*` disponibile, o da quella scelta con `Config::meteo_entita` (`None` = automatico; una scelta non disponibile dà «nessun meteo», non quello di un'altra); `MenuData::meteo_elenco` per il selettore delle Impostazioni. Le `weather.*` restano fuori da stanze e preferiti.
 - Un cambio del meteo si pubblica come una sostituzione (niente mappatura completa, né letture); nel registro diagnostico lo conta `effetto_meteo`. Cambiare `meteo_entita` rimappa solo in memoria.

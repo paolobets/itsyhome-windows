@@ -1,5 +1,6 @@
 // Il pannello unico dell'assistente (spec §3bis). Riga alta: occhi al centro (dove stavano quelli
-// della pillola), l'ora a destra e dopo di lei «⋯» (Task 14i: il menu dell'isola senza «Apri», con
+// della pillola), a sinistra data e meteo (solo nella Panoramica; nelle app resta vuota), l'ora a
+// destra e dopo di lei «⋯» (Task 14i: il menu dell'isola senza «Apri», con
 // Impostazioni in testa); niente «‹ Indietro» (Task 14g: alla Panoramica si torna dal
 // dock, con Backspace o Alt+←; nella vista Casa «Preferiti» è la prima voce dell'elenco). Centro: la
 // Panoramica (riga «In attesa» se c'è qualcosa, poi il layout Orologio o Quadranti, cambiabili
@@ -114,6 +115,10 @@ export component Pannello inherits Window {
     in property <UmoreUi> umore: UmoreUi.tranquillo;
     in property <string> ora;
     in property <string> data;
+    // Parte sinistra della riga alta, solo nella Panoramica (nelle app resta vuota): data breve e
+    // meteo secondo il layout, scritti da Rust solo quando cambiano; il nome è per Narrator.
+    in property <string> riga-sinistra;
+    in property <string> riga-sinistra-nome;
     // Layout della Panoramica (indice del puntino: 0 Orologio, 1 Quadranti, come `layout.rs`).
     in-out property <int> layout: 0;
     out property <int> numero-layout: 2;
@@ -201,6 +206,40 @@ export component Pannello inherits Window {
     property <length> altezza-attese: 42px;
     property <length> sotto-attese: con-attese ? altezza-attese + 6px : 0px;
     property <bool> espansa: con-attese && indice-aperta >= 0 && indice-aperta < attese.length;
+
+    // ─── Scorrimento fra le viste (280 ms) ───
+    // Cambiando vista il contenuto (non la riga alta né il dock) parte da 26 px verso il lato
+    // della scheda scelta (più a destra nel dock: da destra; più a sinistra, e la Panoramica che è
+    // la prima: da sinistra) e arriva al suo posto dissolvendosi dentro. Con «Effetti di animazione»
+    // spento niente scarto, solo una dissolvenza da 120 ms. Il `Timer` gira solo i 16 ms del cambio:
+    // fuori dall'animazione non c'è nulla da ridisegnare.
+    out property <length> scarto-contenuto: 0px;
+    property <float> opacita-contenuto: 1;
+    property <bool> in-arrivo: true;
+    property <int> posizione-prec: 0;
+    animate scarto-contenuto { duration: in-arrivo ? 280ms : 0ms; easing: ease-out; }
+    animate opacita-contenuto { duration: in-arrivo ? (Movimento.ridotto ? 120ms : 280ms) : 0ms; easing: ease-out; }
+
+    // Posizione di una vista nel dock (la Panoramica è la prima); sconosciuta: dopo la Panoramica.
+    pure function posizione(v: string) -> int {
+        return v == "panoramica" ? 0
+            : app[0].id == v ? 0 : app[1].id == v ? 1 : app[2].id == v ? 2 : app[3].id == v ? 3
+            : app[4].id == v ? 4 : app[5].id == v ? 5 : app[6].id == v ? 6 : app[7].id == v ? 7 : 1;
+    }
+
+    changed vista => {
+        let nuova = posizione(vista);
+        if (nuova != posizione-prec) {
+            // Prima il punto di partenza, senza animazione (`in-arrivo` falso = 0 ms); poi, 16 ms
+            // dopo, l'arrivo animato.
+            in-arrivo = false;
+            scarto-contenuto = Movimento.ridotto ? 0px : nuova > posizione-prec ? 26px : -26px;
+            opacita-contenuto = 0;
+            arrivo.running = true;
+            arrivo.restart();
+        }
+        posizione-prec = nuova;
+    }
 
     // Diventa vero poco dopo l'apertura, quando i primi fotogrammi hanno già disegnato gli occhi
     // al punto di partenza: solo allora lo scarto si anima (le proprietà si calcolano solo
@@ -715,6 +754,22 @@ export component Pannello inherits Window {
                 }
             }
 
+            // Data e meteo, a sinistra degli occhi, solo nella Panoramica.
+            if vista == "panoramica" && riga-sinistra != "": Text {
+                x: 12px;
+                y: 0;
+                width: max(0px, (parent.width - occhi.ingombro) / 2 - 12px - 8px);
+                height: altezza-riga;
+                text: riga-sinistra;
+                overflow: elide;
+                vertical-alignment: center;
+                font-family: Tema.carattere-mono;
+                font-size: Tema.testo-piccolo;
+                color: Tema.testo-tenue;
+                accessible-role: text;
+                accessible-label: riga-sinistra-nome;
+            }
+
             Text {
                 x: 0;
                 y: 0;
@@ -814,11 +869,12 @@ export component Pannello inherits Window {
 
             // Centro: la Panoramica (solo sintesi, nessun comando) o la vista dell'app.
             Rectangle {
-                x: centro-x;
+                x: centro-x + scarto-contenuto;
                 y: centro-y + sotto-attese;
                 width: centro-l;
                 height: centro-a - sotto-attese;
                 visible: !espansa;
+                opacity: opacita-contenuto;
 
                 if vista == "panoramica" && layout == 0: LayoutOrologio {
                     width: parent.width;
@@ -1065,6 +1121,18 @@ export component Pannello inherits Window {
         triggered => {
             rotella-ferma = false;
             rotella = 0px;
+        }
+    }
+
+    // Fa partire l'arrivo animato del contenuto, 16 ms dopo il punto di partenza.
+    arrivo := Timer {
+        interval: 16ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            in-arrivo = true;
+            scarto-contenuto = 0px;
+            opacita-contenuto = 1;
         }
     }
 
