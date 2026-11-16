@@ -1,6 +1,6 @@
 //! Registro delle app apribili dal pannello: sono le icone del dock, nell'ordine. La prima,
 //! la Panoramica, è la schermata principale. Le Impostazioni non sono un'app del dock (Task 14i):
-//! si aprono dal menu «⋯» in alto a destra del pannello, dal clic destro sulla pillola e dalla tray.
+//! si aprono dal menu «⋯» in alto a destra del pannello e dalla tray.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VoceApp {

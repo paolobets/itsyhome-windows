@@ -263,18 +263,17 @@ mod accessibilita {
         assert_eq!(elemento(&p, "La casa chiede di te").accessible_role(), Some(AccessibleRole::Button));
     }
 
-    /// Task 14d: il clic destro sulla pillola chiede il menu dell'isola (non la ritirata né
-    /// l'apertura del pannello); il clic sinistro apre il pannello come prima.
+    /// 16/11 (Paolo): il clic destro sulla pillola non fa nulla (il menu sta nel «⋯» del
+    /// pannello); il clic sinistro apre il pannello come prima.
     #[test]
-    fn clic_destro_sulla_pillola_chiede_il_menu() {
+    fn clic_destro_sulla_pillola_non_fa_nulla() {
         use slint::platform::{PointerEventButton, WindowEvent};
         piattaforma_di_prova();
         let p = Pillola::new().expect("pillola");
         p.show().expect("pillola mostrata nel backend di prova");
         let eventi = std::rc::Rc::new(std::cell::RefCell::new(Vec::<&str>::new()));
-        let (e1, e2) = (eventi.clone(), eventi.clone());
-        p.on_menu(move || e1.borrow_mut().push("menu"));
-        p.on_cliccata(move || e2.borrow_mut().push("cliccata"));
+        let e = eventi.clone();
+        p.on_cliccata(move || e.borrow_mut().push("cliccata"));
         let pillola = elemento(&p, "ItsyHome");
         let (pos, lato) = (pillola.absolute_position(), pillola.size());
         let centro = slint::LogicalPosition::new(pos.x + lato.width / 2.0, pos.y + lato.height / 2.0);
@@ -284,9 +283,9 @@ mod accessibilita {
             p.window().dispatch_event(WindowEvent::PointerReleased { position: centro, button });
         };
         clic(PointerEventButton::Right);
-        assert_eq!(*eventi.borrow(), ["menu"]);
+        assert!(eventi.borrow().is_empty(), "il clic destro non apre il pannello");
         clic(PointerEventButton::Left);
-        assert_eq!(*eventi.borrow(), ["menu", "cliccata"]);
+        assert_eq!(*eventi.borrow(), ["cliccata"]);
     }
 
     /// Task 14d: «Mostra icona nella barra» in Impostazioni › Sistema, spenta di serie; il

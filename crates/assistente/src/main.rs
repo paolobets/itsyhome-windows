@@ -193,7 +193,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     casa.connetti_attivo();
     // Il ciclo eventi vive anche senza finestre visibili (pillola nascosta da uno schermo intero
-    // a pannello chiuso): finisce solo con «Esci» della tray.
+    // a pannello chiuso): finisce solo con «Esci» (menu «⋯» del pannello o della tray).
     let esito = pillola.show().and_then(|_| slint::run_event_loop_until_quit());
     // Sempre, anche se mostrare la pillola o il ciclo eventi non sono riusciti. In ordine:
     // servizi (tray, scorciatoie), finestra di gestione (processo raccolto), ponte, pannello; il `CasaService` si chiude qui, con il suo

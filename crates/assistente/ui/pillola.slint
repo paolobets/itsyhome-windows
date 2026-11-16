@@ -38,8 +38,6 @@ export component Pillola inherits Window {
     in property <bool> ritirata;
     in property <LivelloUi> livello-linea: LivelloUi.nessuno;
     callback cliccata();
-    // Clic destro sulla pillola: il menu dell'isola (nativo, lo apre Rust sotto la pillola).
-    callback menu();
     // Clic su un pulsante della pillola allargata: l'id del pulsante.
     callback azione(string);
 
@@ -234,13 +232,9 @@ export component Pillola inherits Window {
             accessible-label: allargata ? messaggio
                 : aspetto == AspettoPillolaUi.puntino ? "ItsyHome, una voce in attesa" : "ItsyHome";
             accessible-action-default => { root.cliccata(); }
+            // Il clic destro non fa nulla (16/11, Paolo): il menu sta nel «⋯» del pannello.
             clicked => {
                 root.cliccata();
-            }
-            pointer-event(e) => {
-                if (e.button == PointerEventButton.right && e.kind == PointerEventKind.up) {
-                    root.menu();
-                }
             }
         }
 

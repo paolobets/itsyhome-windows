@@ -2,11 +2,10 @@
 //! AboutSlint, richiesta dalla licenza Slint royalty-free 2.0, §2(a), «accessible from the top
 //! level menu»), «Ritira l'isola» / «Mostra l'isola», «Esci».
 //!
-//! È un menu nativo di Windows (`muda`, lo stesso dell'icona nella barra: TrackPopupMenu). Si
-//! apre col clic destro sulla pillola, sotto la pillola, e dall'icona nella barra se l'utente
-//! l'ha accesa (Impostazioni › Sistema); Esc o un clic altrove lo chiudono. Un solo menu, con le
-//! stesse voci, per tutte e due. Le scelte arrivano dal gestore globale di `muda` e si inoltrano
-//! al ciclo eventi con `invoke_from_event_loop`.
+//! È un menu nativo di Windows (`muda`, TrackPopupMenu). Con tutte le voci si apre dall'icona
+//! nella barra se l'utente l'ha accesa (Impostazioni › Sistema); Esc o un clic altrove lo
+//! chiudono. Le scelte arrivano dal gestore globale di `muda` e si inoltrano al ciclo eventi con
+//! `invoke_from_event_loop`. Il clic destro sulla pillola non lo apre più (16/11, Paolo).
 //!
 //! Dal pulsante «⋯» in alto a destra del pannello (Task 14i) si apre il gemello senza «Apri» (il
 //! pannello è già aperto), sotto il pulsante e allineato al suo bordo destro: `muda` lo apre solo
@@ -16,8 +15,8 @@
 //! La linea della ritirata non apre il menu: lascia passare i clic (non riceve il mouse). Ci si
 //! torna tenendo il mouse sulla linea, con Ctrl+Alt+Maiusc+I o Ctrl+Alt+Maiusc+Spazio.
 //!
-//! Fuori da Windows per ora niente menu (su Linux `muda` richiede GTK): il clic destro non fa
-//! nulla, come prima.
+//! Fuori da Windows per ora niente menu (su Linux `muda` richiede GTK): «⋯» apre direttamente
+//! le Impostazioni.
 
 /// Cosa chiede il menu (o il clic sull'icona nella barra).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,7 +121,6 @@ pub use windows::MenuIsola;
 #[cfg(windows)]
 mod windows {
     use super::{comando, da_ignorare_nel_menu, id, posizioni, testo_ritirata, voci, voci_pannello, Comando};
-    use tray_icon::menu::dpi::PhysicalPosition;
     use tray_icon::menu::{ContextMenu, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 
     pub struct MenuIsola {
@@ -201,17 +199,6 @@ mod windows {
         /// Lo stesso menu, per l'icona nella barra.
         pub fn menu(&self) -> &Menu {
             &self.menu
-        }
-
-        /// Apre il menu nella finestra `hwnd`, col bordo sinistro in alto a `(x, y)` (pixel fisici
-        /// dell'area client). Ritorna quando il menu si chiude (scelta, Esc o clic altrove); la
-        /// scelta arriva dopo, dal gestore di `crea`. Vero se è stata scelta una voce.
-        pub fn mostra(&self, hwnd: isize, (x, y): (i32, i32)) -> bool {
-            // SAFETY: hwnd è la finestra viva della pillola, sul thread dell'interfaccia (lo stesso
-            // del menu); `muda` lo usa solo per la durata di TrackPopupMenu.
-            unsafe {
-                self.menu.show_context_menu_for_hwnd(hwnd, Some(PhysicalPosition::new(x, y).into()))
-            }
         }
 
         /// Apre il menu del pannello nella finestra `hwnd`, col bordo DESTRO in alto a `(x, y)`

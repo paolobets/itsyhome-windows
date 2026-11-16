@@ -303,8 +303,8 @@ impl Apertura {
                 dopo(&a, Apertura::apri_impostazioni);
             }
         });
-        // «⋯» in alto a destra: il menu dell'isola senza «Apri» (fuori da Windows niente menu,
-        // come il clic destro sulla pillola).
+        // «⋯» in alto a destra: il menu dell'isola senza «Apri» (fuori da Windows niente menu
+        // nativo: apre le Impostazioni).
         let a = self.io.clone();
         let debole = pannello.as_weak();
         pannello.on_menu(move |destra, basso, tastiera| match azione_altre_opzioni(cfg!(windows)) {

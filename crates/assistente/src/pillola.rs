@@ -240,38 +240,10 @@ pub fn al_cambio_schermo(ui: &Pillola) {
     applica_ritaglio(ui);
 }
 
-/// Dove si apre il menu del clic destro: al bordo sinistro della pillola, appena sotto la sua
-/// aura. Pixel fisici dell'area client della finestra.
-// Fuori da Windows il menu non c'è.
-#[cfg_attr(not(windows), allow(dead_code))]
-pub fn punto_menu(ui: &Pillola) -> (i32, i32) {
-    let finestra = ui.window();
-    let dimensioni = finestra.size();
-    let ritaglio = RITAGLIO.with(Cell::get);
-    punto_sotto(dimensioni.width as i32, dimensioni.height as i32, finestra.scale_factor(), ritaglio)
-}
-
-#[cfg_attr(not(windows), allow(dead_code))]
-fn punto_sotto(larghezza: i32, altezza: i32, scala: f32, (l, a): (f32, f32)) -> (i32, i32) {
-    let (sinistra, _, _, basso) = finestre::regione_pillola(larghezza, altezza, scala, l, a);
-    (sinistra + (finestre::MARGINE_AURA * scala).round() as i32, basso)
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
 
-    #[test]
-    fn il_menu_si_apre_sotto_la_pillola_al_suo_bordo_sinistro() {
-        // Finestra della pillola a 1,75 (456 × 56 logici), pillola a riposo 124 × 32 con l'aura.
-        let (l, a) = (finestre::LARGHEZZA_PILLOLA + 16.0, finestre::ALTEZZA_PILLOLA + 16.0);
-        let (x, y) = punto_sotto(798, 98, 1.75, (l, a));
-        assert_eq!(x, (798 - 245) / 2 + 14, "bordo sinistro della pillola, oltre l'aura");
-        assert_eq!(y, 84, "sotto la pillola e la sua aura (48 logici dall'alto della finestra)");
-        // Pillola allargata: il menu segue il bordo sinistro.
-        let (x2, _) = punto_sotto(798, 98, 1.75, (finestre::LARGHEZZA_BLOCCANTE + 16.0, 56.0));
-        assert!(x2 < x);
-    }
     use crate::attenzione::test::voce;
 
     #[test]

@@ -41,15 +41,12 @@ pub struct Servizi {
     mouse: slint::Timer,
     /// Zona sensibile della linea (pixel fisici), presa entrando nella ritirata e a ogni controllo.
     zona: Cell<Option<RettangoloFisico>>,
-    /// Il menu dell'isola (clic destro sulla pillola e icona nella barra).
+    /// Il menu dell'isola (icona nella barra e, senza «Apri», il «⋯» del pannello).
     #[cfg(windows)]
     menu: RefCell<Option<MenuIsola>>,
     /// L'icona nella barra, solo se l'utente l'ha accesa.
     #[cfg(windows)]
     tray: RefCell<Option<Tray>>,
-    /// La finestra in primo piano prima del menu della pillola e la pillola, finché arriva la scelta.
-    #[cfg(windows)]
-    primo_piano_prima: Cell<Option<(isize, isize)>>,
     scorciatoie: RefCell<Option<Scorciatoie>>,
 }
 
@@ -84,16 +81,10 @@ pub fn avvia(pillola: &Pillola, apertura: Rc<Apertura>, ponte: Rc<Ponte>) {
         menu: RefCell::new(None),
         #[cfg(windows)]
         tray: RefCell::new(None),
-        #[cfg(windows)]
-        primo_piano_prima: Cell::new(None),
         scorciatoie: RefCell::new(None),
     });
     SERVIZI.with(|x| *x.borrow_mut() = Some(s.clone()));
 
-    // Clic destro → il menu dell'isola (con la ritirata), solo dove c'è il menu nativo e si può
-    // anche tornare indietro (scorciatoia, mouse sulla linea): fuori da Windows niente.
-    #[cfg(windows)]
-    pillola.on_menu(apri_menu);
     s.controllo.start(slint::TimerMode::Repeated, PERIODO_CONTROLLO, || {
         if let Some(s) = servizi() {
             s.controlla();
@@ -157,36 +148,6 @@ pub fn mostra_icona(si: bool) {
     let _ = si;
 }
 
-/// Clic destro sulla pillola: il menu dell'isola, col bordo sinistro sotto la pillola. Esc o
-/// un clic altrove lo chiudono; la scelta arriva da sola (`al_comando`).
-///
-/// Per aprire il menu la pillola va in primo piano (TrackPopupMenu lo vuole), e la pillola
-/// ingoia ogni tasto. Il primo piano torna alla finestra che lo aveva (chi stava scrivendo non
-/// perde il fuoco) se il menu si chiude senza scelta, o dopo «Ritira l'isola» / «Mostra
-/// l'isola». «Apri», «Impostazioni» e «Informazioni» aprono una finestra che si prende il fuoco
-/// da sé; «Esci» chiude tutto.
-#[cfg(windows)]
-fn apri_menu() {
-    use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
-    let Some(s) = servizi() else { return };
-    let Some(p) = s.pillola.upgrade() else { return };
-    let Some(hwnd) = finestre::maniglia(p.window()) else { return };
-    let punto = pillola::punto_menu(&p);
-    // SAFETY: solo lettura della finestra in primo piano.
-    let prima = unsafe { GetForegroundWindow() };
-    let prima = (prima != 0 && prima != hwnd).then_some((prima, hwnd));
-    let scelta = {
-        let menu = s.menu.borrow();
-        menu.as_ref().is_some_and(|m| m.mostra(hwnd, punto))
-    };
-    if scelta {
-        // La scelta arriva dopo, dal ciclo eventi: `al_comando` decide se ridare il fuoco.
-        s.primo_piano_prima.set(prima);
-    } else {
-        ridai_primo_piano(prima);
-    }
-}
-
 /// «⋯» in alto a destra del pannello (Task 14i): il menu dell'isola senza «Apri», sotto il
 /// pulsante e allineato al suo bordo destro (`destra`, `basso`: pixel logici della finestra del
 /// pannello). Il pannello resta in primo piano mentre il menu è aperto: chiuso senza scelta (Esc,
@@ -209,7 +170,7 @@ pub fn menu_dal_pannello(finestra: &slint::Window, destra: f32, basso: f32, tast
 
 /// Una voce del menu del pannello. La ritirata vale per la pillola: il pannello si chiude e la
 /// pillola si ritira (o torna) subito, non alla chiusura come da icona o tasti. Le altre voci
-/// fanno quello che fanno dal menu della pillola.
+/// fanno quello che fanno dal menu dell'icona nella barra.
 #[cfg(windows)]
 fn al_comando_dal_pannello(c: Comando) {
     match c {
@@ -223,40 +184,7 @@ fn al_comando_dal_pannello(c: Comando) {
     }
 }
 
-/// A chi ridare il primo piano dopo il menu: alla finestra che lo aveva prima, ma solo se adesso
-/// ce l'ha ancora la pillola. Se intanto l'utente ha attivato un'altra finestra (un clic altrove
-/// mentre il menu era aperto, Alt+Tab), quella resta in primo piano: non la si scavalca.
-#[cfg(any(windows, test))]
-fn da_ridare(prima: Option<(isize, isize)>, in_primo_piano: isize) -> Option<isize> {
-    let (finestra, pillola) = prima?;
-    (in_primo_piano == pillola).then_some(finestra)
-}
-
-/// Ridà il primo piano alla finestra che lo aveva prima del menu (vedi `da_ridare`).
-#[cfg(windows)]
-fn ridai_primo_piano(prima: Option<(isize, isize)>) {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
-    // SAFETY: solo lettura della finestra in primo piano.
-    let adesso = unsafe { GetForegroundWindow() };
-    if let Some(h) = da_ridare(prima, adesso) {
-        // SAFETY: un HWND non più valido fa solo fallire la chiamata; il primo piano adesso è
-        // nostro (della pillola, appena controllato), quindi Windows lascia restituirlo.
-        unsafe {
-            SetForegroundWindow(h);
-        }
-    }
-}
-
 fn al_comando(c: Comando) {
-    // Il primo piano da ridare, se la scelta viene dal menu della pillola.
-    #[cfg(windows)]
-    let prima = servizi().and_then(|s| s.primo_piano_prima.take());
-    #[cfg(windows)]
-    if c == Comando::Ritirata {
-        commuta_ritirata();
-        ridai_primo_piano(prima);
-        return;
-    }
     match c {
         Comando::Apri => apri(),
         Comando::Impostazioni => {
@@ -297,8 +225,8 @@ pub fn apri() {
 /// «Ritira l'isola» / «Mostra l'isola» del menu, Ctrl+Alt+Maiusc+I.
 pub fn commuta_ritirata() {
     let Some(s) = servizi() else { return };
-    // Il menu della pillola a pannello aperto non si apre (pillola nascosta); da icona o tasti
-    // il pannello resta com'è e la ritirata vale da quando si chiude.
+    // Da icona o tasti il pannello resta com'è e la ritirata vale da quando si chiude (dal «⋯»
+    // del pannello invece si chiude subito: `al_comando_dal_pannello`).
     s.ritirata.borrow_mut().commuta();
     s.applica();
 }
@@ -442,20 +370,4 @@ impl Servizi {
 
 fn zona_della_linea(p: &Pillola) -> Option<RettangoloFisico> {
     finestre::schermo_di(p.window()).map(|(area, scala)| ritirata::zona_linea(area, scala))
-}
-
-#[cfg(test)]
-mod test {
-    use super::da_ridare;
-
-    /// N4 (ri-revisione del 14d): dopo il menu il primo piano torna a chi lo aveva solo se è
-    /// ancora della pillola.
-    #[test]
-    fn il_primo_piano_torna_solo_se_e_ancora_della_pillola() {
-        let (finestra, pillola, altra) = (10, 20, 30);
-        assert_eq!(da_ridare(Some((finestra, pillola)), pillola), Some(finestra));
-        assert_eq!(da_ridare(Some((finestra, pillola)), altra), None, "l'utente ha attivato un'altra finestra");
-        assert_eq!(da_ridare(Some((finestra, pillola)), 0), None, "nessuna finestra in primo piano");
-        assert_eq!(da_ridare(None, pillola), None);
-    }
 }

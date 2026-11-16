@@ -1,9 +1,9 @@
 //! L'icona nella barra (area di notifica), spenta di serie: l'utente la accende da Impostazioni ›
 //! Sistema e da lì si accende o spegne subito, senza riavvio. Ha il menu dell'isola
-//! (`sistema::menu`, lo stesso del clic destro sulla pillola); clic sinistro = «Apri». Va creata
+//! (`sistema::menu`, lo stesso del «⋯» del pannello più «Apri»); clic sinistro = «Apri». Va creata
 //! dal ciclo eventi (thread dell'interfaccia).
 //!
-//! Senza icona l'assistente si ritrova sempre: clic destro sulla pillola, Ctrl+Alt+Maiusc+Spazio
+//! Senza icona l'assistente si ritrova sempre: clic sulla pillola e «⋯», Ctrl+Alt+Maiusc+Spazio
 //! (anche a pillola nascosta o ritirata), un secondo avvio dal menu Start (istanza unica). Le
 //! notifiche di sistema non dipendono dall'icona (identificativo AUMID registrato a parte).
 

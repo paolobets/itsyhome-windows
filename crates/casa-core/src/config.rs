@@ -19,7 +19,7 @@ pub struct Config {
     pub area_icons: HashMap<String, String>,
     pub cameras_enabled: bool,
     pub launch_at_login: bool,
-    /// L'icona nell'area di notifica (spenta di serie: il menu sta sul clic destro della pillola).
+    /// L'icona nell'area di notifica (spenta di serie: il menu sta nel «⋯» del pannello).
     pub mostra_icona_barra: bool,
     pub ultimo_layout: String,
     pub importata_da_v2: bool,

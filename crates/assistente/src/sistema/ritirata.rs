@@ -1,5 +1,5 @@
 //! La ritirata: la pillola diventa una linea 300 × 5 al bordo alto, con clic passanti. Entra e
-//! esce dal menu del clic destro sulla pillola (o dell'icona nella barra, se accesa) o con
+//! esce dal menu «⋯» del pannello (o dell'icona nella barra, se accesa) o con
 //! Ctrl+Alt+Maiusc+I; esce anche tenendo il mouse sulla linea per 450 ms (TwoCode) e da sola
 //! all'arrivo di un bloccante. Non si ricorda al riavvio. Logica pura: il tempo e la posizione del
 //! mouse arrivano dal chiamante.

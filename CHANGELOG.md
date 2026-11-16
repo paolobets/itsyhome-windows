@@ -196,6 +196,7 @@ Riposo non rimisurato a schermo libero: durante tutta la prova lo schermo era bl
 ### Changed (Task 14i: decisione di Paolo, 16/11/2026)
 - Riga alta del pannello: dopo l'ora il pulsante **«⋯»** («Altre opzioni», 28 × 28, anello da tastiera) apre lo stesso menu nativo del clic destro sulla pillola, senza «Apri» e con «Impostazioni» in testa (Impostazioni, Informazioni, Ritira/Mostra l'isola, Esci), sotto il pulsante e allineato al suo bordo destro dentro l'area di lavoro. Esc lo chiude e il fuoco resta su «⋯»; «Ritira l'isola» da qui chiude il pannello e ritira subito la pillola.
 - Dock di sole app: via l'ingranaggio delle Impostazioni. Tab gira fra «In attesa», contenuto, dock e «⋯».
+- Pillola (16/11, dopo la prova di Paolo): il clic destro non fa più nulla. Il menu dell'isola sta nel «⋯» del pannello e, se accesa, nella tray; via il codice che serviva solo a quel menu (punto sotto la pillola, ritorno del primo piano).
 - Giro di correzioni 1: fuori da Windows, dove il menu nativo non c'è ancora, «⋯» apre direttamente le Impostazioni (senza ingranaggio nel dock era l'unico accesso dal pannello). Da tastiera o da Narrator il menu si apre con la prima voce evidenziata; Invio o Spazio tenuti non scelgono più da soli (filtro dei messaggi solo mentre il menu è aperto). Via l'icona dell'ingranaggio non più usata.
 - Misure (release, finto HA, `--umore calm`): riposo 5 min **0,015%** (max 0,33), **8,0–8,2 MB** (14h: 0,015%, 8,0–8,1); raffica anti-glitch 1199 fotogrammi **0 difettosi**, controllo negativo 299 su 299.
 
