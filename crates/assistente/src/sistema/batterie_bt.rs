@@ -18,6 +18,9 @@
 //!   devpkey-device-friendlyname). Id di istanza: `DEVPKEY_Device_InstanceId` (pid 256, stringa,
 //!   devpkey-device-instanceid); contiene l'indirizzo del dispositivo, quindi si salva solo come
 //!   impronta (`impronta`).
+//! - `DEVPKEY_Device_ContainerId` ({8c7ed206-…}, pid 2, `DEVPROP_TYPE_GUID`; devpkey-device-containerid):
+//!   identifica il dispositivo fisico, uguale per tutti i suoi nodi: l'impronta si ricava da lui
+//!   (vedi `unifica`). Senza contenitore si ripiega sull'id di istanza del nodo.
 //! - `CM_Get_DevNode_Status` (…/cfgmgr32/nf-cfgmgr32-cm_get_devnode_status): `pulStatus` con i
 //!   flag `DN_*` (qui `DN_STARTED`), `ulFlags` 0; restituisce `CR_SUCCESS` o un errore `CR_*`.
 //!
@@ -135,18 +138,24 @@ pub fn pota_avvisati(avvisati: &mut HashMap<String, String>, oggi: &str) {
     });
 }
 
-/// Più nodi dello stesso dispositivo (audio, telefonia…) dicono lo stesso nome: ne resta uno,
-/// preferendo il connesso e poi la percentuale più bassa. L'ordine di prima si mantiene.
+/// Più nodi dello stesso dispositivo (audio, telefonia, GATT…) portano la stessa impronta, perché
+/// `leggi` la ricava dal contenitore (`DEVPKEY_Device_ContainerId`) e non dal singolo nodo: ne
+/// resta una lettura, connessa se lo è almeno un nodo, con la percentuale minima fra i nodi
+/// connessi (se nessuno lo è, fra tutti). L'impronta non dipende da quale nodo è più basso, quindi
+/// non cambia durante la giornata (profili diversi riportano la batteria a passi diversi) e
+/// l'avviso resta uno al giorno. Due dispositivi distinti con lo stesso nome hanno contenitori
+/// diversi e restano separati. L'ordine di prima si mantiene.
 pub fn unifica(letture: Vec<LetturaBt>) -> Vec<LetturaBt> {
     let mut fuori: Vec<LetturaBt> = Vec::new();
     for l in letture {
-        match fuori.iter_mut().find(|x| x.nome == l.nome) {
-            Some(x) => {
-                if (l.connesso, std::cmp::Reverse(l.percentuale)) > (x.connesso, std::cmp::Reverse(x.percentuale)) {
-                    *x = l;
-                }
-            }
-            None => fuori.push(l),
+        let Some(x) = fuori.iter_mut().find(|x| x.impronta == l.impronta) else {
+            fuori.push(l);
+            continue;
+        };
+        // Percentuale: la minima fra i connessi; un connesso vince su un non connesso.
+        if (l.connesso, std::cmp::Reverse(l.percentuale)) > (x.connesso, std::cmp::Reverse(x.percentuale)) {
+            x.percentuale = l.percentuale;
+            x.connesso = l.connesso;
         }
     }
     fuori
@@ -278,8 +287,8 @@ pub fn leggi() -> Vec<LetturaBt> {
         SetupDiGetDevicePropertyW, CR_SUCCESS, DIGCF_ALLCLASSES, DIGCF_PRESENT, DN_STARTED, HDEVINFO, SP_DEVINFO_DATA,
     };
     use windows_sys::Win32::Devices::Properties::{
-        DEVPKEY_Device_FriendlyName, DEVPKEY_Device_InstanceId, DEVPROPKEY, DEVPROPTYPE, DEVPROP_TYPE_BOOLEAN,
-        DEVPROP_TYPE_BYTE, DEVPROP_TYPE_STRING,
+        DEVPKEY_Device_ContainerId, DEVPKEY_Device_FriendlyName, DEVPKEY_Device_InstanceId, DEVPROPKEY, DEVPROPTYPE,
+        DEVPROP_TYPE_BOOLEAN, DEVPROP_TYPE_BYTE, DEVPROP_TYPE_GUID, DEVPROP_TYPE_STRING,
     };
     use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
 
@@ -339,6 +348,15 @@ pub fn leggi() -> Vec<LetturaBt> {
                 continue;
             }
             let Some(id) = stringa(set, &dati, &DEVPKEY_Device_InstanceId) else { continue };
+            // L'impronta è del contenitore (il dispositivo fisico), uguale per tutti i suoi nodi; senza
+            // contenitore (assente o tutto zero) si ripiega sull'id del nodo.
+            let mut g = [0u8; 16];
+            let contenitore = proprieta(set, &dati, &DEVPKEY_Device_ContainerId, DEVPROP_TYPE_GUID, &mut g)
+                .filter(|&n| n == 16 && g.iter().any(|&x| x != 0));
+            let chiave = match contenitore {
+                Some(_) => format!("contenitore:{g:02x?}"),
+                None => id,
+            };
             let nome = stringa(set, &dati, &DEVPKEY_Device_FriendlyName).filter(|n| !n.trim().is_empty());
             let (mut stato, mut problema) = (0u32, 0u32);
             let avviato = CM_Get_DevNode_Status(&mut stato, &mut problema, dati.DevInst, 0) == CR_SUCCESS
@@ -346,7 +364,7 @@ pub fn leggi() -> Vec<LetturaBt> {
             let mut c = [0u8; 4];
             let dichiarato = proprieta(set, &dati, &CONNESSO, DEVPROP_TYPE_BOOLEAN, &mut c).is_some_and(|n| n == 1 && c[0] != 0);
             letture.push(LetturaBt {
-                impronta: impronta(&id),
+                impronta: impronta(&chiave),
                 nome: nome.unwrap_or_else(|| "Dispositivo Bluetooth".into()),
                 percentuale: b[0],
                 connesso: avviato && dichiarato,
@@ -442,13 +460,40 @@ mod tests {
 
     #[test]
     fn nodi_dello_stesso_dispositivo_diventano_uno() {
+        // Stessa impronta (stesso contenitore): una lettura, connessa, con la percentuale minima
+        // fra i nodi connessi (il non connesso, più basso, non conta).
         let u = unifica(vec![
-            lettura("a", "Cuffie finte", 40, false),
-            lettura("b", "Cuffie finte", 42, true),
+            lettura("a", "Cuffie finte", 30, false),
+            lettura("a", "Cuffie finte", 42, true),
+            lettura("a", "Cuffie finte", 40, true),
             lettura("c", "Tastiera finta", 90, true),
         ]);
         assert_eq!(u.len(), 2);
-        assert_eq!(u[0].impronta, "b", "preferito il connesso");
+        assert_eq!((u[0].impronta.as_str(), u[0].percentuale, u[0].connesso), ("a", 40, true));
+    }
+
+    #[test]
+    fn due_dispositivi_con_lo_stesso_nome_restano_due() {
+        let u = unifica(vec![lettura("a", "Cuffie finte", 50, true), lettura("b", "Cuffie finte", 15, true)]);
+        assert_eq!(u.len(), 2, "contenitori diversi: due dispositivi");
+        assert_eq!(riga_cuffie(&u).unwrap().altri, 1);
+    }
+
+    /// Lo scambio fra nodi dello stesso dispositivo (HFP a passi di 10%, GATT al punto) non cambia
+    /// l'impronta: la voce resta e nello stesso giorno non nasce un secondo avviso.
+    #[test]
+    fn scambio_fra_nodi_nessun_secondo_avviso() {
+        let oggi = "2026-11-15";
+        let prima = unifica(vec![lettura("a", "Cuffie finte", 20, true), lettura("a", "Cuffie finte", 18, true)]);
+        assert_eq!(prima[0].percentuale, 18);
+        let da_avvisare_prima = da_avvisare(&prima, &HashMap::new(), oggi);
+        assert_eq!(da_avvisare_prima.len(), 1);
+        // L'avviso dato è registrato; il giro dopo l'altro nodo è il più basso.
+        let avvisati: HashMap<String, String> = [(da_avvisare_prima[0].impronta.clone(), oggi.to_string())].into();
+        let dopo = unifica(vec![lettura("a", "Cuffie finte", 10, true), lettura("a", "Cuffie finte", 17, true)]);
+        assert_eq!(dopo[0].impronta, prima[0].impronta, "stessa impronta");
+        assert!(da_avvisare(&dopo, &avvisati, oggi).is_empty(), "nessun secondo avviso");
+        assert!(da_togliere(&dopo, &[id_voce(&prima[0].impronta)]).is_empty(), "la voce non si toglie");
     }
 
     #[test]
