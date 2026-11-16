@@ -58,7 +58,8 @@ pub struct Config {
     /// Windows): acceso di serie, anche per un file di prima senza la chiave.
     #[serde(default = "vero")]
     pub avvisi_bt: bool,
-    /// I dispositivi Bluetooth già avvisati: impronta (FNV-1a 64 bit dell'id di istanza, mai
+    /// I dispositivi Bluetooth già avvisati: impronta (FNV-1a 64 bit del contenitore
+    /// del dispositivo fisico, o dell'id di istanza del nodo se il contenitore manca; mai
     /// l'indirizzo in chiaro) → data dell'avviso («2026-11-15»); così l'avviso è uno al giorno
     /// anche dopo un riavvio dell'app. Le impronte più vecchie di 7 giorni si tolgono quando
     /// si salva un nuovo avviso (non a ogni salvataggio: il file resta limitato lo stesso, senza
