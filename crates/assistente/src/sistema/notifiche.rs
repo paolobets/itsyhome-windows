@@ -16,6 +16,8 @@ use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
 use std::sync::OnceLock;
 
 /// Identificativo dei toast dell'assistente.
+// Lo usa solo il codice di Windows.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub const AUMID: &str = "ItsyHome.Assistente";
 /// Quanti toast possono aspettare il loro turno.
 const CODA: usize = 8;

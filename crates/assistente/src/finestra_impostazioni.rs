@@ -10,6 +10,8 @@ use std::time::Duration;
 
 /// Titolo della finestra: il gancio di winit in `main` la lascia nella barra delle applicazioni
 /// (pillola e pannello no).
+// Lo usa solo il codice di Windows.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub const TITOLO: &str = "ItsyHome — Impostazioni";
 
 thread_local! {
