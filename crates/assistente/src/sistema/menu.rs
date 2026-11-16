@@ -80,6 +80,24 @@ pub fn punto_pannello(destra: f32, basso: f32, scala: f32) -> (i32, i32) {
     ((destra * scala).round() as i32, (basso * scala).round() as i32)
 }
 
+/// Cosa non deve arrivare al menu del pannello aperto da tastiera: l'Invio o lo Spazio ancora
+/// tenuti (auto-ripetizione, bit 30 di `lparam`: il tasto era già giù) sceglierebbero da soli la
+/// prima voce evidenziata; i loro caratteri (WM_CHAR) non sono iniziali di nessuna voce e il menu
+/// farebbe solo il suono d'errore. Una nuova pressione di Invio sceglie come sempre.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn da_ignorare_nel_menu(messaggio: u32, tasto: usize, lparam: isize) -> bool {
+    const WM_KEYDOWN: u32 = 0x100;
+    const WM_CHAR: u32 = 0x102;
+    const VK_RETURN: usize = 0x0D;
+    const VK_SPACE: usize = 0x20;
+    let invio_o_spazio = tasto == VK_RETURN || tasto == VK_SPACE;
+    match messaggio {
+        WM_KEYDOWN => invio_o_spazio && lparam & (1 << 30) != 0,
+        WM_CHAR => invio_o_spazio,
+        _ => false,
+    }
+}
+
 /// L'identificativo di una voce nel menu nativo, e ritorno.
 // Fuori da Windows il menu non c'è: restano per i test.
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -103,7 +121,7 @@ pub use windows::MenuIsola;
 
 #[cfg(windows)]
 mod windows {
-    use super::{comando, id, posizioni, testo_ritirata, voci, voci_pannello, Comando};
+    use super::{comando, da_ignorare_nel_menu, id, posizioni, testo_ritirata, voci, voci_pannello, Comando};
     use tray_icon::menu::dpi::PhysicalPosition;
     use tray_icon::menu::{ContextMenu, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 
@@ -133,6 +151,22 @@ mod windows {
         }
         let ritirata = voce_ritirata.ok_or("voce della ritirata mancante")?;
         Ok((menu, ritirata))
+    }
+
+    /// Filtro dei messaggi del ciclo del menu (WH_MSGFILTER, solo sul thread dell'interfaccia e
+    /// solo mentre il menu del pannello è aperto): toglie quello che dice `da_ignorare_nel_menu`.
+    unsafe extern "system" fn filtro_menu(codice: i32, wparam: usize, lparam: isize) -> isize {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{CallNextHookEx, MSG, MSGF_MENU, WM_NULL};
+        if codice == MSGF_MENU as i32 && lparam != 0 {
+            // SAFETY: per WH_MSGFILTER `lparam` punta al MSG in esame, valido durante la chiamata.
+            let msg = &mut *(lparam as *mut MSG);
+            if da_ignorare_nel_menu(msg.message, msg.wParam, msg.lParam) {
+                // Il messaggio è già tolto dalla coda: diventa un WM_NULL e il menu non lo vede.
+                msg.message = WM_NULL;
+                return 1;
+            }
+        }
+        CallNextHookEx(0, codice, wparam, lparam)
     }
 
     impl MenuIsola {
@@ -188,10 +222,11 @@ mod windows {
         pub fn mostra_dal_pannello(&self, hwnd: isize, (x, y): (i32, i32), prima_voce: bool) -> Option<Comando> {
             use windows_sys::Win32::Foundation::POINT;
             use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
+            use windows_sys::Win32::System::Threading::GetCurrentThreadId;
             use windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_DOWN;
             use windows_sys::Win32::UI::WindowsAndMessaging::{
-                GetMenuItemCount, GetMenuItemID, PostMessageW, SetForegroundWindow, TrackPopupMenu, TPM_RETURNCMD,
-                TPM_RIGHTALIGN, TPM_TOPALIGN, TPM_WORKAREA, WM_KEYDOWN,
+                GetMenuItemCount, GetMenuItemID, PostMessageW, SetForegroundWindow, SetWindowsHookExW, TrackPopupMenu,
+                UnhookWindowsHookEx, TPM_RETURNCMD, TPM_RIGHTALIGN, TPM_TOPALIGN, TPM_WORKAREA, WH_MSGFILTER, WM_KEYDOWN,
             };
             let hmenu = self.pannello.hpopupmenu();
             let mut punto = POINT { x, y };
@@ -207,7 +242,9 @@ mod windows {
                 if prima_voce {
                     PostMessageW(hwnd, WM_KEYDOWN, VK_DOWN as usize, 0);
                 }
-                TrackPopupMenu(
+                // Il filtro vale solo per questo thread e solo finché il menu è aperto.
+                let filtro = SetWindowsHookExW(WH_MSGFILTER, Some(filtro_menu), 0, GetCurrentThreadId());
+                let scelto = TrackPopupMenu(
                     hmenu,
                     TPM_RIGHTALIGN | TPM_TOPALIGN | TPM_RETURNCMD | TPM_WORKAREA,
                     punto.x,
@@ -215,7 +252,11 @@ mod windows {
                     0,
                     hwnd,
                     std::ptr::null(),
-                )
+                );
+                if filtro != 0 {
+                    UnhookWindowsHookEx(filtro);
+                }
+                scelto
             };
             if scelto <= 0 {
                 return None;
@@ -281,6 +322,27 @@ mod test {
                 }
             }
         }
+    }
+
+    #[test]
+    fn nel_menu_del_pannello_si_ignorano_il_tasto_tenuto_e_i_caratteri() {
+        // Giro 1: aperto con Invio, il tasto tenuto (auto-ripetizione) arrivava al menu con la
+        // prima voce evidenziata e sceglieva da solo «Impostazioni».
+        const WM_KEYDOWN: u32 = 0x100;
+        const WM_KEYUP: u32 = 0x101;
+        const WM_CHAR: u32 = 0x102;
+        let tenuto = 1 << 30;
+        assert!(da_ignorare_nel_menu(WM_KEYDOWN, 0x0D, tenuto | 1), "Invio tenuto");
+        assert!(da_ignorare_nel_menu(WM_KEYDOWN, 0x20, tenuto | 1), "Spazio tenuto");
+        assert!(!da_ignorare_nel_menu(WM_KEYDOWN, 0x0D, 1), "Invio premuto di nuovo sceglie");
+        assert!(!da_ignorare_nel_menu(WM_KEYDOWN, 0x28, tenuto | 1), "↓ tenuto scorre le voci");
+        assert!(!da_ignorare_nel_menu(WM_KEYDOWN, 0x1B, 1), "Esc chiude");
+        assert!(!da_ignorare_nel_menu(WM_KEYUP, 0x0D, tenuto | 1));
+        // Il carattere dell'Invio o dello Spazio che ha aperto il menu: nessuna voce lo ha come
+        // iniziale, il menu farebbe solo il suono d'errore.
+        assert!(da_ignorare_nel_menu(WM_CHAR, 0x0D, 1));
+        assert!(da_ignorare_nel_menu(WM_CHAR, 0x20, 1));
+        assert!(!da_ignorare_nel_menu(WM_CHAR, 'i' as usize, 1), "le iniziali delle voci restano");
     }
 
     #[test]
