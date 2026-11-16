@@ -1145,3 +1145,145 @@ async fn riconnessione_con_lettura_fallita_riprova_e_segue_gli_stati() {
     aspetta(|| ha.get_states() >= 3, "nuovo tentativo della lettura").await;
 }
 
+
+// ─── Registro diagnostico (Task 14g) ──────────────────────────────────────────
+
+fn prepara_con_diagnosi(url: &str, diagnosi: Arc<casa_core::diagnosi::Diagnosi>) -> Prova {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(ConfigStore::apri(dir.path()));
+    store
+        .salva(&Config {
+            environments: vec![HaEnvironment { id: "casa".into(), name: "Casa".into(), ha_url: url.into() }],
+            active_env_id: Some("casa".into()),
+            ..Config::default()
+        })
+        .unwrap();
+    let segreti = Arc::new(MemoriaSegreti::new());
+    segreti.salva("casa", TOKEN).unwrap();
+    let (tx, eventi) = mpsc::unbounded_channel();
+    let servizio = CasaService::avvia_per_prova(
+        store,
+        segreti,
+        Arc::new(move |e| {
+            let _ = tx.send(e);
+        }),
+        vec![RITARDO_TEST],
+        diagnosi,
+    );
+    Prova { servizio, eventi, _dir: dir }
+}
+
+/// I valori di una riga del registro, per nome.
+fn valori(riga: &str) -> BTreeMap<String, String> {
+    riga.split(' ')
+        .map(|p| {
+            let (n, v) = p.split_once('=').unwrap_or_else(|| panic!("«{p}» non è nome=valore"));
+            (n.to_owned(), v.to_owned())
+        })
+        .collect()
+}
+
+fn numero(v: &BTreeMap<String, String>, nome: &str) -> u64 {
+    v.get(nome).unwrap_or_else(|| panic!("manca {nome}")).parse().unwrap()
+}
+
+/// Task 14g: con il registro acceso i contatori dicono cosa è arrivato da HA e cosa ne è
+/// seguito: connessione, riposo, cambi invisibili, un cambio visibile, eventi del registro. E
+/// nelle righe non c'è nulla della casa: né entity_id, né nomi, né token, né indirizzi.
+#[tokio::test]
+async fn diagnosi_conta_messaggi_cambi_e_riletture_senza_dati_della_casa() {
+    use casa_core::diagnosi::{Diagnosi, NOMI};
+    let ha = FintoHa::avvia().await;
+    let diagnosi = Arc::new(Diagnosi::new(true));
+    let mut p = prepara_con_diagnosi(&ha.url, diagnosi.clone());
+    p.servizio.connetti_attivo();
+    aspetta_dati(&mut p).await;
+    aspetta_iscrizione(&ha, 1).await;
+    let mut righe = Vec::new();
+
+    // Connessione: una lettura completa, un'iscrizione con le due entità, una consegna.
+    righe.push(diagnosi.riga(&[]));
+    let v = valori(righe.last().unwrap());
+    assert_eq!(
+        [
+            numero(&v, "rilettura_connessione"),
+            numero(&v, "riletture"),
+            numero(&v, "iscrizioni"),
+            numero(&v, "consegne"),
+            numero(&v, "entita_a"),
+            numero(&v, "seguite"),
+        ],
+        [1, 1, 1, 1, 2, 2],
+        "{}",
+        righe.last().unwrap()
+    );
+    assert_eq!(v["ha"], "RUNNING");
+    assert!(numero(&v, "ws_messaggi") >= 8 && numero(&v, "ws_byte") > 0, "{}", righe.last().unwrap());
+    assert_eq!(numero(&v, "ws_auth"), 2, "auth_required e auth_ok");
+
+    // Riposo: nulla.
+    sleep(Duration::from_millis(300)).await;
+    righe.push(diagnosi.riga(&[]));
+    let v = valori(righe.last().unwrap());
+    assert_eq!(numero(&v, "ws_messaggi"), 0, "{}", righe.last().unwrap());
+    assert_eq!(numero(&v, "consegne") + numero(&v, "riletture"), 0);
+
+    // Cinque cambi che non si vedono (un attributo che l'app non usa): nessuna pubblicazione.
+    for i in 0..5 {
+        let mut luce = stato_nuovo("light.cucina", "on", "Luce cucina");
+        luce["attributes"]["linkquality"] = json!(i);
+        cambio(&ha, "light.cucina", luce);
+    }
+    aspetta(|| diagnosi.valore(casa_core::diagnosi::Contatore::effetto_niente) == 5, "cinque cambi invisibili").await;
+    sleep(Duration::from_millis(150)).await;
+    righe.push(diagnosi.riga(&[]));
+    let v = valori(righe.last().unwrap());
+    assert_eq!(
+        [numero(&v, "ev_entita"), numero(&v, "entita_c"), numero(&v, "effetto_niente"), numero(&v, "pubblicazioni"), numero(&v, "consegne")],
+        [5, 5, 5, 0, 0],
+        "{}",
+        righe.last().unwrap()
+    );
+
+    // Un cambio visibile: sostituito, pubblicato e consegnato una volta.
+    cambio(&ha, "light.cucina", stato_nuovo("light.cucina", "off", "Luce cucina"));
+    aspetta_dati(&mut p).await;
+    righe.push(diagnosi.riga(&[]));
+    let v = valori(righe.last().unwrap());
+    assert_eq!(
+        [numero(&v, "entita_c"), numero(&v, "effetto_sostituita"), numero(&v, "pubblicazioni"), numero(&v, "consegne")],
+        [1, 1, 1, 1],
+        "{}",
+        righe.last().unwrap()
+    );
+
+    // Tre eventi del registro di fila: tre richieste, una sola lettura (dopo 1 s di calma).
+    for _ in 0..3 {
+        ha.manda_evento("entity_registry_updated", json!({ "action": "update", "entity_id": "light.cucina" }));
+    }
+    aspetta(|| ha.get_states() == 2, "rilettura dopo il registro").await;
+    sleep(Duration::from_millis(300)).await;
+    righe.push(diagnosi.riga(&[]));
+    let v = valori(righe.last().unwrap());
+    assert_eq!(
+        [numero(&v, "ev_entity_registry_updated"), numero(&v, "rilettura_registri"), numero(&v, "riletture"), numero(&v, "iscrizioni")],
+        [3, 3, 1, 1],
+        "{}",
+        righe.last().unwrap()
+    );
+
+    // Nessun dato della casa: solo nomi fissi e numeri.
+    let tutto = righe.join("\n");
+    for vietato in ["light", "switch", "cucina", "Luce", "Presa", TOKEN, "127.0.0.1", "http", &ha.url] {
+        assert!(!tutto.contains(vietato), "«{vietato}» nel registro:\n{tutto}");
+    }
+    for riga in &righe {
+        for (n, v) in valori(riga) {
+            match n.as_str() {
+                "ha" => assert!(["nessuna", "assente", "altro", "RUNNING", "STARTING"].contains(&v.as_str()), "ha={v}"),
+                "seguite" => assert!(v.parse::<u64>().is_ok()),
+                _ => assert!(NOMI.contains(&n.as_str()) && v.parse::<u64>().is_ok(), "{n}={v}"),
+            }
+        }
+    }
+}

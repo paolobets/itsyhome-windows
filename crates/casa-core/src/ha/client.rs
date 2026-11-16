@@ -17,6 +17,7 @@ use tokio::time::{sleep_until, timeout, timeout_at, Instant, MissedTickBehavior}
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
 use super::eventi::{interpreta, interpreta_entita, interpreta_notifiche, EventoWs, EVENTI_RILETTURA};
+use crate::diagnosi::{Contatore, Diagnosi};
 use crate::eventi::StatoConnessione;
 use crate::types::TestConnectionResult;
 
@@ -109,9 +110,10 @@ pub(crate) fn avvia(
     token: String,
     ritardi: Vec<Duration>,
     uscita: Uscita,
+    diagnosi: std::sync::Arc<Diagnosi>,
 ) -> (Client, JoinHandle<()>) {
     let (tx, rx) = mpsc::unbounded_channel();
-    let task = tokio::spawn(attore(url, token, ritardi, rx, uscita));
+    let task = tokio::spawn(attore(url, token, ritardi, rx, uscita, diagnosi));
     (Client { tx }, task)
 }
 
@@ -127,11 +129,12 @@ async fn attore(
     ritardi: Vec<Duration>,
     mut rx: mpsc::UnboundedReceiver<Verso>,
     uscita: Uscita,
+    diagnosi: std::sync::Arc<Diagnosi>,
 ) {
     let mut tentativo: usize = 0;
     loop {
         uscita(DalClient::Stato(StatoConnessione::InConnessione));
-        match sessione(&url, &token, &mut rx, &uscita, &mut tentativo).await {
+        match sessione(&url, &token, &mut rx, &uscita, &mut tentativo, &diagnosi).await {
             Fine::TokenNonValido => {
                 uscita(DalClient::Stato(StatoConnessione::TokenNonValido));
                 return; // definitivo, come in v2
@@ -163,6 +166,7 @@ async fn sessione(
     rx: &mut mpsc::UnboundedReceiver<Verso>,
     uscita: &Uscita,
     tentativo: &mut usize,
+    diagnosi: &Diagnosi,
 ) -> Fine {
     let scadenza_apertura = Instant::now() + TIMEOUT_APERTURA;
     let ws = match timeout_at(scadenza_apertura, connect_async(url_ws(url))).await {
@@ -194,9 +198,12 @@ async fn sessione(
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break 'sessione Fine::Chiusa,
                     Some(Ok(_)) => continue,
                 };
+                diagnosi.conta(Contatore::ws_messaggi);
+                diagnosi.conta_n(Contatore::ws_byte, testo.len() as u64);
                 let Ok(mut v) = serde_json::from_str::<Value>(&testo) else { continue };
                 // Il tipo copiato: risultati ed eventi si prendono dal messaggio (`esito`, `interpreta`).
                 let tipo = v["type"].as_str().map(str::to_owned);
+                conta_messaggio(diagnosi, tipo.as_deref());
                 match tipo.as_deref() {
                     Some("auth_required") => {
                         uscenti.push(json!({ "type": "auth", "access_token": token }));
@@ -234,11 +241,18 @@ async fn sessione(
                     Some("event") if autenticato => {
                         let id = v["id"].as_u64();
                         let e = match iscrizione_entita {
-                            Some((ws, numero)) if id == Some(ws) => Some(interpreta_entita(&mut v, numero)),
-                            _ if id.is_some() && id == iscrizione_notifiche => interpreta_notifiche(&v),
-                            // Gli eventi di un'iscrizione alle entità già chiusa non hanno
-                            // `event_type`: `interpreta` li scarta.
-                            _ => interpreta(&v),
+                            Some((ws, numero)) if id == Some(ws) => {
+                                diagnosi.conta(Contatore::ev_entita);
+                                Some(interpreta_entita(&mut v, numero))
+                            }
+                            _ if id.is_some() && id == iscrizione_notifiche => {
+                                diagnosi.conta(Contatore::ev_notifiche);
+                                interpreta_notifiche(&v)
+                            }
+                            _ => {
+                                diagnosi.conta(contatore_evento(v["event"]["event_type"].as_str()));
+                                interpreta(&v)
+                            }
                         };
                         if let Some(e) = e {
                             uscita(DalClient::Evento(e));
@@ -305,6 +319,30 @@ async fn sessione(
 }
 
 /// Il risultato si prende dal messaggio, non si copia: quello di `get_states` di una casa vera è grosso.
+/// Il contatore del registro diagnostico per il tipo di un messaggio (gli `event` si contano a
+/// parte, per sorgente).
+fn conta_messaggio(diagnosi: &Diagnosi, tipo: Option<&str>) {
+    let c = match tipo {
+        Some("result") => Contatore::ws_result,
+        Some("pong") => Contatore::ws_pong,
+        Some("auth_required" | "auth_ok" | "auth_invalid") => Contatore::ws_auth,
+        Some("event") => return,
+        _ => Contatore::ws_altro,
+    };
+    diagnosi.conta(c);
+}
+
+/// Il contatore di un evento del bus: solo quelli a cui ci si iscrive hanno un nome loro.
+fn contatore_evento(tipo: Option<&str>) -> Contatore {
+    match tipo {
+        Some("area_registry_updated") => Contatore::ev_area_registry_updated,
+        Some("device_registry_updated") => Contatore::ev_device_registry_updated,
+        Some("entity_registry_updated") => Contatore::ev_entity_registry_updated,
+        Some("core_config_updated") => Contatore::ev_core_config_updated,
+        _ => Contatore::ev_altro,
+    }
+}
+
 fn esito(mut v: Value) -> Result<Value, String> {
     if v["success"].as_bool().unwrap_or(false) {
         return Ok(v.get_mut("result").map(Value::take).unwrap_or(Value::Null));

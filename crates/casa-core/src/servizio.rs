@@ -28,6 +28,7 @@ use tokio::sync::mpsc;
 use tokio::time::{sleep_until, Instant};
 
 use crate::config::{Config, ConfigStore};
+use crate::diagnosi::{Contatore, Diagnosi};
 use crate::eventi::{Ascoltatore, CasaEvento, StatoConnessione};
 use crate::ha::client::{self, Client, DalClient, NON_CONNESSO};
 use crate::ha::eventi::{applica_diff, Aggiornamento, EventoWs};
@@ -72,11 +73,23 @@ pub struct CasaService {
     tx: mpsc::UnboundedSender<Comando>,
     config: Arc<Mutex<Config>>,
     thread: Option<JoinHandle<()>>,
+    /// Il registro diagnostico (spento di serie): lo usano anche il client e l'interfaccia.
+    diagnosi: Arc<Diagnosi>,
 }
 
 impl CasaService {
     pub fn avvia(store: Arc<ConfigStore>, segreti: Arc<dyn Segreti>, ascolta: Ascoltatore) -> CasaService {
-        Self::avvia_con_ritardi(store, segreti, ascolta, client::RITARDI_RICONNESSIONE.to_vec())
+        Self::avvia_con_diagnosi(store, segreti, ascolta, Arc::new(Diagnosi::default()))
+    }
+
+    /// Come `avvia`, con il registro diagnostico dato (acceso o spento).
+    pub fn avvia_con_diagnosi(
+        store: Arc<ConfigStore>,
+        segreti: Arc<dyn Segreti>,
+        ascolta: Ascoltatore,
+        diagnosi: Arc<Diagnosi>,
+    ) -> CasaService {
+        Self::avvia_per_prova(store, segreti, ascolta, client::RITARDI_RICONNESSIONE.to_vec(), diagnosi)
     }
 
     /// Come `avvia`, con ritardi di riconnessione scelti (per i test).
@@ -87,12 +100,24 @@ impl CasaService {
         ascolta: Ascoltatore,
         ritardi: Vec<Duration>,
     ) -> CasaService {
+        Self::avvia_per_prova(store, segreti, ascolta, ritardi, Arc::new(Diagnosi::default()))
+    }
+
+    /// Ritardi di riconnessione e registro diagnostico scelti (per i test).
+    #[doc(hidden)]
+    pub fn avvia_per_prova(
+        store: Arc<ConfigStore>,
+        segreti: Arc<dyn Segreti>,
+        ascolta: Ascoltatore,
+        ritardi: Vec<Duration>,
+        diagnosi: Arc<Diagnosi>,
+    ) -> CasaService {
         // Unico provider di rustls, esplicito: se un'altra dipendenza attivasse aws-lc-rs
         // la scelta automatica fallirebbe e wss:// tornerebbe ad andare in panico.
         let _ = rustls::crypto::ring::default_provider().install_default();
         let config = Arc::new(Mutex::new(store.leggi()));
         let (tx, rx) = mpsc::unbounded_channel();
-        let motore = Motore::new(store, segreti, ascolta, config.clone(), ritardi);
+        let motore = Motore::new(store, segreti, ascolta, config.clone(), ritardi, diagnosi.clone());
         let thread = std::thread::Builder::new()
             .name("casa-service".into())
             .spawn(move || {
@@ -103,7 +128,12 @@ impl CasaService {
                 rt.block_on(motore.esegui(rx));
             })
             .expect("thread del servizio casa");
-        CasaService { tx, config, thread: Some(thread) }
+        CasaService { tx, config, thread: Some(thread), diagnosi }
+    }
+
+    /// Il registro diagnostico (spento se non acceso all'avvio).
+    pub fn diagnosi(&self) -> &Diagnosi {
+        &self.diagnosi
     }
 
     pub fn connetti_attivo(&self) {
@@ -365,6 +395,9 @@ struct Motore {
     notifiche: BTreeSet<String>,
     /// L'ambiente a cui appartengono quelle notifiche.
     ambiente_notifiche: Option<String>,
+    /// Il nuovo tentativo armato è per HA in avvio (non per una lettura fallita): per il registro.
+    riprova_per_avvio: bool,
+    diagnosi: Arc<Diagnosi>,
 }
 
 impl Motore {
@@ -374,6 +407,7 @@ impl Motore {
         ascolta: Ascoltatore,
         config: Arc<Mutex<Config>>,
         ritardi: Vec<Duration>,
+        diagnosi: Arc<Diagnosi>,
     ) -> Motore {
         let (interni_tx, interni_rx) = mpsc::unbounded_channel();
         Motore {
@@ -401,6 +435,8 @@ impl Motore {
             letta: false,
             notifiche: BTreeSet::new(),
             ambiente_notifiche: None,
+            riprova_per_avvio: false,
+            diagnosi,
         }
     }
 
@@ -417,6 +453,7 @@ impl Motore {
                 Some(i) = interni.recv() => self.interno(i),
                 _ = sleep_until(pubblica.unwrap_or_else(Instant::now)), if pubblica.is_some() => {
                     self.pubblica.annulla();
+                    self.diagnosi.conta(Contatore::pubblicazioni);
                     if std::mem::take(&mut self.rimappa) {
                         self.mappa_tutto();
                         self.segui(false);
@@ -429,6 +466,8 @@ impl Motore {
                 }
                 _ = sleep_until(riprova.unwrap_or_else(Instant::now)), if riprova.is_some() => {
                     self.riprova.annulla();
+                    let causa = if self.riprova_per_avvio { Contatore::rilettura_avvio } else { Contatore::rilettura_riprova };
+                    self.diagnosi.conta(causa);
                     self.rileggi();
                 }
             }
@@ -556,7 +595,7 @@ impl Motore {
         let uscita: client::Uscita = Box::new(move |e| {
             let _ = tx.send(Interno::Client(generazione, e));
         });
-        self.client = Some(client::avvia(url, token, self.ritardi.clone(), uscita));
+        self.client = Some(client::avvia(url, token, self.ritardi.clone(), uscita, self.diagnosi.clone()));
     }
 
     /// Ferma la connessione corrente e invalida tutto ciò che ha ancora in volo. Le notifiche
@@ -629,6 +668,7 @@ impl Motore {
                     self.letta = false;
                     // La sessione nuova non ha ancora nessuna iscrizione agli stati.
                     self.seguite = None;
+                    self.diagnosi.conta(Contatore::rilettura_connessione);
                     self.rileggi();
                 }
             }
@@ -637,8 +677,12 @@ impl Motore {
                     self.entita_cambiate(aggiunte, cambiate, tolte);
                 }
             }
-            Interno::Client(_, DalClient::Evento(EventoWs::StatoIlleggibile)) => self.rileggi(),
+            Interno::Client(_, DalClient::Evento(EventoWs::StatoIlleggibile)) => {
+                self.diagnosi.conta(Contatore::rilettura_illeggibile);
+                self.rileggi();
+            }
             Interno::Client(_, DalClient::Evento(EventoWs::DaRileggere)) => {
+                self.diagnosi.conta(Contatore::rilettura_registri);
                 self.registri.rinvia(Instant::now(), ATTESA_REGISTRI, TETTO_REGISTRI);
             }
             Interno::Client(_, DalClient::Evento(EventoWs::Notifiche { tipo, notifiche })) => {
@@ -654,12 +698,18 @@ impl Motore {
     /// raffica. Un cambio che non si applica (entità sconosciuta, diff illeggibile) fa rileggere.
     fn entita_cambiate(&mut self, aggiunte: Vec<HaState>, cambiate: Vec<(String, Value)>, tolte: Vec<String>) {
         let Some(casa) = &self.casa else { return };
+        self.diagnosi.conta_n(Contatore::entita_a, aggiunte.len() as u64);
+        self.diagnosi.conta_n(Contatore::entita_c, cambiate.len() as u64);
+        self.diagnosi.conta_n(Contatore::entita_r, tolte.len() as u64);
         let mut nuovi: Vec<(String, Option<HaState>)> =
             aggiunte.into_iter().map(|s| (s.entity_id.clone(), Some(s))).collect();
         for (id, diff) in cambiate {
             match casa.stato(&id).and_then(|vecchio| applica_diff(vecchio, &diff)) {
                 Some(s) => nuovi.push((id, Some(s))),
-                None => return self.rileggi(),
+                None => {
+                    self.diagnosi.conta(Contatore::rilettura_illeggibile);
+                    return self.rileggi();
+                }
             }
         }
         nuovi.extend(tolte.into_iter().map(|id| (id, None)));
@@ -676,10 +726,18 @@ impl Motore {
     fn stato_cambiato(&mut self, entity_id: &str, nuovo: Option<HaState>) -> bool {
         let Some(casa) = &mut self.casa else { return false };
         match casa.applica(&self.mapper, entity_id, nuovo) {
-            Effetto::Niente => false,
+            Effetto::Niente => {
+                self.diagnosi.conta(Contatore::effetto_niente);
+                false
+            }
             // Falso se è mostrabile ma nascosta dall'utente.
-            Effetto::Sostituisci(e) => sostituisci_in_menu(Arc::make_mut(&mut casa.menu), &e),
+            Effetto::Sostituisci(e) => {
+                let visibile = sostituisci_in_menu(Arc::make_mut(&mut casa.menu), &e);
+                self.diagnosi.conta(if visibile { Contatore::effetto_sostituita } else { Contatore::effetto_nascosta });
+                visibile
+            }
             Effetto::Rimappa => {
+                self.diagnosi.conta(Contatore::effetto_rimappa);
                 self.rimappa = true;
                 true
             }
@@ -724,6 +782,8 @@ impl Motore {
             return;
         }
         self.iscrizione += 1;
+        self.diagnosi.conta(Contatore::iscrizioni);
+        self.diagnosi.seguite(ids.len());
         client.iscrivi_entita(self.iscrizione, ids.iter().cloned().collect());
         self.seguite = Some(ids);
     }
@@ -733,10 +793,12 @@ impl Motore {
     fn rileggi(&mut self) {
         let Some((client, _)) = &self.client else { return };
         if self.in_lettura {
+            self.diagnosi.conta(Contatore::rilettura_accodata);
             self.rileggi_dopo = true;
             return;
         }
         self.in_lettura = true;
+        self.diagnosi.conta(Contatore::riletture);
         let (client, tx, g) = (client.clone(), self.interni_tx.clone(), self.generazione);
         tokio::spawn(async move {
             let (states, areas, devices, entries, config) = tokio::join!(
@@ -765,6 +827,7 @@ impl Motore {
         match esito {
             // Senza gli stati si tengono i dati precedenti.
             Err(e) => {
+                self.diagnosi.conta(Contatore::letture_fallite);
                 eprintln!("lettura di Home Assistant non riuscita: {e}");
                 // Finché la connessione non ha fatto una lettura riuscita (anche se ci sono i dati
                 // di una connessione precedente) si riprova, ogni volta aspettando il doppio fino
@@ -773,6 +836,7 @@ impl Motore {
                 if !self.letta {
                     let attesa = self.attesa_riprova;
                     self.riprova.rinvia(Instant::now(), attesa, attesa);
+                    self.riprova_per_avvio = false;
                     self.attesa_riprova = (attesa * 2).min(TETTO_RIPROVA);
                     if self.casa.is_some() && self.seguite.is_none() {
                         self.segui(true);
@@ -785,6 +849,9 @@ impl Motore {
                 self.attesa_riprova = RIPROVA_LETTURA;
                 self.letta = true;
                 let in_avvio = g.config.as_ref().and_then(|c| c.state.as_deref()).is_some_and(|s| s != "RUNNING");
+                if let Some(c) = &g.config {
+                    self.diagnosi.stato_ha(c.state.as_deref());
+                }
                 self.casa = Some(Casa::new(*g, &mut self.mapper));
                 self.pubblica.annulla();
                 self.rimappa = false;
@@ -794,6 +861,7 @@ impl Motore {
                 // HA ancora in avvio: molte entità non ci sono ancora; si rilegge poco dopo.
                 if in_avvio {
                     self.riprova.rinvia(Instant::now(), ATTESA_AVVIO, ATTESA_AVVIO);
+                    self.riprova_per_avvio = true;
                 }
             }
         }
@@ -805,6 +873,7 @@ impl Motore {
     /// Ricostruisce tutto `MenuData` dai dati in memoria con la configurazione corrente.
     fn mappa_tutto(&mut self) {
         let Some(casa) = &mut self.casa else { return };
+        self.diagnosi.conta(Contatore::mappature);
         let (favorites, hidden, room_order, device_order) = {
             let c = blocca(&self.config);
             (c.favorites.clone(), c.hidden_entities.clone(), c.room_order.clone(), c.device_order.clone())
@@ -828,8 +897,10 @@ impl Motore {
     fn consegna(&mut self) {
         let Some(casa) = &self.casa else { return };
         if self.consegnato.as_deref() == Some(&*casa.menu) {
+            self.diagnosi.conta(Contatore::consegne_uguali);
             return;
         }
+        self.diagnosi.conta(Contatore::consegne);
         self.consegnato = Some(casa.menu.clone());
         self.emetti(CasaEvento::Dati(casa.menu.clone()));
     }
@@ -919,7 +990,7 @@ mod test {
         let store = Arc::new(ConfigStore::apri(cartella.path()));
         let segreti: Arc<dyn Segreti> = Arc::new(crate::segreti::MemoriaSegreti::new());
         let config = Arc::new(Mutex::new(Config::default()));
-        (Motore::new(store, segreti, Arc::new(|_| {}), config, vec![]), cartella)
+        (Motore::new(store, segreti, Arc::new(|_| {}), config, vec![], Arc::new(Diagnosi::default())), cartella)
     }
 
     fn grezzi_vuoti() -> Box<Grezzi> {
