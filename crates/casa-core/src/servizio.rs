@@ -894,9 +894,17 @@ impl Motore {
     fn stato_cambiato(&mut self, entity_id: &str, nuovo: Option<HaState>) -> bool {
         let Some(casa) = &mut self.casa else { return false };
         let effetto = casa.applica(&self.mapper, entity_id, nuovo);
-        // Il valore di un sensore numerico (quadranti e lati): riscritto dov'è, senza rimappare,
-        // anche se l'entità non è mostrata in stanze e preferiti (una potenza) o è nascosta.
-        let valore = !matches!(effetto, Effetto::Rimappa) && entity_id.starts_with("sensor.") && casa.valore_numerico(entity_id);
+        // Il valore di un sensore numerico (quadranti e lati): riscritto in memoria dov'è, senza
+        // rimappare, anche se l'entità non è mostrata in stanze e preferiti (una potenza) o è
+        // nascosta. Si pubblica per questo solo se il sensore è scelto per un lato o un quadrante:
+        // un sensore nascosto e non scelto che cambia ogni pochi secondi non deve svegliare
+        // l'interfaccia (in M1 non lo faceva; I1 della revisione finale di M2). Se invece è
+        // mostrato in stanze o preferiti lo pubblica già la sua sostituzione qui sotto; per gli
+        // altri il valore nuovo parte con la prossima pubblicazione.
+        let valore = !matches!(effetto, Effetto::Rimappa)
+            && entity_id.starts_with("sensor.")
+            && casa.valore_numerico(entity_id)
+            && blocca(&self.config).sensori_scelti().contains(entity_id);
         if valore {
             self.diagnosi.conta(Contatore::effetto_sensore);
         }

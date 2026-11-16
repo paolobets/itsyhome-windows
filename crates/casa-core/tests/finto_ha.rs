@@ -1705,6 +1705,65 @@ async fn un_cambio_del_meteo_si_pubblica_senza_rimappare_ne_rileggere() {
 
 // ─── Sensori numerici per quadranti e lati (Task 4 della M2, giro di correzioni 1) ───────────
 
+/// Una temperatura come la dà HA, in cucina: mostrabile (nelle stanze e nel catalogo delle
+/// Impostazioni) e fra i sensori numerici.
+fn temperatura_finta(valore: &str) -> Value {
+    let mut s = stato_nuovo("sensor.forno", valore, "Forno");
+    s["attributes"]["device_class"] = json!("temperature");
+    s["attributes"]["unit_of_measurement"] = json!("°C");
+    s["attributes"]["state_class"] = json!("measurement");
+    s
+}
+
+fn valore_di(d: &MenuData, entity_id: &str) -> Option<f64> {
+    d.sensori_numerici.iter().find(|n| n.entity_id == entity_id).expect("sensore numerico").valore
+}
+
+/// I1 della revisione finale di M2: un sensore numerico nascosto dall'utente e non scelto per lati
+/// o quadranti resta seguito (è nel catalogo delle Impostazioni), ma un suo cambio di valore non
+/// pubblica nulla: aggiorna la memoria e parte con la prossima pubblicazione, come in M1 (dove
+/// dava `effetto_nascosta`). Lo stesso sensore scelto per un lato pubblica a ogni cambio.
+#[tokio::test]
+async fn un_sensore_nascosto_e_non_scelto_non_sveglia_l_interfaccia() {
+    use casa_core::diagnosi::{Contatore, Diagnosi};
+    let ha = FintoHa::avvia().await;
+    ha.contatori.stati.lock().unwrap().insert("sensor.forno".into(), temperatura_finta("180"));
+    let mut voce = entry("sensor.forno", "cucina");
+    voce["original_device_class"] = json!("temperature");
+    ha.contatori.voci_extra.lock().unwrap().push(voce);
+    let diagnosi = Arc::new(Diagnosi::new(true));
+    let mut p = prepara_con_diagnosi(&ha.url, diagnosi.clone());
+    p.servizio.aggiorna_config(|c| c.hidden_entities = vec!["sensor.forno".into()]);
+    p.servizio.connetti_attivo();
+    let d = aspetta_dati(&mut p).await;
+    assert_eq!(valore_di(&d, "sensor.forno"), Some(180.0));
+    assert!(d.rooms.iter().flat_map(|r| &r.entities).all(|e| e.entity_id() != "sensor.forno"), "nascosto: non nelle stanze");
+    aspetta_iscrizione(&ha, 1).await;
+    // Seguito: senza questo il cambio qui sotto non arriverebbe e il test non proverebbe nulla.
+    let seguite = ha.iscrizioni_entita();
+    assert!(seguite[0].contains(&"sensor.forno".to_string()), "il sensore nascosto resta seguito: {seguite:?}");
+
+    cambio(&ha, "sensor.forno", temperatura_finta("185"));
+    assert!(dati_entro(&mut p, Duration::from_millis(600)).await.is_empty(), "nessuna pubblicazione per il sensore nascosto");
+    assert_eq!(diagnosi.valore(Contatore::effetto_sensore), 0);
+    assert_eq!(diagnosi.valore(Contatore::effetto_nascosta), 1, "il cambio è arrivato, come in M1");
+
+    // Il valore è in memoria: parte con la prossima pubblicazione (qui la luce che si spegne).
+    cambio(&ha, "light.cucina", stato_nuovo("light.cucina", "off", "Luce cucina"));
+    let d = aspetta_dati(&mut p).await;
+    assert_eq!(valore_di(&d, "sensor.forno"), Some(185.0));
+
+    // Scelto per un lato: ogni cambio si pubblica.
+    p.servizio.aggiorna_config(|c| c.lato_destro = "sensore:sensor.forno".into());
+    // Quello che il cambio di configurazione pubblica (o niente): si lascia passare.
+    dati_entro(&mut p, Duration::from_millis(600)).await;
+    cambio(&ha, "sensor.forno", temperatura_finta("190"));
+    let d = aspetta_dati(&mut p).await;
+    assert_eq!(valore_di(&d, "sensor.forno"), Some(190.0));
+    assert_eq!(diagnosi.valore(Contatore::effetto_sensore), 1);
+    assert_eq!(ha.get_states(), 1, "senza letture complete");
+}
+
 /// Una potenza come la dà HA: niente stanze né preferiti, ma fra i sensori numerici.
 fn potenza_finta(valore: &str) -> Value {
     let mut s = stato_nuovo("sensor.fv", valore, "Fotovoltaico");
