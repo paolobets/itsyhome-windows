@@ -171,6 +171,11 @@ Riposo non rimisurato a schermo libero: durante tutta la prova lo schermo era bl
 | Riposo 5 min, casa piccola, 7 preferiti, `--umore calm` | 14g: 0,016%, 8,0–8,2 MB | **0,015%** (max 0,33), **8,0–8,1 MB** |
 | Raffica anti-glitch (raffica 20/s + un evento del registro al secondo, 20 s a 60 fps) | — | soli registri 1199 fotogrammi **0 difettosi**; letture complete 1199 **0 difettosi**; controllo negativo 299 su 299 |
 
+### Changed (Task 14i: decisione di Paolo, 16/11/2026)
+- Riga alta del pannello: dopo l'ora il pulsante **«⋯»** («Altre opzioni», 28 × 28, anello da tastiera) apre lo stesso menu nativo del clic destro sulla pillola, senza «Apri» e con «Impostazioni» in testa (Impostazioni, Informazioni, Ritira/Mostra l'isola, Esci), sotto il pulsante e allineato al suo bordo destro dentro l'area di lavoro. Esc lo chiude e il fuoco resta su «⋯»; «Ritira l'isola» da qui chiude il pannello e ritira subito la pillola.
+- Dock di sole app: via l'ingranaggio delle Impostazioni. Tab gira fra «In attesa», contenuto, dock e «⋯».
+- Misure (release, finto HA, `--umore calm`): riposo 5 min **0,015%** (max 0,33), **8,0–8,2 MB** (14h: 0,015%, 8,0–8,1); raffica anti-glitch 1199 fotogrammi **0 difettosi**, controllo negativo 299 su 299.
+
 ---
 
 ## [2.1.2] - 2026-03-24
