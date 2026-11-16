@@ -57,9 +57,10 @@ pub enum Rilettura {
 const CAMPI_VISIBILITA: [&str; 5] = ["disabled_by", "hidden_by", "entity_category", "device_class", "original_device_class"];
 /// I campi del registro delle entità che cambiano come un'entità mostrata appare o dove.
 const CAMPI_ASPETTO: [&str; 3] = ["name", "area_id", "device_id"];
-/// I campi da cui HA compone il `friendly_name` dello stato (il nome mostrato quando l'utente non
-/// ne ha scelto uno): il nome dell'integrazione, la sua traduzione, il nome col dispositivo.
-const CAMPI_NOME: [&str; 3] = ["original_name", "translation_key", "has_entity_name"];
+// I campi da cui HA compone il `friendly_name` (`original_name`, `translation_key`,
+// `has_entity_name`, e `changes` vuoto quando cambia il nome composto) non rileggono nulla: le
+// entità mostrate sono tutte seguite e HA riscrive il loro stato a ogni `update` del registro
+// (giro di correzioni 2, N3).
 
 fn dominio(entity_id: &str) -> &str {
     entity_id.split('.').next().unwrap_or_default()
@@ -151,12 +152,7 @@ impl CambioRegistro {
                     Azione::Aggiorna if aggiornamento => {
                         if tocca(campi, &CAMPI_VISIBILITA) { Rilettura::Tutto } else { Rilettura::Niente }
                     }
-                    Azione::Aggiorna => si_se(
-                        tocca(campi, &CAMPI_VISIBILITA)
-                            // `changes` vuoto: HA ha tolto `compat_name`/`original_name_unprefixed`,
-                            // cioè è cambiato il nome composto (dispositivo rinominato).
-                            || ((campi.is_empty() || tocca(campi, &CAMPI_ASPETTO) || tocca(campi, &CAMPI_NOME)) && conta()),
-                    ),
+                    Azione::Aggiorna => si_se(tocca(campi, &CAMPI_VISIBILITA) || (tocca(campi, &CAMPI_ASPETTO) && conta())),
                 }
             }
             CambioRegistro::Dispositivo { azione, device_id, campi } => {
@@ -172,11 +168,16 @@ impl CambioRegistro {
                         mostrata(&e.entity_id) && (!stanza || libera)
                     })
                 };
+                let usato_dai_figli = || {
+                    let Some(i) = indici else { return true };
+                    i.figli(device_id).any(|f| i.voci_del_dispositivo(&f.id).any(|e| mostrata(&e.entity_id)))
+                };
                 match azione {
                     // Stanza propria, o padre cambiato (un figlio senza stanza prende la sua).
                     Azione::Aggiorna if tocca(campi, &["area_id", "parent_device_id"]) && usato(true) => Rilettura::Registri,
-                    // Con `has_entity_name` il nome del dispositivo è parte di quello dell'entità.
-                    Azione::Aggiorna if tocca(campi, &["name", "name_by_user"]) && usato(false) => Rilettura::Registri,
+                    // Il nome di un padre: HA non riscrive gli stati delle entità dei figli (le
+                    // sue, sì: per quelle il nome nuovo arriva con lo stato seguito).
+                    Azione::Aggiorna if tocca(campi, &["name", "name_by_user"]) && usato_dai_figli() => Rilettura::Registri,
                     Azione::Togli if usato(false) => Rilettura::Registri,
                     // Versioni, connessioni, `disabled_by` (HA manda gli eventi delle sue entità):
                     // nessuno li mostra. Un dispositivo nuovo non ha ancora entità.
@@ -312,34 +313,35 @@ mod test {
         }
     }
 
-    /// Giro di correzioni 1, I1: tutto ciò che può cambiare un nome mostrato (anche nelle
-    /// Impostazioni, anche di un'entità nascosta dall'utente) rilegge i registri: il nome dato
-    /// dall'integrazione (`original_name`, `translation_key`), `has_entity_name`, un aggiornamento
-    /// con `changes` vuoto (HA toglie `compat_name` e `original_name_unprefixed` prima dell'evento),
-    /// il nome del dispositivo (con `has_entity_name` è parte del nome dell'entità).
+    /// Giro di correzioni 2 (N3): i nomi che arrivano con lo stato non rileggono i registri. Le
+    /// entità mostrate (anche nascoste dall'utente) sono tutte seguite, e HA riscrive lo stato
+    /// (`friendly_name` nuovo) a ogni `update` del registro dell'entità e quando cambia `name` o
+    /// `name_by_user` del **suo** dispositivo (`helpers/entity.py`, `_async_registry_updated` e
+    /// `_async_device_registry_updated`): così `original_name`, `translation_key`,
+    /// `has_entity_name`, `changes` vuoto e il nome del dispositivo proprio. Restano: il nome
+    /// scelto (`name`, la mappatura lo legge dal registro) e il nome di un dispositivo **padre**,
+    /// che in HA non riscrive gli stati delle entità dei figli (né manda eventi dei figli).
     #[test]
-    fn i_nomi_mostrati_rileggono_i_registri() {
+    fn i_nomi_che_arrivano_con_lo_stato_non_rileggono() {
         for campo in ["original_name", "translation_key", "has_entity_name"] {
             let data = json!({ "action": "update", "entity_id": "light.cucina", "changes": { campo: "x" } });
-            assert_eq!(decidi(ENTITA, data), Rilettura::Registri, "entità {campo}");
+            assert_eq!(decidi(ENTITA, data), Rilettura::Niente, "entità {campo}");
         }
         let data = json!({ "action": "update", "entity_id": "light.cucina", "changes": {} });
-        assert_eq!(decidi(ENTITA, data), Rilettura::Registri, "changes vuoto");
+        assert_eq!(decidi(ENTITA, data), Rilettura::Niente, "changes vuoto");
+        let data = json!({ "action": "update", "entity_id": "light.cucina", "changes": { "name": null } });
+        assert_eq!(decidi(ENTITA, data), Rilettura::Registri, "nome scelto: letto dal registro");
         for campo in ["name", "name_by_user"] {
+            // Il dispositivo proprio: HA riscrive gli stati delle sue entità.
             let data = json!({ "action": "update", "device_id": "lampada", "changes": { campo: "x" } });
-            assert_eq!(decidi(DISPOSITIVO, data), Rilettura::Registri, "dispositivo {campo}");
-            // Anche l'hub: il nome del padre fa parte di quello dei figli.
+            assert_eq!(decidi(DISPOSITIVO, data), Rilettura::Niente, "dispositivo {campo}");
+            // Un padre con figli mostrati: gli stati dei figli non si riscrivono.
             let data = json!({ "action": "update", "device_id": "hub", "changes": { campo: "x" } });
             assert_eq!(decidi(DISPOSITIVO, data), Rilettura::Registri, "hub {campo}");
-            // Un dispositivo senza entità mostrate no.
+            // Un dispositivo senza entità mostrate.
             let data = json!({ "action": "update", "device_id": "presa", "changes": { campo: "x" } });
             assert_eq!(decidi(DISPOSITIVO, data), Rilettura::Niente, "presa {campo}");
         }
-        // Entità non mostrate: il loro nome non si vede da nessuna parte.
-        let data = json!({ "action": "update", "entity_id": "sensor.potenza", "changes": { "original_name": "x" } });
-        assert_eq!(decidi(ENTITA, data), Rilettura::Niente);
-        let data = json!({ "action": "update", "entity_id": "sensor.potenza", "changes": {} });
-        assert_eq!(decidi(ENTITA, data), Rilettura::Niente);
     }
 
     /// Giro di correzioni 1: un dispositivo figlio senza stanza prende quella del padre (HA

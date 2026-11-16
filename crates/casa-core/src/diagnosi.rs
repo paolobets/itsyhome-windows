@@ -90,6 +90,9 @@ contatori!(
     registro_campo_name_by_user,
     registro_campo_sw_version,
     registro_campo_connections,
+    registro_campo_translation_key,
+    registro_campo_has_entity_name,
+    registro_campo_parent_device_id,
     registro_campo_vuoto,
     registro_campo_altro,
     // Iscrizioni `subscribe_entities` mandate.
@@ -123,6 +126,9 @@ pub fn contatore_campo(campo: &str) -> Contatore {
         "name_by_user" => Contatore::registro_campo_name_by_user,
         "sw_version" => Contatore::registro_campo_sw_version,
         "connections" => Contatore::registro_campo_connections,
+        "translation_key" => Contatore::registro_campo_translation_key,
+        "has_entity_name" => Contatore::registro_campo_has_entity_name,
+        "parent_device_id" => Contatore::registro_campo_parent_device_id,
         _ => Contatore::registro_campo_altro,
     }
 }
@@ -314,6 +320,16 @@ mod test {
         spenta.prima_lettura();
         spenta.prima_consegna(5);
         assert!(spenta.riga(&[]).contains("avvio_consegna_cpu_ms=0"));
+    }
+
+    /// Giro di correzioni 2 del 14h (N4): i campi che decidono la rilettura hanno il loro nome.
+    #[test]
+    fn i_campi_che_decidono_hanno_un_contatore() {
+        let nome = |c: Contatore| NOMI[c as usize];
+        for campo in ["translation_key", "has_entity_name", "parent_device_id", "name", "original_name", "area_id"] {
+            assert_eq!(nome(contatore_campo(campo)), format!("registro_campo_{campo}"), "{campo}");
+        }
+        assert_eq!(contatore_campo("Casa di Paolo"), Contatore::registro_campo_altro);
     }
 
     #[test]

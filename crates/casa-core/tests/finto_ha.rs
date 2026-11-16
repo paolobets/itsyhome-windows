@@ -72,6 +72,8 @@ struct Contatori {
     ritardo_voci_ms: AtomicU64,
     /// Quante risposte a `config/entity_registry/list` rifiutare ancora.
     voci_da_rifiutare: AtomicUsize,
+    /// Senza le voci di serie (luce e presa) nel registro delle entità.
+    senza_voci_di_serie: AtomicBool,
 }
 
 struct FintoHa {
@@ -267,7 +269,11 @@ fn risposta(v: &Value, contatori: &Contatori) -> Value {
             if contatori.presa_nascosta.load(Ordering::SeqCst) {
                 presa["hidden_by"] = json!("user");
             }
-            let mut voci = vec![entry("light.cucina", "cucina"), presa];
+            let mut voci = if contatori.senza_voci_di_serie.load(Ordering::SeqCst) {
+                vec![]
+            } else {
+                vec![entry("light.cucina", "cucina"), presa]
+            };
             voci.extend(contatori.voci_extra.lock().unwrap().iter().cloned());
             for (id, nome) in contatori.nomi_registro.lock().unwrap().iter() {
                 if let Some(v) = voci.iter_mut().find(|v| v["entity_id"] == id.as_str()) {
@@ -1001,6 +1007,22 @@ async fn evento_durante_la_lettura_dei_registri_non_si_perde() {
         }
     }
     assert_eq!(ha.get_states(), 1, "solo registri");
+}
+
+/// Giro di correzioni 2 del 14h (N2): una casa senza nulla da mostrare né da seguire non manda
+/// mai `subscribe_entities` con l'elenco vuoto (HA lo leggerebbe come «tutte le entità»).
+#[tokio::test]
+async fn casa_senza_entita_mostrabili_non_si_iscrive_a_tutte() {
+    let ha = FintoHa::avvia().await;
+    ha.contatori.senza_voci_di_serie.store(true, Ordering::SeqCst);
+    *ha.contatori.stati.lock().unwrap() =
+        [("binary_sensor.porta".to_string(), stato("binary_sensor.porta", "off", "Porta"))].into_iter().collect();
+    let mut p = prepara(&ha.url, Some(TOKEN));
+    p.servizio.connetti_attivo();
+    let d = aspetta_dati(&mut p).await;
+    assert_eq!(conta_entita(&d), 0);
+    sleep(Duration::from_millis(300)).await;
+    assert!(ha.iscrizioni_entita().is_empty(), "iscrizioni: {:?}", ha.iscrizioni_entita());
 }
 
 /// Giro di correzioni 2 del 14h: una lettura completa chiesta da un evento (entità nuova) che
