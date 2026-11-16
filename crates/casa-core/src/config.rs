@@ -45,6 +45,11 @@ pub struct Config {
     /// le unità senza una scala naturale (W, kW, ignote).
     #[serde(default)]
     pub massimi_quadranti: HashMap<String, f64>,
+    /// Il monitor su cui stanno pillola e pannello (M2, Task 6): il nome come lo dà winit
+    /// (`MonitorHandle::name()`); `None` = il principale. Resta salvato anche mentre il monitor
+    /// non c'è. Un file di prima, senza la chiave, si legge con `None`.
+    #[serde(default)]
+    pub schermo: Option<String>,
 }
 
 /// Il prefisso di una fonte che è un sensore di Home Assistant («sensore:sensor.sala_t»).
@@ -213,5 +218,7 @@ pub fn importa_v2(v2: &Path, segreti: &dyn Segreti) -> Result<Option<Config>, St
         lato_destro: String::new(),
         quadranti: Vec::new(),
         massimi_quadranti: HashMap::new(),
+        // La v2 non sceglieva il monitor.
+        schermo: None,
     }))
 }

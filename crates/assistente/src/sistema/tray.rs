@@ -29,6 +29,13 @@ mod windows {
         Icon::from_rgba(img.into_raw(), l, a).map_err(|e| e.to_string())
     }
 
+    impl Tray {
+        /// Il menu nuovo (ricostruito per un altro elenco di monitor).
+        pub fn menu(&self, menu: &MenuIsola) {
+            self._icona.set_menu(Some(Box::new(menu.menu().clone())));
+        }
+    }
+
     /// Crea l'icona col menu dell'isola. `al_clic` (clic sinistro) è chiamata sul ciclo eventi.
     pub fn crea(menu: &MenuIsola, al_clic: fn()) -> Result<Tray, String> {
         TrayIconEvent::set_event_handler(Some(move |e: TrayIconEvent| {

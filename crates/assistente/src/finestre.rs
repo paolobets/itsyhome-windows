@@ -1,4 +1,5 @@
-//! Dove stanno le finestre: pillola e pannello in alto al centro dell'area di lavoro del monitor principale.
+//! Dove stanno le finestre: pillola e pannello in alto al centro dell'area di lavoro del monitor
+//! scelto (Task 6: il preferito, se c'è; altrimenti il principale).
 
 use slint::winit_030::{winit, EventResult, WinitWindowAccessor};
 use slint::ComponentHandle;
@@ -81,15 +82,95 @@ pub fn posizione_pannello(area: RettangoloFisico, scala: f32) -> (i32, i32) {
     (x, y)
 }
 
-/// Area di lavoro e scala del monitor principale (se non c'è, del primo disponibile), viste
-/// dalla finestra winit di `finestra`. `None` finché la finestra winit non esiste.
+/// Un monitor collegato, come lo dà winit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InfoMonitor {
+    /// Il nome di winit (`MonitorHandle::name()`, su Windows «\\.\DISPLAY2»): è un identificativo
+    /// tecnico, ma sta solo nella configurazione, mai nei log.
+    pub nome: String,
+    pub principale: bool,
+    /// Area di lavoro in pixel fisici dello schermo virtuale.
+    pub area: RettangoloFisico,
+    pub scala: f32,
+    /// Risoluzione intera del monitor in pixel fisici (per l'etichetta del menu).
+    pub larghezza_px: u32,
+    pub altezza_px: u32,
+}
+
+/// Quale monitor usare: il preferito se c'è; altrimenti il principale; altrimenti il primo;
+/// `None` solo con l'elenco vuoto. Il preferito non si dimentica quando manca: appena ricompare
+/// nell'elenco lo si sceglie di nuovo (il controllo da 5 s dei servizi riposiziona la pillola).
+pub fn scegli_monitor(monitor: &[InfoMonitor], preferito: Option<&str>) -> Option<usize> {
+    preferito
+        .filter(|n| !n.is_empty())
+        .and_then(|n| monitor.iter().position(|m| m.nome == n))
+        .or_else(|| monitor.iter().position(|m| m.principale))
+        .or(if monitor.is_empty() { None } else { Some(0) })
+}
+
+/// Il testo di un monitor nel menu: «Schermo principale» o «Schermo N · 2560×1440», con N la
+/// posizione (da 1) nell'elenco ordinato per `area.x` e poi `area.y`.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn etichetta_monitor(monitor: &[InfoMonitor], i: usize) -> String {
+    let Some(m) = monitor.get(i) else { return "Schermo".to_owned() };
+    if m.principale {
+        return "Schermo principale".to_owned();
+    }
+    let mut ordine: Vec<usize> = (0..monitor.len()).collect();
+    ordine.sort_by_key(|&j| (monitor[j].area.x, monitor[j].area.y));
+    let n = ordine.iter().position(|&j| j == i).unwrap_or(i) + 1;
+    format!("Schermo {n} · {}×{}", m.larghezza_px, m.altezza_px)
+}
+
+thread_local! {
+    /// Il monitor preferito (`Config.schermo`), scritto dai servizi (all'avvio e a ogni scelta) e
+    /// letto da `schermo_di`: pillola, pannello, zona della linea della ritirata e controllo dello
+    /// schermo intero lo seguono da soli. Solo il thread dell'interfaccia.
+    static SCHERMO_PREFERITO: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Cambia il monitor preferito (`None` = il principale).
+pub fn imposta_schermo_preferito(nome: Option<String>) {
+    SCHERMO_PREFERITO.with(|p| *p.borrow_mut() = nome);
+}
+
+/// Quale dei `monitor` è in uso adesso (secondo la preferenza).
+pub fn monitor_in_uso(monitor: &[InfoMonitor]) -> Option<usize> {
+    SCHERMO_PREFERITO.with(|p| scegli_monitor(monitor, p.borrow().as_deref()))
+}
+
+/// I monitor collegati, ordinati per `area.x` e poi `area.y` (come li numera il menu), visti dalla
+/// finestra winit di `finestra`. `None` finché la finestra winit non esiste (o, per la pillola,
+/// mentre è nascosta e può non averla): allora non si sa, non che i monitor siano zero.
+pub fn elenco_monitor(finestra: &slint::Window) -> Option<Vec<InfoMonitor>> {
+    finestra.with_winit_window(|w| {
+        let principale = w.primary_monitor();
+        let mut elenco: Vec<InfoMonitor> = w
+            .available_monitors()
+            .map(|m| {
+                let dim = m.size();
+                InfoMonitor {
+                    nome: m.name().unwrap_or_default(),
+                    principale: principale.as_ref() == Some(&m),
+                    area: area_di_lavoro(&m),
+                    scala: m.scale_factor() as f32,
+                    larghezza_px: dim.width,
+                    altezza_px: dim.height,
+                }
+            })
+            .collect();
+        elenco.sort_by_key(|m| (m.area.x, m.area.y));
+        elenco
+    })
+}
+
+/// Area di lavoro e scala del monitor scelto (il preferito, se c'è; altrimenti il principale; se
+/// non c'è, il primo), viste dalla finestra winit di `finestra`. `None` finché la finestra winit
+/// non esiste.
 pub fn schermo_di(finestra: &slint::Window) -> Option<(RettangoloFisico, f32)> {
-    finestra
-        .with_winit_window(|w| {
-            let monitor = w.primary_monitor().or_else(|| w.available_monitors().next())?;
-            Some((area_di_lavoro(&monitor), monitor.scale_factor() as f32))
-        })
-        .flatten()
+    let monitor = elenco_monitor(finestra)?;
+    let m = &monitor[monitor_in_uso(&monitor)?];
+    Some((m.area, m.scala))
 }
 
 /// Scrive la scala della finestra nel tema (`Tema.scala`, per gli spessori sul pixel fisico),
@@ -537,6 +618,80 @@ mod test {
     fn pannello_largo_800_centrato() {
         assert_eq!(LARGHEZZA_PANNELLO, 800.0);
         assert_eq!(posizione_pannello(area(0, 0, 1920, 1040), 1.0), ((1920 - 800) / 2, 0));
+    }
+
+    fn monitor(nome: &str, principale: bool, x: i32, larghezza_px: u32, altezza_px: u32) -> InfoMonitor {
+        InfoMonitor {
+            nome: nome.to_owned(),
+            principale,
+            area: area(x, 0, larghezza_px as i32, altezza_px as i32 - 40),
+            scala: 1.0,
+            larghezza_px,
+            altezza_px,
+        }
+    }
+
+    const SECONDO: &str = "\\\\.\\DISPLAY2";
+
+    #[test]
+    fn senza_preferenza_il_principale() {
+        let elenco = [monitor(SECONDO, false, -2560, 2560, 1440), monitor("\\\\.\\DISPLAY1", true, 0, 1920, 1080)];
+        assert_eq!(scegli_monitor(&elenco, None), Some(1));
+        // Un preferito vuoto (nome illeggibile) vale come nessuna preferenza.
+        assert_eq!(scegli_monitor(&elenco, Some("")), Some(1));
+    }
+
+    #[test]
+    fn preferito_presente_scelto() {
+        let elenco = [monitor("\\\\.\\DISPLAY1", true, 0, 1920, 1080), monitor(SECONDO, false, 1920, 2560, 1440)];
+        assert_eq!(scegli_monitor(&elenco, Some(SECONDO)), Some(1));
+        assert_eq!(scegli_monitor(&elenco, Some("\\\\.\\DISPLAY1")), Some(0));
+    }
+
+    #[test]
+    fn monitor_scollegato_usa_il_principale_e_poi_torna() {
+        let principale = monitor("\\\\.\\DISPLAY1", true, 0, 1920, 1080);
+        let secondo = monitor(SECONDO, false, 1920, 2560, 1440);
+        // Il preferito manca: il principale (la preferenza resta com'è, la passa chi chiama).
+        assert_eq!(scegli_monitor(std::slice::from_ref(&principale), Some(SECONDO)), Some(0));
+        // L'elenco ha di nuovo il preferito: si torna a lui.
+        assert_eq!(scegli_monitor(&[principale, secondo], Some(SECONDO)), Some(1));
+    }
+
+    #[test]
+    fn nessun_principale_il_primo_ed_elenco_vuoto_nessuno() {
+        let elenco = [monitor("A", false, 0, 1920, 1080), monitor("B", false, 1920, 1920, 1080)];
+        assert_eq!(scegli_monitor(&elenco, None), Some(0));
+        assert_eq!(scegli_monitor(&elenco, Some("C")), Some(0));
+        assert_eq!(scegli_monitor(&[], None), None);
+        assert_eq!(scegli_monitor(&[], Some(SECONDO)), None);
+    }
+
+    #[test]
+    fn etichette_dei_monitor() {
+        let elenco = [
+            monitor("\\\\.\\DISPLAY1", true, 0, 1920, 1080),
+            monitor(SECONDO, false, 1920, 2560, 1440),
+            monitor("\\\\.\\DISPLAY3", false, -1280, 1280, 1024),
+        ];
+        assert_eq!(etichetta_monitor(&elenco, 0), "Schermo principale");
+        // N conta dall'ordine per x: il terzo (x = -1280) è il numero 1, il principale il 2, questo il 3.
+        assert_eq!(etichetta_monitor(&elenco, 1), "Schermo 3 · 2560×1440");
+        assert_eq!(etichetta_monitor(&elenco, 2), "Schermo 1 · 1280×1024");
+        // Il caso semplice: principale a sinistra, secondo a destra.
+        assert_eq!(etichetta_monitor(&elenco[..2], 1), "Schermo 2 · 2560×1440");
+        // Fuori elenco: niente panico.
+        assert_eq!(etichetta_monitor(&elenco, 9), "Schermo");
+    }
+
+    #[test]
+    fn la_preferenza_dei_servizi_guida_la_scelta() {
+        let elenco = [monitor("\\\\.\\DISPLAY1", true, 0, 1920, 1080), monitor(SECONDO, false, 1920, 2560, 1440)];
+        assert_eq!(monitor_in_uso(&elenco), Some(0));
+        imposta_schermo_preferito(Some(SECONDO.to_owned()));
+        assert_eq!(monitor_in_uso(&elenco), Some(1));
+        imposta_schermo_preferito(None);
+        assert_eq!(monitor_in_uso(&elenco), Some(0));
     }
 
     #[test]

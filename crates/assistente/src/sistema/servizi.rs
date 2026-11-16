@@ -2,13 +2,14 @@
 //!
 //! Timer:
 //! - uno solo fisso, ogni 5 s: schermo intero (con l'isteresi), pillola rimessa sopra e al suo
-//!   posto (cambi di area di lavoro o di risoluzione senza eventi di finestra), inattività;
+//!   posto (cambi di area di lavoro o di risoluzione senza eventi di finestra), inattività e, solo
+//!   su Windows, l'elenco dei monitor nel menu (sottomenu «Schermo»: si ricostruisce solo se cambia);
 //! - una sveglia singola quando un cambio di schermo intero aspetta conferma (3 s / 1,5 s);
 //! - il sondaggio del mouse ogni 100 ms SOLO mentre la pillola è ritirata e visibile (la linea
 //!   lascia passare i clic, quindi non riceve eventi del mouse).
 
 #[cfg(windows)]
-use super::menu::{Comando, MenuIsola};
+use super::menu::{schermi_del_menu, Comando, MenuIsola};
 use super::ritirata::{self, Ritirata, SONDAGGIO_MOUSE};
 use super::scorciatoie::{self, Scorciatoia, Scorciatoie};
 #[cfg(windows)]
@@ -17,6 +18,8 @@ use super::{inattivita, passi, pillola_visibile, schermo_intero, IsteresiSchermo
 use crate::attenzione::Livello;
 #[cfg(windows)]
 use super::primo_piano::{self, GanciPrimoPiano};
+#[cfg(windows)]
+use crate::finestre::InfoMonitor;
 use crate::finestre::{self, RettangoloFisico};
 use crate::pannello::Apertura;
 use crate::ponte::Ponte;
@@ -70,6 +73,9 @@ fn servizi() -> Option<Rc<Servizi>> {
 /// Avvia i servizi (dopo pillola, ponte e pannello). Menu, icona nella barra (se accesa) e
 /// scorciatoie nascono al primo giro del ciclo eventi.
 pub fn avvia(pillola: &Pillola, apertura: Rc<Apertura>, ponte: Rc<Ponte>) {
+    // Il monitor preferito (anche fuori da Windows, dove non si sceglie ma la preferenza vale),
+    // prima che qualunque finestra si posizioni.
+    finestre::imposta_schermo_preferito(ponte.casa().config().schermo);
     let s = Rc::new(Servizi {
         pillola: pillola.as_weak(),
         apertura,
@@ -171,6 +177,8 @@ pub fn mostra_icona(si: bool) {
 pub fn menu_dal_pannello(finestra: &slint::Window, destra: f32, basso: f32, tastiera: bool) {
     let Some(s) = servizi() else { return };
     let Some(hwnd) = finestre::maniglia(finestra) else { return };
+    // I monitor possono essere cambiati dall'ultimo giro da 5 s: il menu si rifà un attimo prima.
+    s.schermi_nel_menu(finestre::elenco_monitor(finestra));
     let punto = super::menu::punto_pannello(destra, basso, finestra.scale_factor());
     let scelta = {
         let menu = s.menu.borrow();
@@ -212,10 +220,35 @@ fn al_comando(c: Comando) {
             apri_alla_sezione(SEZIONE_INFORMAZIONI, || servizi().is_some_and(|s| s.ponte.chiedi_impostazioni()));
         }
         Comando::Ritirata => commuta_ritirata(),
+        Comando::Schermo(i) => scegli_schermo(i),
         Comando::Esci => {
             let _ = slint::quit_event_loop();
         }
     }
+}
+
+/// «Schermo» del menu: pillola e pannello (se aperto) vanno sul monitor `i` dell'elenco mostrato nel
+/// menu. La scelta si salva (il nome del monitor non va nei log) e vale anche quando il monitor
+/// manca: allora la pillola sta sul principale e torna appena il monitor ricompare (controllo da
+/// 5 s). Un indice che non esiste più (monitor tolto fra la costruzione del menu e la scelta) non
+/// fa nulla.
+#[cfg(windows)]
+fn scegli_schermo(i: usize) {
+    let Some(s) = servizi() else { return };
+    let Some(monitor) = s.monitor() else { return };
+    let Some(scelto) = monitor.get(i) else { return };
+    // Un nome illeggibile (vuoto) non si può ritrovare: vale come «il principale».
+    let nome = (!scelto.nome.is_empty()).then(|| scelto.nome.clone());
+    s.ponte.casa().aggiorna_config(|c| c.schermo = nome.clone());
+    finestre::imposta_schermo_preferito(nome);
+    if let Some(p) = s.pillola.upgrade() {
+        pillola::al_cambio_schermo(&p);
+        s.zona.set(zona_della_linea(&p));
+    }
+    s.apertura.riposiziona();
+    // Lo schermo intero conta sul monitor di adesso della pillola.
+    s.controlla_schermo_intero();
+    s.schermi_nel_menu(Some(monitor));
 }
 
 /// È cambiata la finestra in primo piano (gancio `EVENT_SYSTEM_FOREGROUND`): lo schermo intero si
@@ -297,8 +330,43 @@ pub fn pannello_chiuso(p: &Pillola, ponte: &Ponte) {
 }
 
 impl Servizi {
+    /// I monitor collegati: li dà la finestra della pillola o, se è nascosta (pannello aperto) e
+    /// non li sa, quella del pannello. `None` se non si sa.
+    #[cfg(windows)]
+    fn monitor(&self) -> Option<Vec<InfoMonitor>> {
+        let dalla_pillola = self.pillola.upgrade().and_then(|p| finestre::elenco_monitor(p.window()));
+        dalla_pillola.or_else(|| self.apertura.con_finestra(finestre::elenco_monitor).flatten())
+    }
+
+    /// Il sottomenu «Schermo» dei due menu, rifatto solo se cambiano i monitor o la spunta (con
+    /// `muda` il menu dell'icona nella barra non ha un evento «prima dell'apertura»: si tiene
+    /// aggiornato qui, al giro dei 5 s e dopo una scelta). `monitor`: l'elenco di adesso, `None` =
+    /// non si sa (non si tocca nulla).
+    #[cfg(windows)]
+    fn schermi_nel_menu(&self, monitor: Option<Vec<InfoMonitor>>) {
+        let Some(monitor) = monitor else { return };
+        let schermi = schermi_del_menu(&monitor, finestre::monitor_in_uso(&monitor));
+        let ritirata = self.ritirata.borrow().attiva();
+        let esito = match self.menu.borrow_mut().as_mut() {
+            Some(m) => m.schermi(schermi, ritirata),
+            None => return,
+        };
+        match esito {
+            // Il menu è nuovo: l'icona nella barra, se c'è, prende quello.
+            Ok(true) => {
+                if let (Some(t), Some(m)) = (self.tray.borrow().as_ref(), self.menu.borrow().as_ref()) {
+                    t.menu(m);
+                }
+            }
+            Ok(false) => {}
+            Err(e) => eprintln!("menu dell'isola non aggiornato: {e}"),
+        }
+    }
+
     /// Il giro dei 5 s.
     fn controlla(&self) {
+        #[cfg(windows)]
+        self.schermi_nel_menu(self.monitor());
         self.controlla_schermo_intero();
         if let Some(p) = self.pillola.upgrade() {
             // «Effetti di animazione» cambiato mentre l'app gira: lo prendono qui la pillola e,
@@ -368,6 +436,9 @@ impl Servizi {
         }
         if passi.mostra {
             let _ = p.show();
+            // Scelto un altro schermo a pillola nascosta (pannello aperto dal «⋯»): al ritorno
+            // la pillola va dove si è scelto, senza aspettare il giro dei 5 s.
+            pillola::al_cambio_schermo(&p);
         }
         if passi.sopra {
             finestre::metti_sopra(p.window());

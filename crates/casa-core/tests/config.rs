@@ -200,3 +200,17 @@ fn lati_e_quadranti_salvati_e_sensori_scelti() {
     let scelti: Vec<String> = c.sensori_scelti().into_iter().collect();
     assert_eq!(scelti, vec!["sensor.fv".to_owned(), "sensor.sala_t".to_owned()], "senza id vuoti, senza doppioni");
 }
+
+/// M2 Task 6: un file di prima (senza `schermo`) si legge col monitor principale; la scelta si salva
+/// e si rilegge.
+#[test]
+fn schermo_scelto_salvato_e_file_di_prima_senza() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("assistente.json"), r#"{ "favorites": ["light.a"] }"#).unwrap();
+    let st = ConfigStore::apri(d.path());
+    let mut c = st.leggi();
+    assert_eq!(c.schermo, None, "nessuna scelta: il monitor principale");
+    c.schermo = Some(r"\\.\DISPLAY2".into());
+    st.salva(&c).unwrap();
+    assert_eq!(st.leggi().schermo.as_deref(), Some(r"\\.\DISPLAY2"));
+}

@@ -420,6 +420,24 @@ impl Apertura {
         self.pannello.borrow().is_some()
     }
 
+    /// La finestra del pannello, se aperto, a `f`.
+    #[cfg(windows)]
+    pub fn con_finestra<R>(&self, f: impl FnOnce(&slint::Window) -> R) -> Option<R> {
+        self.pannello.borrow().as_ref().map(|p| f(p.window()))
+    }
+
+    /// Il pannello aperto va al suo posto sul monitor scelto adesso (scelto un altro schermo dal
+    /// menu): posizione e scala come all'apertura.
+    #[cfg(windows)]
+    pub fn riposiziona(&self) {
+        let pannello = self.pannello.borrow();
+        let Some(p) = pannello.as_ref() else { return };
+        if let Some((area, scala)) = finestre::schermo_di(p.window()) {
+            finestre::sposta(p.window(), finestre::posizione_pannello(area, scala));
+            finestre::scrivi_scala(&p.global::<crate::Tema>(), scala);
+        }
+    }
+
     pub fn apri(&self) {
         let Some(pillola) = self.pillola.upgrade() else { return };
         if let Some(p) = self.pannello.borrow().as_ref() {

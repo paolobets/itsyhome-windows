@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — v3 «assistente isola» (ramo `v3-assistente`, milestone M1)
 
+### Added (M2, Task 6: scelta dello schermo)
+- Solo Windows, solo con più di un monitor: il sottomenu «Schermo» (una voce a spunta per monitor: «Schermo principale», «Schermo 2 · 2560×1440», numerati da sinistra a destra) fra «Informazioni» e «Ritira l'isola», sia nel menu «⋯» del pannello sia in quello dell'icona nella barra. La scelta si salva (`Config.schermo`, il nome del monitor come lo dà winit; `None` = il principale) e sposta subito pillola e pannello aperto. Con un monitor solo il sottomenu non compare. Il clic destro sulla pillola resta senza menu.
+- Pillola, pannello, zona della linea della ritirata e controllo dello schermo intero seguono il monitor scelto (tutti passano da `schermo_di` / `monitor_di`). Se il monitor scelto non c'è (scollegato) la pillola sta sul principale e la scelta resta salvata: appena il monitor ricompare, il controllo da 5 s già esistente la riporta lì (nessun codice di sorveglianza nuovo, nessun timer in più).
+- Il menu non si ricostruisce a ogni apertura: con `muda` per l'icona nella barra non c'è un evento «prima dell'apertura», quindi si ricostruisce solo quando cambia l'elenco dei monitor (o la spunta), controllato dal giro da 5 s e subito dopo una scelta; il «⋯» lo ricontrolla anche un attimo prima di aprirsi. Una scelta su un indice che non esiste più non fa nulla.
+- Il nome del monitor non compare nei log.
+- Fuori da Windows (macOS, Linux) non c'è un menu nativo e quindi nessun modo di scegliere lo schermo; `Config.schermo`, se scritta a mano nel file, vale lo stesso.
+- `casa-core`: `Config::schermo` (un file di prima, senza la chiave, si legge con `None`).
+
 ### Fixed (giro finale della revisione di M1)
 - Fuori da Windows si può uscire dall'assistente: Impostazioni › Sistema ha la riga «Esci dall'assistente» con il pulsante «Esci» (su Windows «Esci» resta nel menu «⋯» e nell'icona nella barra).
 - Con Home Assistant ancora in avvio la rilettura dei 5 s non si arma più a connessione caduta (come ogni altra riprova).

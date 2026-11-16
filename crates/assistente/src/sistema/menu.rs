@@ -15,8 +15,20 @@
 //! La linea della ritirata non apre il menu: lascia passare i clic (non riceve il mouse). Ci si
 //! torna tenendo il mouse sulla linea, con Ctrl+Alt+Maiusc+I o Ctrl+Alt+Maiusc+Spazio.
 //!
+//! Sottomenu «Schermo» (M2, Task 6): fra «Informazioni» e «Ritira l'isola», una voce a spunta per
+//! monitor, SOLO con più di un monitor. Sta in tutti e due i menu (icona nella barra e «⋯»).
+//! Con `muda` per l'icona nella barra non c'è un evento «prima dell'apertura», quindi il menu non
+//! si ricostruisce a ogni apertura: si ricostruisce quando cambia l'elenco dei monitor (o la
+//! spunta), controllato dal giro da 5 s dei servizi e subito dopo una scelta; il «⋯» lo ricontrolla
+//! anche un attimo prima di aprirsi. Una scelta fatta nei pochi secondi fra un cambio di monitor e
+//! il controllo successivo si legge sull'elenco vero di quel momento (`Comando::Schermo(i)` è un
+//! indice): se l'indice non esiste più, non succede nulla.
+//!
 //! Fuori da Windows per ora niente menu (su Linux `muda` richiede GTK): «⋯» apre direttamente
-//! le Impostazioni.
+//! le Impostazioni, e lo schermo non si sceglie da nessuna parte; la preferenza `Config.schermo`,
+//! se scritta nel file, vale lo stesso.
+
+use crate::finestre::InfoMonitor;
 
 /// Cosa chiede il menu (o il clic sull'icona nella barra).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +39,8 @@ pub enum Comando {
     Informazioni,
     /// Ritira la pillola o la rimette (secondo lo stato).
     Ritirata,
+    /// Sposta pillola e pannello sul monitor di questa posizione dell'elenco mostrato nel menu.
+    Schermo(usize),
     Esci,
 }
 
@@ -39,35 +53,88 @@ pub fn testo_ritirata(ritirata: bool) -> &'static str {
     }
 }
 
-/// Le voci del menu, in ordine: (comando, testo). Il separatore sta prima di «Esci».
-pub fn voci(ritirata: bool) -> [(Comando, &'static str); 5] {
-    [
-        (Comando::Apri, "Apri"),
-        (Comando::Impostazioni, "Impostazioni"),
-        (Comando::Informazioni, "Informazioni"),
-        (Comando::Ritirata, testo_ritirata(ritirata)),
-        (Comando::Esci, "Esci"),
-    ]
+/// Una voce di un monitor nel sottomenu «Schermo».
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))]
+pub struct VoceSchermo {
+    pub comando: Comando,
+    pub testo: String,
+    /// La spunta: il monitor su cui stanno adesso pillola e pannello.
+    pub scelto: bool,
+}
+
+/// Una riga del menu, prima del separatore e di «Esci».
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))]
+pub enum Voce {
+    Semplice(Comando, String),
+    /// Il sottomenu «Schermo»: c'è solo con più di un monitor.
+    Schermo(Vec<VoceSchermo>),
+}
+
+/// Le voci del sottomenu «Schermo» (testo, spunta) dall'elenco dei monitor: la spunta sul monitor
+/// dove stanno pillola e pannello (`scelto`, indice nell'elenco).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn schermi_del_menu(monitor: &[InfoMonitor], scelto: Option<usize>) -> Vec<(String, bool)> {
+    (0..monitor.len())
+        .map(|i| (crate::finestre::etichetta_monitor(monitor, i), Some(i) == scelto))
+        .collect()
+}
+
+/// Le voci del menu, in ordine. `schermi`: (testo, spunta) di ogni monitor; il sottomenu «Schermo»
+/// c'è solo con più di uno. Il separatore sta prima di «Esci».
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn voci(ritirata: bool, schermi: &[(String, bool)]) -> Vec<Voce> {
+    let semplice = |c, t: &str| Voce::Semplice(c, t.to_owned());
+    let mut v = vec![semplice(Comando::Apri, "Apri"), semplice(Comando::Impostazioni, "Impostazioni"), semplice(Comando::Informazioni, "Informazioni")];
+    if schermi.len() > 1 {
+        v.push(Voce::Schermo(
+            schermi
+                .iter()
+                .enumerate()
+                .map(|(i, (testo, scelto))| VoceSchermo { comando: Comando::Schermo(i), testo: testo.clone(), scelto: *scelto })
+                .collect(),
+        ));
+    }
+    v.push(semplice(Comando::Ritirata, testo_ritirata(ritirata)));
+    v.push(semplice(Comando::Esci, "Esci"));
+    v
 }
 
 /// Le voci del menu del pannello («⋯»): le stesse, senza «Apri».
 #[cfg_attr(not(windows), allow(dead_code))]
-pub fn voci_pannello(ritirata: bool) -> [(Comando, &'static str); 4] {
-    let [_, impostazioni, informazioni, ritira, esci] = voci(ritirata);
-    [impostazioni, informazioni, ritira, esci]
+pub fn voci_pannello(ritirata: bool, schermi: &[(String, bool)]) -> Vec<Voce> {
+    let mut v = voci(ritirata, schermi);
+    v.remove(0);
+    v
 }
 
-/// Cosa c'è a ogni posizione del menu nativo, separatore compreso (`None`): il separatore va
-/// prima di «Esci».
+/// Cosa c'è a ogni posizione del menu nativo (primo livello).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))]
+enum Posizione {
+    Separatore,
+    Comando(Comando),
+    /// Il sottomenu «Schermo»: i comandi delle sue righe.
+    Sotto(Vec<Comando>),
+}
+
+/// Cosa c'è a ogni posizione del menu nativo, separatore compreso: il separatore va prima di
+/// «Esci».
 // Fuori da Windows il menu non c'è: restano per i test.
 #[cfg_attr(not(windows), allow(dead_code))]
-fn posizioni(voci: &[(Comando, &str)]) -> Vec<Option<Comando>> {
+fn posizioni(voci: &[Voce]) -> Vec<Posizione> {
     let mut p = Vec::with_capacity(voci.len() + 1);
-    for (c, _) in voci {
-        if *c == Comando::Esci {
-            p.push(None);
+    for voce in voci {
+        match voce {
+            Voce::Semplice(c, _) => {
+                if *c == Comando::Esci {
+                    p.push(Posizione::Separatore);
+                }
+                p.push(Posizione::Comando(*c));
+            }
+            Voce::Schermo(righe) => p.push(Posizione::Sotto(righe.iter().map(|r| r.comando).collect())),
         }
-        p.push(Some(*c));
     }
     p
 }
@@ -100,19 +167,25 @@ fn da_ignorare_nel_menu(messaggio: u32, tasto: usize, lparam: isize) -> bool {
 /// L'identificativo di una voce nel menu nativo, e ritorno.
 // Fuori da Windows il menu non c'è: restano per i test.
 #[cfg_attr(not(windows), allow(dead_code))]
-fn id(c: Comando) -> &'static str {
+fn id(c: Comando) -> String {
     match c {
-        Comando::Apri => "apri",
-        Comando::Impostazioni => "impostazioni",
-        Comando::Informazioni => "informazioni",
-        Comando::Ritirata => "ritirata",
-        Comando::Esci => "esci",
+        Comando::Apri => "apri".into(),
+        Comando::Impostazioni => "impostazioni".into(),
+        Comando::Informazioni => "informazioni".into(),
+        Comando::Ritirata => "ritirata".into(),
+        Comando::Schermo(i) => format!("schermo:{i}"),
+        Comando::Esci => "esci".into(),
     }
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
 fn comando(id: &str) -> Option<Comando> {
-    voci(false).into_iter().map(|(c, _)| c).find(|c| self::id(*c) == id)
+    if let Some(i) = id.strip_prefix("schermo:") {
+        return i.parse().ok().map(Comando::Schermo);
+    }
+    [Comando::Apri, Comando::Impostazioni, Comando::Informazioni, Comando::Ritirata, Comando::Esci]
+        .into_iter()
+        .find(|c| self::id(*c) == id)
 }
 
 #[cfg(windows)]
@@ -120,8 +193,10 @@ pub use windows::MenuIsola;
 
 #[cfg(windows)]
 mod windows {
-    use super::{comando, da_ignorare_nel_menu, id, posizioni, testo_ritirata, voci, voci_pannello, Comando};
-    use tray_icon::menu::{ContextMenu, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+    use super::{
+        comando, da_ignorare_nel_menu, id, posizioni, testo_ritirata, voci, voci_pannello, Comando, Posizione, Voce,
+    };
+    use tray_icon::menu::{CheckMenuItem, ContextMenu, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
 
     pub struct MenuIsola {
         menu: Menu,
@@ -130,21 +205,35 @@ mod windows {
         pannello: Menu,
         ritirata_pannello: MenuItem,
         /// Cosa c'è a ogni posizione del menu del pannello (separatore compreso).
-        posizioni_pannello: Vec<Option<Comando>>,
+        posizioni_pannello: Vec<Posizione>,
+        /// I monitor con cui sono costruiti i menu: (testo, spunta). Con più di uno c'è «Schermo».
+        schermi: Vec<(String, bool)>,
     }
 
     /// Un menu nativo con queste voci (separatore prima di «Esci») e la sua voce della ritirata.
-    pub(super) fn costruisci(voci: &[(Comando, &'static str)]) -> Result<(Menu, MenuItem), String> {
+    pub(super) fn costruisci(voci: &[Voce]) -> Result<(Menu, MenuItem), String> {
+        let errore = |e: tray_icon::menu::Error| e.to_string();
         let menu = Menu::new();
         let mut voce_ritirata = None;
-        for &(c, testo) in voci {
-            let voce = MenuItem::with_id(id(c), testo, true, None);
-            if c == Comando::Esci {
-                menu.append(&PredefinedMenuItem::separator()).map_err(|e| e.to_string())?;
-            }
-            menu.append(&voce).map_err(|e| e.to_string())?;
-            if c == Comando::Ritirata {
-                voce_ritirata = Some(voce);
+        for v in voci {
+            match v {
+                Voce::Semplice(c, testo) => {
+                    let voce = MenuItem::with_id(id(*c), testo, true, None);
+                    if *c == Comando::Esci {
+                        menu.append(&PredefinedMenuItem::separator()).map_err(errore)?;
+                    }
+                    menu.append(&voce).map_err(errore)?;
+                    if *c == Comando::Ritirata {
+                        voce_ritirata = Some(voce);
+                    }
+                }
+                Voce::Schermo(righe) => {
+                    let sotto = Submenu::new("Schermo", true);
+                    for r in righe {
+                        sotto.append(&CheckMenuItem::with_id(id(r.comando), &r.testo, true, r.scelto, None)).map_err(errore)?;
+                    }
+                    menu.append(&sotto).map_err(errore)?;
+                }
             }
         }
         let ritirata = voce_ritirata.ok_or("voce della ritirata mancante")?;
@@ -170,21 +259,39 @@ mod windows {
     impl MenuIsola {
         /// Crea il menu sul thread dell'interfaccia. `al_comando` è chiamata sul ciclo eventi.
         pub fn crea(al_comando: fn(Comando), ritirata: bool) -> Result<MenuIsola, String> {
-            let (menu, voce_ritirata) = costruisci(&voci(ritirata))?;
-            let voci_pannello = voci_pannello(ritirata);
-            let (pannello, ritirata_pannello) = costruisci(&voci_pannello)?;
+            let m = Self::costruito(ritirata, Vec::new())?;
             MenuEvent::set_event_handler(Some(move |e: MenuEvent| {
                 if let Some(c) = comando(e.id().as_ref()) {
                     let _ = slint::invoke_from_event_loop(move || al_comando(c));
                 }
             }));
+            Ok(m)
+        }
+
+        /// I due menu costruiti per questi monitor.
+        fn costruito(ritirata: bool, schermi: Vec<(String, bool)>) -> Result<MenuIsola, String> {
+            let (menu, voce_ritirata) = costruisci(&voci(ritirata, &schermi))?;
+            let voci_pannello = voci_pannello(ritirata, &schermi);
+            let (pannello, ritirata_pannello) = costruisci(&voci_pannello)?;
             Ok(MenuIsola {
                 menu,
                 ritirata: voce_ritirata,
                 pannello,
                 ritirata_pannello,
                 posizioni_pannello: posizioni(&voci_pannello),
+                schermi,
             })
+        }
+
+        /// Ricostruisce i due menu se cambiano i monitor o la spunta (`schermi`: testo e spunta di
+        /// ognuno). Ritorna `true` se li ha ricostruiti: chi tiene il menu dell'icona nella barra
+        /// deve passarle quello nuovo (`menu()`).
+        pub fn schermi(&mut self, schermi: Vec<(String, bool)>, ritirata: bool) -> Result<bool, String> {
+            if schermi == self.schermi {
+                return Ok(false);
+            }
+            *self = Self::costruito(ritirata, schermi)?;
+            Ok(true)
         }
 
         pub fn ritirata(&self, attiva: bool) {
@@ -212,7 +319,7 @@ mod windows {
             use windows_sys::Win32::System::Threading::GetCurrentThreadId;
             use windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_DOWN;
             use windows_sys::Win32::UI::WindowsAndMessaging::{
-                GetMenuItemCount, GetMenuItemID, PostMessageW, SetForegroundWindow, SetWindowsHookExW, TrackPopupMenu,
+                GetMenuItemCount, GetMenuItemID, GetSubMenu, PostMessageW, SetForegroundWindow, SetWindowsHookExW, TrackPopupMenu,
                 UnhookWindowsHookEx, TPM_RETURNCMD, TPM_RIGHTALIGN, TPM_TOPALIGN, TPM_WORKAREA, WH_MSGFILTER, WM_KEYDOWN,
             };
             let hmenu = self.pannello.hpopupmenu();
@@ -248,11 +355,19 @@ mod windows {
             if scelto <= 0 {
                 return None;
             }
-            // SAFETY: solo letture del menu vivo di `self`.
-            let quante = unsafe { GetMenuItemCount(hmenu) };
-            (0..quante)
-                .find(|&i| unsafe { GetMenuItemID(hmenu, i) } == scelto as u32)
-                .and_then(|i| self.posizioni_pannello.get(i as usize).copied().flatten())
+            // SAFETY: solo letture del menu vivo di `self` e dei suoi sottomenu.
+            unsafe {
+                (0..GetMenuItemCount(hmenu)).find_map(|i| match self.posizioni_pannello.get(i as usize)? {
+                    Posizione::Comando(c) => (GetMenuItemID(hmenu, i) == scelto as u32).then_some(*c),
+                    Posizione::Sotto(righe) => {
+                        let sotto = GetSubMenu(hmenu, i);
+                        (0..righe.len() as i32)
+                            .find(|&j| GetMenuItemID(sotto, j) == scelto as u32)
+                            .map(|j| righe[j as usize])
+                    }
+                    Posizione::Separatore => None,
+                })
+            }
         }
     }
 }
@@ -261,30 +376,89 @@ mod windows {
 mod test {
     use super::*;
 
+    /// Due monitor: il secondo con la spunta.
+    fn due_schermi() -> Vec<(String, bool)> {
+        vec![("Schermo principale".into(), false), ("Schermo 2 · 2560×1440".into(), true)]
+    }
+
+    /// I testi delle voci di primo livello (il sottomenu come «Schermo»).
+    fn testi(voci: &[Voce]) -> Vec<String> {
+        voci.iter()
+            .map(|v| match v {
+                Voce::Semplice(_, t) => t.clone(),
+                Voce::Schermo(_) => "Schermo".to_owned(),
+            })
+            .collect()
+    }
+
     #[test]
     fn le_voci_del_menu_e_la_ritirata() {
-        let testi: Vec<&str> = voci(false).iter().map(|(_, t)| *t).collect();
-        assert_eq!(testi, ["Apri", "Impostazioni", "Informazioni", "Ritira l'isola", "Esci"]);
-        assert_eq!(voci(true)[3], (Comando::Ritirata, "Mostra l'isola"));
+        assert_eq!(testi(&voci(false, &[])), ["Apri", "Impostazioni", "Informazioni", "Ritira l'isola", "Esci"]);
+        assert_eq!(voci(true, &[])[3], Voce::Semplice(Comando::Ritirata, "Mostra l'isola".into()));
     }
 
     #[test]
     fn il_menu_del_pannello_senza_apri_con_impostazioni_in_testa() {
         // Task 14i: dal «⋯» del pannello (già aperto) niente «Apri»; il resto come nel menu dell'icona nella barra.
-        let testi: Vec<&str> = voci_pannello(false).iter().map(|(_, t)| *t).collect();
-        assert_eq!(testi, ["Impostazioni", "Informazioni", "Ritira l'isola", "Esci"]);
-        assert_eq!(voci_pannello(true)[2], (Comando::Ritirata, "Mostra l'isola"));
+        assert_eq!(testi(&voci_pannello(false, &[])), ["Impostazioni", "Informazioni", "Ritira l'isola", "Esci"]);
+        assert_eq!(voci_pannello(true, &[])[2], Voce::Semplice(Comando::Ritirata, "Mostra l'isola".into()));
+    }
+
+    #[test]
+    fn schermo_solo_con_piu_monitor() {
+        // Un monitor solo, o nessuno: niente «Schermo». Con due: il sottomenu fra «Informazioni» e
+        // «Ritira l'isola», una voce per monitor e la spunta sul preferito.
+        assert!(!testi(&voci(false, &[])).contains(&"Schermo".to_owned()));
+        assert!(!testi(&voci(false, &[("Schermo principale".into(), true)])).contains(&"Schermo".to_owned()));
+        let v = voci(false, &due_schermi());
+        assert_eq!(testi(&v), ["Apri", "Impostazioni", "Informazioni", "Schermo", "Ritira l'isola", "Esci"]);
+        assert_eq!(
+            v[3],
+            Voce::Schermo(vec![
+                VoceSchermo { comando: Comando::Schermo(0), testo: "Schermo principale".into(), scelto: false },
+                VoceSchermo { comando: Comando::Schermo(1), testo: "Schermo 2 · 2560×1440".into(), scelto: true },
+            ])
+        );
+        // Anche nel menu del pannello.
+        assert_eq!(
+            testi(&voci_pannello(false, &due_schermi())),
+            ["Impostazioni", "Informazioni", "Schermo", "Ritira l'isola", "Esci"]
+        );
+    }
+
+    #[test]
+    fn le_voci_degli_schermi_dai_monitor() {
+        use crate::finestre::RettangoloFisico;
+        let m = |x, principale| InfoMonitor {
+            nome: format!("M{x}"),
+            principale,
+            area: RettangoloFisico { x, y: 0, larghezza: 2560, altezza: 1400 },
+            scala: 1.0,
+            larghezza_px: 2560,
+            altezza_px: 1440,
+        };
+        let monitor = [m(0, true), m(2560, false)];
+        assert_eq!(
+            schermi_del_menu(&monitor, Some(1)),
+            [("Schermo principale".to_owned(), false), ("Schermo 2 · 2560×1440".to_owned(), true)]
+        );
+        assert!(schermi_del_menu(&[], None).is_empty());
     }
 
     #[test]
     fn le_posizioni_contano_il_separatore_prima_di_esci() {
+        use Posizione::{Comando as C, Separatore, Sotto};
         // Nel menu nativo il separatore occupa una posizione: senza comando.
         assert_eq!(
-            posizioni(&voci_pannello(false)),
-            [Some(Comando::Impostazioni), Some(Comando::Informazioni), Some(Comando::Ritirata), None, Some(Comando::Esci)]
+            posizioni(&voci_pannello(false, &[])),
+            [C(Comando::Impostazioni), C(Comando::Informazioni), C(Comando::Ritirata), Separatore, C(Comando::Esci)]
         );
-        assert_eq!(posizioni(&voci(false)).len(), 6);
-        assert_eq!(posizioni(&voci(false))[4], None);
+        assert_eq!(posizioni(&voci(false, &[])).len(), 6);
+        assert_eq!(posizioni(&voci(false, &[]))[4], Separatore);
+        // Il sottomenu è una posizione sola, con le sue righe.
+        let p = posizioni(&voci(false, &due_schermi()));
+        assert_eq!(p.len(), 7);
+        assert_eq!(p[3], Sotto(vec![Comando::Schermo(0), Comando::Schermo(1)]));
     }
 
     /// La traduzione posizione → comando del menu del pannello vale solo se `muda` mette una riga
@@ -293,19 +467,35 @@ mod test {
     #[cfg(windows)]
     #[test]
     fn il_menu_nativo_ha_le_righe_di_posizioni() {
-        use windows_sys::Win32::UI::WindowsAndMessaging::{GetMenuItemCount, GetMenuItemID, GetMenuState, MF_BYPOSITION, MF_SEPARATOR};
-        let voci = voci_pannello(false);
-        let (menu, _) = super::windows::costruisci(&voci).expect("menu creato");
-        let hmenu = tray_icon::menu::ContextMenu::hpopupmenu(&menu);
-        let attese = posizioni(&voci);
-        // SAFETY: letture del menu vivo appena creato, sullo stesso thread.
-        unsafe {
-            assert_eq!(GetMenuItemCount(hmenu), attese.len() as i32);
-            for (i, attesa) in attese.iter().enumerate() {
-                let separatore = GetMenuState(hmenu, i as u32, MF_BYPOSITION) & MF_SEPARATOR != 0;
-                assert_eq!(separatore, attesa.is_none(), "posizione {i}");
-                if attesa.is_some() {
-                    assert!(GetMenuItemID(hmenu, i as i32) >= 1000, "voce {i} con un id di comando");
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            GetMenuItemCount, GetMenuItemID, GetMenuState, GetSubMenu, MF_BYPOSITION, MF_SEPARATOR,
+        };
+        // Senza e con il sottomenu «Schermo» (due monitor).
+        for schermi in [Vec::new(), due_schermi()] {
+            let voci = voci_pannello(false, &schermi);
+            let (menu, _) = super::windows::costruisci(&voci).expect("menu creato");
+            let hmenu = tray_icon::menu::ContextMenu::hpopupmenu(&menu);
+            let attese = posizioni(&voci);
+            // SAFETY: letture del menu vivo appena creato, sullo stesso thread.
+            unsafe {
+                assert_eq!(GetMenuItemCount(hmenu), attese.len() as i32);
+                for (i, attesa) in attese.iter().enumerate() {
+                    let separatore = GetMenuState(hmenu, i as u32, MF_BYPOSITION) & MF_SEPARATOR != 0;
+                    assert_eq!(separatore, *attesa == Posizione::Separatore, "posizione {i}");
+                    match attesa {
+                        Posizione::Comando(_) => {
+                            assert!(GetMenuItemID(hmenu, i as i32) >= 1000, "voce {i} con un id di comando");
+                        }
+                        Posizione::Sotto(righe) => {
+                            let sotto = GetSubMenu(hmenu, i as i32);
+                            assert!(sotto != 0, "la posizione {i} è un sottomenu");
+                            assert_eq!(GetMenuItemCount(sotto), righe.len() as i32);
+                            for j in 0..righe.len() as i32 {
+                                assert!(GetMenuItemID(sotto, j) >= 1000, "riga {j} del sottomenu con un id di comando");
+                            }
+                        }
+                        Posizione::Separatore => {}
+                    }
                 }
             }
         }
@@ -341,9 +531,19 @@ mod test {
 
     #[test]
     fn ogni_voce_torna_al_suo_comando() {
-        for (c, _) in voci(false) {
-            assert_eq!(comando(id(c)), Some(c));
+        let mut tutti: Vec<Comando> = voci(false, &due_schermi())
+            .into_iter()
+            .flat_map(|v| match v {
+                Voce::Semplice(c, _) => vec![c],
+                Voce::Schermo(righe) => righe.into_iter().map(|r| r.comando).collect(),
+            })
+            .collect();
+        assert!(tutti.contains(&Comando::Schermo(0)) && tutti.contains(&Comando::Schermo(1)));
+        tutti.push(Comando::Schermo(12));
+        for c in tutti {
+            assert_eq!(comando(&id(c)), Some(c));
         }
         assert_eq!(comando("sconosciuto"), None);
+        assert_eq!(comando("schermo:x"), None);
     }
 }
