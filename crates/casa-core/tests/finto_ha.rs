@@ -428,13 +428,14 @@ fn prepara_con(dir: tempfile::TempDir, config: Option<Config>, token: &[(&str, &
         segreti.salva(env, t).unwrap();
     }
     let (tx, eventi) = mpsc::unbounded_channel();
-    let servizio = CasaService::avvia_con_ritardi(
+    let servizio = CasaService::avvia_per_prova(
         store,
         segreti,
         Arc::new(move |e| {
             let _ = tx.send(e);
         }),
         vec![RITARDO_TEST],
+        Arc::new(casa_core::diagnosi::Diagnosi::default()),
     );
     Prova { servizio, eventi, _dir: dir }
 }
@@ -1262,7 +1263,9 @@ async fn diagnosi_conta_messaggi_cambi_e_riletture_senza_dati_della_casa() {
         ha.manda_evento("entity_registry_updated", json!({ "action": "update", "entity_id": "light.cucina" }));
     }
     aspetta(|| ha.get_states() == 2, "rilettura dopo il registro").await;
-    sleep(Duration::from_millis(300)).await;
+    // La lettura finisce e l'iscrizione si rifà: si aspetta quella, non un tempo fisso.
+    aspetta(|| diagnosi.valore(casa_core::diagnosi::Contatore::iscrizioni) == 1, "nuova iscrizione").await;
+    sleep(Duration::from_millis(100)).await;
     righe.push(diagnosi.riga(&[]));
     let v = valori(righe.last().unwrap());
     assert_eq!(

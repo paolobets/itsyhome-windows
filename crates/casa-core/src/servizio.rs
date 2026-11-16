@@ -92,17 +92,6 @@ impl CasaService {
         Self::avvia_per_prova(store, segreti, ascolta, client::RITARDI_RICONNESSIONE.to_vec(), diagnosi)
     }
 
-    /// Come `avvia`, con ritardi di riconnessione scelti (per i test).
-    #[doc(hidden)]
-    pub fn avvia_con_ritardi(
-        store: Arc<ConfigStore>,
-        segreti: Arc<dyn Segreti>,
-        ascolta: Ascoltatore,
-        ritardi: Vec<Duration>,
-    ) -> CasaService {
-        Self::avvia_per_prova(store, segreti, ascolta, ritardi, Arc::new(Diagnosi::default()))
-    }
-
     /// Ritardi di riconnessione e registro diagnostico scelti (per i test).
     #[doc(hidden)]
     pub fn avvia_per_prova(
@@ -849,8 +838,11 @@ impl Motore {
                 self.attesa_riprova = RIPROVA_LETTURA;
                 self.letta = true;
                 let in_avvio = g.config.as_ref().and_then(|c| c.state.as_deref()).is_some_and(|s| s != "RUNNING");
-                if let Some(c) = &g.config {
-                    self.diagnosi.stato_ha(c.state.as_deref());
+                // Senza `get_config` (fallita) lo stato del core non è noto: «nessuna», non quello
+                // della lettura di prima.
+                match &g.config {
+                    Some(c) => self.diagnosi.stato_ha(c.state.as_deref()),
+                    None => self.diagnosi.stato_ha_non_letto(),
                 }
                 self.casa = Some(Casa::new(*g, &mut self.mapper));
                 self.pubblica.annulla();
@@ -1108,6 +1100,29 @@ mod test {
         m.entita_cambiate(vec![], vec![("light.cucina".into(), json!({ "+": { "s": "on" } }))], vec![]);
         assert_eq!(m.casa.as_ref().unwrap().stato("light.cucina").unwrap().state, "on");
         assert!(m.pubblica.scadenza().is_some(), "cambio visibile in pubblicazione");
+    }
+
+    /// Giro di correzioni 1: `ha=` dice lo stato dell'ultima lettura, anche quando `get_config` non
+    /// è riuscita (prima restava quello della lettura precedente).
+    #[test]
+    fn stato_ha_della_lettura_senza_configurazione() {
+        let cartella = tempfile::tempdir().unwrap();
+        let store = Arc::new(ConfigStore::apri(cartella.path()));
+        let segreti: Arc<dyn Segreti> = Arc::new(crate::segreti::MemoriaSegreti::new());
+        let diagnosi = Arc::new(Diagnosi::new(true));
+        let config = Arc::new(Mutex::new(Config::default()));
+        let mut m = Motore::new(store, segreti, Arc::new(|_| {}), config, vec![], diagnosi.clone());
+        let mut g = grezzi_vuoti();
+        g.config = Some(HaConfig {
+            unit_system: crate::ha::models::HaUnitSystem { temperature: "°C".into() },
+            location_name: "Casa".into(),
+            state: Some("RUNNING".into()),
+        });
+        m.letti(Ok(g));
+        assert!(diagnosi.riga(&[]).ends_with(" ha=RUNNING"));
+        m.letti(Ok(grezzi_vuoti()));
+        let riga = diagnosi.riga(&[]);
+        assert!(riga.ends_with(" ha=nessuna"), "{riga}");
     }
 
     #[test]

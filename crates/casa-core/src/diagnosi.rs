@@ -135,6 +135,13 @@ impl Diagnosi {
         self.stato_ha.store(i as u8, Ordering::Relaxed);
     }
 
+    /// L'ultima lettura completa non ha portato `get_config`: lo stato del core non è noto.
+    pub fn stato_ha_non_letto(&self) {
+        if self.acceso() {
+            self.stato_ha.store(0, Ordering::Relaxed);
+        }
+    }
+
     /// Il valore di un contatore (per i test), senza azzerarlo.
     pub fn valore(&self, c: Contatore) -> u64 {
         self.contatori[c as usize].load(Ordering::Relaxed)

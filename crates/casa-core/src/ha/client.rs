@@ -335,7 +335,6 @@ async fn sessione(
     fine
 }
 
-/// Il risultato si prende dal messaggio, non si copia: quello di `get_states` di una casa vera è grosso.
 /// Il contatore del registro diagnostico per il tipo di un messaggio (gli `event` si contano a
 /// parte, per sorgente).
 fn conta_messaggio(diagnosi: &Diagnosi, tipo: Option<&str>) {
@@ -360,6 +359,7 @@ fn contatore_evento(tipo: Option<&str>) -> Contatore {
     }
 }
 
+/// Il risultato si prende dal messaggio, non si copia: quello di `get_states` di una casa vera è grosso.
 fn esito(mut v: Value) -> Result<Value, String> {
     if v["success"].as_bool().unwrap_or(false) {
         return Ok(v.get_mut("result").map(Value::take).unwrap_or(Value::Null));
