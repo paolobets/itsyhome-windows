@@ -3,7 +3,7 @@ use crate::segreti::Segreti;
 use crate::types::HaEnvironment;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -30,6 +30,38 @@ pub struct Config {
     /// L'entità `weather.*` scelta per il meteo; `None` = automatico (la prima disponibile).
     #[serde(default)]
     pub meteo_entita: Option<String>,
+    /// Che cosa mostra la pillola a sinistra e a destra degli occhi (M2, Task 4): le stringhe di
+    /// `assistente::lati::Lato` («ora», «cpu», «sensore:<entity_id>»…); `""` = niente. Un file di
+    /// prima, senza le chiavi, si legge con niente / niente.
+    #[serde(default)]
+    pub lato_sinistro: String,
+    #[serde(default)]
+    pub lato_destro: String,
+    /// Le fonti dei tre quadranti configurabili del layout Quadranti, con le stesse stringhe dei
+    /// lati. Vuoto o mancante = i tre quadranti di M1 (CPU, RAM, disco).
+    #[serde(default)]
+    pub quadranti: Vec<String>,
+    /// Il massimo dell'arco scelto dall'utente per una fonte (chiave: la stringa della fonte), per
+    /// le unità senza una scala naturale (W, kW, ignote).
+    #[serde(default)]
+    pub massimi_quadranti: HashMap<String, f64>,
+}
+
+/// Il prefisso di una fonte che è un sensore di Home Assistant («sensore:sensor.sala_t»).
+pub const PREFISSO_SENSORE: &str = "sensore:";
+
+impl Config {
+    /// I sensori di Home Assistant scelti per i lati della pillola e per i quadranti: il servizio li
+    /// segue sempre (`subscribe_entities`), anche se un giorno non fossero più fra quelli mostrati.
+    pub fn sensori_scelti(&self) -> BTreeSet<String> {
+        [&self.lato_sinistro, &self.lato_destro]
+            .into_iter()
+            .chain(&self.quadranti)
+            .filter_map(|f| f.strip_prefix(PREFISSO_SENSORE))
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned)
+            .collect()
+    }
 }
 
 /// Un collegamento veloce: si apre nel browser predefinito. `url` è già controllato e
@@ -176,5 +208,10 @@ pub fn importa_v2(v2: &Path, segreti: &dyn Segreti) -> Result<Option<Config>, St
         collegamenti: Vec::new(),
         // La v2 non aveva il meteo: automatico.
         meteo_entita: None,
+        // Né i lati della pillola né i quadranti configurabili: niente / niente e quelli di M1.
+        lato_sinistro: String::new(),
+        lato_destro: String::new(),
+        quadranti: Vec::new(),
+        massimi_quadranti: HashMap::new(),
     }))
 }

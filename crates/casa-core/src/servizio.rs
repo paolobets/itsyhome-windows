@@ -74,7 +74,7 @@ enum Comando {
     Archivia(String),
     Prova { url: String, token: String, fatto: Fatto },
     // In una `Box`: con `Config` in linea la variante supera le altre (`clippy::large_enum_variant`).
-    Salva { config: Box<Config>, rimappa: bool },
+    Salva { config: Box<Config>, rimappa: bool, risegui: bool },
     Ferma,
 }
 
@@ -197,8 +197,10 @@ impl CasaService {
             || prima.room_order != config.room_order
             || prima.device_order != config.device_order
             || prima.meteo_entita != config.meteo_entita;
+        // I sensori scelti per lati e quadranti si seguono sempre: cambiandoli si rifà l'iscrizione.
+        let risegui = prima.sensori_scelti() != config.sensori_scelti();
         // Inviato sotto il lucchetto: i salvataggi arrivano nell'ordine delle modifiche.
-        self.manda(Comando::Salva { config: Box::new(config.clone()), rimappa });
+        self.manda(Comando::Salva { config: Box::new(config.clone()), rimappa, risegui });
     }
 
     fn manda(&self, c: Comando) {
@@ -598,13 +600,16 @@ impl Motore {
             Comando::Prova { url, token, fatto } => {
                 tokio::spawn(async move { fatto(client::prova_connessione(&url, &token).await) });
             }
-            Comando::Salva { config, rimappa } => {
+            Comando::Salva { config, rimappa, risegui } => {
                 self.salva(&config);
                 if rimappa {
                     self.mappa_tutto();
                     // Un'entità nascosta o mostrata cambia quelle da seguire.
                     self.segui(false);
                     self.consegna();
+                } else if risegui {
+                    // Un sensore scelto per un lato o un quadrante: solo l'iscrizione.
+                    self.segui(false);
                 }
             }
             Comando::Ferma => {}
@@ -883,8 +888,11 @@ impl Motore {
     /// aggiornamenti in `MenuData`. Le nascoste dall'utente si seguono (giro di correzioni 1 del
     /// 14h): il loro nome nelle Impostazioni viene dal `friendly_name` dello stato, che HA riscrive
     /// quando l'integrazione o il dispositivo cambiano nome; e mostrandole lo stato è già quello di
-    /// adesso. Più le `weather.*`, per il meteo (Task 2 della M2).
-    fn da_seguire(casa: &Casa) -> BTreeSet<String> {
+    /// adesso. Più le `weather.*`, per il meteo (Task 2 della M2), e i sensori scelti per i lati
+    /// della pillola e per i quadranti (Task 4 della M2: di solito sono già fra quelli mostrati, ma
+    /// uno nascosto più tardi resterebbe senza cambi). Solo aggiunte: l'insieme non si svuota per
+    /// colpa loro (un elenco vuoto, per HA, è «tutte le entità»: lo esclude `iscrivi_entita`).
+    fn da_seguire(casa: &Casa, config: &Config) -> BTreeSet<String> {
         let m = &casa.menu;
         m.favorites
             .iter()
@@ -899,6 +907,7 @@ impl Motore {
             // sarebbe più seguita), e cambiare scelta dalle Impostazioni avrebbe stati vecchi.
             .chain(casa.stati.iter().filter(|s| s.entity_id.starts_with("weather.")).map(|s| s.entity_id.clone()))
             .chain(casa.stati.iter().filter(|s| s.entity_id.starts_with("update.")).map(|s| s.entity_id.clone()))
+            .chain(config.sensori_scelti())
             .collect()
     }
 
@@ -908,7 +917,7 @@ impl Motore {
     /// ricaricamento) HA la rimanda con `a`.
     fn segui(&mut self, sempre: bool) {
         let (Some(casa), Some((client, _))) = (&self.casa, &self.client) else { return };
-        let mut ids = Self::da_seguire(casa);
+        let mut ids = Self::da_seguire(casa, &blocca(&self.config));
         if !sempre {
             if let Some(prima) = &self.seguite {
                 let tolte = prima.iter().filter(|id| casa.stato(id).is_none()).cloned();
@@ -1243,9 +1252,28 @@ mod test {
     #[test]
     fn meteo_seguito_nell_iscrizione() {
         let (c, _) = casa(vec![tempo("weather.a", "cloudy", 9.0), tempo("weather.b", "unavailable", 5.0), luce("on")]);
-        let seguite = Motore::da_seguire(&c);
+        let seguite = Motore::da_seguire(&c, &Config::default());
         assert!(seguite.contains("weather.a"));
         assert!(seguite.contains("weather.b"), "anche non disponibile: se torna, il suo cambio arriva");
+    }
+
+    /// M2 Task 4: un sensore scelto per un quadrante (o un lato) entra nell'insieme seguito, anche
+    /// se l'app non lo mostra (nascosto, o non ancora mappato).
+    #[test]
+    fn sensore_scelto_e_seguito() {
+        let (c, _) = casa(vec![luce("on"), tempo("weather.a", "cloudy", 9.0)]);
+        let config = Config {
+            quadranti: vec!["cpu".into(), "sensore:sensor.produzione_fv".into()],
+            lato_destro: "sensore:sensor.sala_t".into(),
+            ..Config::default()
+        };
+        let seguite = Motore::da_seguire(&c, &config);
+        assert!(seguite.contains("sensor.produzione_fv"), "{seguite:?}");
+        assert!(seguite.contains("sensor.sala_t"), "{seguite:?}");
+        assert!(seguite.contains("weather.a"), "quelle di prima restano");
+        assert!(!seguite.contains("cpu"), "le fonti del PC non sono entità");
+        // Senza scelte l'insieme è quello di prima.
+        assert_eq!(Motore::da_seguire(&c, &Config::default()).len(), seguite.len() - 2);
     }
 
     #[test]

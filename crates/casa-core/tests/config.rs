@@ -169,3 +169,34 @@ fn file_senza_collegamenti_si_legge() {
     assert!(c.mostra_icona_barra);
     assert_eq!(c.ultimo_layout, "quadranti");
 }
+
+/// M2 Task 4: un file di M1 (senza le chiavi dei lati) si legge con niente / niente.
+#[test]
+fn config_di_m1_ha_lati_vuoti() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("assistente.json"), r#"{ "favorites": ["light.a"], "ultimoLayout": "quadranti" }"#).unwrap();
+    let c = ConfigStore::apri(d.path()).leggi();
+    assert_eq!(c.lato_sinistro, "");
+    assert_eq!(c.lato_destro, "");
+    assert!(c.quadranti.is_empty(), "nessun quadrante scelto: quelli di M1");
+    assert!(c.massimi_quadranti.is_empty());
+    assert_eq!(c.favorites, vec!["light.a"], "il resto si legge come prima");
+}
+
+/// M2 Task 4: lati e quadranti salvati e riletti; i sensori scelti sono quelli col prefisso.
+#[test]
+fn lati_e_quadranti_salvati_e_sensori_scelti() {
+    let d = tempfile::tempdir().unwrap();
+    let st = ConfigStore::apri(d.path());
+    let mut c = Config {
+        lato_sinistro: "cpu".into(),
+        lato_destro: "sensore:sensor.sala_t".into(),
+        quadranti: vec!["ram".into(), "sensore:sensor.fv".into(), "sensore:".into()],
+        ..Config::default()
+    };
+    c.massimi_quadranti.insert("sensore:sensor.fv".into(), 4500.0);
+    st.salva(&c).unwrap();
+    assert_eq!(st.leggi(), c);
+    let scelti: Vec<String> = c.sensori_scelti().into_iter().collect();
+    assert_eq!(scelti, vec!["sensor.fv".to_owned(), "sensor.sala_t".to_owned()], "senza id vuoti, senza doppioni");
+}
