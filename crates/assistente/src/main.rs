@@ -4,6 +4,7 @@
 mod attenzione;
 mod avvio;
 mod collegamenti;
+mod diagnosi;
 mod dispositivi;
 mod finestra_impostazioni;
 mod finestre;
@@ -95,10 +96,19 @@ fn main() -> Result<(), slint::PlatformError> {
     if let Some(e) = &errore_import {
         eprintln!("{e}");
     }
-    let casa = Rc::new(CasaService::avvia(
+    // Registro diagnostico (solo contatori), acceso con `ITSYHOME_DIAGNOSI=1`: `diagnosi.log`
+    // accanto alla configurazione.
+    let registro = Arc::new(casa_core::diagnosi::Diagnosi::new(diagnosi::acceso(
+        std::env::var_os(diagnosi::VARIABILE).as_deref(),
+    )));
+    if registro.acceso() {
+        diagnosi::avvia(registro.clone(), &cartella);
+    }
+    let casa = Rc::new(CasaService::avvia_con_diagnosi(
         Arc::new(ConfigStore::apri(&cartella)),
         segreti.clone(),
         ponte::ascoltatore(),
+        registro,
     ));
     // Prove locali: avvio con il sistema in una chiave di prova; identificativo dei toast solo se
     // la prova lo chiede (`ITSYHOME_PROVA_NOTIFICHE=1`).

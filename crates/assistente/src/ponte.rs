@@ -18,6 +18,7 @@ use crate::{
     AmbienteUi, CollegamentoUi, FinestraImpostazioni, GenereUi, Pannello, Pillola, PreferitoUi, RigaDispositivoUi, SensoreUi, StanzaUi,
     TipoRigaUi, TonoUi, VoceAttesaUi,
 };
+use casa_core::diagnosi::Contatore;
 use casa_core::eventi::{Ascoltatore, CasaEvento, StatoConnessione};
 use casa_core::segreti::Segreti;
 use casa_core::servizio::CasaService;
@@ -733,17 +734,23 @@ fn voce_ui(p: &Preferito, connesso: bool) -> PreferitoUi {
     }
 }
 
-/// Riscrive solo le righe cambiate (una riga uguale non ridisegna nulla).
-fn aggiorna_modello<T: Clone + PartialEq + 'static>(modello: &VecModel<T>, voci: Vec<T>) {
+/// Riscrive solo le righe cambiate (una riga uguale non ridisegna nulla). Restituisce quante
+/// righe ha riscritto (per il registro diagnostico).
+fn aggiorna_modello<T: Clone + PartialEq + 'static>(modello: &VecModel<T>, voci: Vec<T>) -> u64 {
     if modello.row_count() != voci.len() {
+        // Un modello svuotato conta come una riga riscritta (c'è stato un cambio).
+        let n = voci.len().max(1) as u64;
         modello.set_vec(voci);
-        return;
+        return n;
     }
+    let mut riscritte = 0;
     for (i, v) in voci.into_iter().enumerate() {
         if modello.row_data(i).as_ref() != Some(&v) {
             modello.set_row_data(i, v);
+            riscritte += 1;
         }
     }
+    riscritte
 }
 
 impl Ponte {
@@ -755,6 +762,7 @@ impl Ponte {
         let ora = Instant::now();
         match evento {
             CasaEvento::Stato(s) => {
+                self.casa.diagnosi().conta(Contatore::ui_stato);
                 self.cervello.borrow_mut().ricevi(Segnale::Casa(s.clone()), ora);
                 self.sorveglianza.borrow_mut().ricevi(&s, ora);
                 self.appena_connesso.set(s == StatoConnessione::Connesso);
@@ -773,6 +781,7 @@ impl Ponte {
                 self.aggiorna_casa_offline();
             }
             CasaEvento::Dati(menu) => {
+                self.casa.diagnosi().conta(Contatore::ui_dati);
                 self.appena_connesso.set(false);
                 let vero = |id: &str| entita(&menu, id).as_ref().and_then(acceso_di);
                 let confermati = self.ottimismo.borrow_mut().conferma(vero, ora);
@@ -825,6 +834,7 @@ impl Ponte {
     /// Se qualcosa scadrà da solo (contento, i 20 s di un'attenzione), una sveglia singola li
     /// ricalcola allora; altrimenti nessun timer.
     fn aggiorna_umore(&self) {
+        self.casa.diagnosi().conta(Contatore::ui_umore);
         let ora = Instant::now();
         let (umore, scadenza_umore) = {
             let c = self.cervello.borrow();
@@ -842,6 +852,7 @@ impl Ponte {
             // La pillola nascosta (pannello aperto) non si tocca: ridisegnarla mentre Windows la
             // dissolve la farebbe intravedere. Riprende l'aspetto appena prima di ricomparire.
             if let Some(p) = self.pillola.upgrade().filter(|p| p.get_attiva()) {
+                self.casa.diagnosi().conta(Contatore::ui_pillola);
                 pillola::imposta(&p, &nuova);
             }
             if let Some(p) = self.pannello.borrow().upgrade() {
@@ -903,8 +914,10 @@ impl Ponte {
             };
             (voci, sensori, stanze, dispositivi)
         };
-        aggiorna_modello(&self.preferiti, voci);
-        aggiorna_modello(&self.sensori, sensori);
+        let d = self.casa.diagnosi();
+        d.conta(Contatore::ui_ricostruzioni);
+        d.conta_n(Contatore::ui_righe, aggiorna_modello(&self.preferiti, voci));
+        d.conta_n(Contatore::ui_righe, aggiorna_modello(&self.sensori, sensori));
         // La stanza aperta può aver cambiato posto (ordine) o essere sparita (nascosta).
         let aperta = self.stanza_aperta.borrow().clone();
         if let Some(area) = aperta {
@@ -919,8 +932,8 @@ impl Ponte {
                 }
             }
         }
-        aggiorna_modello(&self.stanze, stanze);
-        aggiorna_modello(&self.dispositivi, dispositivi);
+        d.conta_n(Contatore::ui_righe, aggiorna_modello(&self.stanze, stanze));
+        d.conta_n(Contatore::ui_righe, aggiorna_modello(&self.dispositivi, dispositivi));
     }
 
     /// Una stanza della vista Casa aperta (`Some(area)`) o chiusa.
@@ -1911,6 +1924,35 @@ pub(crate) mod test {
         p.ricevi(CasaEvento::Stato(StatoConnessione::Connesso));
         p.ricevi(CasaEvento::Dati(Arc::new(menu(vec![luce("light.a", false)], vec![]))));
         (Spegni, p, pillola, cartella)
+    }
+
+    /// Task 14g: col registro acceso il ponte conta gli eventi ricevuti, le ricostruzioni e le
+    /// righe dei modelli davvero riscritte (dati uguali: nessuna).
+    #[test]
+    fn la_diagnosi_conta_dati_ricostruzioni_e_righe_riscritte() {
+        use casa_core::config::ConfigStore;
+        use casa_core::diagnosi::Diagnosi;
+        use casa_core::segreti::MemoriaSegreti;
+        crate::test_ui::piattaforma_di_prova();
+        let cartella = tempfile::tempdir().unwrap();
+        let segreti: Arc<dyn Segreti> = Arc::new(MemoriaSegreti::new());
+        let store = Arc::new(ConfigStore::apri(cartella.path()));
+        let diagnosi = Arc::new(Diagnosi::new(true));
+        let casa = Rc::new(CasaService::avvia_con_diagnosi(store, segreti.clone(), Arc::new(|_| {}), diagnosi.clone()));
+        let pillola = crate::Pillola::new().unwrap();
+        let cervello = Rc::new(RefCell::new(Cervello::new(Instant::now())));
+        let p = collega(casa, segreti, &pillola, cervello, None, None);
+        let _spegni = Spegni;
+        p.ricevi(CasaEvento::Stato(StatoConnessione::Connesso));
+        let dati = |accesa| CasaEvento::Dati(Arc::new(menu(vec![luce("light.a", accesa)], vec![])));
+        p.ricevi(dati(false));
+        let _ = diagnosi.riga(&[]);
+        let conta = |c| diagnosi.valore(c);
+        p.ricevi(dati(false));
+        assert_eq!((conta(Contatore::ui_dati), conta(Contatore::ui_ricostruzioni), conta(Contatore::ui_righe)), (1, 1, 0));
+        p.ricevi(dati(true));
+        assert_eq!((conta(Contatore::ui_dati), conta(Contatore::ui_ricostruzioni), conta(Contatore::ui_righe)), (2, 2, 1));
+        assert!(conta(Contatore::ui_umore) >= 2);
     }
 
     fn stato_mostrato(p: &Ponte) -> String {
