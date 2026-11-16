@@ -564,6 +564,11 @@ pub struct Ponte {
     stanze: Rc<VecModel<StanzaUi>>,
     dispositivi: Rc<VecModel<PreferitoUi>>,
     stanza_aperta: RefCell<Option<String>>,
+    /// I modelli della vista Casa seguono i dati solo a pannello aperto (Task 14h): da chiuso
+    /// nessuno li guarda (la pillola mostra umore e voci in attesa). `modelli_vecchi`: da chiuso è
+    /// arrivato qualcosa che li cambierebbe, si rifanno all'apertura.
+    modelli_vivi: Cell<bool>,
+    modelli_vecchi: Cell<bool>,
     /// Impostazioni › Dispositivi: le righe e le stanze compresse (solo finché l'app gira).
     righe: Rc<VecModel<RigaDispositivoUi>>,
     /// I collegamenti veloci, per il pannello e per Impostazioni › Collegamenti.
@@ -644,6 +649,8 @@ pub fn collega(
         stanze: Rc::new(VecModel::default()),
         dispositivi: Rc::new(VecModel::default()),
         stanza_aperta: RefCell::new(None),
+        modelli_vivi: Cell::new(false),
+        modelli_vecchi: Cell::new(false),
         righe: Rc::new(VecModel::default()),
         collegamenti: Rc::new(VecModel::default()),
         apri_url: RefCell::new(Rc::new(crate::sistema::browser::apri)),
@@ -890,6 +897,10 @@ impl Ponte {
     /// recenti, con lo stato ottimistico dei tocchi, gli errori ancora aperti e lo stato della
     /// connessione.
     fn ricostruisci_preferiti(&self) {
+        if !self.modelli_vivi.get() {
+            self.modelli_vecchi.set(true);
+            return;
+        }
         let connesso = self.connesso();
         let icone = self.casa.con_config(|c| c.area_icons.clone());
         let (voci, sensori, stanze, dispositivi) = {
@@ -1439,9 +1450,19 @@ impl Ponte {
         p.set_casa_riprovabile(riprovabile(&stato));
     }
 
+    /// I modelli della vista Casa tornano a seguire i dati (pannello aperto): se da chiuso è
+    /// cambiato qualcosa si rifanno ora, una volta.
+    pub fn apri_modelli(&self) {
+        self.modelli_vivi.set(true);
+        if self.modelli_vecchi.replace(false) {
+            self.ricostruisci_preferiti();
+        }
+    }
+
     /// Il pannello appena creato: modelli dei preferiti, dei sensori e delle voci in attesa,
     /// stato della casa, tocchi e pulsanti.
     pub fn riempi(&self, p: &Pannello) {
+        self.apri_modelli();
         p.set_preferiti(ModelRc::from(self.preferiti.clone()));
         p.set_sensori(ModelRc::from(self.sensori.clone()));
         p.set_stanze(ModelRc::from(self.stanze.clone()));
@@ -1497,6 +1518,7 @@ impl Ponte {
     /// l'umore di adesso.
     pub fn pannello_chiuso(&self) {
         *self.pannello.borrow_mut() = slint::Weak::default();
+        self.modelli_vivi.set(false);
         self.collegamento_aperto.set(false);
         // Il pannello si riapre sui preferiti.
         if self.stanza_aperta.borrow_mut().take().is_some() {
@@ -1921,6 +1943,8 @@ pub(crate) mod test {
         let pillola = crate::Pillola::new().unwrap();
         let cervello = Rc::new(RefCell::new(Cervello::new(Instant::now())));
         let p = collega(casa, segreti, &pillola, cervello, None, None);
+        // Come col pannello aperto: i modelli della Casa seguono i dati.
+        p.apri_modelli();
         p.ricevi(CasaEvento::Stato(StatoConnessione::Connesso));
         p.ricevi(CasaEvento::Dati(Arc::new(menu(vec![luce("light.a", false)], vec![]))));
         (Spegni, p, pillola, cartella)
@@ -1943,6 +1967,7 @@ pub(crate) mod test {
         let cervello = Rc::new(RefCell::new(Cervello::new(Instant::now())));
         let p = collega(casa, segreti, &pillola, cervello, None, None);
         let _spegni = Spegni;
+        p.apri_modelli();
         p.ricevi(CasaEvento::Stato(StatoConnessione::Connesso));
         let dati = |accesa| CasaEvento::Dati(Arc::new(menu(vec![luce("light.a", accesa)], vec![])));
         p.ricevi(dati(false));
@@ -1953,6 +1978,58 @@ pub(crate) mod test {
         p.ricevi(dati(true));
         assert_eq!((conta(Contatore::ui_dati), conta(Contatore::ui_ricostruzioni), conta(Contatore::ui_righe)), (2, 2, 1));
         assert!(conta(Contatore::ui_umore) >= 2);
+    }
+
+    /// Task 14h: a pannello chiuso i dati della casa non ricostruiscono i modelli della vista Casa
+    /// (nessuno li guarda: la pillola mostra solo umore e voci in attesa); all'apertura si rifanno
+    /// una volta coi dati di adesso, e da lì seguono i dati finché il pannello resta aperto.
+    #[test]
+    fn a_pannello_chiuso_i_modelli_della_casa_aspettano_l_apertura() {
+        use casa_core::config::ConfigStore;
+        use casa_core::diagnosi::Diagnosi;
+        use casa_core::segreti::MemoriaSegreti;
+        crate::test_ui::piattaforma_di_prova();
+        let cartella = tempfile::tempdir().unwrap();
+        let segreti: Arc<dyn Segreti> = Arc::new(MemoriaSegreti::new());
+        let store = Arc::new(ConfigStore::apri(cartella.path()));
+        let diagnosi = Arc::new(Diagnosi::new(true));
+        let casa = Rc::new(CasaService::avvia_con_diagnosi(store, segreti.clone(), Arc::new(|_| {}), diagnosi.clone()));
+        let pillola = crate::Pillola::new().unwrap();
+        let cervello = Rc::new(RefCell::new(Cervello::new(Instant::now())));
+        let p = collega(casa, segreti, &pillola, cervello, None, None);
+        let _spegni = Spegni;
+        let conta = |c| diagnosi.valore(c);
+        let dati = |accesa| CasaEvento::Dati(Arc::new(menu(vec![luce("light.a", accesa)], vec![])));
+        p.ricevi(CasaEvento::Stato(StatoConnessione::Connesso));
+        for i in 0..5 {
+            p.ricevi(dati(i % 2 == 0));
+        }
+        assert_eq!((conta(Contatore::ui_dati), conta(Contatore::ui_ricostruzioni)), (5, 0), "pannello chiuso: nulla da ricostruire");
+        assert_eq!(p.preferiti.row_count(), 0);
+        // Apertura: i modelli si rifanno una volta, coi dati di adesso (l'ultimo: accesa).
+        p.apri_modelli();
+        assert_eq!(conta(Contatore::ui_ricostruzioni), 1);
+        assert_eq!(p.preferiti.row_data(0).unwrap().stato, "Acceso");
+        p.ricevi(dati(false));
+        assert_eq!(conta(Contatore::ui_ricostruzioni), 2, "aperto: seguono i dati");
+        assert_eq!(p.preferiti.row_data(0).unwrap().stato, "Spento");
+        // Chiuso di nuovo: i dati non ricostruiscono più nulla; una riapertura senza dati nuovi
+        // non rifà nulla.
+        p.pannello_chiuso();
+        p.apri_modelli();
+        assert_eq!(conta(Contatore::ui_ricostruzioni), 2, "dati uguali: niente da rifare");
+        p.pannello_chiuso();
+        p.ricevi(dati(true));
+        assert_eq!(conta(Contatore::ui_ricostruzioni), 2);
+        p.apri_modelli();
+        assert_eq!(conta(Contatore::ui_ricostruzioni), 3);
+        assert_eq!(p.preferiti.row_data(0).unwrap().stato, "Acceso");
+        // Il pannello vero, appena creato e riempito, ha i dati di adesso.
+        p.pannello_chiuso();
+        p.ricevi(dati(false));
+        let pannello = crate::Pannello::new().unwrap();
+        p.riempi(&pannello);
+        assert_eq!(pannello.get_preferiti().row_data(0).unwrap().stato, "Spento", "il pannello nuovo ha i dati di adesso");
     }
 
     fn stato_mostrato(p: &Ponte) -> String {
