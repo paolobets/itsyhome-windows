@@ -13,7 +13,10 @@ use crate::pc_stats::{formatta_byte, formatta_velocita, tinta_batteria, Campiona
 use crate::pc_stats::{LetturaBatteria, StatoBatteria};
 use crate::ponte::Ponte;
 use crate::sistema::servizi;
-use crate::{finestra_impostazioni, finestre, orologio, scelte, Movimento, Pannello, Pillola, StatPcUi, VoceAppUi};
+use crate::{
+    finestra_impostazioni, finestre, orologio, scelte, Movimento, Pannello, Pillola, StatPcUi, TintaBatteriaUi,
+    VoceAppUi,
+};
 use slint::winit_030::{winit, EventResult, WinitWindowAccessor};
 use slint::{ComponentHandle, Image, ModelRc, VecModel};
 use std::cell::{Cell, RefCell};
@@ -148,7 +151,12 @@ fn stat_ui(s: &StatPc, cpu_pronta: bool) -> StatPcUi {
         batteria_testo: batteria.map(percentuale).unwrap_or_default().into(),
         batteria_frazione: batteria.map(|b| b / 100.0).unwrap_or(0.0),
         in_carica: s.batteria.is_some_and(|b| b.collegata()),
-        tinta_batteria: s.batteria.map_or(TintaBatteria::Normale, |b| tinta_batteria(&b)) as i32,
+        tinta_batteria: match s.batteria.map_or(TintaBatteria::Normale, |b| tinta_batteria(&b)) {
+            TintaBatteria::Carica => TintaBatteriaUi::Carica,
+            TintaBatteria::Normale => TintaBatteriaUi::Normale,
+            TintaBatteria::Informazione => TintaBatteriaUi::Informazione,
+            TintaBatteria::Attenzione => TintaBatteriaUi::Attenzione,
+        },
     }
 }
 
@@ -515,15 +523,15 @@ mod test {
         // Senza batteria: normale, riga nascosta.
         let ui = stat_ui(&s, true);
         assert!(!ui.ha_batteria);
-        assert_eq!(ui.tinta_batteria, TintaBatteria::Normale as i32);
+        assert_eq!(ui.tinta_batteria, TintaBatteriaUi::Normale);
         s.batteria = Some(LetturaBatteria { percentuale: 18.0, stato: StatoBatteria::Scarica });
         let ui = stat_ui(&s, true);
         assert!(ui.ha_batteria && !ui.in_carica);
-        assert_eq!(ui.tinta_batteria, TintaBatteria::Informazione as i32);
+        assert_eq!(ui.tinta_batteria, TintaBatteriaUi::Informazione);
         s.batteria = Some(LetturaBatteria { percentuale: 18.0, stato: StatoBatteria::InCarica });
         let ui = stat_ui(&s, true);
         assert!(ui.in_carica);
-        assert_eq!(ui.tinta_batteria, TintaBatteria::Carica as i32);
+        assert_eq!(ui.tinta_batteria, TintaBatteriaUi::Carica);
     }
 
     #[test]

@@ -107,7 +107,10 @@ pub const MASSIMO_PULSANTI: usize = 2;
 pub const ALLARGATA_PER: Duration = Duration::from_secs(20);
 
 /// Le voci in attesa. `metti` con un id già presente aggiorna la voce e ne tiene l'ora di
-/// creazione (un aggiornamento non fa ripartire i 20 s della pillola larga).
+/// creazione (un aggiornamento non fa ripartire i 20 s della pillola larga); ma se il livello
+/// **sale** (informazione → attenzione, attenzione → bloccante) la voce conta come nuova: riparte
+/// l'ora di creazione e non è più «vista», così pillola larga, notifica e suono valgono come per
+/// una voce appena arrivata (vale per ogni fonte che riusa lo stesso id fra livelli diversi).
 #[derive(Debug, Default)]
 pub struct Attese {
     voci: Vec<Voce>,
@@ -120,11 +123,20 @@ impl Attese {
         v.pulsanti.truncate(MASSIMO_PULSANTI);
         match self.voci.iter_mut().find(|x| x.id == v.id) {
             Some(x) => {
-                v.creata = x.creata;
+                if v.livello.peso() > x.livello.peso() {
+                    self.viste.remove(&v.id);
+                } else {
+                    v.creata = x.creata;
+                }
                 *x = v;
             }
             None => self.voci.push(v),
         }
+    }
+
+    /// Vera se `v` arriverebbe come novità: id non presente, o livello più alto di quello presente.
+    pub fn e_novita(&self, v: &Voce) -> bool {
+        self.voce(&v.id).is_none_or(|x| v.livello.peso() > x.livello.peso())
     }
 
     pub fn togli(&mut self, id: &str) {
@@ -348,8 +360,14 @@ impl SorveglianzaBatteria {
     /// `presente`: il livello con cui la voce sta ora tra le attese (`None` se non c'è).
     pub fn osserva(&mut self, l: &LetturaBatteria, presente: Option<Livello>, ora: Instant) -> Option<Voce> {
         let p = l.percentuale;
-        if !l.scollegata() || p >= SOGLIA_BATTERIA_INFO_FINE {
+        // Stato sconosciuto (es. portatile con limite di carica che non sta caricando): nessuna
+        // voce, ma il «Ho capito» resta: se lo stato oscilla fra Scarica e Sconosciuto l'avviso non
+        // rinasce. Il «Ho capito» si dimentica solo con alimentatore sicuramente collegato o ≥ 22%.
+        if l.collegata() || p >= SOGLIA_BATTERIA_INFO_FINE {
             self.zittita = false;
+            return None;
+        }
+        if !l.scollegata() {
             return None;
         }
         let soglia_attenzione = if presente == Some(Livello::Attenzione) { SOGLIA_BATTERIA_FINE } else { SOGLIA_BATTERIA };
@@ -747,6 +765,64 @@ pub(crate) mod test {
         assert_eq!(s.osserva(&lettura(9.0, StatoBatteria::InCarica), None, t), None);
         let v = s.osserva(&lettura(19.0, StatoBatteria::Scarica), None, t).expect("dopo la ricarica torna");
         assert_eq!(v.livello, Livello::Informazione);
+    }
+
+    #[test]
+    fn stato_sconosciuto_non_dimentica_il_ho_capito() {
+        let t = Instant::now();
+        let mut s = SorveglianzaBatteria::default();
+        s.zittisci();
+        assert_eq!(s.osserva(&lettura(18.0, StatoBatteria::Sconosciuto), None, t), None);
+        // Tornata a scaricarsi: resta zittita.
+        assert_eq!(s.osserva(&lettura(17.0, StatoBatteria::Scarica), None, t), None);
+        // Solo l'alimentatore sicuramente collegato la riattiva.
+        assert_eq!(s.osserva(&lettura(17.0, StatoBatteria::Piena), None, t), None);
+        assert!(s.osserva(&lettura(17.0, StatoBatteria::Scarica), None, t).is_some());
+    }
+
+    /// Giro 1 della revisione: 19% (informazione, non zittita) → 9% sullo stesso id: per la
+    /// pillola, la notifica e il suono è una voce nuova, come in M1.
+    #[test]
+    fn dal_venti_al_dieci_per_cento_arriva_come_voce_nuova() {
+        let t = Instant::now();
+        let mut s = SorveglianzaBatteria::default();
+        let mut a = Attese::default();
+        let info = s.osserva(&lettura(19.0, StatoBatteria::Scarica), None, t).expect("19%");
+        assert!(a.e_novita(&info));
+        a.metti(info);
+        // Passa del tempo e il pannello viene aperto: la voce informativa è vista e «vecchia».
+        a.segna_viste();
+        let dopo = t + Duration::from_secs(30 * 60);
+        assert_eq!(aspetto_pillola(&a, dopo), AspettoPillola::Puntino);
+
+        let attenzione = s
+            .osserva(&lettura(9.0, StatoBatteria::Scarica), a.voce(ID_BATTERIA).map(|v| v.livello), dopo)
+            .expect("9%");
+        assert_eq!(attenzione.livello, Livello::Attenzione);
+        // È una novità: il ponte manda la notifica (`toast`) e `voce_arrivata` solo se lo è.
+        assert!(a.e_novita(&attenzione));
+        assert!(toast(&attenzione, false));
+        a.metti(attenzione);
+        assert_eq!(
+            aspetto_pillola(&a, dopo),
+            AspettoPillola::Allargata { voce_id: ID_BATTERIA.into(), ferma: false },
+            "la pillola si allarga come per una voce nuova"
+        );
+        assert_eq!(aspetto_pillola(&a, dopo + ALLARGATA_PER + Duration::from_secs(1)), AspettoPillola::Puntino);
+        // Un aggiornamento dello stesso livello non è una novità e non riparte.
+        let ancora = s.osserva(&lettura(8.0, StatoBatteria::Scarica), Some(Livello::Attenzione), dopo).expect("8%");
+        assert!(!a.e_novita(&ancora));
+    }
+
+    #[test]
+    fn la_discesa_di_livello_non_e_una_novita() {
+        let t = Instant::now();
+        let mut a = Attese::default();
+        a.metti(voce("x", Livello::Attenzione, t));
+        let giu = voce("x", Livello::Informazione, t + Duration::from_secs(5));
+        assert!(!a.e_novita(&giu));
+        a.metti(giu);
+        assert_eq!(a.voce("x").map(|v| v.creata), Some(t), "l'ora di creazione resta");
     }
 
     #[test]

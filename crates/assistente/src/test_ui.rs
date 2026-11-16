@@ -263,13 +263,28 @@ mod accessibilita {
             ha_batteria: true,
             batteria_testo: "18%".into(),
             batteria_frazione: 0.18,
-            tinta_batteria: 2,
+            tinta_batteria: crate::TintaBatteriaUi::Informazione,
             ..Default::default()
         });
         let riga = elemento(&p, "BATTERIA");
         assert_eq!(riga.accessible_role(), Some(AccessibleRole::ProgressIndicator));
         assert_eq!(riga.accessible_value().as_deref(), Some("18%"));
         assert_eq!(riga.accessible_description().as_deref(), Some("A batteria"));
+        // Il glifo c'è (19 × 8 px), sta nella riga a sinistra del valore e non è accessibile: il
+        // test fallisce se la riga torna senza glifo.
+        let glifi: Vec<_> = ElementHandle::find_by_element_type_name(&p, "GlifoBatteria").collect();
+        assert_eq!(glifi.len(), 1, "un solo glifo nella riga BATTERIA");
+        assert_eq!((glifi[0].size().width, glifi[0].size().height), (19.0, 8.0));
+        assert_ne!(glifi[0].accessible_role(), Some(AccessibleRole::ProgressIndicator));
+        assert!(glifi[0].accessible_label().is_none(), "il glifo non ha un nome per Narrator");
+        let (riga_pos, glifo_pos) = (riga.absolute_position(), glifi[0].absolute_position());
+        assert!(
+            glifo_pos.x > riga_pos.x + riga.size().width / 2.0,
+            "il glifo sta nella colonna del valore, a destra"
+        );
+        // Senza batteria niente riga e niente glifo.
+        p.set_pc(StatPcUi { pronta: true, ..Default::default() });
+        assert_eq!(ElementHandle::find_by_element_type_name(&p, "GlifoBatteria").count(), 0);
     }
 
     #[test]

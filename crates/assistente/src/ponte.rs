@@ -1642,7 +1642,9 @@ impl Ponte {
     /// salvo `avvisa` falso (notifiche di HA già presenti alla connessione) o pannello aperto (la
     /// voce compare subito nella riga «In attesa»). Un bloccante nuovo fa uscire dalla ritirata.
     pub fn metti_voce(&self, v: Voce, avvisa: bool) {
-        let nuova = !self.attese.borrow().contiene(&v.id);
+        // Novità = voce mai vista o che sale di livello con lo stesso id (19% → 9%): la notifica e
+        // il suono valgono come per una voce appena arrivata (`Attese::metti` ne azzera i 20 s).
+        let nuova = self.attese.borrow().e_novita(&v);
         let pannello_aperto = self.pannello.borrow().upgrade().is_some();
         if nuova && avvisa && attenzione::toast(&v, pannello_aperto) {
             notifica_sistema(&v);
@@ -2455,6 +2457,28 @@ pub(crate) mod test {
         let m = menu(vec![sensore("sensor.t", "20.0", Some("°C"))], vec![]);
         assert!((sensori_quadranti(&m, 8, 3)[0].1 - 0.5).abs() < 1e-6);
         assert_eq!(sensori_quadranti(&m, 8, 3)[0].0.valore, "20,0 °C");
+    }
+
+    /// Il percorso del Ponte: la voce del 19% nasce informazione, «Ho capito» la toglie e la
+    /// zittisce (18% niente), la ricarica la riattiva. (Niente 9%: l'attenzione manderebbe un
+    /// toast vero; la salita di livello è coperta in `attenzione.rs`.)
+    #[test]
+    fn ho_capito_sulla_batteria_toglie_e_zittisce() {
+        use crate::pc_stats::{LetturaBatteria, StatoBatteria};
+        let (_spegni, p, _pillola, _cartella) = ponte_di_prova();
+        let lettura = |percentuale, stato| LetturaBatteria { percentuale, stato };
+        let livello = || p.attese.borrow().voce(ID_BATTERIA).map(|v| v.livello);
+        p.batteria(&lettura(19.0, StatoBatteria::Scarica));
+        assert_eq!(livello(), Some(Livello::Informazione));
+
+        p.azione(ID_BATTERIA, PULSANTE_HO_CAPITO);
+        assert_eq!(livello(), None, "«Ho capito» toglie la voce");
+        p.batteria(&lettura(18.0, StatoBatteria::Scarica));
+        assert_eq!(livello(), None, "zittita fino alla ricarica");
+
+        p.batteria(&lettura(18.0, StatoBatteria::InCarica));
+        p.batteria(&lettura(19.0, StatoBatteria::Scarica));
+        assert_eq!(livello(), Some(Livello::Informazione), "dopo la ricarica torna");
     }
 
     #[test]

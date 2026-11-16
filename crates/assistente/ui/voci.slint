@@ -23,6 +23,9 @@ export struct VoceAppUi {
     icona: image,
 }
 
+// Tinta del glifo della batteria; `normale` per prima: è il valore predefinito di uno struct nuovo.
+export enum TintaBatteriaUi { normale, carica, informazione, attenzione }
+
 // Le statistiche del PC già formattate (italiano) per quadranti e vista PC; `cpu`, `ram` e
 // `disco` sono frazioni 0..1 per gli archi. `pronta`: dal secondo campione la CPU ha un valore.
 export struct StatPcUi {
@@ -41,8 +44,9 @@ export struct StatPcUi {
     batteria-testo: string,
     batteria-frazione: float,
     in-carica: bool,
-    // Tinta del glifo: 0 carica, 1 normale, 2 informazione, 3 attenzione (ordine di `TintaBatteria`).
-    tinta-batteria: int,
+    // Tinta del glifo della batteria (vedi `pc_stats::TintaBatteria`); il valore predefinito è
+    // il neutro.
+    tinta-batteria: TintaBatteriaUi,
 }
 
 // Un preferito della casa, già pronto per l'interfaccia (vedi `ponte::voce_ui`).

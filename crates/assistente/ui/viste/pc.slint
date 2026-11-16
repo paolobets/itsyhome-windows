@@ -1,7 +1,7 @@
 // Vista PC: l'elenco dettagliato delle statistiche (CPU, RAM, disco, rete, batteria se c'è).
 import { Tema } from "../tema.slint";
 import { Icone, Icona, Vetro } from "../icone.slint";
-import { StatPcUi } from "../voci.slint";
+import { StatPcUi, TintaBatteriaUi } from "../voci.slint";
 import { Etichetta, GlifoBatteria } from "../componenti.slint";
 
 // Una riga: etichetta, valore e (se serve) una barra sottile con la frazione usata.
@@ -13,8 +13,9 @@ component Riga inherits Rectangle {
     in property <color> colore: Tema.petalo-2;
     // Batteria: l'avviso scatta quando è quasi scarica, non quando è piena.
     in property <bool> invertita: false;
-    // Batteria: tinta del glifo accanto al valore (0..3, vedi `GlifoBatteria`); -1 = nessun glifo.
-    in property <int> tinta: -1;
+    // Batteria: glifo accanto al valore, con la sua tinta (vedi `GlifoBatteria`).
+    in property <bool> con-glifo: false;
+    in property <TintaBatteriaUi> tinta: TintaBatteriaUi.normale;
     height: 44px;
     // Per Narrator: nome, valore e dettaglio (FE16).
     accessible-role: progress-indicator;
@@ -41,7 +42,7 @@ component Riga inherits Rectangle {
 
     // Il valore: largo quanto la barra; senza barra (rete) può prendersi tutta la riga dopo
     // l'etichetta, così «↓ 1,6 KB/s · ↑ 286 B/s» sta su una riga sola.
-    if tinta < 0: Text {
+    if !con-glifo: Text {
         x: parent.width - 14px - self.width;
         y: 7px;
         width: frazione >= 0 ? 150px : max(150px, parent.width - 28px - 110px);
@@ -53,7 +54,7 @@ component Riga inherits Rectangle {
     }
 
     // Con il glifo (batteria): glifo e valore insieme, a destra, sulla stessa linea di base.
-    if tinta >= 0: HorizontalLayout {
+    if con-glifo: HorizontalLayout {
         x: parent.width - 14px - 150px;
         y: 7px;
         width: 150px;
@@ -154,6 +155,7 @@ export component VistaPc inherits Rectangle {
                     dettaglio: stat.in-carica ? "In carica" : "A batteria";
                     frazione: stat.batteria-frazione;
                     invertita: true;
+                    con-glifo: true;
                     tinta: stat.tinta-batteria;
                 }
 

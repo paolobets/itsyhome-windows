@@ -54,17 +54,17 @@ impl LetturaBatteria {
     }
 }
 
-/// Tinta del glifo della batteria. Numerazione fissa: è `tinta-batteria` di `StatPcUi` (0..3).
+/// Tinta del glifo della batteria (in Slint: `TintaBatteriaUi`, vedi `pannello::stat_ui`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TintaBatteria {
-    Carica = 0,
-    Normale = 1,
-    Informazione = 2,
-    Attenzione = 3,
+    Carica,
+    Normale,
+    Informazione,
+    Attenzione,
 }
 
-/// Da questa percentuale in giù (scollegata) il glifo vira all'informazione (≤: a 20% esatti è
-/// già ambra, mentre la voce parte solo sotto il 20%).
+/// Da questa percentuale in giù (scollegata) il glifo vira all'informazione (blu; ≤: a 20%
+/// esatti il glifo è già blu, mentre la voce parte solo sotto il 20%). L'ambra è l'attenzione (≤ 10).
 pub const SOGLIA_BATTERIA_INFO: f32 = 20.0;
 /// Una voce «informazione» già presente sparisce solo da questa percentuale in su.
 pub const SOGLIA_BATTERIA_INFO_FINE: f32 = 22.0;
