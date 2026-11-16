@@ -28,6 +28,10 @@ pub struct HaDevice {
     pub name_by_user: Option<String>,
     pub area_id: Option<String>,
     pub disabled_by: Option<String>,
+    /// Il padre di un dispositivo figlio (HA 2026.9+, `ChildDeviceEntry.parent_device_id` di
+    /// `helpers/device_registry.py`): senza stanza propria il figlio prende quella del padre.
+    #[serde(default)]
+    pub parent_device_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

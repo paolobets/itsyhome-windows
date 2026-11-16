@@ -60,6 +60,18 @@ struct Contatori {
     letture_config: AtomicUsize,
     /// Nomi scelti nel registro delle entità (`name`), per entity_id.
     nomi_registro: Mutex<BTreeMap<String, String>>,
+    /// Il registro dei dispositivi (vuoto di serie) e stanze in più.
+    dispositivi: Mutex<Vec<Value>>,
+    aree_extra: Mutex<Vec<Value>>,
+    /// Voci del registro delle entità che sostituiscono quelle di serie, per entity_id.
+    voci_sostituite: Mutex<BTreeMap<String, Value>>,
+    /// Subito dopo la risposta a `config/device_registry/list` (una volta): il registro dei
+    /// dispositivi diventa questo e parte questo evento (testo intero del messaggio).
+    dopo_dispositivi: Mutex<Option<(Vec<Value>, String)>>,
+    /// Ritardo della risposta al registro delle entità.
+    ritardo_voci_ms: AtomicU64,
+    /// Quante risposte a `config/entity_registry/list` rifiutare ancora.
+    voci_da_rifiutare: AtomicUsize,
 }
 
 struct FintoHa {
@@ -110,10 +122,6 @@ impl FintoHa {
 
     fn iscrizioni_entita(&self) -> Vec<Vec<String>> {
         self.contatori.iscrizioni_entita.lock().unwrap().clone()
-    }
-
-    fn disiscrizioni(&self) -> usize {
-        self.contatori.disiscrizioni.load(Ordering::SeqCst)
     }
 
     /// Evento della iscrizione `persistent_notification/subscribe`, come lo manda HA
@@ -242,10 +250,19 @@ fn risposta(v: &Value, contatori: &Contatori) -> Value {
             }
             ok(Value::Array(contatori.stati.lock().unwrap().values().cloned().collect()))
         }
-        "config/area_registry/list" => ok(json!([{ "area_id": "cucina", "name": "Cucina" }])),
-        "config/device_registry/list" => ok(json!([])),
+        "config/area_registry/list" => {
+            let mut aree = vec![json!({ "area_id": "cucina", "name": "Cucina" })];
+            aree.extend(contatori.aree_extra.lock().unwrap().iter().cloned());
+            ok(Value::Array(aree))
+        }
+        "config/device_registry/list" => ok(Value::Array(contatori.dispositivi.lock().unwrap().clone())),
         "config/entity_registry/list" => {
             contatori.letture_registri.fetch_add(1, Ordering::SeqCst);
+            let da_rifiutare = &contatori.voci_da_rifiutare;
+            if da_rifiutare.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_ok() {
+                return json!({ "id": id, "type": "result", "success": false,
+                               "error": { "code": "unknown_error", "message": "Errore finto" } });
+            }
             let mut presa = entry("switch.presa", "cucina");
             if contatori.presa_nascosta.load(Ordering::SeqCst) {
                 presa["hidden_by"] = json!("user");
@@ -255,6 +272,11 @@ fn risposta(v: &Value, contatori: &Contatori) -> Value {
             for (id, nome) in contatori.nomi_registro.lock().unwrap().iter() {
                 if let Some(v) = voci.iter_mut().find(|v| v["entity_id"] == id.as_str()) {
                     v["name"] = json!(nome);
+                }
+            }
+            for (id, sostituta) in contatori.voci_sostituite.lock().unwrap().iter() {
+                if let Some(v) = voci.iter_mut().find(|v| v["entity_id"] == id.as_str()) {
+                    *v = sostituta.clone();
                 }
             }
             ok(Value::Array(voci))
@@ -371,7 +393,18 @@ async fn servi(tcp: tokio::net::TcpStream, contatori: Arc<Contatori>, mut eventi
                     let ms = contatori.ritardo_aree_ms.load(Ordering::SeqCst);
                     if ms > 0 { sleep(Duration::from_millis(ms)).await; }
                 }
+                if v["type"] == "config/entity_registry/list" {
+                    let ms = contatori.ritardo_voci_ms.load(Ordering::SeqCst);
+                    if ms > 0 { sleep(Duration::from_millis(ms)).await; }
+                }
                 if tx.send(testo(risposta(&v, &contatori))).await.is_err() { return; }
+                if v["type"] == "config/device_registry/list" {
+                    let dopo = contatori.dopo_dispositivi.lock().unwrap().take();
+                    if let Some((nuovi, evento)) = dopo {
+                        *contatori.dispositivi.lock().unwrap() = nuovi;
+                        if tx.send(Message::Text(evento.into())).await.is_err() { return; }
+                    }
+                }
                 if v["type"] == "get_states" {
                     let cambio = contatori.cambio_dopo_stati.lock().unwrap().take();
                     if let Some(data) = cambio {
@@ -613,8 +646,9 @@ async fn aspetta_iscrizione(ha: &FintoHa, quante: usize) {
 }
 
 /// Task 14e: gli stati arrivano da `subscribe_entities` con le sole entità mostrate, non più da
-/// `state_changed` di tutta la casa. L'iscrizione si rifà quando cambia ciò che si mostra, e con
-/// nulla da mostrare si chiude soltanto (HA leggerebbe un elenco vuoto come «tutte»).
+/// `state_changed` di tutta la casa. Giro di correzioni 1 del 14h: anche quelle nascoste
+/// dall'utente restano seguite (sono nel catalogo delle Impostazioni, col nome dello stato):
+/// nasconderle o rimostrarle non rifà l'iscrizione.
 #[tokio::test]
 async fn si_seguono_solo_le_entita_mostrate() {
     let ha = FintoHa::avvia().await;
@@ -628,19 +662,16 @@ async fn si_seguono_solo_le_entita_mostrate() {
     // Preferiti: stesse entità, nessuna nuova iscrizione.
     p.servizio.aggiorna_config(|c| c.favorites = vec!["light.cucina".into()]);
     aspetta_dati(&mut p).await;
-    // Presa nascosta: si segue solo la luce, al posto dell'iscrizione di prima.
+    // Presa nascosta: esce dalle stanze ma resta seguita, e il suo stato resta di adesso.
     p.servizio.aggiorna_config(|c| c.hidden_entities = vec!["switch.presa".into()]);
-    aspetta(|| ha.iscrizioni_entita().len() == 2, "nuova iscrizione").await;
-    assert_eq!(ha.iscrizioni_entita()[1], ["light.cucina"]);
-    aspetta(|| ha.disiscrizioni() == 1, "vecchia iscrizione chiusa").await;
-    // Tutto nascosto: si chiude e basta.
-    p.servizio.aggiorna_config(|c| c.hidden_entities = vec!["switch.presa".into(), "light.cucina".into()]);
-    aspetta(|| ha.disiscrizioni() == 2, "iscrizione chiusa").await;
-    sleep(Duration::from_millis(200)).await;
-    assert_eq!(ha.iscrizioni_entita().len(), 2, "mai un subscribe_entities con l'elenco vuoto");
-    // Di nuovo visibile: si torna a seguirla, e il primo evento porta lo stato di adesso.
+    let d = aspetta_dati(&mut p).await;
+    assert_eq!(conta_entita(&d), 1);
+    cambio(&ha, "switch.presa", stato_nuovo("switch.presa", "on", "Presa"));
+    sleep(Duration::from_millis(300)).await;
     p.servizio.aggiorna_config(|c| c.hidden_entities.clear());
-    aspetta(|| ha.iscrizioni_entita().len() == 3, "di nuovo seguite").await;
+    let d = aspetta_dati(&mut p).await;
+    assert_eq!(acceso(&d, "switch.presa"), Some(true), "mostrata di nuovo, con lo stato di adesso");
+    assert_eq!(ha.iscrizioni_entita().len(), 1, "nessuna iscrizione rifatta");
     assert_eq!(ha.get_states(), 1, "nessuna rilettura per seguire altre entità");
 }
 
@@ -880,6 +911,110 @@ async fn entita_nascosta_nel_registro_esce_senza_rileggere_gli_stati() {
     aspetta(|| ha.iscrizioni_entita().len() == 2, "iscrizione rifatta").await;
     assert_eq!(ha.iscrizioni_entita()[1], ["light.cucina"]);
     assert_eq!((ha.get_states(), ha.letture_registri()), (1, 2));
+}
+
+/// Il nome di un'entità nel catalogo delle Impostazioni (dove ci sono anche le nascoste).
+fn nome_nel_catalogo(d: &MenuData, entity_id: &str) -> Option<String> {
+    d.catalogo.iter().flat_map(|s| &s.voci).find(|v| v.entity_id == entity_id).map(|v| v.name.clone())
+}
+
+/// Aspetta dati in cui il catalogo dà a `entity_id` il nome `nome` (al più 5 s).
+async fn aspetta_nome_nel_catalogo(p: &mut Prova, entity_id: &str, nome: &str) {
+    let fine = Instant::now() + Duration::from_secs(5);
+    loop {
+        let d = timeout_at(fine, aspetta_dati(p)).await.unwrap_or_else(|_| panic!("«{nome}» mai arrivato nel catalogo"));
+        if nome_nel_catalogo(&d, entity_id).as_deref() == Some(nome) {
+            return;
+        }
+    }
+}
+
+/// Giro di correzioni 1 del 14h, I1: un'entità nascosta dall'utente resta nel catalogo delle
+/// Impostazioni: se l'integrazione la rinomina (`original_name`, HA riscrive il `friendly_name`)
+/// il nome nuovo deve arrivare. Prima l'evento si scartava e lo stato delle nascoste non era seguito.
+#[tokio::test]
+async fn entita_nascosta_dall_utente_rinominata_dall_integrazione() {
+    let ha = FintoHa::avvia().await;
+    let mut p = prepara(&ha.url, Some(TOKEN));
+    p.servizio.aggiorna_config(|c| c.hidden_entities = vec!["switch.presa".into()]);
+    p.servizio.connetti_attivo();
+    let d = aspetta_dati(&mut p).await;
+    assert_eq!(nome_nel_catalogo(&d, "switch.presa").as_deref(), Some("Presa"));
+    aspetta_iscrizione(&ha, 1).await;
+    cambio(&ha, "switch.presa", stato_nuovo("switch.presa", "off", "Presa asciugatrice"));
+    ha.manda_evento("entity_registry_updated", json!({ "action": "update", "entity_id": "switch.presa", "changes": { "original_name": "Presa" } }));
+    aspetta_nome_nel_catalogo(&mut p, "switch.presa", "Presa asciugatrice").await;
+    assert_eq!(ha.get_states(), 1, "senza lettura completa");
+}
+
+/// I1, secondo caso: il dispositivo di un'entità con `has_entity_name` rinominato in HA. L'evento
+/// del dispositivo porta `name`, quello dell'entità `changes: {}` (HA toglie `compat_name`).
+#[tokio::test]
+async fn dispositivo_rinominato_con_has_entity_name() {
+    let ha = FintoHa::avvia().await;
+    let mut presa = entry("switch.presa", "cucina");
+    presa["device_id"] = json!("shelly");
+    ha.contatori.voci_sostituite.lock().unwrap().insert("switch.presa".into(), presa);
+    *ha.contatori.dispositivi.lock().unwrap() = vec![json!({ "id": "shelly", "name": "Presa lavatrice", "name_by_user": null, "area_id": "cucina", "disabled_by": null })];
+    let mut p = prepara(&ha.url, Some(TOKEN));
+    p.servizio.aggiorna_config(|c| c.hidden_entities = vec!["switch.presa".into()]);
+    p.servizio.connetti_attivo();
+    aspetta_dati(&mut p).await;
+    aspetta_iscrizione(&ha, 1).await;
+    cambio(&ha, "switch.presa", stato_nuovo("switch.presa", "off", "Presa asciugatrice Interruttore"));
+    ha.manda_evento("device_registry_updated", json!({ "action": "update", "device_id": "shelly", "changes": { "name_by_user": null } }));
+    ha.manda_evento("entity_registry_updated", json!({ "action": "update", "entity_id": "switch.presa", "changes": {} }));
+    aspetta_nome_nel_catalogo(&mut p, "switch.presa", "Presa asciugatrice Interruttore").await;
+    assert_eq!(ha.get_states(), 1, "senza lettura completa");
+}
+
+/// Giro di correzioni 1 del 14h, I2: un evento che arriva mentre i registri si stanno leggendo
+/// (qui dopo la risposta a `device_registry/list` e prima di quella, ritardata, del registro delle
+/// entità) non si decide sui registri vecchi: si rileggono i registri dopo.
+#[tokio::test]
+async fn evento_durante_la_lettura_dei_registri_non_si_perde() {
+    let ha = FintoHa::avvia().await;
+    let dispositivo = |area: &str| json!({ "id": "lampada", "name": "Lampada", "name_by_user": null, "area_id": area, "disabled_by": null });
+    let mut luce = entry("light.cucina", "cucina");
+    luce["device_id"] = json!("lampada");
+    ha.contatori.voci_sostituite.lock().unwrap().insert("light.cucina".into(), luce.clone());
+    *ha.contatori.dispositivi.lock().unwrap() = vec![dispositivo("cucina")];
+    ha.contatori.aree_extra.lock().unwrap().push(json!({ "area_id": "salotto", "name": "Salotto" }));
+    let mut p = prepara(&ha.url, Some(TOKEN));
+    p.servizio.connetti_attivo();
+    aspetta_dati(&mut p).await;
+    aspetta_iscrizione(&ha, 1).await;
+    // 1. La luce perde la stanza propria (prende quella del dispositivo): lettura dei registri.
+    luce["area_id"] = Value::Null;
+    ha.contatori.voci_sostituite.lock().unwrap().insert("light.cucina".into(), luce);
+    ha.contatori.ritardo_voci_ms.store(400, Ordering::SeqCst);
+    // 2. Durante quella lettura il dispositivo va in salotto.
+    let evento = json!({ "id": 1, "type": "event", "event": { "event_type": "device_registry_updated",
+        "data": { "action": "update", "device_id": "lampada", "changes": { "area_id": "cucina" } } } });
+    *ha.contatori.dopo_dispositivi.lock().unwrap() = Some((vec![dispositivo("salotto")], evento.to_string()));
+    ha.manda_evento("entity_registry_updated", json!({ "action": "update", "entity_id": "light.cucina", "changes": { "area_id": "cucina" } }));
+    let fine = Instant::now() + Duration::from_secs(6);
+    loop {
+        let d = timeout_at(fine, aspetta_dati(&mut p)).await.expect("la luce non è mai arrivata in salotto");
+        if d.rooms.iter().any(|r| r.area_id == "salotto" && r.entities.iter().any(|e| e.entity_id() == "light.cucina")) {
+            break;
+        }
+    }
+    assert_eq!(ha.get_states(), 1, "solo registri");
+}
+
+/// Giro di correzioni 1 del 14h, M4: se la lettura dei soli registri fallisce si rilegge tutto.
+#[tokio::test]
+async fn lettura_dei_registri_fallita_rilegge_tutto() {
+    let ha = FintoHa::avvia().await;
+    let mut p = prepara(&ha.url, Some(TOKEN));
+    p.servizio.connetti_attivo();
+    aspetta_dati(&mut p).await;
+    aspetta_iscrizione(&ha, 1).await;
+    ha.contatori.voci_da_rifiutare.store(1, Ordering::SeqCst);
+    ha.manda_evento("entity_registry_updated", json!({ "action": "update", "entity_id": "light.cucina", "changes": { "name": null } }));
+    aspetta(|| ha.get_states() == 2, "lettura completa dopo il rifiuto").await;
+    assert_eq!(ha.letture_registri(), 3, "prima, rifiutata, completa");
 }
 
 /// Un cambio avvenuto mentre la lettura completa è in volo non si perde: l'iscrizione parte dopo

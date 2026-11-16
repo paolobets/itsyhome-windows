@@ -57,6 +57,9 @@ pub enum Rilettura {
 const CAMPI_VISIBILITA: [&str; 5] = ["disabled_by", "hidden_by", "entity_category", "device_class", "original_device_class"];
 /// I campi del registro delle entità che cambiano come un'entità mostrata appare o dove.
 const CAMPI_ASPETTO: [&str; 3] = ["name", "area_id", "device_id"];
+/// I campi da cui HA compone il `friendly_name` dello stato (il nome mostrato quando l'utente non
+/// ne ha scelto uno): il nome dell'integrazione, la sua traduzione, il nome col dispositivo.
+const CAMPI_NOME: [&str; 3] = ["original_name", "translation_key", "has_entity_name"];
 /// I domini che l'app può mostrare (gli stessi di `mapper`): gli altri non contano mai.
 const DOMINI_MOSTRABILI: [&str; 13] = [
     "light", "switch", "input_boolean", "climate", "cover", "lock", "fan", "humidifier", "valve",
@@ -118,7 +121,20 @@ impl CambioRegistro {
     /// La lettura che serve. `mostrata(entity_id)`: l'app mostra l'entità (anche se nascosta
     /// dall'utente: è nel catalogo delle Impostazioni) o la segue.
     pub fn rilettura(&self, indici: &Indici, mostrata: &dyn Fn(&str) -> bool) -> Rilettura {
+        self.decidi(Some(indici), mostrata)
+    }
+
+    /// La lettura che serve senza registri affidabili (una lettura dei registri in volo o in coda,
+    /// nessun dato ancora): si decide solo da azione, campi e dominio, e ciò che dipenderebbe dai
+    /// registri o dalle entità mostrate rilegge i registri (giro di correzioni 1, I2).
+    pub fn rilettura_prudente(&self) -> Rilettura {
+        self.decidi(None, &|_| true)
+    }
+
+    /// `indici` assente: ogni domanda sui registri ha la risposta che fa rileggere.
+    fn decidi(&self, indici: Option<&Indici>, mostrata: &dyn Fn(&str) -> bool) -> Rilettura {
         let tocca = |campi: &[String], quali: &[&str]| campi.iter().any(|c| quali.contains(&c.as_str()));
+        let si_se = |b: bool| if b { Rilettura::Registri } else { Rilettura::Niente };
         match self {
             CambioRegistro::Entita { azione, entity_id, campi, rinominata } => {
                 let d = dominio(entity_id);
@@ -128,40 +144,52 @@ impl CambioRegistro {
                 if !aggiornamento && !DOMINI_MOSTRABILI.contains(&d) {
                     return Rilettura::Niente;
                 }
+                // Mostrata (o seguita), o sconosciuta ai registri in memoria (vecchi?).
+                let conta = || mostrata(entity_id) || indici.is_none_or(|i| i.voce(entity_id).is_none());
                 match azione {
                     Azione::Crea => Rilettura::Tutto,
                     // Il suo stato esce con `r` dall'iscrizione; i registri tolgono la sua voce.
-                    Azione::Togli if mostrata(entity_id) => Rilettura::Registri,
-                    Azione::Togli | Azione::Riordina => Rilettura::Niente,
+                    Azione::Togli => si_se(mostrata(entity_id)),
+                    Azione::Riordina => Rilettura::Niente,
                     // Rinominata: l'entity_id nuovo ha uno stato che l'app non ha.
                     Azione::Aggiorna if *rinominata => Rilettura::Tutto,
                     Azione::Aggiorna if aggiornamento => {
                         if tocca(campi, &CAMPI_VISIBILITA) { Rilettura::Tutto } else { Rilettura::Niente }
                     }
-                    Azione::Aggiorna => {
-                        let conta = tocca(campi, &CAMPI_VISIBILITA)
-                            || (tocca(campi, &CAMPI_ASPETTO) && (mostrata(entity_id) || indici.voce(entity_id).is_none()));
-                        if conta { Rilettura::Registri } else { Rilettura::Niente }
-                    }
+                    Azione::Aggiorna => si_se(
+                        tocca(campi, &CAMPI_VISIBILITA)
+                            // `changes` vuoto: HA ha tolto `compat_name`/`original_name_unprefixed`,
+                            // cioè è cambiato il nome composto (dispositivo rinominato).
+                            || ((campi.is_empty() || tocca(campi, &CAMPI_ASPETTO) || tocca(campi, &CAMPI_NOME)) && conta()),
+                    ),
                 }
             }
             CambioRegistro::Dispositivo { azione, device_id, campi } => {
-                // Conta solo se ha entità mostrate che prendono la stanza da lui. Nome, versioni,
-                // connessioni non li mostra nessuno; disattivarlo disattiva le sue entità, che
-                // mandano il loro evento.
-                let usato = || {
-                    indici
-                        .voci_del_dispositivo(device_id)
-                        .any(|e| mostrata(&e.entity_id) && e.area_id.as_deref().is_none_or(str::is_empty))
+                // Le entità mostrate del dispositivo e dei suoi figli (HA 2026.9+), con `stanza`:
+                // solo quelle che prendono la stanza da lui (né la loro né quella del figlio).
+                let usato = |stanza: bool| {
+                    let Some(i) = indici else { return true };
+                    let proprie = i.voci_del_dispositivo(device_id).map(|e| (e, None));
+                    let dei_figli = i.figli(device_id).flat_map(|f| i.voci_del_dispositivo(&f.id).map(move |e| (e, Some(f))));
+                    proprie.chain(dei_figli).any(|(e, figlio)| {
+                        let libera = e.area_id.as_deref().is_none_or(str::is_empty)
+                            && figlio.is_none_or(|f| f.area_id.as_deref().is_none_or(str::is_empty));
+                        mostrata(&e.entity_id) && (!stanza || libera)
+                    })
                 };
                 match azione {
-                    Azione::Aggiorna if tocca(campi, &["area_id"]) && usato() => Rilettura::Registri,
-                    Azione::Togli if usato() => Rilettura::Registri,
+                    // Stanza propria, o padre cambiato (un figlio senza stanza prende la sua).
+                    Azione::Aggiorna if tocca(campi, &["area_id", "parent_device_id"]) && usato(true) => Rilettura::Registri,
+                    // Con `has_entity_name` il nome del dispositivo è parte di quello dell'entità.
+                    Azione::Aggiorna if tocca(campi, &["name", "name_by_user"]) && usato(false) => Rilettura::Registri,
+                    Azione::Togli if usato(false) => Rilettura::Registri,
+                    // Versioni, connessioni, `disabled_by` (HA manda gli eventi delle sue entità):
+                    // nessuno li mostra. Un dispositivo nuovo non ha ancora entità.
                     _ => Rilettura::Niente,
                 }
             }
             CambioRegistro::Area { azione, area_id } => match (azione, area_id) {
-                (Azione::Aggiorna | Azione::Togli, Some(a)) if indici.ha_area(a) => Rilettura::Registri,
+                (Azione::Aggiorna | Azione::Togli, Some(a)) => si_se(indici.is_none_or(|i| i.ha_area(a))),
                 _ => Rilettura::Niente,
             },
         }
@@ -191,27 +219,49 @@ mod test {
     }
 
     fn dispositivo(id: &str, area: Option<&str>) -> HaDevice {
-        HaDevice { id: id.into(), name: "D".into(), name_by_user: None, area_id: area.map(Into::into), disabled_by: None }
+        HaDevice {
+            id: id.into(),
+            name: "D".into(),
+            name_by_user: None,
+            area_id: area.map(Into::into),
+            disabled_by: None,
+            parent_device_id: None,
+        }
+    }
+
+    fn figlio(id: &str, padre: &str, area: Option<&str>) -> HaDevice {
+        HaDevice { parent_device_id: Some(padre.into()), ..dispositivo(id, area) }
     }
 
     /// Una casa: la luce della cucina (mostrata, sul dispositivo «lampada» in cucina), un sensore
     /// di potenza (non mostrato) sul dispositivo «presa», un segnale wifi in diagnostica sul
-    /// dispositivo «router», un'automazione.
+    /// dispositivo «router», un'automazione; un «hub» con due dispositivi figli (HA 2026.9+): «canale1»
+    /// senza stanza (prende quella dell'hub) con la luce mostrata «light.canale1», «canale2» con
+    /// la sua stanza e la luce mostrata «light.canale2».
     fn indici() -> Indici {
         Indici::new(
             vec![HaArea { area_id: "cucina".into(), name: "Cucina".into() }],
-            vec![dispositivo("lampada", Some("cucina")), dispositivo("presa", None), dispositivo("router", None)],
+            vec![
+                dispositivo("lampada", Some("cucina")),
+                dispositivo("presa", None),
+                dispositivo("router", None),
+                dispositivo("hub", Some("cucina")),
+                figlio("canale1", "hub", None),
+                figlio("canale2", "hub", Some("cucina")),
+            ],
             vec![
                 voce("light.cucina", Some("lampada"), None),
                 voce("sensor.potenza", Some("presa"), None),
                 voce("sensor.wifi", Some("router"), None),
                 voce("automation.sera", None, None),
+                voce("light.canale1", Some("canale1"), None),
+                voce("light.canale2", Some("canale2"), None),
             ],
         )
     }
 
     fn mostrata(id: &str) -> bool {
-        id == "light.cucina"
+        ["light.cucina", "light.canale1", "light.canale2"].contains(&id)
     }
 
     fn decidi(tipo: &str, data: Value) -> Rilettura {
@@ -257,14 +307,83 @@ mod test {
     /// I casi visti sulla casa vera: dispositivi e entità aggiornati in campi che l'app non usa.
     #[test]
     fn campi_che_l_app_non_usa_non_fanno_rileggere() {
-        for campo in ["sw_version", "hw_version", "connections", "identifiers", "config_entries", "name", "name_by_user", "disabled_by"] {
+        for campo in ["sw_version", "hw_version", "connections", "identifiers", "config_entries", "disabled_by"] {
             let data = json!({ "action": "update", "device_id": "lampada", "changes": { campo: "x" } });
             assert_eq!(decidi(DISPOSITIVO, data), Rilettura::Niente, "dispositivo {campo}");
         }
-        for campo in ["options", "capabilities", "supported_features", "original_name", "original_icon", "icon", "unit_of_measurement", "aliases", "labels", "translation_key", "config_entry_id"] {
+        for campo in ["options", "capabilities", "supported_features", "original_icon", "icon", "unit_of_measurement", "aliases", "labels", "config_entry_id"] {
             let data = json!({ "action": "update", "entity_id": "light.cucina", "changes": { campo: "x" } });
             assert_eq!(decidi(ENTITA, data), Rilettura::Niente, "entità {campo}");
         }
+    }
+
+    /// Giro di correzioni 1, I1: tutto ciò che può cambiare un nome mostrato (anche nelle
+    /// Impostazioni, anche di un'entità nascosta dall'utente) rilegge i registri: il nome dato
+    /// dall'integrazione (`original_name`, `translation_key`), `has_entity_name`, un aggiornamento
+    /// con `changes` vuoto (HA toglie `compat_name` e `original_name_unprefixed` prima dell'evento),
+    /// il nome del dispositivo (con `has_entity_name` è parte del nome dell'entità).
+    #[test]
+    fn i_nomi_mostrati_rileggono_i_registri() {
+        for campo in ["original_name", "translation_key", "has_entity_name"] {
+            let data = json!({ "action": "update", "entity_id": "light.cucina", "changes": { campo: "x" } });
+            assert_eq!(decidi(ENTITA, data), Rilettura::Registri, "entità {campo}");
+        }
+        let data = json!({ "action": "update", "entity_id": "light.cucina", "changes": {} });
+        assert_eq!(decidi(ENTITA, data), Rilettura::Registri, "changes vuoto");
+        for campo in ["name", "name_by_user"] {
+            let data = json!({ "action": "update", "device_id": "lampada", "changes": { campo: "x" } });
+            assert_eq!(decidi(DISPOSITIVO, data), Rilettura::Registri, "dispositivo {campo}");
+            // Anche l'hub: il nome del padre fa parte di quello dei figli.
+            let data = json!({ "action": "update", "device_id": "hub", "changes": { campo: "x" } });
+            assert_eq!(decidi(DISPOSITIVO, data), Rilettura::Registri, "hub {campo}");
+            // Un dispositivo senza entità mostrate no.
+            let data = json!({ "action": "update", "device_id": "presa", "changes": { campo: "x" } });
+            assert_eq!(decidi(DISPOSITIVO, data), Rilettura::Niente, "presa {campo}");
+        }
+        // Entità non mostrate: il loro nome non si vede da nessuna parte.
+        let data = json!({ "action": "update", "entity_id": "sensor.potenza", "changes": { "original_name": "x" } });
+        assert_eq!(decidi(ENTITA, data), Rilettura::Niente);
+        let data = json!({ "action": "update", "entity_id": "sensor.potenza", "changes": {} });
+        assert_eq!(decidi(ENTITA, data), Rilettura::Niente);
+    }
+
+    /// Giro di correzioni 1: un dispositivo figlio senza stanza prende quella del padre (HA
+    /// 2026.9+, `async_get_effective_area_id`): la stanza dell'hub conta per le entità del figlio.
+    #[test]
+    fn la_stanza_del_padre_conta_per_i_figli() {
+        let data = json!({ "action": "update", "device_id": "hub", "changes": { "area_id": "cucina" } });
+        assert_eq!(decidi(DISPOSITIVO, data), Rilettura::Registri);
+        // Un figlio che cambia padre.
+        let data = json!({ "action": "update", "device_id": "canale1", "changes": { "parent_device_id": "altro" } });
+        assert_eq!(decidi(DISPOSITIVO, data), Rilettura::Registri);
+        let data = json!({ "action": "remove", "device_id": "hub", "device": {} });
+        assert_eq!(decidi(DISPOSITIVO, data), Rilettura::Registri);
+        // Solo «canale2» (con la sua stanza) sotto un altro padre: la stanza del padre non conta.
+        let indici = Indici::new(
+            vec![],
+            vec![dispositivo("hub", None), figlio("canale2", "hub", Some("cucina"))],
+            vec![voce("light.canale2", Some("canale2"), None)],
+        );
+        let c = leggi(DISPOSITIVO, &json!({ "action": "update", "device_id": "hub", "changes": { "area_id": "x" } })).unwrap();
+        assert_eq!(c.rilettura(&indici, &mostrata), Rilettura::Niente);
+    }
+
+    /// Giro di correzioni 1, I2: senza registri affidabili (una lettura in volo o in coda) si
+    /// decide solo dai campi e dal dominio: ciò che dipenderebbe dai registri rilegge i registri.
+    #[test]
+    fn decisione_prudente_senza_registri() {
+        let prudente = |tipo: &str, data: Value| leggi(tipo, &data).unwrap().rilettura_prudente();
+        // Dai soli campi e dominio: come sempre.
+        assert_eq!(prudente(DISPOSITIVO, json!({ "action": "update", "device_id": "x", "changes": { "sw_version": "1" } })), Rilettura::Niente);
+        assert_eq!(prudente(ENTITA, json!({ "action": "update", "entity_id": "light.x", "changes": { "options": {} } })), Rilettura::Niente);
+        assert_eq!(prudente(ENTITA, json!({ "action": "update", "entity_id": "automation.x", "changes": { "name": "x" } })), Rilettura::Niente);
+        assert_eq!(prudente(AREA, json!({ "action": "reorder", "area_id": null })), Rilettura::Niente);
+        assert_eq!(prudente(ENTITA, json!({ "action": "create", "entity_id": "light.nuova" })), Rilettura::Tutto);
+        // Dai registri o dalle entità mostrate: si rileggono i registri.
+        assert_eq!(prudente(DISPOSITIVO, json!({ "action": "update", "device_id": "presa", "changes": { "area_id": null } })), Rilettura::Registri);
+        assert_eq!(prudente(ENTITA, json!({ "action": "update", "entity_id": "sensor.potenza", "changes": { "name": null } })), Rilettura::Registri);
+        assert_eq!(prudente(ENTITA, json!({ "action": "remove", "entity_id": "sensor.potenza" })), Rilettura::Registri);
+        assert_eq!(prudente(AREA, json!({ "action": "update", "area_id": "nuova" })), Rilettura::Registri);
     }
 
     #[test]

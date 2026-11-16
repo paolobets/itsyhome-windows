@@ -120,6 +120,23 @@ impl Indici {
     pub fn ha_area(&self, area_id: &str) -> bool {
         self.areas.contains_key(area_id)
     }
+
+    /// I dispositivi figli di un dispositivo (HA 2026.9+, `parent_device_id`).
+    pub fn figli<'a>(&'a self, device_id: &'a str) -> impl Iterator<Item = &'a HaDevice> + 'a {
+        self.devices.values().filter(move |d| d.parent_device_id.as_deref() == Some(device_id))
+    }
+
+    /// La stanza di un dispositivo come la risolve HA (`async_get_effective_area_id` di
+    /// `helpers/device_registry.py`): la sua, altrimenti, per un figlio, quella del padre (un solo
+    /// livello).
+    pub fn area_del_dispositivo(&self, device_id: &str) -> Option<&str> {
+        let d = self.devices.get(device_id)?;
+        if let Some(a) = d.area_id.as_deref() {
+            return Some(a);
+        }
+        let padre = self.devices.get(d.parent_device_id.as_deref()?)?;
+        padre.area_id.as_deref()
+    }
 }
 
 fn registro_mostrabile(e: &HaEntityEntry) -> bool {
@@ -481,8 +498,8 @@ impl EntityMapper {
             if let Some(aid) = entry.area_id.as_ref().filter(|a| !a.is_empty()) {
                 return Some(aid.clone());
             }
-            let did = entry.device_id.as_ref()?;
-            indici.devices.get(did.as_str())?.area_id.clone()
+            // La stanza del dispositivo, o del padre per un figlio (HA 2026.9+).
+            indici.area_del_dispositivo(entry.device_id.as_deref()?).map(str::to_owned)
         });
         self.map_entity(state, entry, area_id)
     }
@@ -812,6 +829,34 @@ mod tests {
 
     fn area(id: &str, nome: &str) -> HaArea {
         HaArea { area_id: id.to_owned(), name: nome.to_owned() }
+    }
+
+    /// Giro di correzioni 1 del 14h: un dispositivo figlio (HA 2026.9+) senza stanza prende quella
+    /// del padre, come `async_get_effective_area_id`; con la sua stanza vale la sua; un livello solo.
+    #[test]
+    fn i_dispositivi_figli_prendono_la_stanza_del_padre() {
+        let dispositivo = |id: &str, area: Option<&str>, padre: Option<&str>| HaDevice {
+            id: id.into(),
+            name: id.into(),
+            name_by_user: None,
+            area_id: area.map(Into::into),
+            disabled_by: None,
+            parent_device_id: padre.map(Into::into),
+        };
+        let su = |entita: &str, d: &str| HaEntityEntry { device_id: Some(d.into()), ..voce(entita, None) };
+        let indici = Indici::new(
+            vec![area("cucina", "Cucina"), area("bagno", "Bagno")],
+            vec![
+                dispositivo("hub", Some("cucina"), None),
+                dispositivo("canale1", None, Some("hub")),
+                dispositivo("canale2", Some("bagno"), Some("hub")),
+            ],
+            vec![su("light.canale1", "canale1"), su("light.canale2", "canale2")],
+        );
+        let m = EntityMapper::new();
+        let area_di = |id: &str| m.mappa_entita(&indici, &stato(id)).and_then(|e| entity_base_area_id(&e).map(str::to_owned));
+        assert_eq!(area_di("light.canale1").as_deref(), Some("cucina"), "dal padre");
+        assert_eq!(area_di("light.canale2").as_deref(), Some("bagno"), "la sua");
     }
 
     fn config(unita: &str) -> HaConfig {

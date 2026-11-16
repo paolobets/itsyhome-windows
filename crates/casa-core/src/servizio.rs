@@ -712,6 +712,15 @@ impl Motore {
     /// Cosa rileggere dopo un evento di un registro (Task 14h). Senza dati in memoria non si sa
     /// cosa l'app mostra: si rilegge tutto, come prima.
     fn rilettura_per(&self, c: &CambioRegistro) -> Rilettura {
+        // Una lettura in volo o in coda: i registri in memoria possono essere di prima dell'evento
+        // (HA può averlo mandato dopo una delle risposte). Si decide dai soli campi e dominio, e
+        // ciò che dipende dai registri li rilegge dopo (giro di correzioni 1, I2). Durante la prima
+        // lettura (nessun dato ancora) basta lo stesso: porterà comunque gli stati di adesso (M3).
+        let lettura_pendente =
+            self.in_lettura || self.rilettura_registri != Rilettura::Niente || self.rileggi_dopo != Rilettura::Niente;
+        if lettura_pendente {
+            return c.rilettura_prudente();
+        }
         let Some(casa) = &self.casa else { return Rilettura::Tutto };
         let mostrata = |id: &str| {
             casa.stato(id).is_some_and(|s| self.mapper.mappa_entita(&casa.indici, s).is_some())
@@ -783,37 +792,37 @@ impl Motore {
         }
     }
 
-    /// Le entità da seguire: quelle che l'app mostra (preferiti, stanze, scene, telecamere), le
-    /// voci del registro che mostrerà appena avranno uno stato (salvo quelle nascoste dall'utente)
-    /// e gli `update.*`, che contano gli aggiornamenti in `MenuData`.
-    fn da_seguire(casa: &Casa, nascoste: &[String]) -> BTreeSet<String> {
+    /// Le entità da seguire: quelle che l'app mostra (preferiti, stanze, scene, telecamere, e il
+    /// catalogo delle Impostazioni, dove ci sono anche quelle nascoste dall'utente), le voci del
+    /// registro che mostrerà appena avranno uno stato e gli `update.*`, che contano gli
+    /// aggiornamenti in `MenuData`. Le nascoste dall'utente si seguono (giro di correzioni 1 del
+    /// 14h): il loro nome nelle Impostazioni viene dal `friendly_name` dello stato, che HA riscrive
+    /// quando l'integrazione o il dispositivo cambiano nome; e mostrandole lo stato è già quello di
+    /// adesso.
+    fn da_seguire(casa: &Casa) -> BTreeSet<String> {
         let m = &casa.menu;
-        let nascosta = |id: &str| nascoste.iter().any(|n| n == id);
         m.favorites
             .iter()
             .chain(m.rooms.iter().flat_map(|r| &r.entities))
             .chain(&m.cameras)
             .map(|e| e.entity_id().to_owned())
             .chain(m.scenes.iter().map(|s| s.base.entity_id.clone()))
-            .chain(casa.indici.mostrabili_dal_registro().filter(|id| !nascosta(id)).map(str::to_owned))
+            .chain(m.catalogo.iter().flat_map(|s| &s.voci).map(|v| v.entity_id.clone()))
+            .chain(casa.indici.mostrabili_dal_registro().map(str::to_owned))
             .chain(casa.stati.iter().filter(|s| s.entity_id.starts_with("update.")).map(|s| s.entity_id.clone()))
             .collect()
     }
 
     /// Rifà l'iscrizione `subscribe_entities` se cambiano le entità da seguire, o sempre se
     /// `sempre` (dopo una lettura completa: il primo evento porta gli stati di adesso). Fra due
-    /// letture un'entità seguita che non c'è più (tolta con `r`) resta seguita, salvo che l'utente
-    /// l'abbia nascosta: se torna (un ricaricamento) HA la rimanda con `a`.
+    /// letture un'entità seguita che non c'è più (tolta con `r`) resta seguita: se torna (un
+    /// ricaricamento) HA la rimanda con `a`.
     fn segui(&mut self, sempre: bool) {
         let (Some(casa), Some((client, _))) = (&self.casa, &self.client) else { return };
-        let nascoste = blocca(&self.config).hidden_entities.clone();
-        let mut ids = Self::da_seguire(casa, &nascoste);
+        let mut ids = Self::da_seguire(casa);
         if !sempre {
             if let Some(prima) = &self.seguite {
-                let tolte = prima
-                    .iter()
-                    .filter(|id| casa.stato(id).is_none() && !nascoste.contains(id))
-                    .cloned();
+                let tolte = prima.iter().filter(|id| casa.stato(id).is_none()).cloned();
                 ids.extend(tolte.collect::<Vec<_>>());
             }
         }
