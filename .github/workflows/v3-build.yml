@@ -4,9 +4,9 @@ name: v3 build
 
 on:
   push:
-    branches: [v3-assistente]
+    branches: [v3-assistente, main]
   pull_request:
-    branches: [v3-assistente]
+    branches: [v3-assistente, main]
   workflow_dispatch:
 
 permissions:

@@ -395,7 +395,7 @@ export component Pannello inherits Window {
     }
 
     function vai(v: string) {
-        // La vista che se ne va (con «In attesa» e «Indietro») può avere l'elemento col fuoco:
+        // La vista che se ne va (con «In attesa»; «Indietro» non c'è più) può avere l'elemento col fuoco:
         // distrutto lui, il pannello resterebbe senza fuoco e senza tastiera. Il fuoco passa prima
         // a `tasti`; l'elemento scelto nella vista nuova lo riprende da sé (`Fuoco`). Il dock resta.
         if (zona != Zona.dock) {

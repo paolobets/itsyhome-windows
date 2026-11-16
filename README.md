@@ -17,6 +17,7 @@ Sul ramo `v3-assistente` nasce la v3: un assistente «isola» sempre presente in
 
 - **Pillola** di 124 × 32 con due occhi che cambiano umore; si allarga quando qualcosa chiede attenzione e si può ritirare in una linea sottile.
 - **Pannello** 800 × 300 al bordo alto: riga «In attesa», layout Orologio e Quadranti, app Casa e PC, Impostazioni in una finestra dedicata.
+- **Menu ed «Esci»**: il menu dell'isola (Impostazioni, Informazioni, Ritira l'isola, Esci) sta nel «⋯» in alto a destra del pannello; il clic destro sulla pillola non fa nulla. L'icona nella barra è facoltativa e spenta di serie (Impostazioni › Sistema). Fuori da Windows, dove menu e icona non ci sono, «Esci» sta in Impostazioni › Sistema.
 - **Finestra di gestione** in un processo separato (`itsyhome-gestione`), con riquadro web senza JavaScript e senza risorse remote.
 - Home Assistant solo via eventi WebSocket (nessun polling); token nell'archivio sicuro del sistema (Gestione credenziali su Windows), mai nel file di configurazione.
 - Rust + [Slint](https://slint.dev) (renderer Skia software) e wry; workspace in `crates/` (`casa-core`, `assistente`, `gestione`, `gestione-protocollo`). La v2 in `src-tauri/` resta fuori dal workspace.

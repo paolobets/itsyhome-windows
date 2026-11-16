@@ -270,7 +270,7 @@ mod test {
 
     #[test]
     fn il_menu_del_pannello_senza_apri_con_impostazioni_in_testa() {
-        // Task 14i: dal «⋯» del pannello (già aperto) niente «Apri»; il resto come nella pillola.
+        // Task 14i: dal «⋯» del pannello (già aperto) niente «Apri»; il resto come nel menu dell'icona nella barra.
         let testi: Vec<&str> = voci_pannello(false).iter().map(|(_, t)| *t).collect();
         assert_eq!(testi, ["Impostazioni", "Informazioni", "Ritira l'isola", "Esci"]);
         assert_eq!(voci_pannello(true)[2], (Comando::Ritirata, "Mostra l'isola"));
