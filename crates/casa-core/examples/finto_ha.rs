@@ -14,6 +14,8 @@
 //!         più qualche cambio su entità mostrate (vedi `raffica`);
 //!     --casa-grande <n>: <n> entità in più con attributi da casa vera (vedi `casa_grande`).
 //!     --lenta <ms>: ogni comando risponde (e manda il suo state_changed) dopo <ms> millisecondi.
+//!     --registro <s>: ogni <s> secondi un `entity_registry_updated` (a chi vi è iscritto), come
+//!         un'integrazione che riscrive il registro; serve a provare il registro diagnostico.
 //! cargo run -p casa-core --example finto_ha -- pulisci
 //!     cancella il token finto dal portachiavi
 //! ```
@@ -480,6 +482,8 @@ async fn servi(
     let mut iscrizione: Option<Value> = None;
     // Le altre iscrizioni: `state_changed` intero e `subscribe_entities` (id, entità seguite).
     let mut con_state_changed = false;
+    // Gli altri eventi del bus seguiti (`subscribe_events`): tipo → id dell'iscrizione.
+    let mut eventi_seguiti: BTreeMap<String, Value> = BTreeMap::new();
     let mut seguite: Option<(Value, BTreeSet<String>)> = None;
     let Ok(ws) = tokio_tungstenite::accept_async(tcp).await else { return };
     let (mut tx, mut rx) = ws.split();
@@ -534,6 +538,10 @@ async fn servi(
                 }
                 if v["type"] == "subscribe_events" && v["event_type"] == "state_changed" {
                     con_state_changed = true;
+                } else if v["type"] == "subscribe_events" {
+                    if let Some(t) = v["event_type"].as_str() {
+                        eventi_seguiti.insert(t.to_owned(), v["id"].clone());
+                    }
                 }
                 if v["type"] == "persistent_notification/subscribe" {
                     let id = v["id"].clone();
@@ -567,7 +575,15 @@ async fn servi(
                     Err(_) => return,
                 };
                 // Come HA: a ognuno solo ciò a cui è iscritto. Le entità che non segue non gli arrivano.
-                let Ok(v) = serde_json::from_str::<Value>(&e) else { continue };
+                let Ok(mut v) = serde_json::from_str::<Value>(&e) else { continue };
+                // Un evento del bus che non è un cambio di stato: a chi è iscritto a quel tipo.
+                if let Some(t) = v["event"]["event_type"].as_str().filter(|t| *t != "state_changed") {
+                    if let Some(id) = eventi_seguiti.get(t) {
+                        v["id"] = id.clone();
+                        if tx.send(testo(v)).await.is_err() { return; }
+                    }
+                    continue;
+                }
                 if con_state_changed && tx.send(Message::Text(e.into())).await.is_err() { return; }
                 let data = &v["event"]["data"];
                 let Some((id, ids)) = &seguite else { continue };
@@ -640,6 +656,7 @@ fn main() -> Result<(), String> {
             };
             let raffica_al_secondo = numero("--raffica");
             let lenta = Duration::from_millis(numero("--lenta").unwrap_or(0).into());
+            let registro_ogni = secondi("--registro");
             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
             rt.block_on(async move {
                 let listener = TcpListener::bind(("127.0.0.1", porta)).await.map_err(|e| e.to_string())?;
@@ -656,6 +673,18 @@ fn main() -> Result<(), String> {
                 let (eventi, _) = broadcast::channel(1024);
                 if let Some(n) = raffica_al_secondo {
                     tokio::spawn(raffica(stati.clone(), eventi.clone(), n));
+                }
+                if let Some(ogni) = registro_ogni {
+                    let tx = eventi.clone();
+                    tokio::spawn(async move {
+                        let mut passo = tokio::time::interval_at(tokio::time::Instant::now() + ogni, ogni);
+                        loop {
+                            passo.tick().await;
+                            let data = json!({ "action": "update", "entity_id": "light.soggiorno", "changes": { "name": null } });
+                            let e = json!({ "type": "event", "event": { "event_type": "entity_registry_updated", "data": data } });
+                            let _ = tx.send(e.to_string());
+                        }
+                    });
                 }
                 let notifiche: Notifiche = Arc::default();
                 let (notifiche_tx, _) = broadcast::channel(64);
@@ -683,6 +712,6 @@ fn main() -> Result<(), String> {
                 }
             })
         }
-        None => Err("uso: finto_ha <porta> [--con-notifica] [--notifica-dopo <s>] [--rimuovi-dopo <s>] [--raffica <n>] [--casa-grande <n>] [--lenta <ms>] | prepara <cartella> <porta> [--preferiti] | pulisci".into()),
+        None => Err("uso: finto_ha <porta> [--con-notifica] [--notifica-dopo <s>] [--rimuovi-dopo <s>] [--raffica <n>] [--casa-grande <n>] [--lenta <ms>] [--registro <s>] | prepara <cartella> <porta> [--preferiti] | pulisci".into()),
     }
 }
