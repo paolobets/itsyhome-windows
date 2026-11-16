@@ -241,6 +241,20 @@ fn diff_compresso(data: &Value) -> Value {
     json!({ "c": { id: diff } })
 }
 
+/// Toglie uno al contatore se è sopra zero; vero se l'ha tolto. Scritta a mano invece di
+/// `fetch_update` (deprecata in Rust 1.100, che la rinomina `try_update`, assente in 1.94):
+/// compila uguale sul PC e nella CI.
+fn togli_uno(contatore: &AtomicUsize) -> bool {
+    let mut n = contatore.load(Ordering::SeqCst);
+    while n > 0 {
+        match contatore.compare_exchange(n, n - 1, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => return true,
+            Err(attuale) => n = attuale,
+        }
+    }
+    false
+}
+
 fn risposta(v: &Value, contatori: &Contatori) -> Value {
     let id = v["id"].clone();
     let ok = |r: Value| json!({ "id": id, "type": "result", "success": true, "result": r });
@@ -248,7 +262,7 @@ fn risposta(v: &Value, contatori: &Contatori) -> Value {
         "get_states" => {
             contatori.get_states.fetch_add(1, Ordering::SeqCst);
             let da_rifiutare = &contatori.stati_da_rifiutare;
-            if da_rifiutare.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_ok() {
+            if togli_uno(da_rifiutare) {
                 return json!({ "id": id, "type": "result", "success": false,
                                "error": { "code": "unknown_error", "message": "Errore finto" } });
             }
@@ -263,7 +277,7 @@ fn risposta(v: &Value, contatori: &Contatori) -> Value {
         "config/entity_registry/list" => {
             contatori.letture_registri.fetch_add(1, Ordering::SeqCst);
             let da_rifiutare = &contatori.voci_da_rifiutare;
-            if da_rifiutare.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_ok() {
+            if togli_uno(da_rifiutare) {
                 return json!({ "id": id, "type": "result", "success": false,
                                "error": { "code": "unknown_error", "message": "Errore finto" } });
             }
