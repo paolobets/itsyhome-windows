@@ -22,8 +22,10 @@
 //!   restituisce un `RadioAccessStatus`; `Allowed` vuol dire «richiesta accettata», il passaggio
 //!   avviene dopo, e hardware o criteri possono lasciarla com'era: lo stato vero si conferma con
 //!   `StateChanged` (o rileggendo `State`). Niente raffiche di On/Off: i comandi passano uno alla
-//!   volta dal thread `radio`, e dopo un `Allowed` lo stato si rilegge una volta dopo
-//!   `VERIFICA_DOPO` (nel caso `StateChanged` non arrivi mai).
+//!   volta dal thread `radio`. Dopo un `Allowed` l'esito resta in sospeso: è `Fatto` appena uno
+//!   `StateChanged` porta la radio nello stato voluto; altrimenti, dopo `VERIFICA_DOPO`, lo stato
+//!   si rilegge e `esito_cambio` decide: se la radio è rimasta com'era (criteri, modalità aereo,
+//!   interruttore fisico) è un rifiuto silenzioso → `Negato`, come un rifiuto esplicito.
 //! - `Radio.StateChanged`: un gestore per radio (`TypedEventHandler<Radio, IInspectable>`), tolto
 //!   con `RemoveStateChanged(cookie)` prima di lasciare la radio. Il gestore qui fa solo un `send`
 //!   al thread `radio`.
@@ -83,8 +85,8 @@ pub fn tacche_da(barre: Option<u8>) -> u8 {
 #[cfg(windows)]
 pub const TACCHE_OGNI: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// Dopo un cambio accettato (`Allowed`) lo stato si rilegge una volta, nel caso `StateChanged`
-/// non arrivi (hardware o criteri l'hanno lasciata com'era).
+/// Dopo un cambio accettato (`Allowed`) senza uno `StateChanged` nello stato voluto, lo stato si
+/// rilegge una volta dopo questo tempo e si decide l'esito (`esito_cambio`).
 #[cfg(windows)]
 const VERIFICA_DOPO: std::time::Duration = std::time::Duration::from_secs(3);
 
@@ -124,6 +126,18 @@ pub fn esito_da(stato_accesso: i32) -> EsitoRadio {
     }
 }
 
+/// L'esito finale di un cambio. `risposta`: quello di `SetStateAsync` (`esito_da`); `voluto`: lo
+/// stato chiesto (acceso o no); `letto`: lo stato riletto dopo. Un rifiuto esplicito resta tale;
+/// un `Fatto` con la radio rimasta com'era (criteri, modalità aereo, hardware) diventa `Negato`,
+/// così compaiono la riga in ambra e la pagina delle Impostazioni come per un rifiuto esplicito.
+#[cfg(any(windows, test))]
+pub fn esito_cambio(voluto: bool, letto: bool, risposta: EsitoRadio) -> EsitoRadio {
+    match risposta {
+        EsitoRadio::Fatto if letto != voluto => EsitoRadio::Negato,
+        altro => altro,
+    }
+}
+
 /// `OsservaRete` acceso: lato «Rete» scelto e pillola visibile (e sveglia), oppure vista PC
 /// aperta. Altrimenti spento.
 #[cfg(any(windows, test))]
@@ -136,7 +150,7 @@ pub use winrt::{OsservaRete, Radio};
 
 #[cfg(windows)]
 mod winrt {
-    use super::{esito_da, tacche_da, EsitoRadio, StatoRadio, StatoRete, TipoRadio, TACCHE_OGNI, VERIFICA_DOPO};
+    use super::{esito_cambio, esito_da, tacche_da, EsitoRadio, StatoRadio, StatoRete, TipoRadio, TACCHE_OGNI, VERIFICA_DOPO};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
     use std::sync::Arc;
@@ -239,6 +253,14 @@ mod winrt {
             .collect()
     }
 
+    /// Un cambio accettato (`Allowed`) di cui non si sa ancora se è avvenuto.
+    struct Verifica {
+        tipo: TipoRadio,
+        voluto: bool,
+        entro: Instant,
+        esito: ConsegnaEsito,
+    }
+
     fn lavora_radio(consegna: ConsegnaRadio, invia: Sender<Comando>, ricevi: &Receiver<Comando>) {
         // Un gestore `StateChanged` per radio: fa solo un `send` (vedi in testa al modulo).
         let radio: Vec<(TipoRadio, RadioWinRT, i64)> = trova_radio()
@@ -261,15 +283,27 @@ mod winrt {
 
         // L'accesso, chiesto alla prima commutazione e tenuto finché vive questa `Radio`.
         let mut permesso = false;
-        // La rilettura singola dopo un cambio accettato.
-        let mut verifica: Option<Instant> = None;
+        // I cambi accettati in attesa di conferma (al più uno per radio).
+        let mut verifiche: Vec<Verifica> = Vec::new();
         loop {
-            let comando = match verifica {
+            let comando = match verifiche.iter().map(|v| v.entro).min() {
                 Some(quando) => match ricevi.recv_timeout(quando.saturating_duration_since(Instant::now())) {
                     Ok(c) => c,
                     Err(RecvTimeoutError::Timeout) => {
-                        verifica = None;
-                        Comando::Rileggi
+                        // Scaduta: si rilegge e si decide. Prima gli stati (il riquadro torna a
+                        // quello vero), poi l'esito.
+                        let letti = stati(&radio);
+                        consegna(letti.clone());
+                        let adesso = Instant::now();
+                        verifiche.retain(|v| {
+                            if v.entro > adesso {
+                                return true;
+                            }
+                            let letto = letti.iter().any(|s| s.tipo == v.tipo && s.acceso);
+                            (v.esito)(v.tipo, esito_cambio(v.voluto, letto, EsitoRadio::Fatto));
+                            false
+                        });
+                        continue;
                     }
                     Err(RecvTimeoutError::Disconnected) => break,
                 },
@@ -280,7 +314,19 @@ mod winrt {
                 },
             };
             match comando {
-                Comando::Rileggi => consegna(stati(&radio)),
+                Comando::Rileggi => {
+                    let letti = stati(&radio);
+                    consegna(letti.clone());
+                    // Uno `StateChanged` nello stato voluto conferma il cambio; uno diverso (un
+                    // passaggio intermedio) lascia aspettare fino a `entro`.
+                    verifiche.retain(|v| {
+                        let arrivato = letti.iter().any(|s| s.tipo == v.tipo && s.acceso == v.voluto);
+                        if arrivato {
+                            (v.esito)(v.tipo, EsitoRadio::Fatto);
+                        }
+                        !arrivato
+                    });
+                }
                 Comando::Commuta(tipo, acceso, esito) => {
                     let Some((_, r, _)) = radio.iter().find(|(t, _, _)| *t == tipo) else {
                         esito(tipo, EsitoRadio::Errore);
@@ -309,10 +355,14 @@ mod winrt {
                             EsitoRadio::Errore
                         }
                     };
+                    // Un tocco nuovo sulla stessa radio sostituisce l'attesa di prima.
+                    verifiche.retain(|v| v.tipo != tipo);
                     if fatto == EsitoRadio::Fatto {
-                        verifica = Some(Instant::now() + VERIFICA_DOPO);
+                        // Accettato: l'esito si sa alla conferma (`StateChanged`) o alla rilettura.
+                        verifiche.push(Verifica { tipo, voluto: acceso, entro: Instant::now() + VERIFICA_DOPO, esito });
+                    } else {
+                        esito(tipo, fatto);
                     }
-                    esito(tipo, fatto);
                 }
                 Comando::Ferma => break,
             }
@@ -481,6 +531,26 @@ mod test {
         assert_eq!(esito_da(3), EsitoRadio::Negato);
         assert_eq!(esito_da(0), EsitoRadio::Errore);
         assert_eq!(esito_da(42), EsitoRadio::Errore);
+    }
+
+    /// Il rifiuto silenzioso: Windows risponde `Allowed` ma la radio riletta non è nello stato
+    /// voluto (criteri, modalità aereo, hardware) → `Negato`, come un rifiuto esplicito.
+    #[test]
+    fn esito_dopo_la_rilettura() {
+        use EsitoRadio::*;
+        // (voluto, letto, risposta) → esito
+        for (voluto, letto, risposta, atteso) in [
+            (true, true, Fatto, Fatto),
+            (false, false, Fatto, Fatto),
+            (true, false, Fatto, Negato),
+            (false, true, Fatto, Negato),
+            (true, false, Negato, Negato),
+            (true, true, Negato, Negato),
+            (false, true, Errore, Errore),
+            (false, false, Errore, Errore),
+        ] {
+            assert_eq!(esito_cambio(voluto, letto, risposta), atteso, "voluto {voluto}, letto {letto}, risposta {risposta:?}");
+        }
     }
 
     /// I valori numerici di `esito_da` sono quelli di WinRT.

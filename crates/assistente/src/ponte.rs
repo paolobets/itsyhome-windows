@@ -2464,9 +2464,12 @@ impl Ponte {
     }
 
     /// Un rifiuto: riga in ambra, riquadro di nuovo allo stato vero, pagina di Windows aperta.
+    /// Un esito arrivato dopo aver lasciato la vista PC (radio non più seguite) si ignora.
     fn esito_radio(&self, tipo: radio::TipoRadio, esito: radio::EsitoRadio) {
         let Some(p) = self.pannello.borrow().upgrade() else { return };
-        let pagina = connessioni::esito(&p, &self.stati_radio.borrow(), tipo, esito);
+        let seguite = self.radio.borrow().is_some();
+        let stati = self.stati_radio.borrow();
+        let pagina = connessioni::esito(&p, seguite.then_some(stati.as_slice()), tipo, esito);
         if let Some(pagina) = pagina {
             apri_pagina(pagina);
         }

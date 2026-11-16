@@ -67,10 +67,13 @@ pub fn scrivi_nome(p: &Pannello, nome: Option<&str>) {
     }
 }
 
-/// L'esito di un cambio. `Fatto`: nulla (lo stato vero arriva da `StateChanged`). Rifiutato
-/// (`Negato`, `Errore`): la riga in ambra, il riquadro di nuovo allo stato vero (`stati`, l'ultimo
-/// `StateChanged`) e la pagina di Windows da aprire.
-pub fn esito(p: &Pannello, stati: &[StatoRadio], tipo: TipoRadio, esito: EsitoRadio) -> Option<PaginaWindows> {
+/// L'esito di un cambio. `stati`: l'ultimo elenco letto, `None` se le radio non sono più seguite
+/// (vista PC lasciata o pannello chiuso): allora l'esito arrivato in ritardo si ignora, senza
+/// riga in ambra né riquadri «Non presente». `Fatto`: nulla (lo stato vero arriva da
+/// `StateChanged`). Rifiutato (`Negato`, `Errore`): la riga in ambra, il riquadro di nuovo allo
+/// stato vero e la pagina di Windows da aprire.
+pub fn esito(p: &Pannello, stati: Option<&[StatoRadio]>, tipo: TipoRadio, esito: EsitoRadio) -> Option<PaginaWindows> {
+    let stati = stati?;
     if esito == EsitoRadio::Fatto {
         return None;
     }

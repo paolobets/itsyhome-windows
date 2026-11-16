@@ -2038,20 +2038,42 @@ mod accessibilita {
         assert_eq!(elemento(&p, "Wi-Fi").accessible_checked(), Some(false));
         assert!(!riga(&p));
 
-        let pagina = crate::connessioni::esito(&p, &reali, TipoRadio::WiFi, EsitoRadio::Negato);
+        let pagina = crate::connessioni::esito(&p, Some(&reali), TipoRadio::WiFi, EsitoRadio::Negato);
         assert_eq!(pagina, Some(PaginaWindows::ImpostazioniWifi), "si apre la pagina del Wi-Fi");
         assert!(riga(&p), "la riga in ambra c'è");
         assert_eq!(elemento(&p, "Wi-Fi").accessible_checked(), Some(true), "di nuovo acceso, lo stato vero");
 
         // Un errore del Bluetooth apre la pagina del Bluetooth; un nuovo tocco toglie la riga.
         assert_eq!(
-            crate::connessioni::esito(&p, &reali, TipoRadio::Bluetooth, EsitoRadio::Errore),
+            crate::connessioni::esito(&p, Some(&reali), TipoRadio::Bluetooth, EsitoRadio::Errore),
             Some(PaginaWindows::Bluetooth)
         );
         elemento(&p, "Bluetooth").invoke_accessible_default_action();
         assert!(!riga(&p), "il tocco nuovo toglie la riga del rifiuto");
-        assert_eq!(crate::connessioni::esito(&p, &reali, TipoRadio::Bluetooth, EsitoRadio::Fatto), None);
+        assert_eq!(crate::connessioni::esito(&p, Some(&reali), TipoRadio::Bluetooth, EsitoRadio::Fatto), None);
         assert!(!riga(&p), "riuscito: nessuna riga");
+    }
+
+    /// Un rifiuto che arriva dopo aver lasciato la vista PC (radio non più seguite) si ignora:
+    /// nessuna riga in ambra al rientro, nessuna pagina aperta, i riquadri non diventano
+    /// «Non presente».
+    #[test]
+    fn esito_a_vista_pc_lasciata_ignorato() {
+        piattaforma_di_prova();
+        let p = pannello_connessioni();
+        let riga = |p: &Pannello| {
+            ElementHandle::find_by_accessible_label(p, "Non riuscito: apro le Impostazioni di Windows").next().is_some()
+        };
+        // Lasciata la vista: le radio sono dimenticate.
+        crate::connessioni::dimentica_radio(&p);
+        assert!(!p.get_radio_lette());
+        for esito in [EsitoRadio::Negato, EsitoRadio::Errore] {
+            assert_eq!(crate::connessioni::esito(&p, None, TipoRadio::WiFi, esito), None, "{esito:?}: nessuna pagina");
+        }
+        assert!(!p.get_errore_radio(), "nessuna riga in ambra da mostrare al rientro");
+        assert!(!p.get_radio_lette(), "i riquadri non passano a «Non presente»");
+        assert!(p.get_wifi_presente() && p.get_bt_presente(), "le radio non risultano sparite");
+        assert!(!riga(&p));
     }
 
     /// Vista PC da tastiera: dal volume Tab passa ai riquadri e alle righe (Wi-Fi, Bluetooth,
@@ -2081,7 +2103,7 @@ mod accessibilita {
         assert!(col_fuoco_pannello(&p).ends_with("::fuoco-collegamento"), "fuoco sulla riga: «{}»", col_fuoco_pannello(&p));
         tasto(&p, Key::Return);
         assert_eq!(ultimo(&eventi), "pagina 1");
-        // ←: «Reti Wi-Fi ›»; Spazio apre l'elenco delle reti.
+        // ←: «Reti Wi-Fi ›»; Spazio apre la pagina Wi-Fi delle Impostazioni.
         tasto(&p, Key::LeftArrow);
         tasto(&p, Key::Space);
         assert_eq!(ultimo(&eventi), "pagina 0");

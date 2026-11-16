@@ -9,17 +9,21 @@
 //! l'interfaccia finché non si risponde (accettato per M1). COM c'è già: winit chiama
 //! `OleInitialize` sul thread principale.
 //!
-//! Le pagine di Windows (M2, Task 8, solo Windows) sono a parte: `apri_pagina` con tre URI fissi,
-//! mai scritti da fuori, e `apri` resta solo `http`/`https` (rifiuta anche `ms-settings:`).
-//! Documentazione letta (learn.microsoft.com, 16/11/2026): «Launch Windows Settings»
-//! (windows/apps/develop/launch/launch-settings): `ms-settings:network-wifi` è la pagina Wi-Fi
-//! («solo se il PC ha un adattatore Wi-Fi»), `ms-settings:bluetooth` la pagina Bluetooth; le
-//! pagine si aprono lanciando l'URI (`Launcher.LaunchUriAsync` o, da un'app desktop,
-//! `ShellExecuteW` col verbo «open», che risolve i protocolli registrati come `ms-settings:`).
-//! `ms-availablenetworks:` (l'elenco delle reti Wi-Fi disponibili, il riquadro di rete della
-//! barra) non è in quella pagina: è un protocollo della shell, preso dal brief; **da verificare
-//! dal vivo** che apra l'elenco su questo Windows. Un URI non risolto fa restituire a
-//! `ShellExecuteW` un valore ≤ 32 (errore, scritto nel log).
+//! Le pagine di Windows (M2, Task 8, solo Windows) sono a parte: `apri_pagina` con URI fissi
+//! `ms-settings:`, mai scritti da fuori, e `apri` resta solo `http`/`https` (rifiuta anche
+//! `ms-settings:`). Fonte: learn.microsoft.com, «Launch Windows Settings»
+//! (https://learn.microsoft.com/windows/apps/develop/launch/launch-settings, aggiornata il
+//! 02/11/2026, riletta il 16/11/2026): sezione «Network and internet», riga «Wi-Fi» →
+//! `ms-settings:network-wifi` («only available if the device has a wifi adapter»); sezione
+//! «Devices», riga «Bluetooth» → `ms-settings:bluetooth`. Le pagine si aprono lanciando l'URI
+//! (`Launcher.LaunchUriAsync` o, da un'app desktop, `ShellExecuteW` col verbo «open», che
+//! risolve i protocolli registrati come `ms-settings:`).
+//! «Reti Wi-Fi ›» apre la pagina Wi-Fi delle Impostazioni (da lì si vedono le reti disponibili):
+//! l'URI `ms-availablenetworks:` del brief (il riquadro delle reti della barra) non è in quella
+//! pagina né altrove su learn.microsoft.com, e un protocollo non registrato può far mostrare a
+//! `ShellExecuteW` «Scegli un'app» invece di un errore; per questo non si usa (giro di
+//! correzioni 1 del Task 8). Un URI non risolto fa restituire a `ShellExecuteW` un valore ≤ 32
+//! (errore, scritto nel log).
 
 /// Apre `url` nel browser predefinito. L'errore è per i dettagli tecnici.
 #[cfg(windows)]
@@ -55,7 +59,8 @@ pub fn apri(url: &str) -> Result<(), String> {
 #[cfg(any(windows, test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaginaWindows {
-    /// «Reti Wi-Fi ›»: l'elenco delle reti disponibili.
+    /// «Reti Wi-Fi ›»: la pagina Wi-Fi delle Impostazioni, con le reti disponibili (stesso URI di
+    /// `ImpostazioniWifi`: l'elenco della barra non ha un URI documentato).
     RetiWifi,
     /// Le Impostazioni del Wi-Fi (dopo un rifiuto del Wi-Fi).
     ImpostazioniWifi,
@@ -67,8 +72,7 @@ pub enum PaginaWindows {
 #[cfg(any(windows, test))]
 pub fn uri(p: PaginaWindows) -> &'static str {
     match p {
-        PaginaWindows::RetiWifi => "ms-availablenetworks:",
-        PaginaWindows::ImpostazioniWifi => "ms-settings:network-wifi",
+        PaginaWindows::RetiWifi | PaginaWindows::ImpostazioniWifi => "ms-settings:network-wifi",
         PaginaWindows::Bluetooth => "ms-settings:bluetooth",
     }
 }
@@ -119,11 +123,15 @@ mod test {
 
     #[test]
     fn pagine_di_windows_fisse() {
-        assert_eq!(uri(PaginaWindows::RetiWifi), "ms-availablenetworks:");
+        // Solo URI documentati in «Launch Windows Settings» (learn.microsoft.com).
+        assert_eq!(uri(PaginaWindows::RetiWifi), "ms-settings:network-wifi");
         assert_eq!(uri(PaginaWindows::ImpostazioniWifi), "ms-settings:network-wifi");
         assert_eq!(uri(PaginaWindows::Bluetooth), "ms-settings:bluetooth");
+        for p in [PaginaWindows::RetiWifi, PaginaWindows::ImpostazioniWifi, PaginaWindows::Bluetooth] {
+            assert!(uri(p).starts_with("ms-settings:"), "{p:?}");
+        }
         // `apri` resta solo http/https: le pagine di Windows passano solo da `apri_pagina`.
         assert!(apri("ms-settings:bluetooth").is_err());
-        assert!(apri("ms-availablenetworks:").is_err());
+        assert!(apri("ms-settings:network-wifi").is_err());
     }
 }
