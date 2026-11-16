@@ -83,6 +83,11 @@ export component Pillola inherits Window {
     // (`livello-linea`; `nessuno`: colore neutro). Opaca: la finestra ritirata è layered.
     in property <bool> ritirata;
     in property <LivelloUi> livello-linea: LivelloUi.nessuno;
+    // Quanto della linea è riempito, da sinistra (0..1): 1 = piena (nessun avanzamento); con un
+    // avanzamento in corso (M2, Task 5) cresce da 0. Rust lo riscrive solo se cambiano i pixel.
+    in property <float> riempimento-linea: 1.0;
+    // Larghezza del riempimento (le prove la leggono).
+    out property <length> larghezza-riempimento: riempimento-linea * larghezza-linea;
     // Ai lati degli occhi, a riposo e col puntino (M2, Task 4): ciò che l'utente ha scelto nelle
     // Impostazioni › Isola. Rust li riscrive solo quando cambiano.
     in property <ContenutoLatoUi> lato-sinistro;
@@ -242,16 +247,31 @@ export component Pillola inherits Window {
         }
     }
 
-    // 300 × 5 come TwoCode, con un filo scuro di 1 px tutt'intorno: si vede anche sopra una barra
-    // chiara (il grigio neutro da solo era 2,6:1 sul bianco), e il colore del livello resta.
+    // 300 × 5 come TwoCode. Sotto, un fondo opaco scuro (la finestra ritirata è layered: la sola
+    // traccia, trasparente, non si vedrebbe) con la traccia neutra; sopra, da sinistra, il
+    // riempimento del colore del livello; in cima il filo scuro di 1 px tutt'intorno: si vede
+    // anche sopra una barra chiara, e il colore del livello resta.
     if ritirata: Rectangle {
         x: (root.width - self.width) / 2;
         y: margine-aura;
         width: larghezza-linea;
         height: altezza-linea;
-        background: Tema.colore-livello(livello-linea);
-        border-width: Tema.sul-pixel(1px);
-        border-color: Tema.corpo;
+        background: Tema.corpo;
+
+        Rectangle {
+            background: Tema.traccia;
+        }
+
+        Rectangle {
+            x: 0px;
+            width: larghezza-riempimento;
+            background: Tema.colore-livello(livello-linea);
+        }
+
+        Rectangle {
+            border-width: Tema.sul-pixel(1px);
+            border-color: Tema.corpo;
+        }
     }
 
     pillola := Rectangle {

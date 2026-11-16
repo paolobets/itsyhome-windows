@@ -217,6 +217,53 @@ pub fn livello_massimo(attese: &Attese) -> Option<Livello> {
     attese.piu_urgente().map(|v| v.livello)
 }
 
+/// Un lavoro in corso (Claude Code, Focus, la prova): la linea della ritirata si riempie con la
+/// sua frazione. In M2 lo usa solo `--prova-avanzamento`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Avanzamento {
+    pub id: String,
+    /// 0..1 (fuori scala si ritaglia).
+    pub frazione: f32,
+    pub livello: Livello,
+}
+
+/// Fra gli avanzamenti, quello che la linea mostra: il più urgente, a pari livello il più vecchio.
+pub fn avanzamento_mostrato(avanzamenti: &[Avanzamento]) -> Option<&Avanzamento> {
+    avanzamenti.iter().fold(None, |scelto: Option<&Avanzamento>, a| match scelto {
+        Some(s) if s.livello.peso() >= a.livello.peso() => Some(s),
+        _ => Some(a),
+    })
+}
+
+/// Colore e riempimento della linea della ritirata: il colore è il livello più urgente fra voci
+/// e avanzamento (nessuno: neutro); il riempimento è la frazione dell'avanzamento (ritagliata a
+/// 0..1), oppure 1.0 (linea piena, come in M1) se non ce n'è uno.
+pub fn riempimento_linea(livello_massimo: Option<Livello>, avanzamento: Option<&Avanzamento>) -> (Option<Livello>, f32) {
+    let Some(a) = avanzamento else { return (livello_massimo, 1.0) };
+    let livello = match livello_massimo {
+        Some(l) if l.peso() >= a.livello.peso() => l,
+        _ => a.livello,
+    };
+    // Un NaN non deve arrivare all'interfaccia: vale «vuota».
+    let frazione = if a.frazione.is_nan() { 0.0 } else { a.frazione.clamp(0.0, 1.0) };
+    (Some(livello), frazione)
+}
+
+/// Pixel logici riempiti della linea: la frazione si riscrive in Slint solo se questo cambia.
+pub fn pixel_riempiti(frazione: f32) -> u32 {
+    (frazione.clamp(0.0, 1.0) * crate::sistema::ritirata::LARGHEZZA_LINEA).round() as u32
+}
+
+/// `--prova-avanzamento <secondi>`: la durata della prova.
+pub fn avanzamento_di_prova(mut argomenti: impl Iterator<Item = String>) -> Option<u64> {
+    while let Some(a) = argomenti.next() {
+        if a == "--prova-avanzamento" {
+            return argomenti.next()?.parse().ok().filter(|s| *s > 0);
+        }
+    }
+    None
+}
+
 // ─── Fonti di M1 ─────────────────────────────────────────────────────────────
 
 pub const ID_CASA_OFFLINE: &str = "casa.connessione";
@@ -481,6 +528,61 @@ pub fn toast(v: &Voce, pannello_aperto: bool) -> bool {
 #[cfg(test)]
 pub(crate) mod test {
     use super::*;
+
+    fn avanzamento(frazione: f32, livello: Livello) -> Avanzamento {
+        Avanzamento { id: "prova".into(), frazione, livello }
+    }
+
+    #[test]
+    fn linea_piena_senza_avanzamento() {
+        assert_eq!(riempimento_linea(Some(Livello::Attenzione), None), (Some(Livello::Attenzione), 1.0));
+        assert_eq!(riempimento_linea(None, None), (None, 1.0));
+    }
+
+    #[test]
+    fn linea_con_avanzamento() {
+        let a = avanzamento(0.4, Livello::Informazione);
+        assert_eq!(riempimento_linea(None, Some(&a)), (Some(Livello::Informazione), 0.4));
+        assert_eq!(riempimento_linea(Some(Livello::Bloccante), Some(&a)), (Some(Livello::Bloccante), 0.4));
+        // Voce meno urgente dell'avanzamento: vince l'avanzamento.
+        let b = avanzamento(0.4, Livello::Attenzione);
+        assert_eq!(riempimento_linea(Some(Livello::Informazione), Some(&b)), (Some(Livello::Attenzione), 0.4));
+    }
+
+    #[test]
+    fn frazione_fuori_scala_ritagliata() {
+        assert_eq!(riempimento_linea(None, Some(&avanzamento(1.7, Livello::Informazione))).1, 1.0);
+        assert_eq!(riempimento_linea(None, Some(&avanzamento(-0.2, Livello::Informazione))).1, 0.0);
+        assert_eq!(riempimento_linea(None, Some(&avanzamento(f32::NAN, Livello::Informazione))).1, 0.0);
+    }
+
+    #[test]
+    fn pixel_riempiti_al_pixel() {
+        assert_eq!(pixel_riempiti(0.5), 150);
+        assert_eq!(pixel_riempiti(0.001), 0);
+        assert_eq!(pixel_riempiti(1.0), 300);
+        assert_eq!(pixel_riempiti(2.0), 300);
+    }
+
+    #[test]
+    fn avanzamento_mostrato_il_piu_urgente_poi_il_piu_vecchio() {
+        assert_eq!(avanzamento_mostrato(&[]), None);
+        let (a, b, c) = (
+            Avanzamento { id: "a".into(), ..avanzamento(0.1, Livello::Informazione) },
+            Avanzamento { id: "b".into(), ..avanzamento(0.2, Livello::Attenzione) },
+            Avanzamento { id: "c".into(), ..avanzamento(0.3, Livello::Attenzione) },
+        );
+        assert_eq!(avanzamento_mostrato(&[a, b.clone(), c]).map(|x| x.id.as_str()), Some("b"));
+    }
+
+    #[test]
+    fn flag_prova_avanzamento() {
+        let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>().into_iter();
+        assert_eq!(avanzamento_di_prova(args(&["--prova-avanzamento", "20"])), Some(20));
+        assert_eq!(avanzamento_di_prova(args(&["--prova-avanzamento", "0"])), None);
+        assert_eq!(avanzamento_di_prova(args(&["--prova-avanzamento", "x"])), None);
+        assert_eq!(avanzamento_di_prova(args(&[])), None);
+    }
 
     #[test]
     fn a_pannello_aperto_niente_toast() {

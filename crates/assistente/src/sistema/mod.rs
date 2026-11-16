@@ -13,6 +13,8 @@ pub mod istanza;
 pub mod menu;
 pub mod movimento;
 pub mod notifiche;
+#[cfg(windows)]
+pub mod primo_piano;
 pub mod ritirata;
 pub mod schermo_intero;
 pub mod scorciatoie;

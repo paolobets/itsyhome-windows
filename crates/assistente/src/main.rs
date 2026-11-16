@@ -137,6 +137,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let cervello = Rc::new(RefCell::new(Cervello::new(Instant::now())));
     let ponte = ponte::collega(casa.clone(), segreti, &pillola, cervello, forzato, errore_import);
     let ponte_servizi = ponte.clone();
+    let ponte_prova = ponte.clone();
     // `--prova-avviso <bloccante|attenzione|informazione> [--dopo <s>] [--lungo]`: una voce finta
     // con 2 pulsanti finti, subito o dopo `s` secondi (per provarla mentre la pillola è ritirata);
     // `--lungo`: titolo tagliato nella pillola e testo da scorrere nel pannello.
@@ -150,6 +151,11 @@ fn main() -> Result<(), slint::PlatformError> {
             }),
             None => ponte.prova_avviso(livello, lungo),
         }
+    }
+    // `--prova-avanzamento <s>`: un avanzamento da 0 a 1 in `s` secondi, per vedere la linea della
+    // ritirata che si riempie.
+    if let Some(s) = attenzione::avanzamento_di_prova(argomenti.iter().cloned()) {
+        ponte_prova.prova_avanzamento(s);
     }
     // La batteria si controlla ogni 60 s anche a pannello chiuso (unica eccezione al campionamento
     // solo a pannello aperto): un thread che dorme, niente su senza batteria.

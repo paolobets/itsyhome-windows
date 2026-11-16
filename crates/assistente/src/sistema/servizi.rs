@@ -15,6 +15,8 @@ use super::scorciatoie::{self, Scorciatoia, Scorciatoie};
 use super::tray::{self, Tray};
 use super::{inattivita, passi, pillola_visibile, schermo_intero, IsteresiSchermoIntero, Visibilita};
 use crate::attenzione::Livello;
+#[cfg(windows)]
+use super::primo_piano::{self, GanciPrimoPiano};
 use crate::finestre::{self, RettangoloFisico};
 use crate::pannello::Apertura;
 use crate::ponte::Ponte;
@@ -47,6 +49,9 @@ pub struct Servizi {
     #[cfg(windows)]
     tray: RefCell<Option<Tray>>,
     scorciatoie: RefCell<Option<Scorciatoie>>,
+    /// Il gancio sul primo piano (nasce al primo giro, muore in `spegni`).
+    #[cfg(windows)]
+    gancio: RefCell<Option<GanciPrimoPiano>>,
 }
 
 thread_local! {
@@ -81,6 +86,8 @@ pub fn avvia(pillola: &Pillola, apertura: Rc<Apertura>, ponte: Rc<Ponte>) {
         #[cfg(windows)]
         tray: RefCell::new(None),
         scorciatoie: RefCell::new(None),
+        #[cfg(windows)]
+        gancio: RefCell::new(None),
     });
     SERVIZI.with(|x| *x.borrow_mut() = Some(s.clone()));
 
@@ -97,6 +104,11 @@ pub fn avvia(pillola: &Pillola, apertura: Rc<Apertura>, ponte: Rc<Ponte>) {
             Err(e) => eprintln!("menu dell'isola non creato: {e}"),
         }
         mostra_icona(s.ponte.casa().config().mostra_icona_barra);
+        // Lo schermo intero si coglie appena cambia la finestra in primo piano, non al giro dei 5 s.
+        #[cfg(windows)]
+        {
+            *s.gancio.borrow_mut() = primo_piano::ascolta(primo_piano_cambiato);
+        }
         let (gestore, non_attive) = scorciatoie::registra(al_tasto);
         *s.scorciatoie.borrow_mut() = gestore;
         for (sc, occupata) in non_attive {
@@ -114,6 +126,8 @@ pub fn spegni() {
         s.mouse.stop();
         #[cfg(windows)]
         {
+            // Il gancio si toglie sul thread che lo ha messo (questo): `Drop` chiama UnhookWinEvent.
+            s.gancio.borrow_mut().take();
             s.tray.borrow_mut().take();
             s.menu.borrow_mut().take();
         }
@@ -204,6 +218,16 @@ fn al_comando(c: Comando) {
     }
 }
 
+/// È cambiata la finestra in primo piano (gancio `EVENT_SYSTEM_FOREGROUND`): lo schermo intero si
+/// ricontrolla subito. L'isteresi (3 s / 1,5 s) resta quella di sempre; il controllo da 5 s resta
+/// per F11 in un browser, che non cambia la finestra in primo piano.
+#[cfg(windows)]
+fn primo_piano_cambiato() {
+    if let Some(s) = servizi() {
+        s.controlla_schermo_intero();
+    }
+}
+
 fn al_tasto(sc: Scorciatoia) {
     match sc {
         Scorciatoia::Apri => apri(),
@@ -247,7 +271,7 @@ pub fn colora_linea() {
     let Some(s) = servizi() else { return };
     if s.mostrata.get() == Visibilita::Linea {
         if let Some(p) = s.pillola.upgrade() {
-            pillola::colora_linea(&p, s.ponte.livello_massimo());
+            pillola::colora_linea(&p, s.ponte.riempimento_linea());
         }
     }
 }
@@ -329,7 +353,7 @@ impl Servizi {
             self.mouse.stop();
         }
         match passi.linea {
-            Some(true) => pillola::mostra_linea(&p, self.ponte.livello_massimo()),
+            Some(true) => pillola::mostra_linea(&p, self.ponte.riempimento_linea()),
             Some(false) => pillola::togli_linea(&p),
             None => {}
         }

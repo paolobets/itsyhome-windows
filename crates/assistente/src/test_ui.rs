@@ -146,6 +146,20 @@ fn misure_slint_e_rust() {
     drop((pillola, pannello));
 }
 
+#[test]
+fn linea_riempita_a_meta() {
+    // M2 Task 5: a pillola ritirata con riempimento 0.5 il riempimento è largo metà linea (150 px);
+    // senza avanzamento (1.0) è tutta la linea, come in M1.
+    piattaforma_di_prova();
+    let pillola = Pillola::new().expect("pillola creata col backend di prova");
+    pillola.set_ritirata(true);
+    assert_eq!(pillola.get_larghezza_riempimento(), sistema::ritirata::LARGHEZZA_LINEA, "linea piena di partenza");
+    pillola.set_riempimento_linea(0.5);
+    assert_eq!(pillola.get_larghezza_riempimento(), 150.0, "riempimento a metà");
+    pillola.set_riempimento_linea(0.0);
+    assert_eq!(pillola.get_larghezza_riempimento(), 0.0, "riempimento vuoto");
+}
+
 mod accessibilita {
     //! FE13/FE16: ruoli, nomi e stati che Narrator legge (UI Automation li riceve da AccessKit).
     use super::piattaforma_di_prova;

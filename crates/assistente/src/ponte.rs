@@ -3,7 +3,7 @@
 //! Home Assistant, casa irraggiungibile, batteria, prova) e decide umore e aspetto della pillola.
 
 use crate::attenzione::{
-    self, livello_massimo, notifica_sistema, prossimo_cambio_aspetto, Attese, Fonte, Livello, SorveglianzaCasa,
+    self, avanzamento_mostrato, livello_massimo, notifica_sistema, prossimo_cambio_aspetto, Attese, Avanzamento, Fonte, Livello, SorveglianzaCasa,
     SorveglianzaBatteria, Voce, ID_BATTERIA, ID_CASA_OFFLINE, ID_CASA_TOKEN, PREFISSO_NOTIFICA, PREFISSO_SISTEMA,
     PULSANTE_ARCHIVIA, PULSANTE_APRI, PULSANTE_HO_CAPITO, PULSANTE_IMPOSTAZIONI, PULSANTE_RIPROVA,
 };
@@ -792,6 +792,10 @@ pub struct Ponte {
     /// Le voci «In attesa» e il loro modello per il pannello (sopravvive al pannello).
     attese: RefCell<Attese>,
     modello_attese: Rc<VecModel<VoceAttesaUi>>,
+    /// I lavori in corso: la linea della ritirata si riempie con quello più urgente.
+    avanzamenti: RefCell<Vec<Avanzamento>>,
+    /// Il timer di `--prova-avanzamento` (fermo se la prova non c'è).
+    prova_avanzamento: slint::Timer,
     /// Da quanto la casa non è connessa; la sua sveglia suona solo allo scadere dei 5 minuti.
     sorveglianza: RefCell<SorveglianzaCasa>,
     /// La voce della batteria (due livelli) e il «Ho capito» che la zittisce fino alla ricarica.
@@ -876,6 +880,8 @@ pub fn collega(
         sveglia: slint::Timer::default(),
         attese: RefCell::new(Attese::default()),
         modello_attese: Rc::new(VecModel::default()),
+        avanzamenti: RefCell::new(Vec::new()),
+        prova_avanzamento: slint::Timer::default(),
         sorveglianza: RefCell::new(SorveglianzaCasa::new(Instant::now())),
         batteria: RefCell::new(SorveglianzaBatteria::default()),
         sveglia_casa: slint::Timer::default(),
@@ -1942,9 +1948,32 @@ impl Ponte {
         self.aggiorna_umore();
     }
 
-    /// Il livello più urgente in attesa (colore della linea della ritirata).
-    pub fn livello_massimo(&self) -> Option<Livello> {
-        livello_massimo(&self.attese.borrow())
+    /// Colore e riempimento della linea della ritirata: il livello più urgente fra voci e
+    /// avanzamento, e la frazione dell'avanzamento (1.0 senza).
+    pub fn riempimento_linea(&self) -> (Option<Livello>, f32) {
+        let avanzamenti = self.avanzamenti.borrow();
+        attenzione::riempimento_linea(livello_massimo(&self.attese.borrow()), avanzamento_mostrato(&avanzamenti))
+    }
+
+    /// Mette (o aggiorna) un avanzamento: la linea della ritirata, se si vede, si riempie. Non fa
+    /// svegliare altro: nessuna voce, nessun umore, nessuna notifica.
+    pub fn metti_avanzamento(&self, a: Avanzamento) {
+        {
+            let mut tutti = self.avanzamenti.borrow_mut();
+            match tutti.iter_mut().find(|x| x.id == a.id) {
+                Some(x) => *x = a,
+                None => tutti.push(a),
+            }
+        }
+        servizi::colora_linea();
+    }
+
+    pub fn togli_avanzamento(&self, id: &str) {
+        let prima = self.avanzamenti.borrow().len();
+        self.avanzamenti.borrow_mut().retain(|a| a.id != id);
+        if self.avanzamenti.borrow().len() != prima {
+            servizi::colora_linea();
+        }
     }
 
     /// Da quanto l'utente non tocca tastiera e mouse (controllo da 5 s dei servizi).
@@ -2155,6 +2184,26 @@ impl Ponte {
             Some(v) => self.metti_voce(v, true),
             None => self.togli_voce(ID_BATTERIA),
         }
+    }
+
+    /// `--prova-avanzamento <s>`: un avanzamento da 0 a 1 in `s` secondi, aggiornato una volta al
+    /// secondo; sparisce alla fine. Il timer vive finché dura la prova.
+    pub fn prova_avanzamento(&self, secondi: u64) {
+        const ID: &str = "prova.avanzamento";
+        let inizio = Instant::now();
+        let durata = Duration::from_secs(secondi);
+        self.metti_avanzamento(Avanzamento { id: ID.into(), frazione: 0.0, livello: Livello::Informazione });
+        self.prova_avanzamento.start(slint::TimerMode::Repeated, Duration::from_secs(1), move || {
+            let Some(p) = ponte() else { return };
+            let trascorso = inizio.elapsed();
+            if trascorso >= durata {
+                p.prova_avanzamento.stop();
+                p.togli_avanzamento(ID);
+            } else {
+                let frazione = trascorso.as_secs_f32() / durata.as_secs_f32();
+                p.metti_avanzamento(Avanzamento { id: ID.into(), frazione, livello: Livello::Informazione });
+            }
+        });
     }
 
     /// `--prova-avviso <livello>`.

@@ -5,7 +5,7 @@
 //! rubare clic, la finestra è ritagliata alla pillola con la sua aura (pulsanti compresi): il
 //! ritaglio cresce subito quando la pillola cresce e cala solo a fine animazione.
 
-use crate::attenzione::{aspetto_pillola, Attese, AspettoPillola, Fonte, Livello, Pulsante, PULSANTE_APRI};
+use crate::attenzione::{aspetto_pillola, pixel_riempiti, Attese, AspettoPillola, Fonte, Livello, Pulsante, PULSANTE_APRI};
 use crate::umore::Umore;
 use crate::{finestre, pannello, AspettoPillolaUi, LivelloUi, Pillola, PulsanteUi, UmoreUi};
 use slint::{ComponentHandle, Image, ModelRc, VecModel};
@@ -121,9 +121,10 @@ fn applica_ritaglio(ui: &Pillola) {
 }
 
 /// Ritirata: la pillola diventa la linea, con clic passanti. `livello`: il più urgente in
-/// attesa (colore della linea), `None` = neutra. Prima di mostrarla, così nasce già linea.
-pub fn mostra_linea(ui: &Pillola, livello: Option<Livello>) {
-    colora_linea(ui, livello);
+/// attesa o dell'avanzamento (colore della linea), `None` = neutra; poi quanto è riempita (vedi
+/// `attenzione::riempimento_linea`). Prima di mostrarla, così nasce già linea.
+pub fn mostra_linea(ui: &Pillola, riempimento: (Option<Livello>, f32)) {
+    colora_linea(ui, riempimento);
     if LINEA.with(|l| l.replace(true)) {
         return;
     }
@@ -132,10 +133,15 @@ pub fn mostra_linea(ui: &Pillola, livello: Option<Livello>) {
     finestre::clic_passanti(ui.window(), true);
 }
 
-pub fn colora_linea(ui: &Pillola, livello: Option<Livello>) {
+/// Colore e riempimento della linea: ognuno si riscrive solo se cambia, e il riempimento solo se
+/// cambiano i pixel riempiti (un avanzamento lento non ridisegna a ogni centesimo).
+pub fn colora_linea(ui: &Pillola, (livello, frazione): (Option<Livello>, f32)) {
     let colore = livello.map_or(LivelloUi::Nessuno, livello_ui);
     if ui.get_livello_linea() != colore {
         ui.set_livello_linea(colore);
+    }
+    if pixel_riempiti(ui.get_riempimento_linea()) != pixel_riempiti(frazione) {
+        ui.set_riempimento_linea(frazione);
     }
 }
 
@@ -296,6 +302,22 @@ mod test {
         let riprova = vec![Pulsante::new("riprova", "Riprova")];
         assert_eq!(pulsanti_pillola(&riprova, true), riprova);
         assert!(pulsanti_pillola(&[], true).is_empty());
+    }
+
+    #[test]
+    fn la_frazione_si_riscrive_solo_se_cambiano_i_pixel() {
+        crate::test_ui::piattaforma_di_prova();
+        let ui = Pillola::new().expect("pillola creata col backend di prova");
+        // Linea piena di partenza (come in M1).
+        assert_eq!(ui.get_riempimento_linea(), 1.0);
+        colora_linea(&ui, (None, 0.5));
+        assert_eq!(ui.get_riempimento_linea(), 0.5);
+        // 0.5004 sono ancora 150 px: la proprieta' non si tocca.
+        colora_linea(&ui, (None, 0.5004));
+        assert_eq!(ui.get_riempimento_linea(), 0.5);
+        // 0.51 sono 153 px: si riscrive.
+        colora_linea(&ui, (None, 0.51));
+        assert_eq!(ui.get_riempimento_linea(), 0.51);
     }
 
     #[test]
