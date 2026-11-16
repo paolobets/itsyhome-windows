@@ -177,8 +177,10 @@ export component Pannello inherits Window {
     // «Modifica» o «Aggiungi un collegamento»: le Impostazioni sulla scheda Collegamenti.
     callback gestisci-collegamenti();
     // «⋯»: il menu dell'isola (nativo, lo apre Rust), sotto il pulsante e allineato al suo bordo
-    // destro: (bordo destro, bordo basso) del pulsante in coordinate logiche della finestra.
-    callback menu(length, length);
+    // destro: (bordo destro, bordo basso) del pulsante in coordinate logiche della finestra, e se
+    // viene da tastiera o da Narrator (allora la prima voce parte evidenziata). Fuori da Windows,
+    // dove il menu nativo non c'è, Rust apre direttamente le Impostazioni.
+    callback menu(length, length, bool);
 
     // Geometria (logica). La riga alta è alta quanto la pillola a riposo, così gli occhi cadono dove
     // stavano i suoi (vedi `posizione_pannello` in finestre.rs). Pannello 800 × 300: zona
@@ -431,9 +433,9 @@ export component Pannello inherits Window {
 
     // «⋯»: il menu sotto il pulsante, al suo bordo destro. Chiuso il menu senza scelta il fuoco
     // resta qui (la zona è «⋯»).
-    function apri-menu() {
+    function apri-menu(tastiera: bool) {
         zona = Zona.menu;
-        root.menu(piu.absolute-position.x + piu.width, piu.absolute-position.y + piu.height);
+        root.menu(piu.absolute-position.x + piu.width, piu.absolute-position.y + piu.height, tastiera);
     }
 
     function scegli(i: int) {
@@ -555,7 +557,7 @@ export component Pannello inherits Window {
         } else if (zona == Zona.dock) {
             apri(fuoco-dock, app[fuoco-dock].id);
         } else if (zona == Zona.menu) {
-            apri-menu();
+            apri-menu(true);
         } else if (zona == Zona.stanze && fuoco-stanza-valido < 0) {
             scegli-preferiti(true);
         } else if (zona == Zona.stanze) {
@@ -737,7 +739,7 @@ export component Pannello inherits Window {
                 background: area-piu.has-hover ? Tema.scheda-sopra : transparent;
                 accessible-role: button;
                 accessible-label: "Altre opzioni";
-                accessible-action-default => { apri-menu(); }
+                accessible-action-default => { apri-menu(true); }
 
                 fuoco-menu := Fuoco { chiede: da-tastiera && zona == Zona.menu; }
 
@@ -754,7 +756,7 @@ export component Pannello inherits Window {
                     mouse-cursor: pointer;
                     clicked => {
                         da-tastiera = false;
-                        apri-menu();
+                        apri-menu(false);
                     }
                 }
 

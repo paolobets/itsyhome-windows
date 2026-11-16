@@ -191,15 +191,16 @@ fn apri_menu() {
 /// pulsante e allineato al suo bordo destro (`destra`, `basso`: pixel logici della finestra del
 /// pannello). Il pannello resta in primo piano mentre il menu è aperto: chiuso senza scelta (Esc,
 /// clic altrove) il fuoco resta su «⋯». La scelta si esegue al giro dopo, fuori dal callback del
-/// pannello: Impostazioni, Informazioni, la ritirata ed Esci lo chiudono.
+/// pannello: Impostazioni, Informazioni, la ritirata ed Esci lo chiudono. `tastiera`: aperto da
+/// tasto o da Narrator, la prima voce parte evidenziata.
 #[cfg(windows)]
-pub fn menu_dal_pannello(finestra: &slint::Window, destra: f32, basso: f32) {
+pub fn menu_dal_pannello(finestra: &slint::Window, destra: f32, basso: f32, tastiera: bool) {
     let Some(s) = servizi() else { return };
     let Some(hwnd) = finestre::maniglia(finestra) else { return };
     let punto = super::menu::punto_pannello(destra, basso, finestra.scale_factor());
     let scelta = {
         let menu = s.menu.borrow();
-        menu.as_ref().and_then(|m| m.mostra_dal_pannello(hwnd, punto))
+        menu.as_ref().and_then(|m| m.mostra_dal_pannello(hwnd, punto, tastiera))
     };
     if let Some(c) = scelta {
         slint::Timer::single_shot(Duration::ZERO, move || al_comando_dal_pannello(c));

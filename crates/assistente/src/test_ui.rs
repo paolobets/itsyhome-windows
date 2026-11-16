@@ -525,28 +525,31 @@ mod accessibilita {
     }
 
     /// Task 14i: in alto a destra il pulsante «⋯» («Altre opzioni»), che chiede il menu dell'isola
-    /// col mouse, con Narrator e da tastiera; nel dock niente Impostazioni.
+    /// col mouse, con Narrator e da tastiera; nel dock (le app vere del registro) niente Impostazioni.
     #[test]
     fn altre_opzioni_nella_riga_alta() {
         use slint::platform::{PointerEventButton, WindowEvent};
         piattaforma_di_prova();
         let p = pannello();
-        p.set_app(app());
-        let menu = std::rc::Rc::new(std::cell::RefCell::new(Vec::<(f32, f32)>::new()));
+        p.set_app(crate::pannello::voci_app());
+        let menu = std::rc::Rc::new(std::cell::RefCell::new(Vec::<(f32, f32, bool)>::new()));
         let m = menu.clone();
-        p.on_menu(move |x, y| m.borrow_mut().push((x, y)));
+        p.on_menu(move |x, y, tastiera| m.borrow_mut().push((x, y, tastiera)));
         let piu = elemento(&p, "Altre opzioni");
         assert_eq!(piu.accessible_role(), Some(AccessibleRole::Button));
         let (pos, lato) = (piu.absolute_position(), piu.size());
         assert!(lato.width >= 28.0 && lato.height >= 28.0, "bersaglio di almeno 28 × 28: {lato:?}");
         assert!(pos.x > 700.0 && pos.y < 10.0, "in alto a destra: {pos:?}");
+        assert!(ElementHandle::find_by_accessible_label(&p, "Collegamenti").next().is_some(), "il dock vero è caricato");
         assert!(ElementHandle::find_by_accessible_label(&p, "Impostazioni").next().is_none(), "niente Impostazioni nel dock");
 
         piu.invoke_accessible_default_action();
         assert_eq!(menu.borrow().len(), 1, "Narrator lo preme");
-        // Il menu si apre sotto il pulsante, al suo bordo destro (coordinate logiche della finestra).
-        let (x, y) = menu.borrow()[0];
+        // Il menu si apre sotto il pulsante, al suo bordo destro (coordinate logiche della finestra);
+        // con Narrator come da tastiera: prima voce evidenziata.
+        let (x, y, tastiera) = menu.borrow()[0];
         assert_eq!((x, y), (pos.x + lato.width, pos.y + lato.height));
+        assert!(tastiera, "da Narrator la prima voce è evidenziata");
 
         let centro = slint::LogicalPosition::new(pos.x + lato.width / 2.0, pos.y + lato.height / 2.0);
         let clic = || {
@@ -556,6 +559,7 @@ mod accessibilita {
         };
         clic();
         assert_eq!(menu.borrow().len(), 2, "il clic lo apre");
+        assert!(!menu.borrow()[1].2, "col mouse nessuna voce evidenziata");
     }
 
     /// Task 14i: Tab dal dock arriva a «⋯» (e Maiusc+Tab dalla Panoramica senza voci in attesa);
@@ -570,7 +574,7 @@ mod accessibilita {
         p.global::<crate::Fuochi>().set_pronti(true);
         let eventi = std::rc::Rc::new(std::cell::RefCell::new(Vec::<&str>::new()));
         let (e1, e2) = (eventi.clone(), eventi.clone());
-        p.on_menu(move |_, _| e1.borrow_mut().push("menu"));
+        p.on_menu(move |_, _, tastiera| e1.borrow_mut().push(if tastiera { "menu" } else { "menu col mouse" }));
         p.on_chiudi(move || e2.borrow_mut().push("chiudi"));
         let e3 = eventi.clone();
         p.on_scorri_layout(move |_| e3.borrow_mut().push("layout"));

@@ -118,7 +118,7 @@ mod windows {
     }
 
     /// Un menu nativo con queste voci (separatore prima di «Esci») e la sua voce della ritirata.
-    fn costruisci(voci: &[(Comando, &'static str)]) -> Result<(Menu, MenuItem), String> {
+    pub(super) fn costruisci(voci: &[(Comando, &'static str)]) -> Result<(Menu, MenuItem), String> {
         let menu = Menu::new();
         let mut voce_ritirata = None;
         for &(c, testo) in voci {
@@ -183,13 +183,15 @@ mod windows {
         /// Apre il menu del pannello nella finestra `hwnd`, col bordo DESTRO in alto a `(x, y)`
         /// (pixel fisici dell'area client), dentro l'area di lavoro. Ritorna quando il menu si
         /// chiude, con la voce scelta (`None`: Esc o clic altrove). Il gestore di `muda` non
-        /// riceve nulla: la scelta la porta chi chiama.
-        pub fn mostra_dal_pannello(&self, hwnd: isize, (x, y): (i32, i32)) -> Option<Comando> {
+        /// riceve nulla: la scelta la porta chi chiama. `prima_voce`: aperto da tastiera (o da
+        /// Narrator), parte con la prima voce evidenziata, come i menu di Windows aperti da tasto.
+        pub fn mostra_dal_pannello(&self, hwnd: isize, (x, y): (i32, i32), prima_voce: bool) -> Option<Comando> {
             use windows_sys::Win32::Foundation::POINT;
             use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
+            use windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_DOWN;
             use windows_sys::Win32::UI::WindowsAndMessaging::{
-                GetMenuItemCount, GetMenuItemID, SetForegroundWindow, TrackPopupMenu, TPM_RETURNCMD, TPM_RIGHTALIGN,
-                TPM_TOPALIGN, TPM_WORKAREA,
+                GetMenuItemCount, GetMenuItemID, PostMessageW, SetForegroundWindow, TrackPopupMenu, TPM_RETURNCMD,
+                TPM_RIGHTALIGN, TPM_TOPALIGN, TPM_WORKAREA, WM_KEYDOWN,
             };
             let hmenu = self.pannello.hpopupmenu();
             let mut punto = POINT { x, y };
@@ -200,6 +202,11 @@ mod windows {
                 ClientToScreen(hwnd, &mut punto);
                 // TrackPopupMenu vuole la finestra in primo piano (lo è già: il clic era nel pannello).
                 SetForegroundWindow(hwnd);
+                // Un ↓ in coda alla finestra del pannello (la nostra): lo consuma il ciclo del menu
+                // appena aperto ed evidenzia la prima voce.
+                if prima_voce {
+                    PostMessageW(hwnd, WM_KEYDOWN, VK_DOWN as usize, 0);
+                }
                 TrackPopupMenu(
                     hmenu,
                     TPM_RIGHTALIGN | TPM_TOPALIGN | TPM_RETURNCMD | TPM_WORKAREA,
@@ -250,6 +257,30 @@ mod test {
         );
         assert_eq!(posizioni(&voci(false)).len(), 6);
         assert_eq!(posizioni(&voci(false))[4], None);
+    }
+
+    /// La traduzione posizione → comando del menu del pannello vale solo se `muda` mette una riga
+    /// nativa per voce, separatore compreso, nell'ordine di inserimento: se un aggiornamento la
+    /// cambia, questo test lo dice prima che si esegua la voce sbagliata.
+    #[cfg(windows)]
+    #[test]
+    fn il_menu_nativo_ha_le_righe_di_posizioni() {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{GetMenuItemCount, GetMenuItemID, GetMenuState, MF_BYPOSITION, MF_SEPARATOR};
+        let voci = voci_pannello(false);
+        let (menu, _) = super::windows::costruisci(&voci).expect("menu creato");
+        let hmenu = tray_icon::menu::ContextMenu::hpopupmenu(&menu);
+        let attese = posizioni(&voci);
+        // SAFETY: letture del menu vivo appena creato, sullo stesso thread.
+        unsafe {
+            assert_eq!(GetMenuItemCount(hmenu), attese.len() as i32);
+            for (i, attesa) in attese.iter().enumerate() {
+                let separatore = GetMenuState(hmenu, i as u32, MF_BYPOSITION) & MF_SEPARATOR != 0;
+                assert_eq!(separatore, attesa.is_none(), "posizione {i}");
+                if attesa.is_some() {
+                    assert!(GetMenuItemID(hmenu, i as i32) >= 1000, "voce {i} con un id di comando");
+                }
+            }
+        }
     }
 
     #[test]

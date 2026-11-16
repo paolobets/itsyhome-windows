@@ -81,7 +81,7 @@ pub fn icona(nome: &str) -> Image {
     })
 }
 
-fn voci_app() -> ModelRc<VoceAppUi> {
+pub(crate) fn voci_app() -> ModelRc<VoceAppUi> {
     let voci: Vec<VoceAppUi> = app_disponibili()
         .into_iter()
         .map(|a| VoceAppUi { id: a.id.into(), nome: a.nome.into(), icona: icona(a.icona) })
@@ -146,6 +146,24 @@ fn stat_ui(s: &StatPc, cpu_pronta: bool) -> StatPcUi {
         batteria_testo: batteria.map(percentuale).unwrap_or_default().into(),
         batteria_frazione: batteria.map(|b| b / 100.0).unwrap_or(0.0),
         in_carica: s.in_carica.unwrap_or(false),
+    }
+}
+
+/// Cosa fa «⋯» in alto a destra del pannello.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AltreOpzioni {
+    /// Il menu nativo dell'isola (Windows).
+    Menu,
+    /// Le Impostazioni, direttamente: fuori da Windows il menu nativo non c'è ancora, e senza
+    /// l'ingranaggio nel dock «⋯» è l'unico accesso alle Impostazioni dal pannello.
+    Impostazioni,
+}
+
+fn azione_altre_opzioni(menu_nativo: bool) -> AltreOpzioni {
+    if menu_nativo {
+        AltreOpzioni::Menu
+    } else {
+        AltreOpzioni::Impostazioni
     }
 }
 
@@ -287,15 +305,19 @@ impl Apertura {
         });
         // «⋯» in alto a destra: il menu dell'isola senza «Apri» (fuori da Windows niente menu,
         // come il clic destro sulla pillola).
-        #[cfg(windows)]
-        {
-            let debole = pannello.as_weak();
-            pannello.on_menu(move |destra, basso| {
+        let a = self.io.clone();
+        let debole = pannello.as_weak();
+        pannello.on_menu(move |destra, basso, tastiera| match azione_altre_opzioni(cfg!(windows)) {
+            AltreOpzioni::Menu => {
+                #[cfg(windows)]
                 if let Some(p) = debole.upgrade() {
-                    servizi::menu_dal_pannello(p.window(), destra, basso);
+                    servizi::menu_dal_pannello(p.window(), destra, basso, tastiera);
                 }
-            });
-        }
+                #[cfg(not(windows))]
+                let _ = (&debole, destra, basso, tastiera);
+            }
+            AltreOpzioni::Impostazioni => dopo(&a, Apertura::apri_impostazioni),
+        });
         // Un collegamento: il browser predefinito e, se è partito, il pannello si chiude (fuori da
         // questo callback). Se non è partito il pannello resta aperto e lo dice.
         let a = self.io.clone();
@@ -506,6 +528,14 @@ mod test {
         assert_eq!(al_prossimo_minuto(59, 999_000_000), Duration::from_millis(1) + MARGINE_MINUTO);
         // Secondo intercalare (60): subito al minuto dopo, mai una durata negativa.
         assert_eq!(al_prossimo_minuto(60, 0), MARGINE_MINUTO);
+    }
+
+    #[test]
+    fn altre_opzioni_apre_il_menu_o_le_impostazioni() {
+        // Task 14i, giro 1: dove c'è il menu nativo «⋯» lo apre; altrove (macOS, Linux) apre
+        // direttamente le Impostazioni, l'unico accesso dal pannello.
+        assert_eq!(azione_altre_opzioni(true), AltreOpzioni::Menu);
+        assert_eq!(azione_altre_opzioni(false), AltreOpzioni::Impostazioni);
     }
 
     #[test]
