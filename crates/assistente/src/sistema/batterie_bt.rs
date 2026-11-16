@@ -324,7 +324,7 @@ pub fn leggi() -> Vec<LetturaBt> {
     unsafe fn stringa(set: HDEVINFO, dati: &SP_DEVINFO_DATA, chiave: &DEVPROPKEY) -> Option<String> {
         let mut buffer = [0u8; 1024];
         let n = proprieta(set, dati, chiave, DEVPROP_TYPE_STRING, &mut buffer)?;
-        let unita: Vec<u16> = buffer[..n].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let unita: Vec<u16> = buffer[..n].as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect();
         let fine = unita.iter().position(|&u| u == 0).unwrap_or(unita.len());
         Some(String::from_utf16_lossy(&unita[..fine]))
     }
