@@ -2024,7 +2024,7 @@ impl Ponte {
             });
             p.on_muto_volume(|si| {
                 if let Some(ponte) = ponte() {
-                    ponte.audio().muto(si);
+                    ponte.muto_volume(si);
                 }
             });
         }
@@ -2702,10 +2702,38 @@ impl Ponte {
 
     /// Un livello scelto col cursore o con la tastiera (il pannello lo mostra già).
     fn imposta_volume(&self, livello: f32) {
+        self.imposta_volume_con(livello, self.audio());
+    }
+
+    /// `imposta_volume` con chi comanda il volume passato da fuori (un finto nei test: il volume
+    /// vero del PC non si tocca).
+    fn imposta_volume_con(&self, livello: f32, audio: &dyn Volume) {
         // Alzando il livello da muto l'audio torna, come con la rotella (una regola sola).
-        let nuovo = volume::imposta_da_cursore(self.volume.get(), livello, self.audio());
+        let nuovo = volume::imposta_da_cursore(self.volume.get(), livello, audio);
+        self.mostra_volume_comandato(nuovo);
+    }
+
+    /// Il muto chiesto dalla vista PC (altoparlante, Invio, Narrator): lo stato mostrato cambia
+    /// subito, perché l'eco di Windows di un nostro comando si scarta (B1).
+    fn muto_volume(&self, si: bool) {
+        self.muto_volume_con(si, self.audio());
+    }
+
+    /// `muto_volume` con chi comanda il volume passato da fuori (un finto nei test).
+    fn muto_volume_con(&self, si: bool, audio: &dyn Volume) {
+        let nuovo = volume::muta(self.volume.get(), si, audio);
+        self.mostra_volume_comandato(nuovo);
+    }
+
+    /// Lo stato ottimistico dopo un nostro comando (cursore o muto): lo prendono la riga della
+    /// vista PC e, se è visibile, la barra della pillola. `None` (nessuno stato letto): si
+    /// riscrive solo il pannello con quello che c'è.
+    fn mostra_volume_comandato(&self, nuovo: Option<StatoVolume>) {
         if nuovo.is_some() {
             self.volume.set(nuovo);
+            if let Some(pl) = self.pillola.upgrade().filter(|pl| pl.get_volume_mostrato() >= 0.0) {
+                scrivi_barra(&pl, nuovo);
+            }
         }
         if let Some(p) = self.pannello.borrow().upgrade() {
             self.scrivi_volume(&p);
@@ -3621,5 +3649,66 @@ pub(crate) mod test {
         assert_eq!(p.cambia_massimo(0, ""), "");
         assert!(p.casa.config().massimi_quadranti.is_empty(), "vuoto: torna il predefinito");
         sorgenti_lati::spegni();
+    }
+
+    /// Il finto del volume per i test del ponte: annota i comandi, il volume vero del PC non si
+    /// tocca.
+    #[cfg(windows)]
+    #[derive(Default)]
+    struct VolumeFinto {
+        comandi: RefCell<Vec<String>>,
+    }
+
+    #[cfg(windows)]
+    impl Volume for VolumeFinto {
+        fn imposta(&self, livello: f32) {
+            self.comandi.borrow_mut().push(format!("imposta {}", volume::percento(livello)));
+        }
+
+        fn muto(&self, si: bool) {
+            self.comandi.borrow_mut().push(format!("muto {si}"));
+        }
+    }
+
+    /// B1 della revisione finale di M2: l'altoparlante della vista PC mette il muto e l'icona lo
+    /// mostra subito (l'eco di Windows si scarta, quindi deve farlo il ponte). Poi il muto si
+    /// toglie con l'altoparlante e con il cursore alzato; la rotella legge lo stesso stato.
+    /// Prima della correzione il ponte mandava solo il comando: `volume` restava «non muto».
+    #[cfg(windows)]
+    #[test]
+    fn il_muto_della_vista_pc_si_vede_e_si_toglie() {
+        let (_spegni, p, _pillola, _dir) = ponte_di_prova();
+        let pannello = crate::Pannello::new().unwrap();
+        p.pannello_aperto(&pannello);
+        p.volume.set(Some(StatoVolume { livello: 0.40, muto: false }));
+        p.scrivi_volume(&pannello);
+        assert!(pannello.get_volume_disponibile() && !pannello.get_volume_muto());
+
+        let finto = VolumeFinto::default();
+        p.muto_volume_con(true, &finto);
+        assert_eq!(*finto.comandi.borrow(), ["muto true"]);
+        assert_eq!(p.volume.get(), Some(StatoVolume { livello: 0.40, muto: true }));
+        assert!(pannello.get_volume_muto(), "l'icona mostra subito il muto");
+
+        // Di nuovo l'altoparlante (il pannello chiede `!volume-muto`): il muto si toglie.
+        let finto = VolumeFinto::default();
+        p.muto_volume_con(!pannello.get_volume_muto(), &finto);
+        assert_eq!(*finto.comandi.borrow(), ["muto false"]);
+        assert!(!pannello.get_volume_muto());
+
+        // Muto di nuovo, poi il cursore alzato lo toglie.
+        p.muto_volume_con(true, &VolumeFinto::default());
+        let finto = VolumeFinto::default();
+        p.imposta_volume_con(0.42, &finto);
+        assert_eq!(*finto.comandi.borrow(), ["imposta 42", "muto false"]);
+        assert!(!pannello.get_volume_muto());
+        assert_eq!(volume::percento(pannello.get_volume()), 42);
+
+        // Muto di nuovo: la rotella in su (la stessa regola, sullo stato del ponte) lo toglie.
+        p.muto_volume_con(true, &VolumeFinto::default());
+        let finto = VolumeFinto::default();
+        let su = volume::muovi(&mut volume::Rotella::default(), p.volume.get(), 60.0, &finto).expect("uno scatto");
+        assert!(!su.muto);
+        assert_eq!(*finto.comandi.borrow(), ["imposta 44", "muto false"]);
     }
 }

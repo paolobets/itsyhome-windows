@@ -138,6 +138,17 @@ pub fn imposta_da_cursore(stato: Option<StatoVolume>, livello: f32, volume: &dyn
     Some(StatoVolume { livello, muto })
 }
 
+/// Il muto chiesto dalla vista PC (altoparlante, Invio o Narrator). Il comando parte e lo stato
+/// da mostrare cambia subito, come per il cursore: l'eco di Windows è un nostro comando e
+/// `stato_da_notifica` la scarta, quindi senza questo stato ottimistico l'icona resterebbe
+/// quella di prima e il cursore e la rotella leggerebbero un «non muto» falso (B1 della
+/// revisione finale di M2). Senza dispositivo il comando parte lo stesso, lo stato resta `None`.
+#[cfg(any(windows, test))]
+pub fn muta(stato: Option<StatoVolume>, si: bool, volume: &dyn Volume) -> Option<StatoVolume> {
+    volume.muto(si);
+    stato.map(|s| StatoVolume { muto: si, ..s })
+}
+
 /// Chi comanda il volume: `Audio` su Windows, un finto nei test.
 #[cfg(any(windows, test))]
 pub trait Volume {
@@ -190,6 +201,11 @@ mod com {
     /// Il contesto dei nostri comandi (`pguidEventContext`): `OnNotify` lo rimanda indietro
     /// nell'eco, e così lo si riconosce. Generato a caso, una volta per tutte.
     const CONTESTO: GUID = GUID::from_u128(0x6d1f_3a52_9c4e_4b87_a2d0_7e15_c8b3_f094);
+
+    /// La notifica è l'eco di un nostro comando: il suo contesto è il nostro.
+    fn e_eco(contesto: &GUID) -> bool {
+        *contesto == CONTESTO
+    }
 
     /// Chi riceve ogni stato letto (dal thread `audio` o dal thread di Windows di `OnNotify`):
     /// deve solo accodarlo al thread dell'interfaccia.
@@ -253,7 +269,7 @@ mod com {
             // un puntatore nullo si ignora.
             if let Some(d) = unsafe { dati.as_ref() } {
                 // Eco dei nostri comandi: conferma, non un nuovo stato (vedi `stato_da_notifica`).
-                let eco = d.guidEventContext == CONTESTO;
+                let eco = e_eco(&d.guidEventContext);
                 if let Some(s) = stato_da_notifica(eco, d.fMasterVolume, d.bMuted.as_bool()) {
                     (self.consegna)(Some(s));
                 }
@@ -403,6 +419,21 @@ mod com {
             let _ = unsafe { v.UnregisterControlChangeNotify(richiamo) };
         }
     }
+
+    #[cfg(test)]
+    mod test {
+        use super::{e_eco, CONTESTO};
+        use windows_core::GUID;
+
+        /// Solo il nostro contesto è eco. Il contesto nullo (tasti del volume, mixer di Windows)
+        /// e quello di altre app passano: sono stati nuovi.
+        #[test]
+        fn solo_il_nostro_contesto_e_eco() {
+            assert!(e_eco(&CONTESTO));
+            assert!(!e_eco(&GUID::zeroed()), "GUID_NULL: un cambio da fuori");
+            assert!(!e_eco(&GUID::from_u128(CONTESTO.to_u128() ^ 1)), "un'altra app");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -520,6 +551,40 @@ mod test {
         let finto = Finto::default();
         imposta_da_cursore(Some(StatoVolume { livello: 0.30, muto: false }), 0.5, &finto);
         assert_eq!(*finto.comandi.borrow(), ["imposta 50"]);
+    }
+
+    /// B1: il muto dalla vista PC cambia subito lo stato. La catena intera: comando → stato
+    /// ottimistico → eco scartata (lo stato resta muto) → si torna indietro con l'altoparlante,
+    /// col cursore alzato e con la rotella in su.
+    #[test]
+    fn il_muto_dalla_vista_pc_si_vede_e_si_toglie() {
+        let acceso = Some(StatoVolume { livello: 0.40, muto: false });
+        let finto = Finto::default();
+        let muto = muta(acceso, true, &finto);
+        assert_eq!(muto, Some(StatoVolume { livello: 0.40, muto: true }));
+        assert_eq!(*finto.comandi.borrow(), ["muto true"]);
+        // L'eco di Windows è nostra: nessuno stato nuovo, resta quello ottimistico (muto).
+        assert_eq!(stato_da_notifica(true, 0.40, true), None);
+
+        // Di nuovo l'altoparlante: il muto si toglie.
+        let finto = Finto::default();
+        assert_eq!(muta(muto, false, &finto), acceso);
+        assert_eq!(*finto.comandi.borrow(), ["muto false"]);
+
+        // Il cursore alzato toglie il muto (legge lo stato muto, non quello vecchio).
+        let finto = Finto::default();
+        assert!(!imposta_da_cursore(muto, 0.42, &finto).expect("stato").muto);
+        assert_eq!(*finto.comandi.borrow(), ["imposta 42", "muto false"]);
+
+        // La rotella in su anche.
+        let finto = Finto::default();
+        assert!(!muovi(&mut Rotella::default(), muto, 60.0, &finto).expect("stato").muto);
+        assert_eq!(*finto.comandi.borrow(), ["imposta 42", "muto false"]);
+
+        // Senza dispositivo il comando parte, ma non c'è uno stato da mostrare.
+        let finto = Finto::default();
+        assert_eq!(muta(None, true, &finto), None);
+        assert_eq!(*finto.comandi.borrow(), ["muto true"]);
     }
 
     /// Sulla macchina vera: avvia `Audio`, aspetta il primo stato e **non cambia nulla** (nessun
