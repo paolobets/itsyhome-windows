@@ -58,6 +58,8 @@ struct Contatori {
     stato_core: Mutex<String>,
     /// Quante `get_config` ricevute.
     letture_config: AtomicUsize,
+    /// Nomi scelti nel registro delle entità (`name`), per entity_id.
+    nomi_registro: Mutex<BTreeMap<String, String>>,
 }
 
 struct FintoHa {
@@ -250,6 +252,11 @@ fn risposta(v: &Value, contatori: &Contatori) -> Value {
             }
             let mut voci = vec![entry("light.cucina", "cucina"), presa];
             voci.extend(contatori.voci_extra.lock().unwrap().iter().cloned());
+            for (id, nome) in contatori.nomi_registro.lock().unwrap().iter() {
+                if let Some(v) = voci.iter_mut().find(|v| v["entity_id"] == id.as_str()) {
+                    v["name"] = json!(nome);
+                }
+            }
             ok(Value::Array(voci))
         }
         "get_config" => {
@@ -803,10 +810,76 @@ async fn entita_nascosta_nel_registro_torna_con_gli_attributi() {
     p.servizio.connetti_attivo();
     assert_eq!(conta_entita(&*aspetta_dati(&mut p).await), 1, "presa nascosta");
     ha.contatori.presa_nascosta.store(false, Ordering::SeqCst);
-    ha.manda_evento("entity_registry_updated", json!({ "action": "update", "entity_id": "switch.presa" }));
+    // Come HA: `changes` coi valori di prima.
+    ha.manda_evento("entity_registry_updated", json!({ "action": "update", "entity_id": "switch.presa", "changes": { "hidden_by": "user" } }));
     let d = aspetta_dati(&mut p).await;
     let presa = d.rooms.iter().flat_map(|r| &r.entities).find(|e| e.entity_id() == "switch.presa").expect("presa");
     assert_eq!(presa.name(), "Presa", "attributi interi, non lo stato alleggerito");
+    // Task 14h: il suo stato in memoria era alleggerito: la lettura dei registri lo scopre e
+    // rilegge tutto.
+    assert_eq!(ha.get_states(), 2);
+}
+
+/// Task 14h: eventi dei registri che non toccano nulla di ciò che l'app mostra o segue (versioni
+/// e connessioni di un dispositivo, opzioni di un'entità, entità che non si mostrano, stanze
+/// riordinate in HA): nessuna lettura, nessuna iscrizione rifatta, nessun dato.
+#[tokio::test]
+async fn eventi_dei_registri_che_non_cambiano_nulla_non_rileggono() {
+    let ha = FintoHa::avvia().await;
+    // Un sensore nel registro che l'app non mostra (senza classe di temperatura né stato).
+    ha.contatori.voci_extra.lock().unwrap().push(entry("sensor.frigo", "cucina"));
+    let mut p = prepara(&ha.url, Some(TOKEN));
+    p.servizio.connetti_attivo();
+    aspetta_dati(&mut p).await;
+    aspetta_iscrizione(&ha, 1).await;
+    ha.manda_evento("device_registry_updated", json!({ "action": "update", "device_id": "d1", "changes": { "sw_version": "1.2" } }));
+    ha.manda_evento("device_registry_updated", json!({ "action": "update", "device_id": "d1", "changes": { "connections": [] } }));
+    ha.manda_evento("entity_registry_updated", json!({ "action": "update", "entity_id": "light.cucina", "changes": { "options": {} } }));
+    ha.manda_evento("entity_registry_updated", json!({ "action": "update", "entity_id": "sensor.frigo", "changes": { "name": null } }));
+    ha.manda_evento("entity_registry_updated", json!({ "action": "create", "entity_id": "automation.sera" }));
+    ha.manda_evento("area_registry_updated", json!({ "action": "reorder", "area_id": null }));
+    let dati = dati_entro(&mut p, Duration::from_millis(1800)).await;
+    assert!(dati.is_empty(), "{} Dati", dati.len());
+    assert_eq!((ha.get_states(), ha.letture_registri(), ha.letture_config()), (1, 1, 1), "nessuna lettura");
+    assert_eq!(ha.iscrizioni_entita().len(), 1, "nessuna iscrizione rifatta");
+}
+
+/// Task 14h: il nome di un'entità mostrata cambiato nel registro: si rileggono i soli registri
+/// (non gli stati, non la configurazione) e l'iscrizione resta quella (le entità seguite sono le
+/// stesse).
+#[tokio::test]
+async fn nome_cambiato_nel_registro_rilegge_solo_i_registri() {
+    let ha = FintoHa::avvia().await;
+    let mut p = prepara(&ha.url, Some(TOKEN));
+    p.servizio.connetti_attivo();
+    aspetta_dati(&mut p).await;
+    aspetta_iscrizione(&ha, 1).await;
+    ha.contatori.nomi_registro.lock().unwrap().insert("light.cucina".into(), "Lampadario".into());
+    ha.manda_evento("entity_registry_updated", json!({ "action": "update", "entity_id": "light.cucina", "changes": { "name": null } }));
+    let d = aspetta_dati(&mut p).await;
+    let luce = d.rooms.iter().flat_map(|r| &r.entities).find(|e| e.entity_id() == "light.cucina").expect("luce");
+    assert_eq!(luce.name(), "Lampadario");
+    assert_eq!(acceso(&d, "light.cucina"), Some(true), "lo stato è quello seguito");
+    sleep(Duration::from_millis(200)).await;
+    assert_eq!((ha.get_states(), ha.letture_registri(), ha.letture_config()), (1, 2, 1));
+    assert_eq!(ha.iscrizioni_entita().len(), 1, "stesse entità seguite: nessuna iscrizione rifatta");
+}
+
+/// Task 14h: un'entità mostrata nascosta nel registro esce rileggendo i soli registri; l'iscrizione
+/// si rifà perché le entità seguite cambiano.
+#[tokio::test]
+async fn entita_nascosta_nel_registro_esce_senza_rileggere_gli_stati() {
+    let ha = FintoHa::avvia().await;
+    let mut p = prepara(&ha.url, Some(TOKEN));
+    p.servizio.connetti_attivo();
+    assert_eq!(conta_entita(&*aspetta_dati(&mut p).await), 2);
+    aspetta_iscrizione(&ha, 1).await;
+    ha.contatori.presa_nascosta.store(true, Ordering::SeqCst);
+    ha.manda_evento("entity_registry_updated", json!({ "action": "update", "entity_id": "switch.presa", "changes": { "hidden_by": null } }));
+    assert_eq!(conta_entita(&*aspetta_dati(&mut p).await), 1);
+    aspetta(|| ha.iscrizioni_entita().len() == 2, "iscrizione rifatta").await;
+    assert_eq!(ha.iscrizioni_entita()[1], ["light.cucina"]);
+    assert_eq!((ha.get_states(), ha.letture_registri()), (1, 2));
 }
 
 /// Un cambio avvenuto mentre la lettura completa è in volo non si perde: l'iscrizione parte dopo
@@ -1258,22 +1331,34 @@ async fn diagnosi_conta_messaggi_cambi_e_riletture_senza_dati_della_casa() {
         righe.last().unwrap()
     );
 
-    // Tre eventi del registro di fila: tre richieste, una sola lettura (dopo 1 s di calma).
+    // Tre eventi del registro di fila sul nome di un'entità mostrata: tre richieste, una sola
+    // lettura dei soli registri (dopo 1 s di calma), nessuna lettura completa né iscrizione. Un
+    // quarto evento (versione di un dispositivo) si scarta.
     for _ in 0..3 {
-        ha.manda_evento("entity_registry_updated", json!({ "action": "update", "entity_id": "light.cucina" }));
+        ha.manda_evento("entity_registry_updated", json!({ "action": "update", "entity_id": "light.cucina", "changes": { "name": null } }));
     }
-    aspetta(|| ha.get_states() == 2, "rilettura dopo il registro").await;
-    // La lettura finisce e l'iscrizione si rifà: si aspetta quella, non un tempo fisso.
-    aspetta(|| diagnosi.valore(casa_core::diagnosi::Contatore::iscrizioni) == 1, "nuova iscrizione").await;
+    ha.manda_evento("device_registry_updated", json!({ "action": "update", "device_id": "d1", "changes": { "sw_version": "1" } }));
+    aspetta(|| ha.letture_registri() == 2, "lettura dei registri").await;
+    aspetta(|| diagnosi.valore(casa_core::diagnosi::Contatore::consegne_uguali) == 1, "mappatura dopo i registri").await;
     sleep(Duration::from_millis(100)).await;
     righe.push(diagnosi.riga(&[]));
     let v = valori(righe.last().unwrap());
     assert_eq!(
-        [numero(&v, "ev_entity_registry_updated"), numero(&v, "rilettura_registri"), numero(&v, "riletture"), numero(&v, "iscrizioni")],
-        [3, 3, 1, 1],
+        [
+            numero(&v, "ev_entity_registry_updated"),
+            numero(&v, "ev_device_registry_updated"),
+            numero(&v, "rilettura_registri"),
+            numero(&v, "rilettura_solo_registri"),
+            numero(&v, "registro_scartati"),
+            numero(&v, "letture_registri"),
+            numero(&v, "riletture"),
+            numero(&v, "iscrizioni"),
+        ],
+        [3, 1, 3, 3, 1, 1, 0, 0],
         "{}",
         righe.last().unwrap()
     );
+    assert_eq!(ha.get_states(), 1);
 
     // Nessun dato della casa: solo nomi fissi e numeri.
     let tutto = righe.join("\n");

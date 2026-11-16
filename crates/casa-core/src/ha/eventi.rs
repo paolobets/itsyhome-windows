@@ -13,6 +13,7 @@
 use serde_json::Value;
 
 use super::models::HaState;
+use super::registri::{self, CambioRegistro};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NotificaHa {
@@ -40,9 +41,11 @@ pub enum EventoWs {
     Entita { iscrizione: u64, aggiunte: Vec<HaState>, cambiate: Vec<(String, Value)>, tolte: Vec<String> },
     /// Un evento delle entità che non si riesce a leggere: si rilegge tutto.
     StatoIlleggibile,
-    /// Un registro (`area_registry_updated`, `device_registry_updated`, `entity_registry_updated`)
-    /// o la configurazione (`core_config_updated`: unità di temperatura) sono cambiati.
+    /// La configurazione (`core_config_updated`: unità di temperatura, stato del core) è cambiata,
+    /// o un evento di un registro non si legge: si rilegge tutto.
     DaRileggere,
+    /// Un evento di un registro, letto (vedi `registri`): il servizio decide cosa rileggere.
+    Registro(CambioRegistro),
     Notifiche { tipo: Aggiornamento, notifiche: Vec<NotificaHa> },
 }
 
@@ -61,8 +64,13 @@ pub const TITOLO_PREDEFINITO: &str = "Home Assistant";
 /// Forma (documentazione di HA, «Events» e «WebSocket API»): `{"type": "event", "event":
 /// {"event_type": ..., "data": {...}}}`.
 pub fn interpreta(v: &Value) -> Option<EventoWs> {
-    match v.get("event")?.get("event_type")?.as_str()? {
-        t if EVENTI_RILETTURA.contains(&t) => Some(EventoWs::DaRileggere),
+    let evento = v.get("event")?;
+    match evento.get("event_type")?.as_str()? {
+        "core_config_updated" => Some(EventoWs::DaRileggere),
+        t if EVENTI_RILETTURA.contains(&t) => Some(match registri::leggi(t, &evento["data"]) {
+            Some(c) => EventoWs::Registro(c),
+            None => EventoWs::DaRileggere,
+        }),
         _ => None,
     }
 }
@@ -314,6 +322,14 @@ mod tests {
             let v = evento(t, json!({ "action": "update" }));
             assert_eq!(interpreta(&v), Some(EventoWs::DaRileggere), "{t}");
         }
+    }
+
+    /// Task 14h: un evento di un registro che si legge arriva col suo contenuto.
+    #[test]
+    fn evento_di_un_registro_letto() {
+        let v = evento("device_registry_updated", json!({ "action": "update", "device_id": "d1", "changes": { "sw_version": "1" } }));
+        let Some(EventoWs::Registro(CambioRegistro::Dispositivo { device_id, campi, .. })) = interpreta(&v) else { panic!() };
+        assert_eq!((device_id.as_str(), campi), ("d1", vec!["sw_version".to_owned()]));
     }
 
     #[test]

@@ -6,9 +6,13 @@
 //! iscrive con `subscribe_entities` alle sole entità che l'app mostra (preferiti, stanze, scene,
 //! telecamere, più gli `update.*` che contano gli aggiornamenti): HA manda subito i loro stati
 //! interi e poi solo i loro cambi, in forma compressa. Ogni cambio aggiorna in memoria solo la sua
-//! entità e si pubblica solo se cambia qualcosa che l'app mostra; i registri si rileggono solo sui
-//! loro eventi `*_registry_updated`. Così una casa vera, dove i sensori cambiano di continuo, non
-//! manda nemmeno i messaggi delle entità che l'app non mostra.
+//! entità e si pubblica solo se cambia qualcosa che l'app mostra. Così una casa vera, dove i
+//! sensori cambiano di continuo, non manda nemmeno i messaggi delle entità che l'app non mostra.
+//!
+//! Gli eventi `*_registry_updated` si leggono (`ha::registri`): quelli che non toccano nulla di ciò
+//! che l'app mostra o segue si scartano; gli altri fanno rileggere i soli registri (poi mappatura
+//! in memoria, iscrizione rifatta solo se cambiano le entità da seguire) o, per un'entità nuova o
+//! rinominata, tutto. `core_config_updated` fa rileggere tutto.
 //!
 //! L'iscrizione si rifà dopo ogni lettura completa (il suo primo evento porta gli stati di
 //! adesso: niente cambi persi fra la lettura e l'iscrizione) e quando cambia l'insieme mostrato
@@ -34,6 +38,7 @@ use crate::ha::client::{self, Client, DalClient, NON_CONNESSO};
 use crate::ha::eventi::{applica_diff, Aggiornamento, EventoWs};
 use crate::ha::mapper::{aggiornamento_disponibile, sostituisci_in_menu, EntityMapper, Indici, Preferenze};
 use crate::ha::models::{HaArea, HaConfig, HaDevice, HaEntityEntry, HaState};
+use crate::ha::registri::{CambioRegistro, Rilettura};
 use crate::segreti::Segreti;
 use crate::types::{AppEntity, MenuData, TestConnectionResult};
 
@@ -224,12 +229,21 @@ struct Grezzi {
     config: Option<HaConfig>,
 }
 
+/// I soli tre registri, riletti dopo un evento che li tocca (Task 14h).
+struct Registri {
+    areas: Vec<HaArea>,
+    devices: Vec<HaDevice>,
+    entries: Vec<HaEntityEntry>,
+}
+
 /// Messaggi dai task del runtime al motore, con la generazione della connessione
 /// che li ha prodotti: quelli di una connessione superata si scartano.
 enum Interno {
     Client(u64, DalClient),
     /// Esito di una lettura completa (`Err`: senza gli stati non c'è nulla da mostrare).
     Grezzi(u64, Result<Box<Grezzi>, String>),
+    /// Esito della lettura dei soli registri (`Err`: almeno uno non è arrivato).
+    Registri(u64, Result<Box<Registri>, String>),
 }
 
 /// Cosa comporta, per ciò che si vede, il cambio di stato di un'entità.
@@ -366,14 +380,17 @@ struct Motore {
     iscrizione: u64,
     /// Le entità seguite dall'iscrizione della connessione corrente (`None`: nessuna ancora).
     seguite: Option<BTreeSet<String>>,
-    /// Un'altra lettura completa è stata chiesta mentre una era in volo.
-    rileggi_dopo: bool,
+    /// Una lettura (completa o dei soli registri) chiesta mentre un'altra era in volo: parte
+    /// alla fine di quella (`Niente`: nessuna).
+    rileggi_dopo: Rilettura,
     /// Pubblicazione dei cambi visibili, raccolti in una raffica.
     pubblica: Attesa,
     /// Alla pubblicazione serve la mappatura completa (non bastano le sostituzioni).
     rimappa: bool,
-    /// Rilettura completa in sospeso dopo gli eventi dei registri o della configurazione.
+    /// Rilettura in sospeso dopo gli eventi dei registri o della configurazione, e quale: la più
+    /// ampia chiesta dagli eventi raccolti.
     registri: Attesa,
+    rilettura_registri: Rilettura,
     /// Nuovo tentativo di una lettura fallita prima che la connessione ne abbia fatta una
     /// riuscita, e l'attesa del prossimo (cresce fino al tetto).
     riprova: Attesa,
@@ -415,10 +432,11 @@ impl Motore {
             in_lettura: false,
             iscrizione: 0,
             seguite: None,
-            rileggi_dopo: false,
+            rileggi_dopo: Rilettura::Niente,
             pubblica: Attesa::default(),
             rimappa: false,
             registri: Attesa::default(),
+            rilettura_registri: Rilettura::Niente,
             riprova: Attesa::default(),
             attesa_riprova: RIPROVA_LETTURA,
             letta: false,
@@ -451,7 +469,10 @@ impl Motore {
                 }
                 _ = sleep_until(registri.unwrap_or_else(Instant::now)), if registri.is_some() => {
                     self.registri.annulla();
-                    self.rileggi();
+                    match std::mem::replace(&mut self.rilettura_registri, Rilettura::Niente) {
+                        Rilettura::Registri => self.rileggi_registri(),
+                        _ => self.rileggi(),
+                    }
                 }
                 _ = sleep_until(riprova.unwrap_or_else(Instant::now)), if riprova.is_some() => {
                     self.riprova.annulla();
@@ -599,13 +620,14 @@ impl Motore {
         self.consegnato = None;
         self.in_lettura = false;
         self.seguite = None;
-        self.rileggi_dopo = false;
+        self.rileggi_dopo = Rilettura::Niente;
         self.ferma_attese();
     }
 
     fn ferma_attese(&mut self) {
         self.pubblica.annulla();
         self.registri.annulla();
+        self.rilettura_registri = Rilettura::Niente;
         self.riprova.annulla();
         self.rimappa = false;
     }
@@ -643,7 +665,7 @@ impl Motore {
 
     fn interno(&mut self, i: Interno) {
         match i {
-            Interno::Client(g, _) | Interno::Grezzi(g, _) if g != self.generazione => {}
+            Interno::Client(g, _) | Interno::Grezzi(g, _) | Interno::Registri(g, _) if g != self.generazione => {}
             Interno::Client(_, DalClient::Stato(s)) => {
                 let connesso = s == StatoConnessione::Connesso;
                 if !connesso {
@@ -670,15 +692,43 @@ impl Motore {
                 self.diagnosi.conta(Contatore::rilettura_illeggibile);
                 self.rileggi();
             }
-            Interno::Client(_, DalClient::Evento(EventoWs::DaRileggere)) => {
-                self.diagnosi.conta(Contatore::rilettura_registri);
-                self.registri.rinvia(Instant::now(), ATTESA_REGISTRI, TETTO_REGISTRI);
+            Interno::Client(_, DalClient::Evento(EventoWs::DaRileggere)) => self.chiedi_rilettura(Rilettura::Tutto),
+            Interno::Client(_, DalClient::Evento(EventoWs::Registro(c))) => {
+                let serve = self.rilettura_per(&c);
+                if serve == Rilettura::Niente {
+                    self.diagnosi.conta(Contatore::registro_scartati);
+                } else {
+                    self.chiedi_rilettura(serve);
+                }
             }
             Interno::Client(_, DalClient::Evento(EventoWs::Notifiche { tipo, notifiche })) => {
                 self.notifiche(tipo, notifiche);
             }
             Interno::Grezzi(_, esito) => self.letti(esito),
+            Interno::Registri(_, esito) => self.registri_letti(esito),
         }
+    }
+
+    /// Cosa rileggere dopo un evento di un registro (Task 14h). Senza dati in memoria non si sa
+    /// cosa l'app mostra: si rilegge tutto, come prima.
+    fn rilettura_per(&self, c: &CambioRegistro) -> Rilettura {
+        let Some(casa) = &self.casa else { return Rilettura::Tutto };
+        let mostrata = |id: &str| {
+            casa.stato(id).is_some_and(|s| self.mapper.mappa_entita(&casa.indici, s).is_some())
+                || self.seguite.as_ref().is_some_and(|ids| ids.contains(id))
+        };
+        c.rilettura(&casa.indici, &mostrata)
+    }
+
+    /// Un evento dei registri o della configurazione chiede una rilettura: parte 1 s dopo l'ultimo
+    /// (al più 5 s dopo il primo), la più ampia fra quelle chieste.
+    fn chiedi_rilettura(&mut self, serve: Rilettura) {
+        self.diagnosi.conta(Contatore::rilettura_registri);
+        if serve == Rilettura::Registri {
+            self.diagnosi.conta(Contatore::rilettura_solo_registri);
+        }
+        self.rilettura_registri = self.rilettura_registri.max(serve);
+        self.registri.rinvia(Instant::now(), ATTESA_REGISTRI, TETTO_REGISTRI);
     }
 
     /// Un evento dell'iscrizione alle entità: stati interi (`aggiunte`, il primo evento li porta
@@ -783,7 +833,7 @@ impl Motore {
         let Some((client, _)) = &self.client else { return };
         if self.in_lettura {
             self.diagnosi.conta(Contatore::rilettura_accodata);
-            self.rileggi_dopo = true;
+            self.rileggi_dopo = Rilettura::Tutto;
             return;
         }
         self.in_lettura = true;
@@ -806,6 +856,82 @@ impl Motore {
             }));
             let _ = tx.send(Interno::Grezzi(g, esito));
         });
+    }
+
+    /// Rilegge i soli tre registri (Task 14h): dopo un evento che cambia nomi, stanze o ciò che si
+    /// mostra. Gli stati restano quelli seguiti dall'iscrizione, che si rifà solo se cambiano le
+    /// entità da seguire. Su una casa vera `get_states` e il primo evento di un'iscrizione rifatta
+    /// sono la gran parte dei byte di una lettura completa.
+    fn rileggi_registri(&mut self) {
+        let Some((client, _)) = &self.client else { return };
+        if self.in_lettura {
+            self.diagnosi.conta(Contatore::rilettura_accodata);
+            self.rileggi_dopo = self.rileggi_dopo.max(Rilettura::Registri);
+            return;
+        }
+        self.in_lettura = true;
+        self.diagnosi.conta(Contatore::letture_registri);
+        let (client, tx, g) = (client.clone(), self.interni_tx.clone(), self.generazione);
+        tokio::spawn(async move {
+            let (areas, devices, entries) = tokio::join!(
+                leggi::<Vec<HaArea>>(&client, "config/area_registry/list"),
+                leggi::<Vec<HaDevice>>(&client, "config/device_registry/list"),
+                leggi::<Vec<HaEntityEntry>>(&client, "config/entity_registry/list"),
+            );
+            let esito = match (areas, devices, entries) {
+                (Ok(areas), Ok(devices), Ok(entries)) => Ok(Box::new(Registri { areas, devices, entries })),
+                (a, d, e) => Err(a.err().or(d.err()).or(e.err()).unwrap_or_default()),
+            };
+            let _ = tx.send(Interno::Registri(g, esito));
+        });
+    }
+
+    /// I registri riletti: si rimappa in memoria e si consegna (se cambia qualcosa), e ci si
+    /// riscrive solo se cambiano le entità da seguire. Se un'entità diventa mostrata ma il suo
+    /// stato in memoria è alleggerito (non era mostrata: senza attributi), o una lettura non è
+    /// riuscita, si rilegge tutto.
+    fn registri_letti(&mut self, esito: Result<Box<Registri>, String>) {
+        self.in_lettura = false;
+        let completa = match esito {
+            Err(e) => {
+                self.diagnosi.conta(Contatore::letture_fallite);
+                eprintln!("lettura dei registri di Home Assistant non riuscita: {e}");
+                true
+            }
+            Ok(r) => match &mut self.casa {
+                None => true,
+                Some(casa) => {
+                    let nuovi = Indici::new(r.areas, r.devices, r.entries);
+                    let mapper = &self.mapper;
+                    let scoperta = casa.stati.iter().any(|s| {
+                        mapper.mappa_entita(&casa.indici, s).is_none() && mapper.mappa_entita(&nuovi, s).is_some()
+                    });
+                    if !scoperta {
+                        casa.indici = nuovi;
+                    }
+                    scoperta
+                }
+            },
+        };
+        if completa {
+            self.rileggi_dopo = Rilettura::Niente;
+            return self.rileggi();
+        }
+        self.pubblica.annulla();
+        self.rimappa = false;
+        self.mappa_tutto();
+        self.consegna();
+        self.segui(false);
+        self.dopo_lettura();
+    }
+
+    /// Una lettura finita: parte quella chiesta intanto, se c'è.
+    fn dopo_lettura(&mut self) {
+        match std::mem::replace(&mut self.rileggi_dopo, Rilettura::Niente) {
+            Rilettura::Tutto => self.rileggi(),
+            Rilettura::Registri => self.rileggi_registri(),
+            Rilettura::Niente => {}
+        }
     }
 
     /// La lettura completa è arrivata: dati nuovi, mappati e consegnati subito; poi l'iscrizione
@@ -857,9 +983,9 @@ impl Motore {
                 }
             }
         }
-        if std::mem::take(&mut self.rileggi_dopo) {
-            self.rileggi();
-        }
+        // Anche una lettura dei soli registri chiesta intanto parte: quelli di questa lettura
+        // possono essere di prima dell'evento.
+        self.dopo_lettura();
     }
 
     /// Ricostruisce tutto `MenuData` dai dati in memoria con la configurazione corrente.

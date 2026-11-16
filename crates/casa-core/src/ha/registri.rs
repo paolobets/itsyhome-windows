@@ -103,7 +103,12 @@ pub fn leggi(event_type: &str, data: &Value) -> Option<CambioRegistro> {
             Some(CambioRegistro::Dispositivo { azione, device_id, campi: campi(data) })
         }
         "area_registry_updated" => {
-            Some(CambioRegistro::Area { azione, area_id: data["area_id"].as_str().map(str::to_owned) })
+            let area_id = data["area_id"].as_str().map(str::to_owned);
+            // Solo «reorder» non ha la stanza.
+            if area_id.is_none() && azione != Azione::Riordina {
+                return None;
+            }
+            Some(CambioRegistro::Area { azione, area_id })
         }
         _ => None,
     }

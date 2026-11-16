@@ -68,6 +68,12 @@ contatori!(
     rilettura_riprova,
     rilettura_avvio,
     rilettura_accodata,
+    // Task 14h: eventi dei registri che non cambiano nulla di ciò che l'app mostra o segue
+    // (scartati, nessuna lettura), quelli che chiedono solo i registri, e le letture dei soli
+    // registri partite (le `riletture` restano quelle complete).
+    registro_scartati,
+    rilettura_solo_registri,
+    letture_registri,
     // Iscrizioni `subscribe_entities` mandate.
     iscrizioni,
     // Lato interfaccia: eventi `Dati` e `Stato` ricevuti, ricostruzioni di preferiti/stanze,
