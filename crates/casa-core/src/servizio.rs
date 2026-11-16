@@ -908,7 +908,7 @@ impl Motore {
 
 async fn leggi<T: serde::de::DeserializeOwned>(client: &Client, tipo: &str) -> Result<T, String> {
     let v = client.richiesta(tipo, Value::Null).await?;
-    serde_json::from_value(v).map_err(|e| e.to_string())
+    serde_json::from_str(v.get()).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

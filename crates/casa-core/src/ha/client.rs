@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
+use serde_json::value::RawValue;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -50,7 +51,7 @@ pub(crate) enum DalClient {
 struct Richiesta {
     tipo: String,
     extra: Value,
-    risposta: oneshot::Sender<Result<Value, String>>,
+    risposta: oneshot::Sender<Result<Box<RawValue>, String>>,
 }
 
 /// Ciò che il servizio chiede all'attore.
@@ -68,7 +69,8 @@ pub(crate) struct Client {
 
 impl Client {
     /// Comando WS generico; `extra` (oggetto) viene fuso nel messaggio.
-    pub(crate) async fn richiesta(&self, tipo: &str, extra: Value) -> Result<Value, String> {
+    /// Il `result` della risposta così com'è nel testo (chi chiama lo legge nel suo tipo).
+    pub(crate) async fn richiesta(&self, tipo: &str, extra: Value) -> Result<Box<RawValue>, String> {
         let (risposta, rx) = oneshot::channel();
         self.tx
             .send(Verso::Richiesta(Richiesta { tipo: tipo.to_owned(), extra, risposta }))
@@ -176,7 +178,7 @@ async fn sessione(
     };
     let (mut scrivi, mut leggi) = ws.split();
 
-    let mut pendenti: HashMap<u64, oneshot::Sender<Result<Value, String>>> = HashMap::new();
+    let mut pendenti: HashMap<u64, oneshot::Sender<Result<Box<RawValue>, String>>> = HashMap::new();
     let mut prossimo_id: u64 = 1;
     let mut autenticato = false;
     // Id della richiesta `persistent_notification/subscribe`: i suoi eventi portano quell'id.
@@ -200,6 +202,20 @@ async fn sessione(
                 };
                 diagnosi.conta(Contatore::ws_messaggi);
                 diagnosi.conta_n(Contatore::ws_byte, testo.len() as u64);
+                // Le risposte (anche di qualche MB: stati e registri di una casa vera) si leggono
+                // senza farne un albero `Value`: il `result` passa così com'è a chi l'ha chiesto.
+                if let Some((id, esito)) = risultato_diretto(&testo) {
+                    diagnosi.conta(Contatore::ws_result);
+                    if let Some(tx) = pendenti.remove(&id) {
+                        let _ = tx.send(esito);
+                    } else if iscrizione_entita.is_some_and(|(ws, _)| ws == id) {
+                        if let Err(e) = esito {
+                            eprintln!("iscrizione agli stati (subscribe_entities) rifiutata da Home Assistant: {e}");
+                            iscrizione_entita = None;
+                        }
+                    }
+                    continue;
+                }
                 let Ok(mut v) = serde_json::from_str::<Value>(&testo) else { continue };
                 // Il tipo copiato: risultati ed eventi si prendono dal messaggio (`esito`, `interpreta`).
                 let tipo = v["type"].as_str().map(str::to_owned);
@@ -226,7 +242,8 @@ async fn sessione(
                     Some("result") => {
                         let id = v["id"].as_u64().unwrap_or(0);
                         if let Some(tx) = pendenti.remove(&id) {
-                            let _ = tx.send(esito(v));
+                            let esito = esito(v).and_then(|r| serde_json::value::to_raw_value(&r).map_err(|e| e.to_string()));
+                            let _ = tx.send(esito);
                         } else if iscrizione_entita.is_some_and(|(ws, _)| ws == id) {
                             // L'iscrizione agli stati rifiutata (HA troppo vecchio, un id che HA
                             // non accetta): senza, gli stati restano fermi. Lo si scrive; rileggere
@@ -347,12 +364,45 @@ fn esito(mut v: Value) -> Result<Value, String> {
     if v["success"].as_bool().unwrap_or(false) {
         return Ok(v.get_mut("result").map(Value::take).unwrap_or(Value::Null));
     }
-    let e = &v["error"];
-    Err(e["message"]
-        .as_str()
-        .or_else(|| e["code"].as_str())
-        .unwrap_or("errore di Home Assistant")
-        .to_owned())
+    Err(messaggio_errore(&v["error"]))
+}
+
+fn messaggio_errore(e: &Value) -> String {
+    e["message"].as_str().or_else(|| e["code"].as_str()).unwrap_or("errore di Home Assistant").to_owned()
+}
+
+/// Una risposta (`"type": "result"`) letta senza l'albero `Value`: (id, `result` così com'è nel
+/// testo, o il messaggio d'errore). `None` per ogni altro messaggio, che segue la strada solita.
+/// Il controllo del testo è solo un filtro veloce: decide il campo `type` letto davvero.
+fn risultato_diretto(testo: &str) -> Option<(u64, Result<Box<RawValue>, String>)> {
+    #[derive(serde::Deserialize)]
+    struct Risultato<'a> {
+        id: u64,
+        #[serde(rename = "type", borrow)]
+        tipo: std::borrow::Cow<'a, str>,
+        #[serde(default)]
+        success: bool,
+        #[serde(borrow, default)]
+        result: Option<&'a RawValue>,
+        #[serde(default)]
+        error: Value,
+    }
+    if !testo.contains("\"type\":\"result\"") {
+        return None;
+    }
+    let r: Risultato = serde_json::from_str(testo).ok()?;
+    if r.tipo != "result" {
+        return None;
+    }
+    let esito = if r.success {
+        Ok(match r.result {
+            Some(raw) => raw.to_owned(),
+            None => RawValue::from_string("null".into()).ok()?,
+        })
+    } else {
+        Err(messaggio_errore(&r.error))
+    };
+    Some((r.id, esito))
 }
 
 /// Connessione di prova: apre, autentica, legge gli stati, chiude. 10 s al massimo.
@@ -420,6 +470,24 @@ fn ritardo(ritardi: &[Duration], tentativo: usize) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Task 14g: le risposte si leggono senza albero `Value`, col `result` così com'è nel testo;
+    /// gli altri messaggi (anche un evento che contiene quel testo) seguono la strada solita.
+    #[test]
+    fn risposte_lette_dal_testo() {
+        let stati = r#"[{"entity_id":"light.a","state":"on","attributes":{"x":[1,2]}}]"#;
+        let ok = format!(r#"{{"id":12,"type":"result","success":true,"result":{stati}}}"#);
+        let (id, esito) = risultato_diretto(&ok).expect("una risposta");
+        assert_eq!((id, esito.unwrap().get()), (12, stati));
+        // Chiavi in un altro ordine (come le scrive serde_json) e `result` nullo.
+        let (_, nullo) = risultato_diretto(r#"{"id":3,"result":null,"success":true,"type":"result"}"#).unwrap();
+        assert_eq!(nullo.unwrap().get(), "null");
+        let errore = r#"{"id":4,"type":"result","success":false,"error":{"code":"unknown_command","message":"Unknown command."}}"#;
+        assert_eq!(risultato_diretto(errore).unwrap().1.unwrap_err(), "Unknown command.");
+        let evento = r#"{"id":5,"type":"event","event":{"a":{"sensor.x":{"s":"on","a":{"type":"result"}}}}}"#;
+        assert!(risultato_diretto(evento).is_none());
+        assert!(risultato_diretto(r#"{"id":6,"type":"pong"}"#).is_none());
+    }
 
     #[test]
     fn url_websocket() {
