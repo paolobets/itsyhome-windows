@@ -492,9 +492,12 @@ fn manda_dpi(hwnd: isize, dpi: u32) {
 }
 
 /// Codice del tasto Esc (VK_ESCAPE).
+// Il gestore di Esc nel riquadro web c'è solo su Windows: fuori restano per i test.
+#[cfg_attr(not(windows), allow(dead_code))]
 const TASTO_ESC: u32 = 0x1B;
 
 /// Esc premuto (non rilasciato) chiude la finestra, ovunque sia il fuoco.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn tasto_chiude(tasto: u32, premuto: bool) -> bool {
     premuto && tasto == TASTO_ESC
 }

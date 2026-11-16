@@ -7,9 +7,8 @@
 //! - il sondaggio del mouse ogni 100 ms SOLO mentre la pillola è ritirata e visibile (la linea
 //!   lascia passare i clic, quindi non riceve eventi del mouse).
 
-use super::menu::Comando;
 #[cfg(windows)]
-use super::menu::MenuIsola;
+use super::menu::{Comando, MenuIsola};
 use super::ritirata::{self, Ritirata, SONDAGGIO_MOUSE};
 use super::scorciatoie::{self, Scorciatoia, Scorciatoie};
 #[cfg(windows)]
@@ -184,6 +183,8 @@ fn al_comando_dal_pannello(c: Comando) {
     }
 }
 
+/// Fuori da Windows non c'è né menu né icona nella barra: nessuno chiama questa funzione.
+#[cfg(windows)]
 fn al_comando(c: Comando) {
     match c {
         Comando::Apri => apri(),

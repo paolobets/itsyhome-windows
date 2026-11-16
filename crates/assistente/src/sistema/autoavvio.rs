@@ -25,6 +25,8 @@ pub enum Stato {
     /// Voce presente e attiva; `percorso_giusto` falso se punta a un altro eseguibile.
     Acceso { percorso_giusto: bool },
     /// Voce presente ma disattivata da Gestione attività.
+    // Fuori da Windows nessuno la costruisce: `stato` serve solo al registro di Windows.
+    #[cfg_attr(not(windows), allow(dead_code))]
     DisattivatoDaWindows,
 }
 
@@ -36,16 +38,20 @@ impl Stato {
 }
 
 /// Il comando da scrivere: il percorso dell'eseguibile tra virgolette (può contenere spazi).
+// Fuori da Windows la voce la scrive `auto-launch`: queste tre restano per i test.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn comando(exe: &Path) -> String {
     format!("\"{}\"", exe.display())
 }
 
 /// Gestione attività scrive 12 byte: il primo pari = attivo, dispari = disattivato.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn disattivato_da_windows(approvato: &[u8]) -> bool {
     approvato.first().is_some_and(|b| b & 1 == 1)
 }
 
 /// Decisione pura dallo stato del registro.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn stato(valore_run: Option<&str>, approvato: Option<&[u8]>, atteso: &str) -> Stato {
     let Some(valore) = valore_run else { return Stato::Spento };
     if approvato.is_some_and(disattivato_da_windows) {

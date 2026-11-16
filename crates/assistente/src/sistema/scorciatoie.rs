@@ -15,6 +15,8 @@ pub enum Scorciatoia {
 }
 
 impl Scorciatoia {
+    // Serve solo alla registrazione delle scorciatoie, che c'è solo su Windows.
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub const TUTTE: [Scorciatoia; 2] = [Scorciatoia::Apri, Scorciatoia::Ritirata];
 
     /// Come la si scrive all'utente.
