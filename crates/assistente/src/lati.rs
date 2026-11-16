@@ -9,8 +9,8 @@
 use crate::finestre;
 use crate::pc_stats::{tinta_batteria, Fonti, LetturaBatteria, TintaBatteria};
 use casa_core::config::PREFISSO_SENSORE;
-use casa_core::types::{AppEntity, MenuData};
-use std::collections::{HashMap, HashSet};
+use casa_core::types::{MenuData, SensoreNumerico};
+use std::collections::HashMap;
 
 /// Una fonte per un lato della pillola o per un quadrante.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -71,45 +71,27 @@ impl Lato {
     }
 }
 
-/// Un sensore di Home Assistant che si può scegliere (dai dati della casa).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SensoreDisponibile {
-    pub entity_id: String,
-    pub nome: String,
-    /// La `device_class` di HA («temperature», «humidity», «power»…).
-    pub classe: Option<String>,
-    pub unita: Option<String>,
+/// L'unità è di temperatura («°C», «°F»).
+fn di_temperatura(unita: &str) -> bool {
+    matches!(unita.trim(), "°C" | "°F")
 }
 
-/// I sensori disponibili fra preferiti e stanze, senza doppioni: per i lati solo le temperature
-/// (ci stanno in pochi caratteri), per i quadranti tutti quelli che la casa manda.
-pub fn sensori_disponibili(menu: &MenuData, per_quadranti: bool) -> Vec<SensoreDisponibile> {
-    let mut visti = HashSet::new();
-    menu.favorites
-        .iter()
-        .chain(menu.rooms.iter().flat_map(|r| r.entities.iter()))
-        .filter_map(|e| match e {
-            AppEntity::Sensor(s) if s.base.is_available => Some(s),
-            _ => None,
-        })
-        .filter(|s| per_quadranti || s.device_class.as_deref() == Some("temperature"))
-        .filter(|s| visti.insert(s.base.entity_id.clone()))
-        .map(|s| SensoreDisponibile {
-            entity_id: s.base.entity_id.clone(),
-            nome: s.base.name.clone(),
-            classe: s.device_class.clone(),
-            unita: s.unit.clone(),
-        })
-        .collect()
+/// I sensori numerici della casa (`MenuData::sensori_numerici`, già per nome) che si possono
+/// scegliere: per i lati solo le temperature (ci stanno in pochi caratteri), per i quadranti tutti
+/// (temperatura, umidità, potenza, energia e produzione FV…). Anche quelli non disponibili adesso:
+/// hanno nome e unità, il valore arriverà.
+pub fn sensori_disponibili(menu: &MenuData, per_quadranti: bool) -> Vec<&SensoreNumerico> {
+    menu.sensori_numerici.iter().filter(|s| per_quadranti || di_temperatura(&s.unita)).collect()
 }
 
-/// Il nome di un sensore nel selettore: «Temperatura · Sala», «Umidità · Bagno»…
-fn nome_sensore(s: &SensoreDisponibile) -> String {
-    let genere = match s.classe.as_deref() {
-        Some("temperature") => Some("Temperatura"),
-        Some("humidity") => Some("Umidità"),
-        Some("power") => Some("Potenza"),
-        Some("energy") => Some("Energia"),
+/// Il nome di un sensore nel selettore, col genere dall'unità: «Temperatura · Sala»,
+/// «Potenza · Fotovoltaico», «Energia · Produzione»; senza un genere sicuro (un «%» può essere
+/// umidità o batteria) il nome come lo dà HA.
+fn nome_sensore(s: &SensoreNumerico) -> String {
+    let genere = match s.unita.trim() {
+        "°C" | "°F" => Some("Temperatura"),
+        "W" | "kW" | "MW" => Some("Potenza"),
+        "Wh" | "kWh" | "MWh" => Some("Energia"),
         _ => None,
     };
     match genere {
@@ -124,7 +106,7 @@ fn nome_sensore(s: &SensoreDisponibile) -> String {
 /// sensore per voce (`sensori`, già filtrati da `sensori_disponibili`).
 pub fn scelte(
     meteo: bool,
-    sensori: &[SensoreDisponibile],
+    sensori: &[&SensoreNumerico],
     rete: bool,
     batteria: bool,
     per_quadranti: bool,
@@ -185,8 +167,8 @@ pub struct DatiLati {
     pub ram: Option<f32>,
     /// La temperatura esterna già pronta («9°»).
     pub meteo: Option<String>,
-    /// I valori grezzi dei sensori scelti, per `entity_id` («21.5»).
-    pub sensori: HashMap<String, String>,
+    /// I sensori scelti, per `entity_id`, come arrivano dai dati della casa (valore e unità).
+    pub sensori: HashMap<String, SensoreNumerico>,
 }
 
 /// Che cosa mostra un lato.
@@ -199,18 +181,43 @@ pub enum ContenutoLato {
     Batteria { testo: String, frazione: f32, tinta: TintaBatteria },
 }
 
-/// Un valore di Home Assistant come gradi brevi con la virgola italiana («21.5» → «21,5°»,
-/// «20» → «20°»); `None` se non è un numero («unavailable»).
-fn gradi(grezzo: &str) -> Option<String> {
-    let v: f64 = grezzo.trim().replace(',', ".").parse().ok().filter(|v: &f64| v.is_finite())?;
-    let arrotondato = (v * 10.0).round() / 10.0;
-    let testo = if arrotondato.fract() == 0.0 {
-        format!("{arrotondato:.0}")
+/// Un numero breve con la virgola italiana: un decimale sotto 100 («21,5», «20», «12,3»), intero
+/// da 100 in su («1523»); mai «-0».
+pub fn numero_breve(v: f64) -> String {
+    let testo = if v.abs() >= 100.0 {
+        format!("{:.0}", v.round())
     } else {
-        format!("{arrotondato:.1}").replace('.', ",")
+        let arrotondato = (v * 10.0).round() / 10.0;
+        if arrotondato.fract() == 0.0 {
+            format!("{arrotondato:.0}")
+        } else {
+            format!("{arrotondato:.1}").replace('.', ",")
+        }
     };
-    // Niente «-0°».
-    Some(format!("{}°", if testo == "-0" { "0" } else { &testo }))
+    if testo == "-0" {
+        "0".into()
+    } else {
+        testo
+    }
+}
+
+/// Un valore con la sua unità: «1523 W», «12,5 kWh», «55%», «21,5 °C».
+pub fn testo_con_unita(v: f64, unita: &str) -> String {
+    match unita.trim() {
+        "" => numero_breve(v),
+        "%" => format!("{}%", numero_breve(v)),
+        u => format!("{} {u}", numero_breve(v)),
+    }
+}
+
+/// Il valore di un sensore in un lato: le temperature in gradi brevi («21,5°»), il resto col
+/// numero e la sua unità («55%», «1523 W»).
+fn testo_sensore(v: f64, unita: &str) -> String {
+    if di_temperatura(unita) {
+        format!("{}°", numero_breve(v))
+    } else {
+        testo_con_unita(v, unita)
+    }
 }
 
 /// Il contenuto di un lato: «CPU 23%», «RAM 61%», «14:05», «80%» col glifo, «9°», «21,5°». Senza
@@ -233,19 +240,49 @@ pub fn contenuto(l: &Lato, d: &DatiLati) -> ContenutoLato {
         Lato::Cpu => percentuale("CPU", d.cpu),
         Lato::Ram => percentuale("RAM", d.ram),
         Lato::Meteo => d.meteo.clone().map_or(ContenutoLato::Vuoto, ContenutoLato::Testo),
-        Lato::Sensore(id) => d.sensori.get(id).and_then(|v| gradi(v)).map_or(ContenutoLato::Vuoto, ContenutoLato::Testo),
+        Lato::Sensore(id) => d
+            .sensori
+            .get(id)
+            .and_then(|s| s.valore.map(|v| testo_sensore(v, &s.unita)))
+            .map_or(ContenutoLato::Vuoto, ContenutoLato::Testo),
         _ => ContenutoLato::Vuoto,
     }
 }
 
-/// Il nome di un lato per Narrator, dentro il nome della pillola («CPU 23%», «batteria 80%»);
-/// `None` se il lato è vuoto.
-#[cfg_attr(not(test), allow(dead_code))] // il nome lo compone pillola.slint; qui per i test
-pub fn nome_lato(c: &ContenutoLato) -> Option<String> {
-    match c {
-        ContenutoLato::Vuoto => None,
-        ContenutoLato::Testo(t) => Some(t.clone()),
-        ContenutoLato::Batteria { testo, .. } => Some(format!("batteria {testo}")),
+/// I lati che cambiano col tempo (ora, CPU, RAM): in «dorme» restano vuoti, perché fermi
+/// sarebbero sbagliati (giro di correzioni 1). Batteria, meteo e sensori restano.
+pub fn a_tempo(l: &Lato) -> bool {
+    matches!(l, Lato::Ora | Lato::Cpu | Lato::Ram)
+}
+
+/// Il campione per misurare un lato: la pillola si misura su questo e non sul valore vero, così
+/// la larghezza cambia solo quando cambia la scelta, mai col valore («CPU 9%» → «CPU 10%» non
+/// sposta nulla; giro di correzioni 1). È il valore più largo plausibile del tipo (il carattere è
+/// mono: conta il numero di caratteri); un valore vero più largo, raro, allarga la pillola invece
+/// di uscirne. `None`: il lato non c'è. La batteria riserva anche il posto del glifo.
+pub fn campione(l: &Lato, d: &DatiLati) -> Option<String> {
+    Some(match l {
+        Lato::Niente | Lato::Rete | Lato::Disco | Lato::ReteGiu | Lato::ReteSu => return None,
+        Lato::Ora => "00:00".into(),
+        Lato::Batteria => "100%".into(),
+        Lato::Cpu => "CPU 100%".into(),
+        Lato::Ram => "RAM 100%".into(),
+        Lato::Meteo => CAMPIONE_GRADI.into(),
+        // Finché il sensore non arriva la sua unità non si sa: per i lati si offrono le temperature.
+        Lato::Sensore(id) => d.sensori.get(id).map_or_else(|| CAMPIONE_GRADI.into(), |s| campione_unita(&s.unita)),
+    })
+}
+
+const CAMPIONE_GRADI: &str = "-10,5°";
+
+/// Il valore più largo plausibile per un'unità, scritto come `testo_sensore`.
+fn campione_unita(unita: &str) -> String {
+    match unita.trim() {
+        u if di_temperatura(u) => CAMPIONE_GRADI.into(),
+        "%" => "100%".into(),
+        // Una potenza può essere negativa (immissione in rete) e arrivare alle migliaia.
+        "W" => "-9999 W".into(),
+        u => testo_con_unita(-99.9, u),
     }
 }
 
@@ -334,6 +371,7 @@ pub fn scala(fonte: &Lato, unita: Option<&str>, massimo_utente: Option<f64>, val
     let utente = massimo_utente.filter(|m| m.is_finite() && *m > 0.0);
     match fonte {
         Lato::Cpu | Lato::Ram | Lato::Disco | Lato::Batteria => (0.0, 100.0),
+        Lato::Meteo if unita.map(str::trim) == Some("°F") => (14.0, 104.0),
         Lato::Meteo => (-10.0, 40.0),
         _ => match unita.map(str::trim) {
             Some("%") => (0.0, 100.0),
@@ -407,8 +445,8 @@ mod test {
         assert_eq!(Lato::Niente.come_str(), "");
     }
 
-    fn sensore(id: &str, nome: &str, classe: &str) -> SensoreDisponibile {
-        SensoreDisponibile { entity_id: id.into(), nome: nome.into(), classe: Some(classe.into()), unita: None }
+    fn sensore(id: &str, nome: &str, valore: Option<f64>, unita: &str) -> SensoreNumerico {
+        SensoreNumerico { entity_id: id.into(), nome: nome.into(), valore, unita: unita.into() }
     }
 
     #[test]
@@ -424,18 +462,39 @@ mod test {
 
     #[test]
     fn scelte_con_tutto_nell_ordine() {
-        let sala = sensore("sensor.sala_t", "Sala", "temperature");
-        let v = scelte(true, std::slice::from_ref(&sala), true, true, false);
+        let sala = sensore("sensor.sala_t", "Sala", Some(21.5), "°C");
+        let v = scelte(true, &[&sala], true, true, false);
         let nomi: Vec<&str> = v.iter().map(|(_, n)| n.as_str()).collect();
         assert_eq!(nomi, ["Niente", "Ora", "Batteria", "CPU", "RAM", "Rete", "Temperatura esterna", "Temperatura · Sala"]);
         // Per i quadranti: disco e rete in arrivo e in uscita, niente «Rete» (il nome della rete).
-        let fv = SensoreDisponibile { unita: Some("W".into()), ..sensore("sensor.fv", "Fotovoltaico", "power") };
-        let q = scelte(true, &[sala, fv], true, false, true);
+        let fv = sensore("sensor.fv", "Fotovoltaico", Some(1500.0), "W");
+        let q = scelte(true, &[&sala, &fv], true, false, true);
         let nomi: Vec<&str> = q.iter().map(|(_, n)| n.as_str()).collect();
         assert_eq!(
             nomi,
             ["Niente", "Ora", "CPU", "RAM", "Disco", "Rete in arrivo", "Rete in uscita", "Temperatura esterna", "Temperatura · Sala", "Potenza · Fotovoltaico"]
         );
+    }
+
+    /// Giro di correzioni 1: il catalogo viene dai sensori numerici della casa. Per i quadranti
+    /// tutti (W, kWh, %…, anche se non disponibili adesso), per i lati solo le temperature.
+    #[test]
+    fn sensori_numerici_fra_le_scelte() {
+        let menu = MenuData {
+            sensori_numerici: std::sync::Arc::new(vec![
+                sensore("sensor.energia", "Produzione", Some(12.5), "kWh"),
+                sensore("sensor.fv", "Fotovoltaico", None, "W"),
+                sensore("sensor.sala_t", "Sala", Some(21.5), "°C"),
+                sensore("sensor.bagno_u", "Umidità bagno", Some(55.0), "%"),
+            ]),
+            ..Default::default()
+        };
+        let nomi = |per_quadranti| -> Vec<String> {
+            let s = sensori_disponibili(&menu, per_quadranti);
+            scelte(false, &s, false, false, per_quadranti).into_iter().skip_while(|(l, _)| !matches!(l, Lato::Sensore(_))).map(|(_, n)| n).collect()
+        };
+        assert_eq!(nomi(true), ["Energia · Produzione", "Potenza · Fotovoltaico", "Temperatura · Sala", "Umidità bagno"]);
+        assert_eq!(nomi(false), ["Temperatura · Sala"]);
     }
 
     #[test]
@@ -451,13 +510,19 @@ mod test {
     #[test]
     fn contenuto_dei_lati() {
         let mut d = DatiLati { cpu: Some(23.4), ram: Some(61.0), meteo: Some("9°".into()), ora: "14:05".into(), ..Default::default() };
-        d.sensori.insert("sensor.sala_t".into(), "21.5".into());
-        d.sensori.insert("sensor.studio_t".into(), "20".into());
+        d.sensori.insert("sensor.sala_t".into(), sensore("sensor.sala_t", "Sala", Some(21.5), "°C"));
+        d.sensori.insert("sensor.studio_t".into(), sensore("sensor.studio_t", "Studio", Some(20.0), "°C"));
+        // Un sensore non di temperatura (scritto a mano nella configurazione): con la sua unità,
+        // mai in gradi.
+        d.sensori.insert("sensor.u".into(), sensore("sensor.u", "Umidità", Some(55.04), "%"));
+        d.sensori.insert("sensor.fv".into(), sensore("sensor.fv", "FV", Some(1523.4), "W"));
         let testo = |s: &str| ContenutoLato::Testo(s.into());
         assert_eq!(contenuto(&Lato::Cpu, &d), testo("CPU 23%"));
         assert_eq!(contenuto(&Lato::Ram, &d), testo("RAM 61%"));
         assert_eq!(contenuto(&Lato::Sensore("sensor.sala_t".into()), &d), testo("21,5°"));
         assert_eq!(contenuto(&Lato::Sensore("sensor.studio_t".into()), &d), testo("20°"));
+        assert_eq!(contenuto(&Lato::Sensore("sensor.u".into()), &d), testo("55%"));
+        assert_eq!(contenuto(&Lato::Sensore("sensor.fv".into()), &d), testo("1523 W"));
         assert_eq!(contenuto(&Lato::Meteo, &d), testo("9°"));
         assert_eq!(contenuto(&Lato::Ora, &d), testo("14:05"));
         d.batteria = Some(LetturaBatteria { percentuale: 80.4, stato: StatoBatteria::Scarica });
@@ -465,8 +530,51 @@ mod test {
             contenuto(&Lato::Batteria, &d),
             ContenutoLato::Batteria { testo: "80%".into(), frazione: 0.804, tinta: TintaBatteria::Normale }
         );
-        assert_eq!(nome_lato(&contenuto(&Lato::Batteria, &d)).as_deref(), Some("batteria 80%"));
-        assert_eq!(nome_lato(&contenuto(&Lato::Cpu, &d)).as_deref(), Some("CPU 23%"));
+    }
+
+    #[test]
+    fn numeri_brevi() {
+        assert_eq!(numero_breve(21.54), "21,5");
+        assert_eq!(numero_breve(20.0), "20");
+        assert_eq!(numero_breve(-0.04), "0", "mai «-0»");
+        assert_eq!(numero_breve(1523.4), "1523");
+        assert_eq!(numero_breve(-250.6), "-251");
+        assert_eq!(testo_con_unita(12.5, "kWh"), "12,5 kWh");
+        assert_eq!(testo_con_unita(48.0, "%"), "48%");
+        assert_eq!(testo_con_unita(3.0, ""), "3");
+    }
+
+    /// Giro di correzioni 1: il campione dipende dalla scelta, mai dal valore; ed è largo almeno
+    /// quanto i valori plausibili del suo tipo (carattere mono: conta il numero di caratteri).
+    #[test]
+    fn campione_per_tipo_e_mai_dal_valore() {
+        let mut d = DatiLati::default();
+        let caratteri = |s: &str| s.chars().count();
+        for (l, atteso) in [(Lato::Cpu, "CPU 100%"), (Lato::Ram, "RAM 100%"), (Lato::Ora, "00:00"), (Lato::Batteria, "100%"), (Lato::Meteo, "-10,5°")] {
+            assert_eq!(campione(&l, &d).as_deref(), Some(atteso));
+        }
+        assert_eq!(campione(&Lato::Niente, &d), None);
+        for cpu in [0.0, 9.0, 10.0, 99.6, 100.0] {
+            d.cpu = Some(cpu);
+            let ContenutoLato::Testo(t) = contenuto(&Lato::Cpu, &d) else { panic!() };
+            assert!(caratteri(&t) <= caratteri("CPU 100%"), "{t}");
+            assert_eq!(campione(&Lato::Cpu, &d).as_deref(), Some("CPU 100%"));
+        }
+        // Un sensore: prima che arrivi le temperature, poi dalla sua unità.
+        let id = Lato::Sensore("sensor.t".into());
+        assert_eq!(campione(&id, &d).as_deref(), Some("-10,5°"));
+        for v in [-10.5, -3.0, 21.5, 35.0] {
+            d.sensori.insert("sensor.t".into(), sensore("sensor.t", "T", Some(v), "°C"));
+            let ContenutoLato::Testo(t) = contenuto(&id, &d) else { panic!() };
+            assert!(caratteri(&t) <= caratteri("-10,5°"), "{t}");
+            assert_eq!(campione(&id, &d).as_deref(), Some("-10,5°"));
+        }
+        d.sensori.insert("sensor.t".into(), sensore("sensor.t", "FV", Some(-4500.0), "W"));
+        let ContenutoLato::Testo(t) = contenuto(&id, &d) else { panic!() };
+        assert!(caratteri(&t) <= caratteri(&campione(&id, &d).unwrap()), "{t}");
+        // I lati a tempo, quelli che in «dorme» restano vuoti.
+        assert!(a_tempo(&Lato::Ora) && a_tempo(&Lato::Cpu) && a_tempo(&Lato::Ram));
+        assert!(!a_tempo(&Lato::Batteria) && !a_tempo(&Lato::Meteo) && !a_tempo(&id));
     }
 
     #[test]
@@ -479,9 +587,8 @@ mod test {
         assert_eq!(contenuto(&Lato::Ora, &d), ContenutoLato::Vuoto, "ora non ancora letta");
         assert_eq!(contenuto(&Lato::Niente, &d), ContenutoLato::Vuoto);
         // Un sensore non disponibile non diventa «0°».
-        d.sensori.insert("sensor.x".into(), "unavailable".into());
+        d.sensori.insert("sensor.x".into(), sensore("sensor.x", "X", None, "°C"));
         assert_eq!(contenuto(&Lato::Sensore("sensor.x".into()), &d), ContenutoLato::Vuoto);
-        assert_eq!(nome_lato(&ContenutoLato::Vuoto), None);
     }
 
     #[test]

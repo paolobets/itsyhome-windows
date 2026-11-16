@@ -37,12 +37,13 @@ use crate::eventi::{Ascoltatore, CasaEvento, StatoConnessione};
 use crate::ha::client::{self, Client, DalClient, NON_CONNESSO};
 use crate::ha::eventi::{applica_diff, Aggiornamento, EventoWs};
 use crate::ha::mapper::{
-    aggiornamento_disponibile, meteo_da, scegli_meteo, sostituisci_in_menu, EntityMapper, Indici, Preferenze,
+    aggiornamento_disponibile, meteo_da, scegli_meteo, sensore_numerico, sostituisci_in_menu, valore_numerico,
+    EntityMapper, Indici, Preferenze,
 };
 use crate::ha::models::{HaArea, HaConfig, HaDevice, HaEntityEntry, HaState};
 use crate::ha::registri::{Azione, CambioRegistro, Rilettura};
 use crate::segreti::Segreti;
-use crate::types::{AppEntity, MenuData, Meteo, TestConnectionResult};
+use crate::types::{AppEntity, MenuData, Meteo, SensoreNumerico, TestConnectionResult};
 
 /// Cambi visibili a raffica (una scena che accende sei luci, un gruppo, un'automazione che
 /// tocca più entità) arrivano entro pochi millisecondi: si aspetta che si calmino per 50 ms e
@@ -351,6 +352,21 @@ impl Casa {
         }
     }
 
+    /// Riscrive in `MenuData::sensori_numerici` il valore di adesso del sensore `entity_id` (dopo
+    /// `applica`, che ha già rimappato se ne cambiano presenza, nome o unità). Vero se è cambiato:
+    /// come il meteo, si pubblica senza mappatura completa.
+    fn valore_numerico(&mut self, entity_id: &str) -> bool {
+        let Some(i) = self.menu.sensori_numerici.iter().position(|n| n.entity_id == entity_id) else {
+            return false;
+        };
+        let valore = self.stato(entity_id).and_then(|s| valore_numerico(&s.state));
+        if self.menu.sensori_numerici[i].valore == valore {
+            return false;
+        }
+        Arc::make_mut(&mut Arc::make_mut(&mut self.menu).sensori_numerici)[i].valore = valore;
+        true
+    }
+
     /// Mette in memoria lo stato nuovo di un'entità (`None`: tolta) e dice cosa cambia per l'app.
     fn applica(&mut self, mapper: &EntityMapper, entity_id: &str, nuovo: Option<HaState>) -> Effetto {
         if entity_id.starts_with("weather.") {
@@ -359,10 +375,16 @@ impl Casa {
         let vecchio = self.stato(entity_id);
         let prima = vecchio.and_then(|s| mapper.mappa_entita(&self.indici, s));
         let aggiornamento_prima = vecchio.is_some_and(aggiornamento_disponibile);
+        // Il sensore numerico (quadranti e lati) per nome e unità: se compare, sparisce o cambia
+        // l'uno o l'altra, cambia il catalogo e si rimappa; il solo valore lo riscrive
+        // `Casa::valore_numerico` senza rimappare.
+        let chiave = |n: SensoreNumerico| (n.nome, n.unita);
+        let numerico_prima = vecchio.and_then(|s| sensore_numerico(&self.indici, s)).map(chiave);
         let dopo = nuovo.as_ref().and_then(|s| mapper.mappa_entita(&self.indici, s));
         let aggiornamento_dopo = nuovo.as_ref().is_some_and(aggiornamento_disponibile);
+        let numerico_dopo = nuovo.as_ref().and_then(|s| sensore_numerico(&self.indici, s)).map(chiave);
         self.memorizza(entity_id, nuovo, dopo.is_some());
-        if aggiornamento_prima != aggiornamento_dopo {
+        if aggiornamento_prima != aggiornamento_dopo || numerico_prima != numerico_dopo {
             return Effetto::Rimappa;
         }
         match (prima, dopo) {
@@ -382,13 +404,25 @@ impl Casa {
 /// temperatura), e allora lo stato nuovo arriva intero con lo `state_changed`; o per un
 /// registro (un'entità non più nascosta o disattivata), e allora nessuno `state_changed` arriva
 /// ma l'evento del registro fa rileggere tutto, stati interi compresi.
+///
+/// Ai `sensor.*` restano anche nome, unità e `state_class`: decidono se il sensore è numerico
+/// (`sensore_numerico`, catalogo di quadranti e lati) e come si chiama, anche nelle mappature
+/// fatte dalla memoria.
 fn alleggerisci(mut s: HaState, mostrata: bool) -> HaState {
     if !mostrata && !s.entity_id.starts_with("weather.") {
-        let classe = s.attributes.get_mut("device_class").map(Value::take);
-        s.attributes = match classe {
-            Some(c) => json!({ "device_class": c }),
-            None => Value::Null,
-        };
+        let sensore = s.entity_id.starts_with("sensor.");
+        let mut tenuti = serde_json::Map::new();
+        if let Value::Object(attributi) = &mut s.attributes {
+            for chiave in ["device_class", "friendly_name", "unit_of_measurement", "state_class"] {
+                if chiave != "device_class" && !sensore {
+                    continue;
+                }
+                if let Some(v) = attributi.get_mut(chiave).map(Value::take) {
+                    tenuti.insert(chiave.to_owned(), v);
+                }
+            }
+        }
+        s.attributes = if tenuti.is_empty() { Value::Null } else { Value::Object(tenuti) };
     }
     s
 }
@@ -808,8 +842,9 @@ impl Motore {
         }
         let Some(casa) = &self.casa else { return Rilettura::Tutto };
         let mostrata = |id: &str| {
-            casa.stato(id).is_some_and(|s| self.mapper.mappa_entita(&casa.indici, s).is_some())
-                || self.seguite.as_ref().is_some_and(|ids| ids.contains(id))
+            casa.stato(id).is_some_and(|s| {
+                self.mapper.mappa_entita(&casa.indici, s).is_some() || sensore_numerico(&casa.indici, s).is_some()
+            }) || self.seguite.as_ref().is_some_and(|ids| ids.contains(id))
         };
         c.rilettura(&casa.indici, &mostrata)
     }
@@ -858,7 +893,15 @@ impl Motore {
     /// Lo stato nuovo di un'entità (`None`: tolta) in memoria. Vero se cambia qualcosa che si vede.
     fn stato_cambiato(&mut self, entity_id: &str, nuovo: Option<HaState>) -> bool {
         let Some(casa) = &mut self.casa else { return false };
-        match casa.applica(&self.mapper, entity_id, nuovo) {
+        let effetto = casa.applica(&self.mapper, entity_id, nuovo);
+        // Il valore di un sensore numerico (quadranti e lati): riscritto dov'è, senza rimappare,
+        // anche se l'entità non è mostrata in stanze e preferiti (una potenza) o è nascosta.
+        let valore = !matches!(effetto, Effetto::Rimappa) && entity_id.starts_with("sensor.") && casa.valore_numerico(entity_id);
+        if valore {
+            self.diagnosi.conta(Contatore::effetto_sensore);
+        }
+        valore
+            | match effetto {
             Effetto::Niente => {
                 self.diagnosi.conta(Contatore::effetto_niente);
                 false
@@ -1290,6 +1333,52 @@ mod test {
         let ora = stato("sensor.x", "21", json!({ "device_class": "temperature", "unit_of_measurement": "°C" }));
         assert_eq!(c.applica(&m, "sensor.x", Some(ora)), Effetto::Rimappa);
         assert_eq!(c.stato("sensor.x").unwrap().attributes["unit_of_measurement"], "°C");
+    }
+
+    /// M2, Task 4 (giro di correzioni 1): il valore di un sensore numerico (una potenza, che stanze
+    /// e preferiti non mostrano) si riscrive in `sensori_numerici` senza rimappare, come il meteo;
+    /// nome o unità nuovi rimappano. Il sensore non mostrato tiene nome e unità in memoria.
+    #[test]
+    fn valore_di_un_sensore_numerico_senza_rimappare() {
+        let potenza = |v: &str, unita: &str| {
+            stato("sensor.fv", v, json!({ "friendly_name": "FV", "device_class": "power", "unit_of_measurement": unita, "x": 1 }))
+        };
+        let (mut c, m) = casa(vec![potenza("1500", "W"), luce("off")]);
+        assert_eq!(
+            c.stato("sensor.fv").unwrap().attributes,
+            json!({ "friendly_name": "FV", "device_class": "power", "unit_of_measurement": "W" }),
+            "alleggerito, ma con nome e unità"
+        );
+        let nessuno: Vec<String> = vec![];
+        let ordini = HashMap::new();
+        let mut mapper = EntityMapper::new();
+        c.menu = Arc::new(mapper.map_indicizzato(
+            &c.indici,
+            &c.stati,
+            None,
+            0,
+            Preferenze {
+                favorites_order: &nessuno,
+                hidden_entities: &nessuno,
+                room_order: &nessuno,
+                device_orders: &ordini,
+                meteo_entita: None,
+            },
+        ));
+        assert_eq!(c.menu.sensori_numerici[0].valore, Some(1500.0));
+        let prima = c.menu.clone();
+        assert_eq!(c.applica(&m, "sensor.fv", Some(potenza("1720.5", "W"))), Effetto::Niente);
+        assert!(c.valore_numerico("sensor.fv"), "il valore nuovo si riscrive");
+        assert_eq!(c.menu.sensori_numerici[0].valore, Some(1720.5));
+        assert_eq!(prima.sensori_numerici[0].valore, Some(1500.0), "il MenuData già consegnato non cambia");
+        assert!(!c.valore_numerico("sensor.fv"), "stesso valore: niente");
+        assert!(!c.valore_numerico("light.cucina"), "non è un sensore numerico");
+        // Non disponibile: il valore diventa `None`, il sensore resta fra le scelte.
+        assert_eq!(c.applica(&m, "sensor.fv", Some(potenza("unavailable", "W"))), Effetto::Niente);
+        assert!(c.valore_numerico("sensor.fv"));
+        assert_eq!(c.menu.sensori_numerici[0].valore, None);
+        // Un'unità nuova cambia il catalogo: si rimappa.
+        assert_eq!(c.applica(&m, "sensor.fv", Some(potenza("1.7", "kW"))), Effetto::Rimappa);
     }
 
     fn motore() -> (Motore, tempfile::TempDir) {

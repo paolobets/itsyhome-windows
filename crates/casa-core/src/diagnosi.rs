@@ -53,6 +53,8 @@ contatori!(
     effetto_rimappa,
     // Task 2 della M2: cambio del meteo scelto, pubblicato come una sostituzione.
     effetto_meteo,
+    // Task 4 della M2: il valore di un sensore numerico (quadranti e lati), senza rimappare.
+    effetto_sensore,
     // Raffiche chiuse (pubblicazioni), mappature complete, `Dati` consegnati all'app e quelli
     // non consegnati perché uguali all'ultimo.
     pubblicazioni,

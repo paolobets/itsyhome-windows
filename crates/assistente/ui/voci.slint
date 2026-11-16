@@ -151,11 +151,17 @@ export struct CollegamentoUi {
 
 // Che cosa mostra un lato della pillola a riposo (vedi `lati::ContenutoLato`): `tipo` 0 vuoto,
 // 1 testo («CPU 23%», «14:05», «21,5°»), 2 batteria (glifo + percentuale), 3 rete (Task 8).
+// `campione`: il valore più largo del tipo scelto («CPU 100%», «00:00»…, `lati::campione`), su
+// cui si misura il lato: la larghezza cambia con la scelta, mai col valore; con `tipo` 0 e un
+// campione il posto resta e il testo è vuoto (i lati a tempo in «dorme»). `con-glifo`: il posto
+// del glifo della batteria resta anche senza lettura.
 export struct ContenutoLatoUi {
     tipo: int,
     testo: string,
     frazione: float,
     tinta: TintaBatteriaUi,
+    campione: string,
+    con-glifo: bool,
 }
 
 // La fonte di un quadrante configurabile (vedi `lati::Lato`).

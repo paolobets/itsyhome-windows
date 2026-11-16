@@ -8,7 +8,7 @@ use super::models::{HaArea, HaConfig, HaDevice, HaEntityEntry, HaState};
 use crate::types::{
     AlarmEntity, AppEntity, BaseEntity, CameraEntity, ClimateEntity, CoverEntity, FanEntity,
     HumidifierEntity, LightEntity, LockEntity, MenuData, Room, SceneEntity, SensorEntity,
-    Meteo, StanzaCatalogo, SwitchEntity, ValveEntity, VoceCatalogo, GRUPPO_SCENE,
+    Meteo, SensoreNumerico, StanzaCatalogo, SwitchEntity, ValveEntity, VoceCatalogo, GRUPPO_SCENE,
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -160,6 +160,51 @@ fn registro_mostrabile(e: &HaEntityEntry) -> bool {
         ),
         d => DOMINI_MOSTRABILI.contains(&d),
     }
+}
+
+/// Le classi dei sensori che non sono numeri (contributors.home-assistant.io → «Sensor entity»:
+/// «Non-numeric device classes take no unit and no state class»).
+const CLASSI_NON_NUMERICHE: [&str; 4] = ["date", "enum", "timestamp", "uptime"];
+
+/// Un sensore numerico per quadranti e lati (M2, Task 4), o `None`.
+///
+/// Documentazione di Home Assistant letta (contributors.home-assistant.io → «Sensor entity»):
+/// `state_class` «marks the sensor as numeric»; le classi `date`, `enum`, `timestamp` e `uptime`
+/// non sono numeriche e non hanno unità. Quindi: un `sensor.*` con un'unità di misura o una
+/// `state_class`, di una classe numerica, non disattivato, nascosto o di configurazione/diagnostica
+/// nel registro (come `mappa_entita`). Il valore è `None` se lo stato non è un numero
+/// (`unavailable`, `unknown`): il sensore resta fra le scelte.
+pub fn sensore_numerico(indici: &Indici, state: &HaState) -> Option<SensoreNumerico> {
+    if domain_of(&state.entity_id) != "sensor" {
+        return None;
+    }
+    let entry = indici.entries.get(state.entity_id.as_str());
+    if entry.is_some_and(|e| e.disabled_by.is_some() || e.hidden_by.is_some() || e.entity_category.is_some()) {
+        return None;
+    }
+    let a = &state.attributes;
+    let unita = a["unit_of_measurement"].as_str().unwrap_or_default().trim();
+    if unita.is_empty() && a["state_class"].as_str().is_none_or(str::is_empty) {
+        return None;
+    }
+    if a["device_class"].as_str().is_some_and(|c| CLASSI_NON_NUMERICHE.contains(&c)) {
+        return None;
+    }
+    let nome = entry
+        .and_then(|e| e.name.as_deref())
+        .or_else(|| a["friendly_name"].as_str())
+        .unwrap_or(&state.entity_id);
+    Some(SensoreNumerico {
+        entity_id: state.entity_id.clone(),
+        nome: nome.to_owned(),
+        valore: valore_numerico(&state.state),
+        unita: unita.to_owned(),
+    })
+}
+
+/// Lo stato di un sensore come numero (`None`: non disponibile o non un numero).
+pub fn valore_numerico(stato: &str) -> Option<f64> {
+    stato.trim().parse::<f64>().ok().filter(|v| v.is_finite())
 }
 
 /// Un aggiornamento in attesa (`update.*` acceso): `MenuData::update_count` li conta.
@@ -439,6 +484,9 @@ impl EntityMapper {
             })
             .collect();
         meteo_elenco.sort_by(|a, b| a.entity_id.cmp(&b.entity_id));
+        let mut sensori_numerici: Vec<SensoreNumerico> =
+            states.iter().filter_map(|s| sensore_numerico(indici, s)).collect();
+        sensori_numerici.sort_by(|a, b| a.nome.cmp(&b.nome).then_with(|| a.entity_id.cmp(&b.entity_id)));
 
         MenuData {
             favorites: fav_list,
@@ -456,6 +504,7 @@ impl EntityMapper {
             catalogo: std::sync::Arc::new(catalogo),
             meteo,
             meteo_elenco,
+            sensori_numerici: std::sync::Arc::new(sensori_numerici),
         }
     }
 
@@ -1243,5 +1292,53 @@ mod tests {
         assert!(menu.rooms.iter().all(|r| r.entities.is_empty()));
         assert!(menu.catalogo.iter().all(|s| s.voci.is_empty()));
         assert_eq!(menu.meteo.unwrap().entity_id, "weather.a");
+    }
+
+    /// M2, Task 4 (giro di correzioni 1): i sensori numerici di HA (temperatura, umidità, potenza,
+    /// energia FV…) in un elenco a parte, per nome; stanze e preferiti non cambiano.
+    #[test]
+    fn sensori_numerici_a_parte_da_stanze_e_preferiti() {
+        let sensore = |id: &str, valore: &str, attributi: Value| HaState {
+            state: valore.into(),
+            attributes: attributi,
+            ..stato(id)
+        };
+        let stati = [
+            sensore("sensor.fv", "1523.4", json!({ "friendly_name": "Fotovoltaico", "device_class": "power", "unit_of_measurement": "W" })),
+            sensore("sensor.energia", "12.5", json!({ "friendly_name": "Energia prodotta", "device_class": "energy", "unit_of_measurement": "kWh", "state_class": "total_increasing" })),
+            sensore("sensor.sala_t", "21.5", json!({ "friendly_name": "Sala", "device_class": "temperature", "unit_of_measurement": "°C" })),
+            sensore("sensor.contatore", "unavailable", json!({ "friendly_name": "Contatore", "state_class": "total" })),
+            // Non numerici: senza unità né state_class, una classe non numerica, un altro dominio.
+            sensore("sensor.testo", "ciao", json!({ "friendly_name": "Testo" })),
+            sensore("sensor.alba", "2026-11-16T06:00:00+00:00", json!({ "device_class": "timestamp", "state_class": "measurement" })),
+            sensore("number.soglia", "3", json!({ "unit_of_measurement": "W" })),
+            // Nascosto o di diagnostica nel registro: fuori.
+            sensore("sensor.nascosto", "1", json!({ "unit_of_measurement": "W" })),
+            sensore("sensor.segnale", "-60", json!({ "unit_of_measurement": "dBm" })),
+        ];
+        let voci = [
+            HaEntityEntry { hidden_by: Some("user".into()), ..voce("sensor.nascosto", None) },
+            HaEntityEntry { entity_category: Some("diagnostic".into()), ..voce("sensor.segnale", None) },
+            HaEntityEntry { name: Some("Produzione FV".into()), ..voce("sensor.fv", None) },
+        ];
+        let menu = mappa(&stati, &[], &voci, None, &["sensor.sala_t"], &[], &[]);
+        let elenco: Vec<(&str, &str, Option<f64>, &str)> = menu
+            .sensori_numerici
+            .iter()
+            .map(|n| (n.entity_id.as_str(), n.nome.as_str(), n.valore, n.unita.as_str()))
+            .collect();
+        assert_eq!(
+            elenco,
+            [
+                ("sensor.contatore", "Contatore", None, ""),
+                ("sensor.energia", "Energia prodotta", Some(12.5), "kWh"),
+                ("sensor.fv", "Produzione FV", Some(1523.4), "W"),
+                ("sensor.sala_t", "Sala", Some(21.5), "°C"),
+            ]
+        );
+        // Stanze e preferiti come prima: solo la temperatura.
+        assert_eq!(ids(&menu.favorites), ["sensor.sala_t"]);
+        let nelle_stanze: Vec<&str> = menu.rooms.iter().flat_map(|r| ids(&r.entities)).collect();
+        assert_eq!(nelle_stanze, ["sensor.sala_t"]);
     }
 }

@@ -1519,6 +1519,7 @@ mod accessibilita {
             testo: "80%".into(),
             frazione: 0.8,
             tinta: crate::TintaBatteriaUi::Normale,
+            ..Default::default()
         });
         let sinistro = p.get_ingombro_lato_sinistro();
         assert!(sinistro > 23.0, "glifo (19 + 4) più il testo: {sinistro}");

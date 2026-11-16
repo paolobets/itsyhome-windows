@@ -258,6 +258,19 @@ pub struct Meteo {
     pub unita: String,
 }
 
+/// Un sensore numerico di Home Assistant (temperatura, umidità, potenza, energia…) per i quadranti
+/// e i lati della pillola (M2, Task 4): solo ciò che serve a sceglierlo e a mostrarlo.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SensoreNumerico {
+    pub entity_id: String,
+    pub nome: String,
+    /// `None` se non disponibile o se lo stato non è un numero.
+    pub valore: Option<f64>,
+    /// L'unità di misura come la dà HA («°C», «W», «kWh»…); vuota se non c'è.
+    pub unita: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MenuData {
@@ -285,6 +298,12 @@ pub struct MenuData {
     /// Tutte le `weather.*` per `entity_id`, per il selettore delle Impostazioni (`kind` «weather»).
     #[serde(default)]
     pub meteo_elenco: Vec<VoceCatalogo>,
+    /// Tutti i sensori numerici di HA (non disattivati, non nascosti, non di diagnostica), per
+    /// nome: il catalogo di quadranti e lati, a parte da stanze e preferiti (che non cambiano).
+    /// I valori dei sensori scelti si aggiornano a ogni cambio, senza mappatura completa; gli
+    /// altri restano quelli dell'ultima mappatura (non sono seguiti). In un `Arc`, come `catalogo`.
+    #[serde(default)]
+    pub sensori_numerici: Arc<Vec<SensoreNumerico>>,
 }
 
 // ─── Config / environment ─────────────────────────────────────────────────────

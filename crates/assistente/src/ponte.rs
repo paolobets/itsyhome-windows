@@ -517,16 +517,18 @@ pub fn entita(menu: &MenuData, entity_id: &str) -> Option<AppEntity> {
 
 // ─── Lati e quadranti (M2, Task 4) ───────────────────────────────────────────
 
-/// Il sensore `entity_id` fra preferiti e stanze.
-fn sensore_di<'a>(menu: &'a MenuData, entity_id: &str) -> Option<&'a AppEntity> {
-    menu.favorites
-        .iter()
-        .chain(menu.rooms.iter().flat_map(|r| r.entities.iter()))
-        .find(|e| matches!(e, AppEntity::Sensor(s) if s.base.entity_id == entity_id))
+/// Il genere (icona) di un sensore numerico dalla sua unità: termometro, goccia o sensore.
+fn genere_di_unita(unita: &str) -> GenereUi {
+    match unita.trim() {
+        u if u.contains('°') => GenereUi::Termo,
+        "%" => GenereUi::Goccia,
+        _ => GenereUi::Sensore,
+    }
 }
 
 /// I quadranti configurabili per il pannello (quelli a «niente» non ci sono). PC e ora li legge
-/// l'interfaccia; meteo e sensori hanno qui valore, arco (scala di `lati::scala`, col massimo
+/// l'interfaccia; meteo e sensori (da `MenuData::sensori_numerici`: anche W, kWh e FV, che stanze
+/// e preferiti non hanno) hanno qui valore, arco (scala di `lati::scala`, col massimo
 /// dell'utente) e nome. Un sensore che non c'è più resta, col trattino.
 pub fn quadranti_ui(q: &[Lato], menu: Option<&MenuData>, massimi: &HashMap<String, f64>) -> Vec<QuadranteUi> {
     let pc = |fonte, etichetta: &str| QuadranteUi { fonte, etichetta: etichetta.into(), frazione: -1.0, ..Default::default() };
@@ -548,26 +550,26 @@ pub fn quadranti_ui(q: &[Lato], menu: Option<&MenuData>, massimi: &HashMap<Strin
                         fonte: FonteQuadranteUi::Meteo,
                         etichetta: "METEO".into(),
                         valore: meteo.and_then(orologio::temperatura_breve).unwrap_or_default().into(),
-                        frazione: t.map_or(-1.0, |t| lati::frazione(l, Some("°C"), None, t)),
+                        frazione: t.map_or(-1.0, |t| lati::frazione(l, meteo.map(|m| m.unita.as_str()), None, t)),
                         dettaglio: meteo.map(|m| orologio::condizione_italiana(&m.condizione)).unwrap_or_default().into(),
                         genere: GenereUi::Casa,
                     }
                 }
                 Lato::Sensore(id) => {
-                    let entita = menu.and_then(|m| sensore_di(m, id));
-                    let (valore, frazione, nome, genere) = match entita {
-                        Some(e @ AppEntity::Sensor(s)) => {
-                            let p = preferito(e);
-                            let numero = s.value.trim().replace(',', ".").parse::<f64>().ok().filter(|v| v.is_finite());
-                            let frazione = match numero {
-                                Some(v) if s.base.is_available => {
-                                    lati::frazione(l, s.unit.as_deref(), massimi.get(&l.come_str()).copied(), v)
-                                }
-                                _ => -1.0,
+                    let sensore = menu.and_then(|m| m.sensori_numerici.iter().find(|n| n.entity_id == *id));
+                    let (valore, frazione, nome, genere) = match sensore {
+                        Some(s) => {
+                            let unita = Some(s.unita.as_str()).filter(|u| !u.is_empty());
+                            let (valore, frazione) = match s.valore {
+                                Some(v) => (
+                                    lati::testo_con_unita(v, &s.unita),
+                                    lati::frazione(l, unita, massimi.get(&l.come_str()).copied(), v),
+                                ),
+                                None => ("Non disponibile".to_owned(), -1.0),
                             };
-                            (testo_stato(&p), frazione, p.nome.clone(), genere(&p))
+                            (valore, frazione, s.nome.clone(), genere_di_unita(&s.unita))
                         }
-                        _ => (String::new(), -1.0, "non disponibile".to_owned(), GenereUi::Sensore),
+                        None => (String::new(), -1.0, "non disponibile".to_owned(), GenereUi::Sensore),
                     };
                     QuadranteUi {
                         fonte: FonteQuadranteUi::Sensore,
@@ -586,12 +588,16 @@ pub fn quadranti_ui(q: &[Lato], menu: Option<&MenuData>, massimi: &HashMap<Strin
 /// Il nome di una scelta salvata che oggi non è fra quelle disponibili (un sensore sparito, il
 /// meteo assente): resta nel selettore, così si vede che cosa è scelto.
 fn voce_mancante(l: &Lato) -> String {
-    match l {
-        Lato::Sensore(id) => format!("{id} (non disponibile)"),
-        Lato::Meteo => "Temperatura esterna (non disponibile)".into(),
-        Lato::Batteria => "Batteria (non disponibile)".into(),
-        altro => format!("{} (non disponibile)", altro.come_str()),
-    }
+    let nome = match l {
+        Lato::Sensore(id) => id.clone(),
+        // Il nome che la scelta ha nel catalogo completo («Temperatura esterna», «Disco»…).
+        altro => lati::scelte(true, &[], true, true, true)
+            .into_iter()
+            .chain(lati::scelte(true, &[], true, true, false))
+            .find(|(l, _)| l == altro)
+            .map_or_else(|| altro.come_str(), |(_, n)| n),
+    };
+    format!("{nome} (non disponibile)")
 }
 
 /// La posizione di `scelto` nel catalogo; se manca, la si aggiunge in fondo (vedi `voce_mancante`).
@@ -651,13 +657,15 @@ pub fn isola(config: &Config, menu: Option<&MenuData>, batteria: bool) -> Isola 
     let mut scelte_quadranti = Vec::new();
     for l in lati::quadranti(&config.quadranti) {
         let indice = indice_in(&mut cat_q, &l);
-        let unita = match &l {
-            Lato::Sensore(id) => sensori_q.iter().find(|s| &s.entity_id == id).map(|s| s.unita.clone()),
+        let unita: Option<Option<&str>> = match &l {
+            Lato::Sensore(id) => {
+                sensori_q.iter().find(|s| &s.entity_id == id).map(|s| Some(s.unita.as_str()).filter(|u| !u.is_empty()))
+            }
             _ => None,
         };
         // Il massimo si chiede solo per un sensore che c'è e la cui unità non ha una scala.
-        let con_massimo = unita.as_ref().is_some_and(|u| lati::chiede_massimo(u.as_deref()));
-        let predefinito = match unita.flatten().as_deref().map(str::trim) {
+        let con_massimo = unita.is_some_and(lati::chiede_massimo);
+        let predefinito = match unita.flatten().map(str::trim) {
             Some("W") => lati::testo_massimo(lati::MASSIMO_W),
             Some("kW") => lati::testo_massimo(lati::MASSIMO_KW),
             _ => "automatico".into(),
@@ -2219,8 +2227,24 @@ pub(crate) mod test {
         })
     }
 
+    /// Un `MenuData` di prova; i sensori di preferiti e stanze sono anche fra i sensori numerici,
+    /// come li mette il mapper di casa-core.
     pub fn menu(preferiti: Vec<AppEntity>, stanze: Vec<Vec<AppEntity>>) -> MenuData {
+        let mut numerici: Vec<SensoreNumerico> = Vec::new();
+        for e in preferiti.iter().chain(stanze.iter().flatten()) {
+            if let AppEntity::Sensor(s) = e {
+                if numerici.iter().all(|n| n.entity_id != s.base.entity_id) {
+                    numerici.push(SensoreNumerico {
+                        entity_id: s.base.entity_id.clone(),
+                        nome: s.base.name.clone(),
+                        valore: casa_core::ha::mapper::valore_numerico(&s.value).filter(|_| s.base.is_available),
+                        unita: s.unit.clone().unwrap_or_default(),
+                    });
+                }
+            }
+        }
         MenuData {
+            sensori_numerici: Arc::new(numerici),
             favorites: preferiti,
             rooms: stanze
                 .into_iter()

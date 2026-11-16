@@ -1702,3 +1702,43 @@ async fn un_cambio_del_meteo_si_pubblica_senza_rimappare_ne_rileggere() {
     assert_eq!(diagnosi.valore(Contatore::mappature), mappature, "nessuna mappatura completa");
     assert_eq!((ha.get_states(), ha.letture_registri(), ha.iscrizioni_entita().len()), (1, 1, 1));
 }
+
+// ─── Sensori numerici per quadranti e lati (Task 4 della M2, giro di correzioni 1) ───────────
+
+/// Una potenza come la dà HA: niente stanze né preferiti, ma fra i sensori numerici.
+fn potenza_finta(valore: &str) -> Value {
+    let mut s = stato_nuovo("sensor.fv", valore, "Fotovoltaico");
+    s["attributes"]["device_class"] = json!("power");
+    s["attributes"]["unit_of_measurement"] = json!("W");
+    s["attributes"]["state_class"] = json!("measurement");
+    s
+}
+
+/// Un sensore di potenza scelto per un quadrante: è fra i sensori numerici di `MenuData` (non
+/// nelle stanze), entra nell'iscrizione, e il suo valore nuovo si pubblica senza mappatura completa
+/// né letture.
+#[tokio::test]
+async fn un_sensore_scelto_si_aggiorna_senza_rimappare_ne_rileggere() {
+    use casa_core::diagnosi::{Contatore, Diagnosi};
+    let ha = FintoHa::avvia().await;
+    ha.contatori.stati.lock().unwrap().insert("sensor.fv".into(), potenza_finta("1500"));
+    let diagnosi = Arc::new(Diagnosi::new(true));
+    let mut p = prepara_con_diagnosi(&ha.url, diagnosi.clone());
+    p.servizio.aggiorna_config(|c| c.quadranti = vec!["cpu".into(), "sensore:sensor.fv".into()]);
+    p.servizio.connetti_attivo();
+    let d = aspetta_dati(&mut p).await;
+    let fv = d.sensori_numerici.iter().find(|n| n.entity_id == "sensor.fv").expect("sensore numerico");
+    assert_eq!((fv.nome.as_str(), fv.valore, fv.unita.as_str()), ("Fotovoltaico", Some(1500.0), "W"));
+    assert!(d.rooms.iter().flat_map(|r| &r.entities).all(|e| e.entity_id() != "sensor.fv"), "non nelle stanze");
+    aspetta_iscrizione(&ha, 1).await;
+    assert!(ha.iscrizioni_entita()[0].contains(&"sensor.fv".to_string()));
+    let mappature = diagnosi.valore(Contatore::mappature);
+
+    cambio(&ha, "sensor.fv", potenza_finta("1720.5"));
+    let d = aspetta_dati(&mut p).await;
+    let fv = d.sensori_numerici.iter().find(|n| n.entity_id == "sensor.fv").unwrap();
+    assert_eq!(fv.valore, Some(1720.5));
+    assert_eq!(diagnosi.valore(Contatore::effetto_sensore), 1);
+    assert_eq!(diagnosi.valore(Contatore::mappature), mappature, "nessuna mappatura completa");
+    assert_eq!((ha.get_states(), ha.letture_registri(), ha.iscrizioni_entita().len()), (1, 1, 1));
+}
