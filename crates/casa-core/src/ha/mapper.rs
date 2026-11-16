@@ -26,6 +26,13 @@ const ALARM_MODE_BITS: &[AlarmModeBit] = &[
     AlarmModeBit { mode: "armed_custom_bypass", bit: 32 },
 ];
 
+/// I domini che l'app può mostrare (`map_entity`): un'entità di un altro dominio non si mostra
+/// mai. Lo usa anche il filtro degli eventi dei registri (`registri`); un test lo lega a `map_entity`.
+pub const DOMINI_MOSTRABILI: [&str; 13] = [
+    "light", "switch", "input_boolean", "climate", "cover", "lock", "fan", "humidifier", "valve",
+    "alarm_control_panel", "camera", "scene", "sensor",
+];
+
 const EXCLUDED_DOMAINS: &[&str] = &[
     "binary_sensor",
     "button",
@@ -145,13 +152,11 @@ fn registro_mostrabile(e: &HaEntityEntry) -> bool {
         return false;
     }
     match dominio {
-        "light" | "switch" | "input_boolean" | "climate" | "cover" | "lock" | "fan" | "humidifier" | "valve"
-        | "alarm_control_panel" | "camera" | "scene" => true,
         "sensor" => matches!(
             e.device_class.as_deref().or(e.original_device_class.as_deref()),
             Some("temperature" | "humidity")
         ),
-        _ => false,
+        d => DOMINI_MOSTRABILI.contains(&d),
     }
 }
 
@@ -829,6 +834,28 @@ mod tests {
 
     fn area(id: &str, nome: &str) -> HaArea {
         HaArea { area_id: id.to_owned(), name: nome.to_owned() }
+    }
+
+    /// Giro di correzioni 1 del 14h (M1): `DOMINI_MOSTRABILI` è esattamente l'insieme dei domini
+    /// che `map_entity` mostra (il filtro dei registri scarta gli altri).
+    #[test]
+    fn i_domini_mostrabili_sono_quelli_della_mappatura() {
+        let m = EntityMapper::new();
+        let indici = Indici::new(vec![], vec![], vec![]);
+        let prova = |d: &str| {
+            let mut s = stato(&format!("{d}.x"));
+            s.attributes = json!({ "friendly_name": "x", "device_class": "temperature", "unit_of_measurement": "°C" });
+            s.state = "20".into();
+            m.mappa_entita(&indici, &s).is_some()
+        };
+        for d in DOMINI_MOSTRABILI {
+            assert!(prova(d), "{d} si deve mostrare");
+        }
+        for d in ["binary_sensor", "automation", "script", "media_player", "update", "input_number", "number",
+                  "select", "button", "person", "device_tracker", "weather", "sun", "zone", "vacuum", "water_heater",
+                  "siren", "event", "text", "input_select", "input_text", "timer", "counter", "remote", "notify"] {
+            assert!(!prova(d), "{d} non si mostra: va aggiunto a DOMINI_MOSTRABILI se ora si mostra");
+        }
     }
 
     /// Giro di correzioni 1 del 14h: un dispositivo figlio (HA 2026.9+) senza stanza prende quella

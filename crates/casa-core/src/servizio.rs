@@ -38,7 +38,7 @@ use crate::ha::client::{self, Client, DalClient, NON_CONNESSO};
 use crate::ha::eventi::{applica_diff, Aggiornamento, EventoWs};
 use crate::ha::mapper::{aggiornamento_disponibile, sostituisci_in_menu, EntityMapper, Indici, Preferenze};
 use crate::ha::models::{HaArea, HaConfig, HaDevice, HaEntityEntry, HaState};
-use crate::ha::registri::{CambioRegistro, Rilettura};
+use crate::ha::registri::{Azione, CambioRegistro, Rilettura};
 use crate::segreti::Segreti;
 use crate::types::{AppEntity, MenuData, TestConnectionResult};
 
@@ -694,6 +694,7 @@ impl Motore {
             }
             Interno::Client(_, DalClient::Evento(EventoWs::DaRileggere)) => self.chiedi_rilettura(Rilettura::Tutto),
             Interno::Client(_, DalClient::Evento(EventoWs::Registro(c))) => {
+                self.conta_campi(&c);
                 let serve = self.rilettura_per(&c);
                 if serve == Rilettura::Niente {
                     self.diagnosi.conta(Contatore::registro_scartati);
@@ -706,6 +707,21 @@ impl Motore {
             }
             Interno::Grezzi(_, esito) => self.letti(esito),
             Interno::Registri(_, esito) => self.registri_letti(esito),
+        }
+    }
+
+    /// I campi di `changes` nel registro diagnostico (nomi da un elenco fisso, mai valori).
+    fn conta_campi(&self, c: &CambioRegistro) {
+        let (CambioRegistro::Entita { azione: Azione::Aggiorna, campi, .. }
+        | CambioRegistro::Dispositivo { azione: Azione::Aggiorna, campi, .. }) = c
+        else {
+            return;
+        };
+        if campi.is_empty() {
+            self.diagnosi.conta(Contatore::registro_campo_vuoto);
+        }
+        for campo in campi {
+            self.diagnosi.conta(crate::diagnosi::contatore_campo(campo));
         }
     }
 
@@ -972,6 +988,7 @@ impl Motore {
                 self.riprova.annulla();
                 self.attesa_riprova = RIPROVA_LETTURA;
                 self.letta = true;
+                self.diagnosi.prima_lettura();
                 let in_avvio = g.config.as_ref().and_then(|c| c.state.as_deref()).is_some_and(|s| s != "RUNNING");
                 // Senza `get_config` (fallita) lo stato del core non è noto: «nessuna», non quello
                 // della lettura di prima.
@@ -1254,10 +1271,10 @@ mod test {
             state: Some("RUNNING".into()),
         });
         m.letti(Ok(g));
-        assert!(diagnosi.riga(&[]).ends_with(" ha=RUNNING"));
+        assert!(diagnosi.riga(&[]).contains(" ha=RUNNING "));
         m.letti(Ok(grezzi_vuoti()));
         let riga = diagnosi.riga(&[]);
-        assert!(riga.ends_with(" ha=nessuna"), "{riga}");
+        assert!(riga.contains(" ha=nessuna "), "{riga}");
     }
 
     #[test]

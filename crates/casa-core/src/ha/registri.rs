@@ -21,7 +21,7 @@
 //! ereditano l'area); delle stanze l'id e il nome.
 use serde_json::Value;
 
-use super::mapper::Indici;
+use super::mapper::{Indici, DOMINI_MOSTRABILI};
 
 /// Cosa fa l'evento sul suo registro.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,11 +60,6 @@ const CAMPI_ASPETTO: [&str; 3] = ["name", "area_id", "device_id"];
 /// I campi da cui HA compone il `friendly_name` dello stato (il nome mostrato quando l'utente non
 /// ne ha scelto uno): il nome dell'integrazione, la sua traduzione, il nome col dispositivo.
 const CAMPI_NOME: [&str; 3] = ["original_name", "translation_key", "has_entity_name"];
-/// I domini che l'app può mostrare (gli stessi di `mapper`): gli altri non contano mai.
-const DOMINI_MOSTRABILI: [&str; 13] = [
-    "light", "switch", "input_boolean", "climate", "cover", "lock", "fan", "humidifier", "valve",
-    "alarm_control_panel", "camera", "scene", "sensor",
-];
 
 fn dominio(entity_id: &str) -> &str {
     entity_id.split('.').next().unwrap_or_default()

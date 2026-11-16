@@ -81,6 +81,11 @@ pub fn avvia(diagnosi: Arc<Diagnosi>, cartella: &Path) {
     }
 }
 
+/// CPU usata dal processo dall'avvio, in millisecondi (0 dove non si misura).
+pub fn cpu_processo_ms() -> u64 {
+    processo::cpu_ms()
+}
+
 #[cfg(windows)]
 mod processo {
     use windows_sys::Win32::Foundation::FILETIME;

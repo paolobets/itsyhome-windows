@@ -1427,6 +1427,9 @@ async fn diagnosi_conta_messaggi_cambi_e_riletture_senza_dati_della_casa() {
         righe.last().unwrap()
     );
     assert_eq!(v["ha"], "RUNNING");
+    // Giro di correzioni 1 del 14h: il tempo della prima lettura; nessuna interfaccia, nessuna consegna.
+    assert!(numero(&v, "avvio_lettura_ms") > 0, "{}", righe.last().unwrap());
+    assert_eq!(numero(&v, "avvio_consegna_ms"), 0);
     assert!(numero(&v, "ws_messaggi") >= 8 && numero(&v, "ws_byte") > 0, "{}", righe.last().unwrap());
     assert_eq!(numero(&v, "ws_auth"), 2, "auth_required e auth_ok");
 
@@ -1493,6 +1496,13 @@ async fn diagnosi_conta_messaggi_cambi_e_riletture_senza_dati_della_casa() {
         "{}",
         righe.last().unwrap()
     );
+    // I campi di `changes`, da un elenco fisso.
+    assert_eq!(
+        [numero(&v, "registro_campo_name"), numero(&v, "registro_campo_sw_version"), numero(&v, "registro_campo_altro")],
+        [3, 1, 0],
+        "{}",
+        righe.last().unwrap()
+    );
     assert_eq!(ha.get_states(), 1);
 
     // Nessun dato della casa: solo nomi fissi e numeri.
@@ -1505,6 +1515,7 @@ async fn diagnosi_conta_messaggi_cambi_e_riletture_senza_dati_della_casa() {
             match n.as_str() {
                 "ha" => assert!(["nessuna", "assente", "altro", "RUNNING", "STARTING"].contains(&v.as_str()), "ha={v}"),
                 "seguite" => assert!(v.parse::<u64>().is_ok()),
+                n if casa_core::diagnosi::AVVIO.contains(&n) => assert!(v.parse::<u64>().is_ok()),
                 _ => assert!(NOMI.contains(&n.as_str()) && v.parse::<u64>().is_ok(), "{n}={v}"),
             }
         }

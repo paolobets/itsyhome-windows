@@ -391,6 +391,8 @@ impl Apertura {
             eprintln!("pannello non mostrato: {e}");
             self.orologio.stop();
             self.ferma_campionamento();
+            // `riempi` ha acceso i modelli della vista Casa: un pannello mai mostrato non li guarda.
+            self.ponte.pannello_chiuso();
             return;
         }
         // Da `aperto` falso (appena creato) a vero: parte l'animazione di apertura.

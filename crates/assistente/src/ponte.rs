@@ -569,6 +569,8 @@ pub struct Ponte {
     /// arrivato qualcosa che li cambierebbe, si rifanno all'apertura.
     modelli_vivi: Cell<bool>,
     modelli_vecchi: Cell<bool>,
+    /// Da quando l'umore è «pensa» (per il registro diagnostico: si conta quando finisce).
+    pensa_da: Cell<Option<Instant>>,
     /// Impostazioni › Dispositivi: le righe e le stanze compresse (solo finché l'app gira).
     righe: Rc<VecModel<RigaDispositivoUi>>,
     /// I collegamenti veloci, per il pannello e per Impostazioni › Collegamenti.
@@ -651,6 +653,7 @@ pub fn collega(
         stanza_aperta: RefCell::new(None),
         modelli_vivi: Cell::new(false),
         modelli_vecchi: Cell::new(false),
+        pensa_da: Cell::new(None),
         righe: Rc::new(VecModel::default()),
         collegamenti: Rc::new(VecModel::default()),
         apri_url: RefCell::new(Rc::new(crate::sistema::browser::apri)),
@@ -789,6 +792,10 @@ impl Ponte {
             }
             CasaEvento::Dati(menu) => {
                 self.casa.diagnosi().conta(Contatore::ui_dati);
+                // Solo la prima consegna conta (giro di correzioni 1 del 14h); spento, nulla.
+                if self.casa.diagnosi().acceso() {
+                    self.casa.diagnosi().prima_consegna(crate::diagnosi::cpu_processo_ms());
+                }
                 self.appena_connesso.set(false);
                 let vero = |id: &str| entita(&menu, id).as_ref().and_then(acceso_di);
                 let confermati = self.ottimismo.borrow_mut().conferma(vero, ora);
@@ -847,6 +854,14 @@ impl Ponte {
             let c = self.cervello.borrow();
             (self.umore_fisso.unwrap_or_else(|| c.umore(ora)), c.prossimo_cambio(ora))
         };
+        match (umore == Umore::Pensa, self.pensa_da.get()) {
+            (true, None) => self.pensa_da.set(Some(ora)),
+            (false, Some(da)) => {
+                self.pensa_da.set(None);
+                self.casa.diagnosi().conta_n(Contatore::ui_pensa_ms, ora.duration_since(da).as_millis() as u64);
+            }
+            _ => {}
+        }
         let (nuova, scadenza_aspetto) = {
             let attese = self.attese.borrow();
             (pillola::vista(umore, &attese, ora), prossimo_cambio_aspetto(&attese, ora))
@@ -1978,6 +1993,40 @@ pub(crate) mod test {
         p.ricevi(dati(true));
         assert_eq!((conta(Contatore::ui_dati), conta(Contatore::ui_ricostruzioni), conta(Contatore::ui_righe)), (2, 2, 1));
         assert!(conta(Contatore::ui_umore) >= 2);
+    }
+
+    /// Giro di correzioni 1 del 14h: il registro diagnostico separa l'avvio. La prima consegna dei
+    /// dati scrive i suoi valori (una volta); il tempo passato con «pensa» (prima connessione) si
+    /// conta quando finisce.
+    #[test]
+    fn la_diagnosi_conta_la_prima_consegna_e_pensa() {
+        use casa_core::config::ConfigStore;
+        use casa_core::diagnosi::Diagnosi;
+        use casa_core::segreti::MemoriaSegreti;
+        crate::test_ui::piattaforma_di_prova();
+        let cartella = tempfile::tempdir().unwrap();
+        let segreti: Arc<dyn Segreti> = Arc::new(MemoriaSegreti::new());
+        let store = Arc::new(ConfigStore::apri(cartella.path()));
+        let diagnosi = Arc::new(Diagnosi::new(true));
+        let casa = Rc::new(CasaService::avvia_con_diagnosi(store, segreti.clone(), Arc::new(|_| {}), diagnosi.clone()));
+        let pillola = crate::Pillola::new().unwrap();
+        let cervello = Rc::new(RefCell::new(Cervello::new(Instant::now())));
+        let p = collega(casa, segreti, &pillola, cervello, None, None);
+        let _spegni = Spegni;
+        let valore = |n: &str| -> u64 {
+            let riga = diagnosi.riga(&[]);
+            riga.split(' ').find_map(|x| x.strip_prefix(&format!("{n}="))).unwrap().parse().unwrap()
+        };
+        p.ricevi(CasaEvento::Stato(StatoConnessione::InConnessione));
+        std::thread::sleep(Duration::from_millis(40));
+        p.ricevi(CasaEvento::Stato(StatoConnessione::Connesso));
+        assert!(diagnosi.valore(Contatore::ui_pensa_ms) >= 40, "pensa: {}", diagnosi.valore(Contatore::ui_pensa_ms));
+        assert_eq!(valore("avvio_consegna_ms"), 0);
+        p.ricevi(CasaEvento::Dati(Arc::new(menu(vec![luce("light.a", false)], vec![]))));
+        let prima = valore("avvio_consegna_ms");
+        assert!(prima > 0);
+        p.ricevi(CasaEvento::Dati(Arc::new(menu(vec![luce("light.a", true)], vec![]))));
+        assert_eq!(valore("avvio_consegna_ms"), prima, "solo la prima");
     }
 
     /// Task 14h: a pannello chiuso i dati della casa non ricostruiscono i modelli della vista Casa
