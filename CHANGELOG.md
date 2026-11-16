@@ -139,6 +139,23 @@ Riposo non rimisurato a schermo libero: durante tutta la prova lo schermo era bl
 - La scelta dell'icona di una stanza non si chiude più con un clic dentro il riquadro ma fuori da un'icona.
 - Test di HA in avvio non più instabile.
 
+### Changed (Task 14g: dalla prova di Paolo sulla casa vera, 16/11/2026)
+- Vista Casa: «★ Preferiti» (con il numero) è la prima voce dell'elenco, selezionata all'apertura; toccandola tornano i preferiti col titolo «Preferiti». Voci dell'elenco come schede per Narrator (nome, numero, selezionata, posizione). Esc con una stanza aperta torna a «Preferiti», poi chiude il pannello.
+- «‹ Indietro» tolto dalla riga alta in tutte le viste: alla Panoramica si torna dal dock, con Backspace o Alt+←.
+- Le risposte di Home Assistant (stati e registri) si leggono dal testo nei loro tipi, senza l'albero `Value` intero: meno memoria dopo ogni lettura completa.
+
+### Added (Task 14g)
+- Registro diagnostico di soli contatori, spento di serie: con `ITSYHOME_DIAGNOSI=1` ogni 60 s una riga in `diagnosi.log` accanto alla configurazione (al più 1 MB, poi `diagnosi.log.1`): messaggi WebSocket per tipo, eventi per tipo, entità `a/c/r` e loro effetto, pubblicazioni e consegne, riletture per causa, iscrizioni, stato del core, lavoro dell'interfaccia, CPU e memoria privata del processo. Mai entity_id, nomi, valori, token o indirizzi.
+- `finto_ha --registro <s>`: un `entity_registry_updated` ogni `s` secondi.
+
+### Misure del Task 14g (16/11/2026, build release, finto HA, `--umore calm`)
+| Prova | Risultato |
+|---|---|
+| Riposo, 5 min, casa piccola (25 entità, 7 preferiti) | **0,016%** (p95 0,11, max 0,44), **8,0–8,2 MB** (14e: 0,019%, 7,9–8,1 MB) |
+| Memoria a riposo dal registro, casa piccola / casa grande (807 in più) | 8,4 → **8,3 MB** / 11,7 → **11,2 MB** con le risposte lette dal testo |
+| Casa grande + un evento del registro ogni 3 s | 20 riletture complete al minuto, 10,9 MB ricevuti al minuto, 375–484 ms di CPU al minuto, 13,3–13,9 MB |
+| Raffica anti-glitch (raffica 20/s + registro ogni secondo, 20 s a 60 fps) | 1199 fotogrammi, **0 difettosi**; controllo negativo (maschera stretta) 300 su 300 |
+
 ---
 
 ## [2.1.2] - 2026-03-24
