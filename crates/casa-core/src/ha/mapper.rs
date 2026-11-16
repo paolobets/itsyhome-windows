@@ -105,6 +105,21 @@ impl Indici {
     pub fn mostrabili_dal_registro(&self) -> impl Iterator<Item = &str> {
         self.entries.values().filter(|e| registro_mostrabile(e)).map(|e| e.entity_id.as_str())
     }
+
+    /// La voce del registro di un'entità.
+    pub fn voce(&self, entity_id: &str) -> Option<&HaEntityEntry> {
+        self.entries.get(entity_id)
+    }
+
+    /// Le voci delle entità di un dispositivo.
+    pub fn voci_del_dispositivo<'a>(&'a self, device_id: &'a str) -> impl Iterator<Item = &'a HaEntityEntry> + 'a {
+        self.entries.values().filter(move |e| e.device_id.as_deref() == Some(device_id))
+    }
+
+    /// La stanza c'è nel registro.
+    pub fn ha_area(&self, area_id: &str) -> bool {
+        self.areas.contains_key(area_id)
+    }
 }
 
 fn registro_mostrabile(e: &HaEntityEntry) -> bool {
