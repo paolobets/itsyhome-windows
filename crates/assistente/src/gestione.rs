@@ -445,11 +445,18 @@ mod test {
         g.chiudi();
     }
 
-    /// Il figlio finto (`examples/figlio_finto.rs`), costruito da `cargo test` accanto ai test.
+    /// Il figlio finto (`examples/figlio_finto.rs`), costruito da `cargo test` nella cartella
+    /// `examples` del profilo. Si cerca risalendo dall'eseguibile dei test: con la disposizione
+    /// classica di Cargo il test sta in `<profilo>/deps`, con quella nuova (`build-dir`, Rust
+    /// recenti) in `<profilo>/build/<pacchetto>/<impronta>`.
     fn figlio_finto() -> PathBuf {
+        let nome = if cfg!(windows) { "figlio_finto.exe" } else { "figlio_finto" };
         let test = std::env::current_exe().unwrap();
-        let cartella = test.parent().unwrap().parent().unwrap().join("examples");
-        cartella.join(if cfg!(windows) { "figlio_finto.exe" } else { "figlio_finto" })
+        test.ancestors()
+            .skip(1)
+            .map(|c| c.join("examples").join(nome))
+            .find(|p| p.is_file())
+            .unwrap_or_else(|| panic!("{nome} non trovato risalendo da {}", test.display()))
     }
 
     /// Una `Gestione` col figlio finto nel modo dato e il canale dei messaggi ricevuti.
