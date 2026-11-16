@@ -53,9 +53,10 @@ const TETTO_RAFFICA: Duration = Duration::from_millis(300);
 /// stanza rinominata): si rilegge 1 s dopo l'ultimo evento, e al più tardi 5 s dopo il primo.
 const ATTESA_REGISTRI: Duration = Duration::from_secs(1);
 const TETTO_REGISTRI: Duration = Duration::from_secs(5);
-/// Se la prima lettura completa della connessione fallisce non c'è nulla da aggiornare con gli
-/// eventi: si riprova dopo 2 s, poi 4, 8, 16, 32 e al più ogni 60 s, finché riesce. L'attesa
-/// riparte da 2 s dopo una lettura riuscita.
+/// Una lettura fallita (completa o dei soli registri) a connessione attiva si riprova con una
+/// lettura completa dopo 2 s, poi 4, 8, 16, 32 e al più ogni 60 s, finché riesce. L'attesa riparte
+/// da 2 s dopo una lettura completa riuscita e a ogni connessione; a connessione caduta non si
+/// riprova (alla riconnessione la lettura parte comunque).
 const RIPROVA_LETTURA: Duration = Duration::from_secs(2);
 const TETTO_RIPROVA: Duration = Duration::from_secs(60);
 /// HA ancora in avvio alla lettura: si rilegge dopo 5 s, finché non è «RUNNING».
@@ -348,6 +349,12 @@ impl Attesa {
         self.0 = Some((primo, (ora + attesa).min(primo + tetto)));
     }
 
+    /// Arma da capo: scade `dopo` da `ora`, senza tener conto di un'attesa già armata (`rinvia`
+    /// terrebbe il primo arrivo, e la scadenza potrebbe essere già passata).
+    fn arma(&mut self, ora: Instant, dopo: Duration) {
+        self.0 = Some((ora, ora + dopo));
+    }
+
     fn scadenza(&self) -> Option<Instant> {
         self.0.map(|(_, s)| s)
     }
@@ -391,10 +398,13 @@ struct Motore {
     /// ampia chiesta dagli eventi raccolti.
     registri: Attesa,
     rilettura_registri: Rilettura,
-    /// Nuovo tentativo di una lettura fallita prima che la connessione ne abbia fatta una
-    /// riuscita, e l'attesa del prossimo (cresce fino al tetto).
+    /// Nuovo tentativo (una lettura completa) dopo una lettura fallita a connessione attiva, o con
+    /// HA ancora in avvio, e l'attesa del prossimo (cresce fino al tetto). Si annulla quando parte
+    /// una lettura completa, a ogni cambio di stato della connessione e alla riuscita.
     riprova: Attesa,
     attesa_riprova: Duration,
+    /// La connessione è attiva (`Connesso` e non ancora caduta): solo allora si arma un tentativo.
+    connesso: bool,
     /// Notifiche persistenti dell'ambiente connesso già consegnate all'applicazione.
     notifiche: BTreeSet<String>,
     /// L'ambiente a cui appartengono quelle notifiche.
@@ -437,6 +447,7 @@ impl Motore {
             rilettura_registri: Rilettura::Niente,
             riprova: Attesa::default(),
             attesa_riprova: RIPROVA_LETTURA,
+            connesso: false,
             notifiche: BTreeSet::new(),
             ambiente_notifiche: None,
             riprova_per_avvio: false,
@@ -618,6 +629,7 @@ impl Motore {
         self.in_lettura = false;
         self.seguite = None;
         self.rileggi_dopo = Rilettura::Niente;
+        self.connesso = false;
         self.ferma_attese();
     }
 
@@ -665,6 +677,7 @@ impl Motore {
             Interno::Client(g, _) | Interno::Grezzi(g, _) | Interno::Registri(g, _) if g != self.generazione => {}
             Interno::Client(_, DalClient::Stato(s)) => {
                 let connesso = s == StatoConnessione::Connesso;
+                self.connesso = connesso;
                 if !connesso {
                     self.ferma_attese();
                 }
@@ -673,6 +686,9 @@ impl Motore {
                     // Una (ri)connessione consegna sempre i dati, anche se uguali a prima, e
                     // deve fare la sua lettura (finché non riesce si riprova).
                     self.consegnato = None;
+                    // Nessun tentativo della connessione di prima; la lettura parte qui sotto.
+                    self.riprova.annulla();
+                    self.attesa_riprova = RIPROVA_LETTURA;
                     // La sessione nuova non ha ancora nessuna iscrizione agli stati.
                     self.seguite = None;
                     self.diagnosi.conta(Contatore::rilettura_connessione);
@@ -858,6 +874,8 @@ impl Motore {
             return;
         }
         self.in_lettura = true;
+        // Parte una lettura completa: un tentativo armato non serve più (giro 3, P2).
+        self.riprova.annulla();
         self.diagnosi.conta(Contatore::riletture);
         let (client, tx, g) = (client.clone(), self.interni_tx.clone(), self.generazione);
         tokio::spawn(async move {
@@ -997,7 +1015,7 @@ impl Motore {
                 self.segui(true);
                 // HA ancora in avvio: molte entità non ci sono ancora; si rilegge poco dopo.
                 if in_avvio {
-                    self.riprova.rinvia(Instant::now(), ATTESA_AVVIO, ATTESA_AVVIO);
+                    self.riprova.arma(Instant::now(), ATTESA_AVVIO);
                     self.riprova_per_avvio = true;
                 }
             }
@@ -1010,8 +1028,13 @@ impl Motore {
     /// Arma il nuovo tentativo di una lettura fallita (una lettura completa) con l'attesa di adesso,
     /// e raddoppia la prossima fino al tetto; la prima lettura completa riuscita la riporta a 2 s.
     fn arma_riprova(&mut self) {
+        // A connessione caduta l'errore è delle letture che erano in volo: alla riconnessione la
+        // lettura parte comunque (giro di correzioni 3, P1).
+        if !self.connesso {
+            return;
+        }
         let attesa = self.attesa_riprova;
-        self.riprova.rinvia(Instant::now(), attesa, attesa);
+        self.riprova.arma(Instant::now(), attesa);
         self.riprova_per_avvio = false;
         self.attesa_riprova = (attesa * 2).min(TETTO_RIPROVA);
     }
@@ -1136,7 +1159,10 @@ mod test {
         let store = Arc::new(ConfigStore::apri(cartella.path()));
         let segreti: Arc<dyn Segreti> = Arc::new(crate::segreti::MemoriaSegreti::new());
         let config = Arc::new(Mutex::new(Config::default()));
-        (Motore::new(store, segreti, Arc::new(|_| {}), config, vec![], Arc::new(Diagnosi::default())), cartella)
+        let mut m = Motore::new(store, segreti, Arc::new(|_| {}), config, vec![], Arc::new(Diagnosi::default()));
+        // Come dopo `Connesso` (senza client la lettura non parte).
+        m.interno(Interno::Client(m.generazione, DalClient::Stato(StatoConnessione::Connesso)));
+        (m, cartella)
     }
 
     fn grezzi_vuoti() -> Box<Grezzi> {
@@ -1284,6 +1310,41 @@ mod test {
         m.letti(Ok(grezzi_vuoti()));
         let riga = diagnosi.riga(&[]);
         assert!(riga.contains(" ha=nessuna "), "{riga}");
+    }
+
+    /// Giro di correzioni 3 del 14h, P1: l'errore delle letture in volo arriva dopo la caduta della
+    /// connessione (stessa generazione: il client si riconnette da solo). Il nuovo tentativo non si
+    /// arma a connessione caduta; alla riconnessione nessun tentativo resta armato e l'attesa
+    /// riparte da 2 s.
+    #[test]
+    fn nessuna_riprova_a_connessione_caduta() {
+        let (mut m, _c) = motore();
+        m.letti(Ok(grezzi_vuoti()));
+        m.letti(Err("rifiutata".into()));
+        assert!(m.riprova.scadenza().is_some());
+        // L'attesa è cresciuta (4 s per il prossimo). Cade la connessione, poi arriva l'errore
+        // di una lettura che era in volo.
+        let caduta = StatoConnessione::Errore("connessione chiusa da Home Assistant".into());
+        m.interno(Interno::Client(m.generazione, DalClient::Stato(caduta)));
+        m.letti(Err(NON_CONNESSO.into()));
+        assert_eq!(m.riprova.scadenza(), None, "nessun tentativo mentre si è disconnessi");
+        m.interno(Interno::Client(m.generazione, DalClient::Stato(StatoConnessione::Connesso)));
+        assert_eq!(m.riprova.scadenza(), None, "nessun tentativo rimasto dalla connessione di prima");
+        let prima = Instant::now();
+        m.letti(Err("la prima della connessione nuova".into()));
+        let scade = m.riprova.scadenza().expect("si riprova");
+        assert_eq!((scade - prima).as_secs_f32().round() as u64, 2, "l'attesa riparte da 2 s");
+    }
+
+    /// P2: un tentativo armato si arma da capo, senza tenere l'istante di prima (dopo il tentativo
+    /// dell'avvio da 5 s non può uscire una scadenza già passata).
+    #[test]
+    fn attesa_armata_da_capo() {
+        let t = Instant::now();
+        let mut a = Attesa::default();
+        a.rinvia(t, ATTESA_AVVIO, ATTESA_AVVIO);
+        a.arma(t + Duration::from_secs(3), RIPROVA_LETTURA);
+        assert_eq!(a.scadenza(), Some(t + Duration::from_secs(5)), "3 s + 2 s, non 0 + 2 s");
     }
 
     #[test]

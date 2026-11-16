@@ -74,6 +74,8 @@ struct Contatori {
     voci_da_rifiutare: AtomicUsize,
     /// Senza le voci di serie (luce e presa) nel registro delle entità.
     senza_voci_di_serie: AtomicBool,
+    /// Alla prossima `get_states` la connessione cade senza risposta (una volta).
+    cadi_su_get_states: AtomicBool,
 }
 
 struct FintoHa {
@@ -394,6 +396,10 @@ async fn servi(tcp: tokio::net::TcpStream, contatori: Arc<Contatori>, mut eventi
                         return;
                     }
                     continue;
+                }
+                if v["type"] == "get_states" && contatori.cadi_su_get_states.swap(false, Ordering::SeqCst) {
+                    // HA che cade a metà lettura: nessuna risposta, connessione chiusa.
+                    return;
                 }
                 if v["type"] == "config/area_registry/list" {
                     let ms = contatori.ritardo_aree_ms.load(Ordering::SeqCst);
@@ -1009,6 +1015,63 @@ async fn evento_durante_la_lettura_dei_registri_non_si_perde() {
     assert_eq!(ha.get_states(), 1, "solo registri");
 }
 
+/// Giro di correzioni 3 del 14h, P1: la connessione cade mentre una lettura completa è in volo
+/// (chiesta da un evento); il client si riconnette da solo dopo 3 s (come i ritardi veri 2, 4 …
+/// 30 s, più lunghi del primo tentativo da 2 s). L'errore della lettura interrotta non arma un
+/// tentativo a connessione caduta (nessuna lettura fallita in più mentre si è disconnessi), la
+/// riconnessione fa una sola lettura e una sola iscrizione, e la prima lettura fallita dopo la
+/// riconnessione si riprova dopo 2 s, non con l'attesa gonfiata durante la caduta.
+#[tokio::test]
+async fn lettura_in_volo_alla_caduta_non_lascia_tentativi() {
+    use casa_core::diagnosi::{Contatore, Diagnosi};
+    let ha = FintoHa::avvia().await;
+    let diagnosi = Arc::new(Diagnosi::new(true));
+    let mut p = prepara_con_ritardi(&ha.url, vec![Duration::from_secs(3)], diagnosi.clone());
+    p.servizio.connetti_attivo();
+    aspetta_dati(&mut p).await;
+    aspetta_iscrizione(&ha, 1).await;
+    ha.contatori.cadi_su_get_states.store(true, Ordering::SeqCst);
+    ha.manda_evento("entity_registry_updated", json!({ "action": "create", "entity_id": "switch.nuova" }));
+    aspetta(|| ha.connessioni() == 2, "riconnessione dopo la caduta").await;
+    aspetta(|| ha.iscrizioni_entita().len() == 2, "iscrizione della connessione nuova").await;
+    assert_eq!(diagnosi.valore(Contatore::letture_fallite), 1, "solo la lettura interrotta: nessun tentativo da disconnessi");
+    // La lettura caduta non ha avuto risposta e non si conta.
+    let (stati, iscrizioni) = (ha.get_states(), ha.iscrizioni_entita().len());
+    assert_eq!(stati, 2, "prima lettura e quella della riconnessione");
+    sleep(Duration::from_millis(2500)).await;
+    assert_eq!((ha.get_states(), ha.iscrizioni_entita().len()), (stati, iscrizioni), "nessuna lettura in più");
+    // Una lettura che fallisce adesso si riprova dopo 2 s.
+    ha.contatori.stati_da_rifiutare.store(1, Ordering::SeqCst);
+    ha.manda_evento("entity_registry_updated", json!({ "action": "create", "entity_id": "switch.nuova" }));
+    aspetta(|| ha.get_states() == stati + 1, "lettura rifiutata").await;
+    let rifiutata = Instant::now();
+    aspetta(|| ha.get_states() == stati + 2, "nuovo tentativo").await;
+    assert!(rifiutata.elapsed() < Duration::from_millis(3500), "tentativo dopo {:?}, non dopo 2 s", rifiutata.elapsed());
+}
+
+/// Giro di correzioni 3 del 14h, P2: un tentativo armato si annulla quando parte un'altra lettura
+/// completa (qui chiesta da un evento); se scadesse mentre quella è in volo ne accoderebbe una
+/// seconda, inutile.
+#[tokio::test]
+async fn una_lettura_completa_annulla_il_tentativo_armato() {
+    let ha = FintoHa::avvia().await;
+    let mut p = prepara(&ha.url, Some(TOKEN));
+    p.servizio.connetti_attivo();
+    aspetta_dati(&mut p).await;
+    aspetta_iscrizione(&ha, 1).await;
+    // Una lettura fallita: tentativo armato fra 2 s.
+    ha.contatori.stati_da_rifiutare.store(1, Ordering::SeqCst);
+    ha.manda_evento("entity_registry_updated", json!({ "action": "create", "entity_id": "switch.nuova" }));
+    aspetta(|| ha.get_states() == 2, "lettura rifiutata").await;
+    // Subito un altro evento: la sua lettura parte dopo 1 s e resta in volo oltre i 2 s.
+    ha.contatori.ritardo_aree_ms.store(1500, Ordering::SeqCst);
+    ha.manda_evento("entity_registry_updated", json!({ "action": "create", "entity_id": "switch.altra" }));
+    aspetta(|| ha.get_states() == 3, "lettura dell'evento").await;
+    ha.contatori.ritardo_aree_ms.store(0, Ordering::SeqCst);
+    sleep(Duration::from_millis(3500)).await;
+    assert_eq!(ha.get_states(), 3, "nessuna seconda lettura accodata dal tentativo");
+}
+
 /// Giro di correzioni 2 del 14h (N2): una casa senza nulla da mostrare né da seguire non manda
 /// mai `subscribe_entities` con l'elenco vuoto (HA lo leggerebbe come «tutte le entità»).
 #[tokio::test]
@@ -1405,6 +1468,10 @@ async fn riconnessione_con_lettura_fallita_riprova_e_segue_gli_stati() {
 // ─── Registro diagnostico (Task 14g) ──────────────────────────────────────────
 
 fn prepara_con_diagnosi(url: &str, diagnosi: Arc<casa_core::diagnosi::Diagnosi>) -> Prova {
+    prepara_con_ritardi(url, vec![RITARDO_TEST], diagnosi)
+}
+
+fn prepara_con_ritardi(url: &str, ritardi: Vec<Duration>, diagnosi: Arc<casa_core::diagnosi::Diagnosi>) -> Prova {
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(ConfigStore::apri(dir.path()));
     store
@@ -1423,7 +1490,7 @@ fn prepara_con_diagnosi(url: &str, diagnosi: Arc<casa_core::diagnosi::Diagnosi>)
         Arc::new(move |e| {
             let _ = tx.send(e);
         }),
-        vec![RITARDO_TEST],
+        ritardi,
         diagnosi,
     );
     Prova { servizio, eventi, _dir: dir }
