@@ -1855,6 +1855,11 @@ mod accessibilita {
         elemento(&p, "Volume").invoke_accessible_decrement_action();
         assert_eq!(livelli.borrow().last(), Some(&98), "Narrator: 2 punti in meno");
         assert_eq!(p.get_vista(), "pc", "le frecce non cambiano vista");
+        assert_eq!(
+            elemento(&p, "Volume").accessible_description().as_deref(),
+            Some("Invio: silenzia o riattiva"),
+            "Narrator sa che Invio sul cursore comanda il muto"
+        );
     }
 
     /// Impostazioni › Isola: «Volume con la rotella sulla pillola» solo dove c'è il volume

@@ -2369,10 +2369,14 @@ impl Ponte {
 
     /// Un livello scelto col cursore o con la tastiera (il pannello lo mostra già).
     fn imposta_volume(&self, livello: f32) {
-        if let Some(s) = self.volume.get() {
-            self.volume.set(Some(StatoVolume { livello, ..s }));
+        // Alzando il livello da muto l'audio torna, come con la rotella (una regola sola).
+        let nuovo = volume::imposta_da_cursore(self.volume.get(), livello, self.audio());
+        if nuovo.is_some() {
+            self.volume.set(nuovo);
         }
-        self.audio().imposta(livello);
+        if let Some(p) = self.pannello.borrow().upgrade() {
+            self.scrivi_volume(&p);
+        }
     }
 
     /// Impostazioni › Isola: la rotella sulla pillola accesa o spenta, salvata e subito in vigore.

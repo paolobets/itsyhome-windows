@@ -13,7 +13,13 @@
 //! - `IAudioEndpointVolume::SetMasterVolumeLevelScalar(fLevel, pguidEventContext)`: `fLevel`
 //!   normalizzato 0.0..=1.0 (fuori: `E_INVALIDARG`), sulla curva «audio-tapered» di Windows, la
 //!   stessa delle posizioni dei cursori: quindi il valore va al cursore così com'è. Ogni client
-//!   registrato riceve `OnNotify`; con il contesto nullo arriva `GUID_NULL`.
+//!   registrato riceve `OnNotify`; con il contesto nullo arriva `GUID_NULL`. `pguidEventContext`
+//!   è il «contesto» che il metodo copia in `guidEventContext` della notifica: il client può
+//!   riconoscere se la causa è lui o un altro. Qui si passa `CONTESTO` (un GUID proprio) a ogni
+//!   comando e in `OnNotify` l'eco dei propri comandi è una conferma, non un nuovo stato (vedi
+//!   `stato_da_notifica`). Pagine: learn.microsoft.com/en-us/windows/win32/api/endpointvolume/
+//!   nf-endpointvolume-iaudioendpointvolume-setmastervolumelevelscalar e
+//!   .../ns-endpointvolume-audio_volume_notification_data (letti il 16/11/2026).
 //! - `IAudioEndpointVolume::SetMute(bMute, pguidEventContext)`: `S_OK` se lo stato cambia,
 //!   `S_FALSE` se era già quello (non è un errore).
 //! - `RegisterControlChangeNotify` / `UnregisterControlChangeNotify`: la registrazione fa
@@ -105,6 +111,33 @@ pub fn nuovo_volume(attuale: f32, punti: i32) -> f32 {
     ((percento(attuale) + punti) as f32 / 100.0).clamp(0.0, 1.0)
 }
 
+/// Lo stato da consegnare per una notifica di Windows. L'eco dei nostri stessi comandi
+/// (`guidEventContext` uguale al nostro contesto) è solo una conferma: lo stato ottimistico del
+/// ponte c'è già, e con la rotella veloce l'eco del passo prima arriverebbe dopo quello del passo
+/// dopo e lo riporterebbe indietro. Le notifiche di altri (tasti del volume, altre app) passano.
+#[cfg(any(windows, test))]
+pub fn stato_da_notifica(eco: bool, livello: f32, muto: bool) -> Option<StatoVolume> {
+    if eco {
+        None
+    } else {
+        Some(StatoVolume { livello, muto })
+    }
+}
+
+/// Un livello scelto col cursore o con la tastiera della vista PC (il pannello lo mostra già).
+/// Una sola regola per il muto, la stessa della rotella: alzando il livello sopra quello attuale
+/// l'audio torna; abbassando (o lasciando com'è) il muto resta. Restituisce il nuovo stato.
+#[cfg(any(windows, test))]
+pub fn imposta_da_cursore(stato: Option<StatoVolume>, livello: f32, volume: &dyn Volume) -> Option<StatoVolume> {
+    volume.imposta(livello);
+    let stato = stato?;
+    let muto = stato.muto && percento(livello) <= percento(stato.livello);
+    if stato.muto && !muto {
+        volume.muto(false);
+    }
+    Some(StatoVolume { livello, muto })
+}
+
 /// Chi comanda il volume: `Audio` su Windows, un finto nei test.
 #[cfg(any(windows, test))]
 pub trait Volume {
@@ -140,7 +173,7 @@ pub use com::Audio;
 
 #[cfg(windows)]
 mod com {
-    use super::{StatoVolume, Volume};
+    use super::{stato_da_notifica, StatoVolume, Volume};
     use std::sync::mpsc::{self, Receiver, Sender};
     use windows::core::{Result, PCWSTR};
     use windows::Win32::Foundation::PROPERTYKEY;
@@ -152,7 +185,11 @@ mod com {
         MMDeviceEnumerator, AUDIO_VOLUME_NOTIFICATION_DATA, DEVICE_STATE,
     };
     use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_MULTITHREADED};
-    use windows_core::implement;
+    use windows_core::{implement, GUID};
+
+    /// Il contesto dei nostri comandi (`pguidEventContext`): `OnNotify` lo rimanda indietro
+    /// nell'eco, e così lo si riconosce. Generato a caso, una volta per tutte.
+    const CONTESTO: GUID = GUID::from_u128(0x6d1f_3a52_9c4e_4b87_a2d0_7e15_c8b3_f094);
 
     /// Chi riceve ogni stato letto (dal thread `audio` o dal thread di Windows di `OnNotify`):
     /// deve solo accodarlo al thread dell'interfaccia.
@@ -215,7 +252,11 @@ mod com {
             // SAFETY: Windows passa la struttura della notifica, valida per tutta la chiamata;
             // un puntatore nullo si ignora.
             if let Some(d) = unsafe { dati.as_ref() } {
-                (self.consegna)(Some(StatoVolume { livello: d.fMasterVolume, muto: d.bMuted.as_bool() }));
+                // Eco dei nostri comandi: conferma, non un nuovo stato (vedi `stato_da_notifica`).
+                let eco = d.guidEventContext == CONTESTO;
+                if let Some(s) = stato_da_notifica(eco, d.fMasterVolume, d.bMuted.as_bool()) {
+                    (self.consegna)(Some(s));
+                }
             }
             Ok(())
         }
@@ -290,8 +331,8 @@ mod com {
             match comando {
                 Comando::Imposta(livello) => {
                     if let Some(v) = &attuale {
-                        // SAFETY: `v` è vivo; contesto nullo (`GUID_NULL` nella notifica).
-                        if let Err(e) = unsafe { v.SetMasterVolumeLevelScalar(livello.clamp(0.0, 1.0), std::ptr::null()) } {
+                        // SAFETY: `v` è vivo; `CONTESTO` vive per tutta la chiamata (è una costante).
+                        if let Err(e) = unsafe { v.SetMasterVolumeLevelScalar(livello.clamp(0.0, 1.0), &CONTESTO) } {
                             eprintln!("volume del PC non cambiato: {e}");
                         }
                     }
@@ -299,7 +340,7 @@ mod com {
                 Comando::Muto(si) => {
                     if let Some(v) = &attuale {
                         // SAFETY: come sopra. `S_FALSE` (già in quello stato) non è un errore.
-                        if let Err(e) = unsafe { v.SetMute(si, std::ptr::null()) } {
+                        if let Err(e) = unsafe { v.SetMute(si, &CONTESTO) } {
                             eprintln!("muto del PC non cambiato: {e}");
                         }
                     }
@@ -446,6 +487,39 @@ mod test {
         let su = muovi(&mut Rotella::default(), muto, 60.0, &finto).expect("in su");
         assert!(!su.muto);
         assert_eq!(*finto.comandi.borrow(), ["imposta 28", "imposta 32", "muto false"]);
+    }
+
+    #[test]
+    fn l_eco_dei_propri_comandi_non_torna_indietro() {
+        // Eco: conferma, nessuno stato nuovo. Altri (tasti, altre app): passa com'è.
+        assert_eq!(stato_da_notifica(true, 0.42, false), None);
+        assert_eq!(
+            stato_da_notifica(false, 0.42, true),
+            Some(StatoVolume { livello: 0.42, muto: true })
+        );
+    }
+
+    #[test]
+    fn il_cursore_alzato_toglie_il_muto_abbassato_no() {
+        let muto = Some(StatoVolume { livello: 0.30, muto: true });
+        let finto = Finto::default();
+        let su = imposta_da_cursore(muto, 0.32, &finto).expect("stato");
+        assert!(!su.muto && percento(su.livello) == 32, "in su il muto si toglie");
+        assert_eq!(*finto.comandi.borrow(), ["imposta 32", "muto false"]);
+
+        let finto = Finto::default();
+        let giu = imposta_da_cursore(muto, 0.28, &finto).expect("stato");
+        assert!(giu.muto, "in giù resta muto");
+        assert_eq!(*finto.comandi.borrow(), ["imposta 28"]);
+
+        // Stesso livello (anche un clic sul punto di adesso): il muto resta.
+        let finto = Finto::default();
+        assert!(imposta_da_cursore(muto, 0.30, &finto).expect("stato").muto);
+
+        // Non muto: nessun comando di muto.
+        let finto = Finto::default();
+        imposta_da_cursore(Some(StatoVolume { livello: 0.30, muto: false }), 0.5, &finto);
+        assert_eq!(*finto.comandi.borrow(), ["imposta 50"]);
     }
 
     /// Sulla macchina vera: avvia `Audio`, aspetta il primo stato e **non cambia nulla** (nessun
