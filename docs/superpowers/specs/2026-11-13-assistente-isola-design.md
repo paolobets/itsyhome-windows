@@ -67,11 +67,11 @@ Decisa con Paolo il 13/11 sera, partendo dall'analisi di uno specialista UI/UX (
 
 **Pannello**
 - **Panoramica**: riga «In attesa» + layout **Orologio** o **Quadranti**, cambiabili al volo con **puntini** sotto il contenuto (clic, frecce, rotella); i puntini ci sono solo nella Panoramica. Escono i layout Colori e Tutte le app.
-- **Dock: solo app, solo icone** (Panoramica, Casa, Claude, HIRIS, PC, Mail, Documenti, Focus, Impostazioni; ognuna compare quando la sua milestone esiste).
-- **Riga alta**: occhi al centro, ora a destra. Nessun «‹ Indietro» (decisione di Paolo, Task 14g): dentro un'app si torna alla Panoramica dal dock, con Esc (un livello alla volta, poi chiude il pannello), Backspace o Alt+←; nella vista Casa «★ Preferiti» è la prima voce dell'elenco delle stanze.
+- **Dock: solo app, solo icone** (Panoramica, Casa, Claude, HIRIS, PC, Mail, Documenti, Focus; ognuna compare quando la sua milestone esiste). Niente ingranaggio delle Impostazioni nel dock (decisione di Paolo, Task 14i): «lì voglio solo le funzionalità».
+- **Riga alta**: occhi al centro, ora a destra e, dopo l'ora, il pulsante **«⋯»** («Altre opzioni», Task 14i): apre lo stesso menu nativo del clic destro sulla pillola, sotto il pulsante e allineato al suo bordo destro, senza «Apri» e con «Impostazioni» in testa (Impostazioni, Informazioni, Ritira l'isola, Esci); Esc lo chiude e il fuoco resta su «⋯». Nessun «‹ Indietro» (decisione di Paolo, Task 14g): dentro un'app si torna alla Panoramica dal dock, con Esc (un livello alla volta, poi chiude il pannello), Backspace o Alt+←; nella vista Casa «★ Preferiti» è la prima voce dell'elenco delle stanze.
 - **Chat HIRIS dentro il pannello** per domande e comandi veloci.
 - Pannello **fisso a 800 × 300**: niente allungamento.
-- **Impostazioni in una finestra dedicata** (decisa da Paolo il 13/11): finestra Slint nello stesso processo, senza motore web, creata all'apertura e distrutta alla chiusura; non si chiude perdendo il fuoco (serve per incollare il token preso dal browser). Si apre dall'icona del dock (il pannello si chiude) e dalla tray.
+- **Impostazioni in una finestra dedicata** (decisa da Paolo il 13/11): finestra Slint nello stesso processo, senza motore web, creata all'apertura e distrutta alla chiusura; non si chiude perdendo il fuoco (serve per incollare il token preso dal browser). Si apre dal menu «⋯» del pannello (il pannello si chiude), dal clic destro sulla pillola e dalla tray.
 
 **Agire senza errori**
 - Permessi di Claude: mai con Invio da solo; da tastiera **Ctrl+Invio**, fuoco iniziale su «Nega».
@@ -168,7 +168,7 @@ Ordine proposto delle milestone successive: Casa (porting completo del popup Its
 - **Casa in M1** *(scelta mia)*: i layout mostrano i **preferiti** (con la regola di ItsyHome; se non ce ne sono, i primi dispositivi in ordine). Comando minimo: un tocco accende/spegne luci e interruttori e attiva le scene; all'esito positivo l'umore diventa "contento". Il resto dei controlli è della milestone Casa.
 - **Pillola e schermo** *(scelta mia)*: sta sullo schermo principale, in alto al centro, sempre sopra; **si nasconde quando l'app in primo piano è a schermo intero** (giochi, video, presentazioni) e ricompare all'uscita; resta raggiungibile dalla tray. Cambi di DPI e di monitor gestiti. macOS (notch) e Linux: in M1 si verifica che compili; Linux Wayland non è bersaglio di M1 (la pillola sempre sopra in alto al centro non è garantita lì) — si affronta in una milestone dedicata.
 - **Budget con backend** *(scelta mia)*: i limiti del §4 valgono **con Home Assistant connesso** e le entità in memoria. Quindi: runtime tokio ridotto, `rustls` invece di `native-tls`, dipendenze minime (axum non entra in M1), modello entità compatto; scenario di misura con l'HA vero.
-- **Registro delle app** *(scelta mia)*: si costruisce in M1, perché ogni milestone successiva ci si aggancia. Il dock mostra solo le app che esistono (Panoramica, Casa, PC) più Impostazioni: niente icone disattivate segnaposto.
+- **Registro delle app** *(scelta mia)*: si costruisce in M1, perché ogni milestone successiva ci si aggancia. Il dock mostra solo le app che esistono (Panoramica, Casa, PC, Collegamenti): niente icone disattivate segnaposto. Le Impostazioni non sono nel dock (Task 14i): stanno nel menu «⋯» della riga alta.
 - **Livelli di attenzione in M1** *(scelta mia)*: notifica persistente di HA = *informazione*; batteria del PC sotto il 10% e scollegata = *attenzione*; connessione a Home Assistant persa da oltre 5 minuti = *attenzione*. Allarmi e aperture di sicurezza della casa restano alla milestone Casa. Il meccanismo (registro delle voci in attesa con livello, fonte, testo, azione, pulsanti) è comune e pronto per Claude Code.
 
 ## 8. Lasciato al costruttore

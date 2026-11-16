@@ -187,6 +187,41 @@ fn apri_menu() {
     }
 }
 
+/// «⋯» in alto a destra del pannello (Task 14i): il menu dell'isola senza «Apri», sotto il
+/// pulsante e allineato al suo bordo destro (`destra`, `basso`: pixel logici della finestra del
+/// pannello). Il pannello resta in primo piano mentre il menu è aperto: chiuso senza scelta (Esc,
+/// clic altrove) il fuoco resta su «⋯». La scelta si esegue al giro dopo, fuori dal callback del
+/// pannello: Impostazioni, Informazioni, la ritirata ed Esci lo chiudono.
+#[cfg(windows)]
+pub fn menu_dal_pannello(finestra: &slint::Window, destra: f32, basso: f32) {
+    let Some(s) = servizi() else { return };
+    let Some(hwnd) = finestre::maniglia(finestra) else { return };
+    let punto = super::menu::punto_pannello(destra, basso, finestra.scale_factor());
+    let scelta = {
+        let menu = s.menu.borrow();
+        menu.as_ref().and_then(|m| m.mostra_dal_pannello(hwnd, punto))
+    };
+    if let Some(c) = scelta {
+        slint::Timer::single_shot(Duration::ZERO, move || al_comando_dal_pannello(c));
+    }
+}
+
+/// Una voce del menu del pannello. La ritirata vale per la pillola: il pannello si chiude e la
+/// pillola si ritira (o torna) subito, non alla chiusura come da icona o tasti. Le altre voci
+/// fanno quello che fanno dal menu della pillola.
+#[cfg(windows)]
+fn al_comando_dal_pannello(c: Comando) {
+    match c {
+        Comando::Ritirata => {
+            let Some(s) = servizi() else { return };
+            s.ritirata.borrow_mut().commuta();
+            // La chiusura passa da `pannello_chiuso`, che applica la ritirata appena commutata.
+            s.apertura.chiudi();
+        }
+        c => al_comando(c),
+    }
+}
+
 /// A chi ridare il primo piano dopo il menu: alla finestra che lo aveva prima, ma solo se adesso
 /// ce l'ha ancora la pillola. Se intanto l'utente ha attivato un'altra finestra (un clic altrove
 /// mentre il menu era aperto, Alt+Tab), quella resta in primo piano: non la si scavalca.

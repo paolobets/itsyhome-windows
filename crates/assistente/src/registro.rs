@@ -1,5 +1,6 @@
 //! Registro delle app apribili dal pannello: sono le icone del dock, nell'ordine. La prima,
-//! la Panoramica, è la schermata principale.
+//! la Panoramica, è la schermata principale. Le Impostazioni non sono un'app del dock (Task 14i):
+//! si aprono dal menu «⋯» in alto a destra del pannello, dal clic destro sulla pillola e dalla tray.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VoceApp {
@@ -15,7 +16,6 @@ pub fn app_disponibili() -> Vec<VoceApp> {
         VoceApp { id: "pc", nome: "PC", icona: "pc" },
         // I collegamenti veloci (Task 14f): pagine web aperte nel browser predefinito.
         VoceApp { id: "collegamenti", nome: "Collegamenti", icona: "collegamenti" },
-        VoceApp { id: "impostazioni", nome: "Impostazioni", icona: "impostazioni" },
     ]
 }
 
@@ -26,15 +26,17 @@ mod test {
     #[test]
     fn app_disponibili_con_panoramica() {
         let ids: Vec<_> = app_disponibili().iter().map(|a| a.id).collect();
-        assert_eq!(ids, ["panoramica", "casa", "pc", "collegamenti", "impostazioni"]);
+        assert_eq!(ids, ["panoramica", "casa", "pc", "collegamenti"]);
     }
 
     #[test]
     fn app_disponibili_solo_quelle_vere() {
         let v = app_disponibili();
         let ids: Vec<_> = v.iter().map(|a| a.id).collect();
-        assert_eq!(ids, ["panoramica", "casa", "pc", "collegamenti", "impostazioni"]);
+        assert_eq!(ids, ["panoramica", "casa", "pc", "collegamenti"]);
         let nomi: Vec<_> = v.iter().map(|a| a.nome).collect();
-        assert_eq!(nomi, ["Panoramica", "Casa", "PC", "Collegamenti", "Impostazioni"]);
+        assert_eq!(nomi, ["Panoramica", "Casa", "PC", "Collegamenti"]);
+        // Task 14i: le Impostazioni non sono un'app del dock (stanno nel menu «⋯» della riga alta).
+        assert!(v.iter().all(|a| a.id != "impostazioni"));
     }
 }

@@ -178,7 +178,6 @@ mod accessibilita {
             voce("casa", "Casa"),
             voce("pc", "PC"),
             voce("collegamenti", "Collegamenti"),
-            voce("impostazioni", "Impostazioni"),
         ]))
     }
 
@@ -190,7 +189,7 @@ mod accessibilita {
         let panoramica = elemento(&p, "Panoramica");
         assert_eq!(panoramica.accessible_role(), Some(AccessibleRole::Tab));
         assert_eq!(panoramica.accessible_item_selected(), Some(true));
-        assert_eq!((panoramica.accessible_item_index(), panoramica.accessible_item_count()), (Some(0), Some(5)));
+        assert_eq!((panoramica.accessible_item_index(), panoramica.accessible_item_count()), (Some(0), Some(4)));
         let casa = elemento(&p, "Casa");
         assert_eq!(casa.accessible_item_selected(), Some(false));
         assert_eq!(casa.accessible_item_index(), Some(1));
@@ -523,6 +522,86 @@ mod accessibilita {
         assert_eq!(p.get_vista(), "panoramica");
         tasto(&p, Key::Escape);
         assert!(chiuso.get(), "Esc chiude il pannello");
+    }
+
+    /// Task 14i: in alto a destra il pulsante «⋯» («Altre opzioni»), che chiede il menu dell'isola
+    /// col mouse, con Narrator e da tastiera; nel dock niente Impostazioni.
+    #[test]
+    fn altre_opzioni_nella_riga_alta() {
+        use slint::platform::{PointerEventButton, WindowEvent};
+        piattaforma_di_prova();
+        let p = pannello();
+        p.set_app(app());
+        let menu = std::rc::Rc::new(std::cell::RefCell::new(Vec::<(f32, f32)>::new()));
+        let m = menu.clone();
+        p.on_menu(move |x, y| m.borrow_mut().push((x, y)));
+        let piu = elemento(&p, "Altre opzioni");
+        assert_eq!(piu.accessible_role(), Some(AccessibleRole::Button));
+        let (pos, lato) = (piu.absolute_position(), piu.size());
+        assert!(lato.width >= 28.0 && lato.height >= 28.0, "bersaglio di almeno 28 × 28: {lato:?}");
+        assert!(pos.x > 700.0 && pos.y < 10.0, "in alto a destra: {pos:?}");
+        assert!(ElementHandle::find_by_accessible_label(&p, "Impostazioni").next().is_none(), "niente Impostazioni nel dock");
+
+        piu.invoke_accessible_default_action();
+        assert_eq!(menu.borrow().len(), 1, "Narrator lo preme");
+        // Il menu si apre sotto il pulsante, al suo bordo destro (coordinate logiche della finestra).
+        let (x, y) = menu.borrow()[0];
+        assert_eq!((x, y), (pos.x + lato.width, pos.y + lato.height));
+
+        let centro = slint::LogicalPosition::new(pos.x + lato.width / 2.0, pos.y + lato.height / 2.0);
+        let clic = || {
+            p.window().dispatch_event(WindowEvent::PointerMoved { position: centro });
+            p.window().dispatch_event(WindowEvent::PointerPressed { position: centro, button: PointerEventButton::Left });
+            p.window().dispatch_event(WindowEvent::PointerReleased { position: centro, button: PointerEventButton::Left });
+        };
+        clic();
+        assert_eq!(menu.borrow().len(), 2, "il clic lo apre");
+    }
+
+    /// Task 14i: Tab dal dock arriva a «⋯» (e Maiusc+Tab dalla Panoramica senza voci in attesa);
+    /// Invio e Spazio lì aprono il menu; Esc chiude il pannello come prima.
+    #[test]
+    fn tab_arriva_ad_altre_opzioni() {
+        use slint::platform::Key;
+        piattaforma_di_prova();
+        let p = pannello();
+        p.set_app(app());
+        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        p.global::<crate::Fuochi>().set_pronti(true);
+        let eventi = std::rc::Rc::new(std::cell::RefCell::new(Vec::<&str>::new()));
+        let (e1, e2) = (eventi.clone(), eventi.clone());
+        p.on_menu(move |_, _| e1.borrow_mut().push("menu"));
+        p.on_chiudi(move || e2.borrow_mut().push("chiudi"));
+        let e3 = eventi.clone();
+        p.on_scorri_layout(move |_| e3.borrow_mut().push("layout"));
+        // Contenuto → Tab: dock → Tab: «⋯» → Invio.
+        tasto(&p, Key::Tab);
+        tasto(&p, Key::Tab);
+        tasto(&p, Key::Return);
+        assert_eq!(*eventi.borrow(), ["menu"]);
+        assert!(col_fuoco_pannello(&p).ends_with("::fuoco-menu"), "fuoco su «{}»", col_fuoco_pannello(&p));
+        tasto(&p, Key::Space);
+        assert_eq!(*eventi.borrow(), ["menu", "menu"]);
+        // Tab da «⋯» torna al contenuto (Panoramica senza voci in attesa): Invio cambia layout.
+        tasto(&p, Key::Tab);
+        tasto(&p, Key::Return);
+        assert_eq!(*eventi.borrow(), ["menu", "menu", "layout"]);
+        // Maiusc+Tab dal contenuto: «⋯» (niente «In attesa»), Invio apre il menu.
+        con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
+        tasto(&p, Key::Return);
+        assert_eq!(*eventi.borrow(), ["menu", "menu", "layout", "menu"]);
+        tasto(&p, Key::Escape);
+        assert_eq!(*eventi.borrow(), ["menu", "menu", "layout", "menu", "chiudi"]);
+    }
+
+    /// L'id dell'elemento col fuoco vero nel pannello («Pannello::fuoco-menu»).
+    fn col_fuoco_pannello(p: &Pannello) -> String {
+        let fuoco = i_slint_core::window::WindowInner::from_pub(p.window()).focus_item.borrow().upgrade();
+        fuoco
+            .as_ref()
+            .and_then(|i| i.element_type_names_and_ids(0))
+            .and_then(|v| v.first().map(|(_, id)| id.to_string()))
+            .unwrap_or_default()
     }
 
     fn voce_casa(id: &str, nome: &str) -> crate::PreferitoUi {
@@ -987,8 +1066,9 @@ mod accessibilita {
         }
         tasto(&p, Key::Return);
         assert_eq!(p.get_vista(), "collegamenti");
-        // Il fuoco va sul contenuto (dal dock un Tab: «Indietro» non c'è più): prima card; ↓ porta
-        // alla quarta (sotto la prima), Invio.
+        // Il fuoco va sul contenuto (dal dock Tab passa da «⋯» e poi al contenuto: «Indietro» non
+        // c'è più): prima card; ↓ porta alla quarta (sotto la prima), Invio.
+        tasto(&p, Key::Tab);
         tasto(&p, Key::Tab);
         tasto(&p, Key::DownArrow);
         tasto(&p, Key::Return);

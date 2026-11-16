@@ -62,13 +62,12 @@ thread_local! {
 }
 
 /// Le icone che Rust passa all'interfaccia: un solo elenco, nome e SVG insieme.
-const ICONE_SVG: [(&str, &[u8]); 6] = [
+const ICONE_SVG: [(&str, &[u8]); 5] = [
     ("panoramica", include_bytes!("../assets/icone/panoramica.svg")),
     ("casa", include_bytes!("../assets/icone/casa.svg")),
     ("pc", include_bytes!("../assets/icone/pc.svg")),
     // La catena di Lucide (ISC), come le card della vista Collegamenti.
     ("collegamenti", include_bytes!("../assets/icone/lucide/link.svg")),
-    ("impostazioni", include_bytes!("../assets/icone/impostazioni.svg")),
     // Fonte «prova» delle voci in attesa (un campanello).
     ("avviso", include_bytes!("../assets/icone/avviso.svg")),
 ];
@@ -277,14 +276,26 @@ impl Apertura {
             p.set_layout(nuovo.indice());
             a.scegli_layout(nuovo);
         });
-        // La vista la cambia già l'interfaccia (Casa e PC hanno già i loro dati); «Impostazioni»
-        // apre la sua finestra e chiude il pannello, fuori da questo callback.
+        // La vista la cambia già l'interfaccia (Casa e PC hanno già i loro dati). «Impostazioni»
+        // (non più nel dock dal Task 14i: «Apri Impostazioni» della vista Casa vuota) apre la sua
+        // finestra e chiude il pannello, fuori da questo callback.
         let a = self.io.clone();
         pannello.on_apri_app(move |id| {
             if id == "impostazioni" {
                 dopo(&a, Apertura::apri_impostazioni);
             }
         });
+        // «⋯» in alto a destra: il menu dell'isola senza «Apri» (fuori da Windows niente menu,
+        // come il clic destro sulla pillola).
+        #[cfg(windows)]
+        {
+            let debole = pannello.as_weak();
+            pannello.on_menu(move |destra, basso| {
+                if let Some(p) = debole.upgrade() {
+                    servizi::menu_dal_pannello(p.window(), destra, basso);
+                }
+            });
+        }
         // Un collegamento: il browser predefinito e, se è partito, il pannello si chiude (fuori da
         // questo callback). Se non è partito il pannello resta aperto e lo dice.
         let a = self.io.clone();
