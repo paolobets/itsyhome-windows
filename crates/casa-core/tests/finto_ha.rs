@@ -773,7 +773,10 @@ async fn un_flusso_visibile_continuo_si_pubblica_almeno_ogni_300_ms() {
         cambio(&ha, "switch.presa", stato_nuovo("switch.presa", s, "Presa"));
     }
     let (_p, dati) = raccolta.await.unwrap();
-    assert!((4..=7).contains(&dati.len()), "pubblicazioni durante il flusso: {}", dati.len());
+    // A regola sono ~5 (1,5 s / 300 ms). Senza il tetto il riposo di 50 ms non scatterebbe mai
+    // dentro il flusso: al massimo 1 pubblicazione, a flusso finito. Il minimo 2 tiene la prova
+    // e regge le macchine lente della CI (visto 3 su GitHub, 16/11); il massimo 7 resta.
+    assert!((2..=7).contains(&dati.len()), "pubblicazioni durante il flusso: {}", dati.len());
 }
 
 /// Un'entità seguita che esce arriva con `r`; un'entità nuova non è fra quelle seguite: arriva
