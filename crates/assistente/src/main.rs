@@ -4,6 +4,8 @@
 mod attenzione;
 mod avvio;
 mod collegamenti;
+#[cfg(any(windows, test))]
+mod connessioni;
 mod diagnosi;
 mod dispositivi;
 mod finestra_impostazioni;

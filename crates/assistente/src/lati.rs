@@ -8,6 +8,7 @@
 
 use crate::finestre;
 use crate::pc_stats::{tinta_batteria, Fonti, LetturaBatteria, TintaBatteria};
+use crate::sistema::radio::StatoRete;
 use casa_core::config::PREFISSO_SENSORE;
 use casa_core::types::{MenuData, SensoreNumerico};
 use std::collections::HashMap;
@@ -21,7 +22,7 @@ pub enum Lato {
     Batteria,
     Cpu,
     Ram,
-    /// La rete (Task 8): fino ad allora non si offre mai.
+    /// L'icona della rete (Task 8, solo Windows): cavo o Wi-Fi con le tacche, mai il nome.
     Rete,
     /// La temperatura esterna, dal meteo di Home Assistant.
     Meteo,
@@ -101,8 +102,8 @@ fn nome_sensore(s: &SensoreNumerico) -> String {
 }
 
 /// Le scelte del selettore, nell'ordine: «Niente», «Ora», «Batteria» (solo se il PC ne ha una),
-/// «CPU», «RAM», poi per i quadranti disco e rete in arrivo e in uscita; «Rete» solo se `rete` (dal
-/// Task 8, mai fuori da Windows) e solo per i lati; «Temperatura esterna» solo se c'è un meteo; un
+/// «CPU», «RAM», poi per i quadranti disco e rete in arrivo e in uscita; «Rete» solo se `rete`
+/// (`cfg!(windows)`, Task 8) e solo per i lati; «Temperatura esterna» solo se c'è un meteo; un
 /// sensore per voce (`sensori`, già filtrati da `sensori_disponibili`).
 pub fn scelte(
     meteo: bool,
@@ -157,7 +158,7 @@ pub fn bisogni(sinistro: &Lato, destro: &Lato) -> Bisogni {
     b
 }
 
-/// I dati da cui nascono i lati (il campo `rete` lo aggiunge il Task 8).
+/// I dati da cui nascono i lati.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct DatiLati {
     /// «14:05»; vuota finché l'ora non serve.
@@ -169,6 +170,8 @@ pub struct DatiLati {
     pub meteo: Option<String>,
     /// I sensori scelti, per `entity_id`, come arrivano dai dati della casa (valore e unità).
     pub sensori: HashMap<String, SensoreNumerico>,
+    /// Come è collegato il PC (Task 8, solo Windows, solo se il lato «Rete» è scelto).
+    pub rete: Option<StatoRete>,
 }
 
 /// Che cosa mostra un lato.
@@ -179,6 +182,8 @@ pub enum ContenutoLato {
     Testo(String),
     /// Il glifo della batteria con la percentuale accanto.
     Batteria { testo: String, frazione: f32, tinta: TintaBatteria },
+    /// L'icona della rete, senza testo: mai il nome della rete (Task 8).
+    Rete(StatoRete),
 }
 
 /// Un numero breve con la virgola italiana: un decimale sotto 100 («21,5», «20», «12,3»), intero
@@ -240,6 +245,7 @@ pub fn contenuto(l: &Lato, d: &DatiLati) -> ContenutoLato {
         Lato::Cpu => percentuale("CPU", d.cpu),
         Lato::Ram => percentuale("RAM", d.ram),
         Lato::Meteo => d.meteo.clone().map_or(ContenutoLato::Vuoto, ContenutoLato::Testo),
+        Lato::Rete => d.rete.map_or(ContenutoLato::Vuoto, ContenutoLato::Rete),
         Lato::Sensore(id) => d
             .sensori
             .get(id)
@@ -259,7 +265,8 @@ pub fn a_tempo(l: &Lato) -> bool {
 /// la larghezza cambia solo quando cambia la scelta, mai col valore («CPU 9%» → «CPU 10%» non
 /// sposta nulla; giro di correzioni 1). È il valore più largo plausibile del tipo (il carattere è
 /// mono: conta il numero di caratteri); un valore vero più largo, raro, allarga la pillola invece
-/// di uscirne. `None`: il lato non c'è. La batteria riserva anche il posto del glifo.
+/// di uscirne. `None`: il lato non c'è (o è solo un'icona, come la rete: il suo posto lo riserva
+/// l'interfaccia). La batteria riserva anche il posto del glifo.
 pub fn campione(l: &Lato, d: &DatiLati) -> Option<String> {
     Some(match l {
         Lato::Niente | Lato::Rete | Lato::Disco | Lato::ReteGiu | Lato::ReteSu => return None,
@@ -530,6 +537,18 @@ mod test {
             contenuto(&Lato::Batteria, &d),
             ContenutoLato::Batteria { testo: "80%".into(), frazione: 0.804, tinta: TintaBatteria::Normale }
         );
+    }
+
+    #[test]
+    fn il_lato_rete_e_solo_un_icona() {
+        let mut d = DatiLati { rete: Some(StatoRete::WiFi { tacche: 2 }), ..Default::default() };
+        assert_eq!(contenuto(&Lato::Rete, &d), ContenutoLato::Rete(StatoRete::WiFi { tacche: 2 }));
+        // Nessun testo: niente campione da misurare (il posto dell'icona lo tiene l'interfaccia).
+        assert_eq!(campione(&Lato::Rete, &d), None);
+        assert!(!a_tempo(&Lato::Rete), "in «dorme» l'icona resta");
+        d.rete = None;
+        assert_eq!(contenuto(&Lato::Rete, &d), ContenutoLato::Vuoto, "non ancora letta");
+        assert!(bisogni(&Lato::Rete, &Lato::Niente).rete);
     }
 
     #[test]

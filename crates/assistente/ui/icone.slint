@@ -46,6 +46,17 @@ export global Icone {
     out property <image> altoparlante: @image-url("../assets/icone/altoparlante.svg");
     out property <image> altoparlante-muto: @image-url("../assets/icone/altoparlante-muto.svg");
 
+    // Rete, Wi-Fi e Bluetooth (M2, Task 8; da Lucide «wifi», «ethernet-port», «bluetooth», ISC):
+    // le tacche spente sono al 30% nello stesso SVG.
+    out property <[image]> wifi: [
+        @image-url("../assets/icone/wifi-0.svg"),
+        @image-url("../assets/icone/wifi-1.svg"),
+        @image-url("../assets/icone/wifi-2.svg"),
+        @image-url("../assets/icone/wifi-3.svg")
+    ];
+    out property <image> cavo: @image-url("../assets/icone/cavo.svg");
+    out property <image> bluetooth: @image-url("../assets/icone/bluetooth.svg");
+
     // Le 60 icone delle stanze, nell'ordine di `stanze::ICONE` (le emoji della v2 ridisegnate
     // con le icone a contorno di Lucide, licenza ISC: assets/icone/lucide/LICENSE-lucide.txt).
     out property <[image]> stanze: [

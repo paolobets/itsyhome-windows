@@ -2,7 +2,7 @@
 // Pillola nera, due occhi di luce, aura con i colori dei petali lungo il bordo.
 import { Tema, Movimento } from "tema.slint";
 import { PulsanteUi, UmoreUi, AspettoPillolaUi, LivelloUi, ContenutoLatoUi } from "voci.slint";
-import { Pulsante, TipoPulsante, GlifoBatteria } from "componenti.slint";
+import { Pulsante, TipoPulsante, GlifoBatteria, IconaRete, NomeRete } from "componenti.slint";
 import { Faccia, Occhi } from "faccia.slint";
 
 // Uno strato dell'aura: la sagoma della pillola allargata di `espansione`.
@@ -22,13 +22,15 @@ component Velo inherits Rectangle {
 // la percentuale. Largo quanto il campione del suo tipo (`ingombro`, giro di correzioni 1: il
 // valore che cambia non cambia la larghezza), o quanto il valore se è più largo; 0 se vuoto e
 // senza campione. Il valore sta dalla parte degli occhi (`verso-destra`: il lato sinistro). Per
-// Narrator non esiste: il suo valore sta nel nome della pillola.
+// Narrator non esiste: il suo valore sta nel nome della pillola. La rete (Task 8) è solo l'icona,
+// 16 × 16, col suo posto anche prima della prima lettura.
 component ValoreLato inherits Rectangle {
     in property <ContenutoLatoUi> contenuto;
     in property <bool> verso-destra;
     property <length> glifo: contenuto.tipo == 2 || contenuto.con-glifo ? 19px + 4px : 0px;
     property <length> testo-largo: max(misura.preferred-width, scritta.preferred-width);
-    out property <length> ingombro: contenuto.tipo == 0 && contenuto.campione == "" ? 0px : glifo + testo-largo;
+    out property <length> ingombro: contenuto.con-rete || contenuto.tipo == 3 ? 16px
+        : contenuto.tipo == 0 && contenuto.campione == "" ? 0px : glifo + testo-largo;
     width: ingombro;
     accessible-role: none;
 
@@ -37,6 +39,13 @@ component ValoreLato inherits Rectangle {
         y: (parent.height - self.height) / 2;
         frazione: contenuto.frazione;
         tinta: contenuto.tinta;
+    }
+
+    if contenuto.tipo == 3: IconaRete {
+        x: 0;
+        y: (parent.height - self.height) / 2;
+        tipo: contenuto.rete;
+        tacche: contenuto.tacche;
     }
 
     // Solo per misurare: mai disegnato.
@@ -53,7 +62,7 @@ component ValoreLato inherits Rectangle {
         x: verso-destra ? parent.width - self.width : glifo;
         width: self.preferred-width;
         height: parent.height;
-        text: contenuto.tipo == 0 ? "" : contenuto.testo;
+        text: contenuto.tipo == 0 || contenuto.tipo == 3 ? "" : contenuto.testo;
         vertical-alignment: center;
         font-family: Tema.carattere-mono;
         font-size: Tema.testo-corpo;
@@ -145,7 +154,8 @@ export component Pillola inherits Window {
         : -(distanza-lato + ingombro-lato-destro) / 2;
     // Il nome dei lati per Narrator, nell'ordine («, CPU 23%, batteria 80%»).
     pure function nome-lato(c: ContenutoLatoUi) -> string {
-        return c.tipo == 0 ? "" : c.tipo == 2 ? ", batteria " + c.testo : ", " + c.testo;
+        return c.tipo == 0 ? "" : c.tipo == 2 ? ", batteria " + c.testo
+            : c.tipo == 3 ? ", " + NomeRete.di(c.rete, c.tacche) : ", " + c.testo;
     }
     property <string> nome-lati: nome-lato(lato-sinistro) + nome-lato(lato-destro);
     out property <length> altezza-riposo: Faccia.altezza-pillola;

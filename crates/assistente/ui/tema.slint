@@ -122,6 +122,12 @@ export global Tema {
     out property <color> attenzione: #fbbf24;
     out property <color> informazione: #60a5fa;
 
+    // Riquadri Wi-Fi e Bluetooth accesi nella vista PC (M2, Task 8): fondo e bordo dal petalo 3,
+    // icona piena. Il testo resta `testo` (contrasto invariato sul fondo tenue).
+    out property <color> radio-acceso: petalo-3;
+    out property <color> radio-acceso-fondo: radio-acceso.with-alpha(0.20);
+    out property <color> radio-acceso-bordo: radio-acceso.with-alpha(0.50);
+
     // Glifo della batteria collegata all'alimentatore (verde, dal petalo 5 un po' più verso il verde).
     out property <color> batteria-carica: #34d399;
 

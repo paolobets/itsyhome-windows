@@ -318,12 +318,15 @@ impl Apertura {
 
         let a = self.io.clone();
         pannello.on_chiudi(move || dopo(&a, Apertura::chiudi));
-        // Vista o layout cambiati: il campionatore legge dischi e reti solo se si vedono.
+        // Vista o layout cambiati: il campionatore legge dischi e reti solo se si vedono, e le
+        // radio vivono solo a vista PC aperta.
         let a = self.io.clone();
         let debole = pannello.as_weak();
         pannello.on_vista_cambiata(move || {
             if let (Some(a), Some(p)) = (a.upgrade(), debole.upgrade()) {
                 a.aggiorna_fonti(&p);
+                // Wi-Fi e Bluetooth (M2, Task 8) si seguono solo a vista PC aperta.
+                a.ponte.vista_pc(p.get_vista() == "pc");
             }
         });
         let a = self.io.clone();

@@ -1,6 +1,7 @@
 //! Servizi di sistema: istanza unica, menu dell'isola e icona nella barra, scorciatoie globali,
-//! avvio con il sistema, notifiche, schermo intero, inattività, modalità «ritirata» (spec §3bis)
-//! e apertura dei collegamenti nel browser predefinito.
+//! avvio con il sistema, notifiche, schermo intero, inattività, modalità «ritirata» (spec §3bis),
+//! apertura dei collegamenti nel browser predefinito e delle pagine di Windows, Wi-Fi, Bluetooth e
+//! icona della rete (`radio`).
 //!
 //! Qui le decisioni pure (tempo e osservazioni arrivano dal chiamante); `servizi` le applica alla
 //! pillola con un solo timer da 5 s più sveglie singole, e un sondaggio del mouse (100 ms) solo
@@ -15,6 +16,7 @@ pub mod movimento;
 pub mod notifiche;
 #[cfg(windows)]
 pub mod primo_piano;
+pub mod radio;
 pub mod ritirata;
 pub mod schermo_intero;
 pub mod scorciatoie;

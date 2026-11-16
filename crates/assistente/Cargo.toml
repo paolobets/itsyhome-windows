@@ -49,6 +49,13 @@ windows = { version = "0.62.2", features = [
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Variant",
+    # Wi-Fi, Bluetooth e icona della rete (M2, Task 8): WinRT `Radio` e `NetworkInformation`;
+    # `Foundation` per gli eventi (`TypedEventHandler`) e `IReference<u8>` delle tacche,
+    # `Foundation_Collections` per l'elenco delle radio (`IVectorView`).
+    "Devices_Radios",
+    "Networking_Connectivity",
+    "Foundation",
+    "Foundation_Collections",
 ] }
 # `#[implement]` (callback COM di Core Audio): la macro scrive `::windows_core`, quindi serve come
 # dipendenza diretta (stessa versione di `windows`, già nel Cargo.lock).

@@ -7,6 +7,8 @@
 //! - L'ora: una sveglia al minuto (rifasata a ogni scatto), alle stesse condizioni.
 //! - La batteria resta sul thread da 60 s di M1 (`pc_stats::sorveglia_batteria`); meteo e sensori
 //!   arrivano dal ponte a ogni `MenuData`: nessuna lettura in più.
+//! - La rete (Task 8, solo Windows): la segue `OsservaRete`, che accende e spegne il ponte
+//!   (`radio::osserva_rete_acceso`); qui arriva solo lo stato (`rete`), mai il nome della rete.
 //!
 //! «Si vede» = `Visibilita::Pillola` (non ritirata, non nascosta, pannello chiuso) e non
 //! allargata (lì i lati sono nascosti). Mentre la pillola non si vede o dorme nessun timer gira e
@@ -20,7 +22,8 @@
 
 use crate::lati::{self, Bisogni, ContenutoLato, DatiLati, Lato};
 use crate::pc_stats::{CampionatoreLeggero, LetturaBatteria, PERIODO_LATI};
-use crate::{orologio, pannello, pillola, ContenutoLatoUi, Pillola};
+use crate::sistema::radio::StatoRete;
+use crate::{orologio, pannello, pillola, ContenutoLatoUi, Pillola, TipoReteUi};
 use casa_core::types::{MenuData, SensoreNumerico};
 use chrono::Timelike;
 use std::cell::RefCell;
@@ -92,6 +95,9 @@ pub fn scegli(sinistro: Lato, destro: Lato) {
         }
         if !b.ora {
             s.dati.ora.clear();
+        }
+        if !b.rete {
+            s.dati.rete = None;
         }
         // Una scelta nuova si vede anche da addormentata (cambia l'ingombro).
         scrivi(s);
@@ -205,6 +211,17 @@ pub fn batteria(lettura: LetturaBatteria) {
     });
 }
 
+/// Come è collegato il PC (da `OsservaRete`, Task 8): si riscrive solo il lato che cambia.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn rete(stato: StatoRete) {
+    con(|s| {
+        if s.dati.rete != Some(stato) {
+            s.dati.rete = Some(stato);
+            ridisegna(s);
+        }
+    });
+}
+
 /// I dati della casa (a ogni `MenuData`): la temperatura esterna e i valori dei soli sensori
 /// scelti per i lati.
 pub fn casa(menu: &MenuData) {
@@ -251,10 +268,25 @@ pub fn lato_ui(l: &Lato, d: &DatiLati, dorme: bool) -> ContenutoLatoUi {
             tinta: pannello::tinta_ui(tinta),
             ..Default::default()
         },
+        ContenutoLato::Rete(r) => {
+            let (rete, tacche) = rete_ui(r);
+            ContenutoLatoUi { tipo: 3, rete, tacche, ..Default::default() }
+        }
     };
     ui.campione = lati::campione(l, d).unwrap_or_default().into();
     ui.con_glifo = *l == Lato::Batteria;
+    // Il posto dell'icona della rete resta anche prima della prima lettura.
+    ui.con_rete = *l == Lato::Rete;
     ui
+}
+
+/// La rete come la conosce l'interfaccia (pillola e vista PC): il tipo e le tacche (0..=3).
+pub fn rete_ui(r: StatoRete) -> (TipoReteUi, i32) {
+    match r {
+        StatoRete::Nessuna => (TipoReteUi::Nessuna, 0),
+        StatoRete::Cavo => (TipoReteUi::Cavo, 0),
+        StatoRete::WiFi { tacche } => (TipoReteUi::Wifi, i32::from(tacche.min(3))),
+    }
 }
 
 /// Riscrive i lati che cambiano solo da attivi (un dato nuovo): da nascosta o addormentata nulla

@@ -14,6 +14,8 @@ use crate::pc_stats::{Fonti, LetturaBatteria};
 use crate::sorgenti_lati;
 use crate::sistema::{autoavvio, servizi, volume};
 #[cfg(windows)]
+use crate::{connessioni, sistema::radio};
+#[cfg(windows)]
 use crate::sistema::volume::{StatoVolume, Volume};
 use crate::impostazioni::{self, Modulo, Tono};
 use crate::ottimismo::Ottimismo;
@@ -632,8 +634,8 @@ pub fn isola(config: &Config, menu: Option<&MenuData>, batteria: bool) -> Isola 
     let meteo_c = menu.is_some_and(|m| m.meteo.is_some());
     let sensori_lati = menu.map(|m| lati::sensori_disponibili(m, false)).unwrap_or_default();
     let sensori_q = menu.map(|m| lati::sensori_disponibili(m, true)).unwrap_or_default();
-    // La rete arriva col Task 8: fino ad allora mai fra le scelte.
-    let mut cat_lati = lati::scelte(meteo_c, &sensori_lati, false, batteria, false);
+    // La rete (Task 8) solo su Windows.
+    let mut cat_lati = lati::scelte(meteo_c, &sensori_lati, cfg!(windows), batteria, false);
     let sinistro = indice_in(&mut cat_lati, &Lato::da_str(&config.lato_sinistro));
     let destro = indice_in(&mut cat_lati, &Lato::da_str(&config.lato_destro));
 
@@ -852,6 +854,23 @@ pub struct Ponte {
     rotella: Cell<volume::Rotella>,
     #[cfg(windows)]
     sveglia_barra: slint::Timer,
+    /// Wi-Fi, Bluetooth e rete (M2, Task 8, solo Windows). `radio`: il thread delle radio, vivo
+    /// solo a vista PC aperta; `stati_radio`: l'ultimo elenco letto (lo stato vero a cui torna un
+    /// riquadro dopo un rifiuto). `osserva_rete`: acceso solo se serve (`aggiorna_rete`);
+    /// `stato_rete`: l'ultima lettura; `nome_rete`: il nome della rete Wi-Fi, solo a vista PC
+    /// aperta e mai nei log. `vista_pc`: la vista PC si vede (pannello aperto su di lei).
+    #[cfg(windows)]
+    radio: RefCell<Option<radio::Radio>>,
+    #[cfg(windows)]
+    stati_radio: RefCell<Vec<radio::StatoRadio>>,
+    #[cfg(windows)]
+    osserva_rete: RefCell<Option<radio::OsservaRete>>,
+    #[cfg(windows)]
+    stato_rete: Cell<Option<radio::StatoRete>>,
+    #[cfg(windows)]
+    nome_rete: RefCell<Option<String>>,
+    #[cfg(windows)]
+    vista_pc: Cell<bool>,
     /// `ITSYHOME_TRACCIA_TOCCO=1`: tempi del tocco sullo stderr (icona cambiata nel modello,
     /// conferma di Home Assistant). Il fotogramma si misura da fuori, sulle foto della zona: il
     /// renderer software di Skia non chiama il notificatore di rendering.
@@ -927,6 +946,18 @@ pub fn collega(
         rotella: Cell::new(volume::Rotella::default()),
         #[cfg(windows)]
         sveglia_barra: slint::Timer::default(),
+        #[cfg(windows)]
+        radio: RefCell::new(None),
+        #[cfg(windows)]
+        stati_radio: RefCell::new(Vec::new()),
+        #[cfg(windows)]
+        osserva_rete: RefCell::new(None),
+        #[cfg(windows)]
+        stato_rete: Cell::new(None),
+        #[cfg(windows)]
+        nome_rete: RefCell::new(None),
+        #[cfg(windows)]
+        vista_pc: Cell::new(false),
     });
     PONTE.with(|p| *p.borrow_mut() = Some(ponte.clone()));
     // I pulsanti della pillola allargata agiscono sulla voce che sta chiamando; «Apri» (un
@@ -1163,7 +1194,11 @@ impl Ponte {
             Some(v) => (v.voce_allargata().is_some(), v.umore == Umore::Dorme),
             None => (false, false),
         };
-        sorgenti_lati::aggiorna(sorgenti_lati::bisogni_scelti(), self.pillola_mostrata.get() && !allargata, dorme);
+        let visibile = self.pillola_mostrata.get() && !allargata;
+        sorgenti_lati::aggiorna(sorgenti_lati::bisogni_scelti(), visibile, dorme);
+        // La rete segue gli stessi bisogni (lato «Rete» scelto e pillola visibile e sveglia).
+        #[cfg(windows)]
+        self.aggiorna_rete(visibile && !dorme);
     }
 
     /// I servizi di sistema dicono se la pillola si vede (`Visibilita::Pillola`).
@@ -1970,6 +2005,19 @@ impl Ponte {
                 }
             });
         }
+        // Wi-Fi, Bluetooth e rete nella vista PC (M2, Task 8, solo Windows): le radio nascono
+        // entrando nella vista PC (`vista_pc`); qui l'ultima rete letta e i comandi.
+        #[cfg(windows)]
+        {
+            p.set_connessioni_disponibili(true);
+            connessioni::scrivi_rete(p, self.stato_rete.get());
+            p.on_commuta_radio(|tipo, acceso| {
+                if let Some(ponte) = ponte() {
+                    ponte.commuta_radio(connessioni::tipo_da(tipo), acceso);
+                }
+            });
+            p.on_apri_pagina(|i| apri_pagina(connessioni::pagina_da(i)));
+        }
     }
 
     /// Posizione nella riga della voce che la pillola allargata sta chiamando: il pannello aperto
@@ -1992,6 +2040,8 @@ impl Ponte {
     /// Il pannello si è chiuso e la pillola (di nuovo attiva) sta per ricomparire: riprende
     /// l'umore di adesso.
     pub fn pannello_chiuso(&self) {
+        // Le radio si liberano e la rete torna a seguire solo la pillola.
+        self.vista_pc(false);
         *self.pannello.borrow_mut() = slint::Weak::default();
         self.modelli_vivi.set(false);
         self.collegamento_aperto.set(false);
@@ -2270,6 +2320,156 @@ impl Ponte {
     /// `--prova-avviso <livello>`.
     pub fn prova_avviso(&self, livello: Livello, lungo: bool) {
         self.metti_voce(attenzione::voce_di_prova(livello, lungo, Instant::now()), true);
+    }
+}
+
+// ─── Wi-Fi, Bluetooth e rete (M2, Task 8, solo Windows) ──────────────────────
+
+/// Gli stati delle radio letti dal thread `radio`: solo accodati al thread dell'interfaccia.
+#[cfg(windows)]
+fn consegna_radio(stati: Vec<radio::StatoRadio>) {
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(p) = ponte() {
+            p.radio_ricevute(stati);
+        }
+    });
+}
+
+/// L'esito di un cambio (dal thread `radio`).
+#[cfg(windows)]
+fn consegna_esito(tipo: radio::TipoRadio, esito: radio::EsitoRadio) {
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(p) = ponte() {
+            p.esito_radio(tipo, esito);
+        }
+    });
+}
+
+/// La rete letta dal thread `rete`.
+#[cfg(windows)]
+fn consegna_rete(stato: radio::StatoRete) {
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(p) = ponte() {
+            p.rete_ricevuta(stato);
+        }
+    });
+}
+
+/// Il nome della rete (dal thread `rete`, solo a vista PC aperta): mai nei log.
+#[cfg(windows)]
+fn consegna_nome_rete(nome: Option<String>) {
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(p) = ponte() {
+            p.nome_rete_ricevuto(nome);
+        }
+    });
+}
+
+/// Una pagina di Windows (righe della vista PC, o dopo un rifiuto): se non si apre, solo il log.
+#[cfg(windows)]
+fn apri_pagina(pagina: crate::sistema::browser::PaginaWindows) {
+    if let Err(e) = crate::sistema::browser::apri_pagina(pagina) {
+        eprintln!("pagina di Windows {pagina:?} non aperta: {e}");
+    }
+}
+
+impl Ponte {
+    /// La vista PC si vede (vero) o non più (falso: altra vista, pannello chiuso). Le radio
+    /// nascono entrandoci e si liberano lasciandola; la rete si osserva anche per lei, col nome.
+    /// Fuori da Windows non fa nulla.
+    pub fn vista_pc(&self, si: bool) {
+        #[cfg(windows)]
+        {
+            if self.vista_pc.replace(si) == si {
+                return;
+            }
+            if si {
+                *self.radio.borrow_mut() = Some(radio::Radio::avvia(consegna_radio));
+            } else {
+                // `Drop` ferma il thread `radio`: toglie i gestori e libera le radio.
+                self.radio.borrow_mut().take();
+                self.stati_radio.borrow_mut().clear();
+                *self.nome_rete.borrow_mut() = None;
+                if let Some(p) = self.pannello.borrow().upgrade() {
+                    connessioni::dimentica_radio(&p);
+                    connessioni::scrivi_nome(&p, None);
+                }
+            }
+            self.aggiorna_lati();
+        }
+        #[cfg(not(windows))]
+        let _ = si;
+    }
+}
+
+#[cfg(windows)]
+impl Ponte {
+    /// `OsservaRete` acceso solo se serve (`radio::osserva_rete_acceso`): lato «Rete» scelto e
+    /// pillola visibile e sveglia (`pillola_attiva`), o vista PC aperta. Il nome della rete solo a
+    /// vista PC aperta.
+    fn aggiorna_rete(&self, pillola_attiva: bool) {
+        let vista_pc = self.vista_pc.get();
+        let acceso = radio::osserva_rete_acceso(sorgenti_lati::bisogni_scelti().rete, pillola_attiva, vista_pc);
+        let mut osserva = self.osserva_rete.borrow_mut();
+        match (acceso, osserva.is_some()) {
+            (true, false) => *osserva = Some(radio::OsservaRete::avvia(consegna_rete, consegna_nome_rete)),
+            (false, true) => {
+                // `Drop` ferma il thread `rete` e toglie il gestore.
+                osserva.take();
+            }
+            _ => {}
+        }
+        if let Some(o) = osserva.as_ref() {
+            o.chiedi_nome(vista_pc);
+        }
+    }
+
+    fn rete_ricevuta(&self, stato: radio::StatoRete) {
+        if self.osserva_rete.borrow().is_none() {
+            return;
+        }
+        self.stato_rete.set(Some(stato));
+        sorgenti_lati::rete(stato);
+        if let Some(p) = self.pannello.borrow().upgrade() {
+            connessioni::scrivi_rete(&p, Some(stato));
+        }
+    }
+
+    fn nome_rete_ricevuto(&self, nome: Option<String>) {
+        if !self.vista_pc.get() {
+            return;
+        }
+        if let Some(p) = self.pannello.borrow().upgrade() {
+            connessioni::scrivi_nome(&p, nome.as_deref());
+        }
+        *self.nome_rete.borrow_mut() = nome;
+    }
+
+    fn radio_ricevute(&self, stati: Vec<radio::StatoRadio>) {
+        // Arrivate dopo che la vista PC è stata lasciata: nessuno le guarda.
+        if self.radio.borrow().is_none() {
+            return;
+        }
+        if let Some(p) = self.pannello.borrow().upgrade() {
+            connessioni::scrivi_radio(&p, &stati);
+        }
+        *self.stati_radio.borrow_mut() = stati;
+    }
+
+    fn commuta_radio(&self, tipo: radio::TipoRadio, acceso: bool) {
+        match self.radio.borrow().as_ref() {
+            Some(r) => r.commuta(tipo, acceso, consegna_esito),
+            None => self.esito_radio(tipo, radio::EsitoRadio::Errore),
+        }
+    }
+
+    /// Un rifiuto: riga in ambra, riquadro di nuovo allo stato vero, pagina di Windows aperta.
+    fn esito_radio(&self, tipo: radio::TipoRadio, esito: radio::EsitoRadio) {
+        let Some(p) = self.pannello.borrow().upgrade() else { return };
+        let pagina = connessioni::esito(&p, &self.stati_radio.borrow(), tipo, esito);
+        if let Some(pagina) = pagina {
+            apri_pagina(pagina);
+        }
     }
 }
 
@@ -3229,12 +3429,14 @@ pub(crate) mod test {
         };
         let i = isola(&config, Some(&m), false);
         let nomi: Vec<&str> = i.lati.iter().map(|(_, n)| n.as_str()).collect();
-        assert_eq!(
-            nomi,
-            ["Niente", "Ora", "CPU", "RAM", "Temperatura esterna", "Temperatura · Nome sensor.t", "sensor.via (non disponibile)"],
-            "per i lati solo le temperature; la scelta sparita resta in fondo"
-        );
-        assert_eq!((i.sinistro, i.destro), (2, 6));
+        // «Rete» (Task 8) solo su Windows.
+        let mut attesi = vec!["Niente", "Ora", "CPU", "RAM"];
+        if cfg!(windows) {
+            attesi.push("Rete");
+        }
+        attesi.extend(["Temperatura esterna", "Temperatura · Nome sensor.t", "sensor.via (non disponibile)"]);
+        assert_eq!(nomi, attesi, "per i lati solo le temperature; la scelta sparita resta in fondo");
+        assert_eq!((i.sinistro, i.destro), (2, attesi.len() as i32 - 1));
         assert_eq!(i.meteo.iter().map(|(_, n)| n.as_str()).collect::<Vec<_>>(), ["Automatico", "Casa"]);
         assert_eq!(i.indice_meteo, 1);
         // Quadranti: RAM, il fotovoltaico (col massimo, predefinito 3000) e il terzo a niente.

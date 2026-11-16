@@ -13,8 +13,11 @@
 // card: ↑/↓ fra «Preferiti» e le stanze e → alle card, le frecce fra le card, ← dalla prima colonna all'elenco
 // e ↑ dalla prima riga a «Riprova» quando c'è; Casa vuota e non connessa: «Apri Impostazioni»);
 // In Collegamenti le frecce fra le card, ↑ dalla prima riga a «Modifica»; Invio apre la pagina.
-// Nella vista PC (con il volume) il contenuto è il cursore del volume: ←/→ ±2 punti, Home/Fine
-// 0/100, Invio o Spazio muto sì/no.
+// Nella vista PC il contenuto sono il cursore del volume e, su Windows, i riquadri Wi-Fi e
+// Bluetooth e le righe «Reti Wi-Fi ›» e «Dispositivi Bluetooth ›» (M2, Task 8): Tab e Maiusc+Tab
+// passano dall'uno all'altro prima di lasciare la vista; sul cursore ←/→ ±2 punti, Home/Fine
+// 0/100, Invio o Spazio muto sì/no; fra riquadri e righe le frecce (← → nella riga, ↑ ↓ fra
+// riquadri e righe), Invio o Spazio accendono/spengono o aprono la pagina di Windows.
 // Invio o Spazio attivano (su una stanza o «Preferiti»: la sceglie e porta alle card; su una voce: la espande o la
 // riduce; un permesso, «Consenti», solo con Ctrl+Invio, e la voce che lo chiede si apre col fuoco
 // su «Nega»); Backspace o Alt+← = indietro (prima torna a «Preferiti»); Esc un livello alla
@@ -26,7 +29,7 @@ import { Tema, Movimento } from "tema.slint";
 import { Faccia, Occhi } from "faccia.slint";
 import { Anello, Fuoco, Fuochi } from "componenti.slint";
 import { Icone } from "icone.slint";
-import { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, UmoreUi, StanzaUi, CollegamentoUi, QuadranteUi, FonteQuadranteUi } from "voci.slint";
+import { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, UmoreUi, StanzaUi, CollegamentoUi, QuadranteUi, FonteQuadranteUi, TipoReteUi } from "voci.slint";
 import { RigaAttesa, VoceEspansa } from "attesa.slint";
 import { VistaPc } from "viste/pc.slint";
 import { VistaCasa } from "viste/casa.slint";
@@ -144,6 +147,25 @@ export component Pannello inherits Window {
     // Un livello 0..1 scelto col cursore o con la tastiera; muto sì/no dall'altoparlante o Invio.
     callback imposta-volume(float);
     callback muto-volume(bool);
+    // Le connessioni nella vista PC (M2, Task 8, solo Windows: altrove `connessioni-disponibili`
+    // resta falso e la colonna ha solo la rete). Gli stati li scrive Rust: le radio lette
+    // (`radio-lette`), presenti e accese (l'acceso cambia subito al clic e torna allo stato vero
+    // se Windows rifiuta), il nome della rete (solo a vista PC aperta), l'icona della rete
+    // (`rete-nota`, `rete`, `tacche`) e la riga in ambra di un rifiuto (`errore-radio`).
+    in property <bool> connessioni-disponibili: false;
+    in property <bool> radio-lette: false;
+    in property <bool> wifi-presente: false;
+    in-out property <bool> wifi-acceso: false;
+    in property <bool> bt-presente: false;
+    in-out property <bool> bt-acceso: false;
+    in property <string> nome-rete;
+    in property <bool> rete-nota: false;
+    in property <TipoReteUi> rete: TipoReteUi.nessuna;
+    in property <int> tacche: 0;
+    in-out property <bool> errore-radio: false;
+    // (0 Wi-Fi / 1 Bluetooth, acceso voluto) e la pagina di Windows (0 reti Wi-Fi, 1 Bluetooth).
+    callback commuta-radio(int, bool);
+    callback apri-pagina(int);
     // Vero mentre il pannello è aperto: guida l'animazione di apertura e il battito degli occhi.
     in-out property <bool> aperto;
     // Casa: i preferiti (al massimo 8), la riga di stato, i sensori dei Quadranti (al massimo 3).
@@ -286,6 +308,11 @@ export component Pannello inherits Window {
     property <int> fuoco-collegamento: 0;
     property <int> fuoco-collegamento-valido: min(fuoco-collegamento, collegamenti.length - 1);
     property <int> colonne-collegamenti: 3;
+    // Vista PC: elemento col fuoco (0 volume, 1 Wi-Fi, 2 Bluetooth, 3 «Reti Wi-Fi ›»,
+    // 4 «Dispositivi Bluetooth ›»); se non c'è, il primo che c'è dopo (o prima).
+    property <int> fuoco-pc: 0;
+    property <int> fuoco-pc-valido: pc-ha(fuoco-pc) ? fuoco-pc
+        : pc-successivo(fuoco-pc) >= 0 ? pc-successivo(fuoco-pc) : pc-precedente(fuoco-pc);
     // «Riprova» nella testata della vista Casa: casa non connessa che si può riprovare.
     property <bool> riprova-visibile: !casa-pronta && casa-riprovabile && (griglia.length > 0 || stanze.length > 0);
     // «In attesa»: voce col fuoco (da chiusa 0..2, 3 = «+N») e pulsante della voce espansa
@@ -310,6 +337,32 @@ export component Pannello inherits Window {
     height: 300px;
     forward-focus: tasti;
 
+    // Vista PC: l'elemento `i` c'è (e prende il fuoco). Un riquadro senza radio («Non presente»)
+    // o non ancora letto no.
+    pure function pc-ha(i: int) -> bool {
+        if (i == 0) {
+            return volume-disponibile;
+        }
+        if (i == 1) {
+            return connessioni-disponibili && radio-lette && wifi-presente;
+        }
+        if (i == 2) {
+            return connessioni-disponibili && radio-lette && bt-presente;
+        }
+        return (i == 3 || i == 4) && connessioni-disponibili;
+    }
+
+    // Il primo elemento della vista PC dopo `i` (-1 nessuno), e prima.
+    pure function pc-successivo(i: int) -> int {
+        return i < 0 && pc-ha(0) ? 0 : i < 1 && pc-ha(1) ? 1 : i < 2 && pc-ha(2) ? 2
+            : i < 3 && pc-ha(3) ? 3 : i < 4 && pc-ha(4) ? 4 : -1;
+    }
+
+    pure function pc-precedente(i: int) -> int {
+        return i > 4 && pc-ha(4) ? 4 : i > 3 && pc-ha(3) ? 3 : i > 2 && pc-ha(2) ? 2
+            : i > 1 && pc-ha(1) ? 1 : i > 0 && pc-ha(0) ? 0 : -1;
+    }
+
     pure function ha-zona(z: Zona) -> bool {
         if (z == Zona.attesa) {
             return con-attese;
@@ -324,9 +377,9 @@ export component Pannello inherits Window {
             }
             // Casa vuota e non connessa: il fuoco va su «Apri Impostazioni». Collegamenti: le card,
             // o «Aggiungi un collegamento» se non ce ne sono.
-            // PC: il cursore del volume, se c'è.
+            // PC: il cursore del volume, i riquadri e le righe delle connessioni, se ci sono.
             return vista == "panoramica" || vista == "collegamenti" || (vista == "casa" && (griglia.length > 0 || !casa-pronta))
-                || (vista == "pc" && volume-disponibile);
+                || (vista == "pc" && pc-successivo(-1) >= 0);
         }
         return true;
     }
@@ -338,6 +391,35 @@ export component Pannello inherits Window {
         }
         return z == Zona.menu ? Zona.dock : z == Zona.dock ? Zona.contenuto : z == Zona.contenuto ? Zona.stanze
             : z == Zona.stanze ? Zona.attesa : Zona.menu;
+    }
+
+    // Tab nella vista PC: prima gli elementi del contenuto (volume, riquadri, righe), poi la zona
+    // seguente; entrando nel contenuto si parte dal primo (o dall'ultimo, all'indietro).
+    function premi-tab(avanti: bool) {
+        if (zona == Zona.contenuto && vista == "pc" && !espansa) {
+            let n = avanti ? pc-successivo(fuoco-pc-valido) : pc-precedente(fuoco-pc-valido);
+            if (n >= 0) {
+                fuoco-pc = n;
+                return;
+            }
+        }
+        passa-zona(avanti);
+        if (zona == Zona.contenuto && vista == "pc") {
+            fuoco-pc = avanti ? pc-successivo(-1) : pc-precedente(5);
+        }
+    }
+
+    // Wi-Fi (0) o Bluetooth (1): l'interruttore si sposta subito (lo stato vero torna da Rust, e
+    // se Windows rifiuta torna com'era) e la riga del rifiuto di prima sparisce.
+    function commuta(tipo: int) {
+        errore-radio = false;
+        if (tipo == 0) {
+            wifi-acceso = !wifi-acceso;
+            root.commuta-radio(0, wifi-acceso);
+        } else {
+            bt-acceso = !bt-acceso;
+            root.commuta-radio(1, bt-acceso);
+        }
     }
 
     // Tab: la zona seguente che esiste in questa vista (dock e «⋯» ci sono sempre).
@@ -469,6 +551,7 @@ export component Pannello inherits Window {
         }
         vista = v;
         fuoco-casa = 0;
+        fuoco-pc = 0;
         fuoco-stanza = -1;
         fuoco-collegamento = 0;
         if (!ha-zona(zona)) {
@@ -565,12 +648,24 @@ export component Pannello inherits Window {
                 zona = Zona.contenuto;
                 fuoco-casa = 0;
             }
-        } else if (zona == Zona.contenuto && vista == "pc" && volume-disponibile) {
+        } else if (zona == Zona.contenuto && vista == "pc" && fuoco-pc-valido == 0) {
             // Il cursore del volume: ←/→ due punti.
             if (k == Key.LeftArrow) {
                 passo-volume(-2);
             } else if (k == Key.RightArrow) {
                 passo-volume(2);
+            }
+        } else if (zona == Zona.contenuto && vista == "pc" && fuoco-pc-valido > 0) {
+            // Riquadri (1 Wi-Fi, 2 Bluetooth) e sotto le righe (3 sotto il Wi-Fi, 4 sotto il
+            // Bluetooth): ←/→ nella riga, ↑/↓ fra riquadri e righe.
+            if (k == Key.RightArrow && (fuoco-pc-valido == 1 || fuoco-pc-valido == 3) && pc-ha(fuoco-pc-valido + 1)) {
+                fuoco-pc = fuoco-pc-valido + 1;
+            } else if (k == Key.LeftArrow && (fuoco-pc-valido == 2 || fuoco-pc-valido == 4) && pc-ha(fuoco-pc-valido - 1)) {
+                fuoco-pc = fuoco-pc-valido - 1;
+            } else if (k == Key.DownArrow && fuoco-pc-valido <= 2) {
+                fuoco-pc = fuoco-pc-valido + 2;
+            } else if (k == Key.UpArrow && fuoco-pc-valido >= 3) {
+                fuoco-pc = pc-ha(fuoco-pc-valido - 2) ? fuoco-pc-valido - 2 : pc-precedente(fuoco-pc-valido);
             }
         } else if (zona == Zona.contenuto && vista == "collegamenti" && collegamenti.length > 0) {
             // -1 = «Modifica» nella testata: ↑ dalla prima riga, ↓ torna alle card.
@@ -651,9 +746,14 @@ export component Pannello inherits Window {
                 root.apri-collegamento(collegamenti[fuoco-collegamento-valido].id);
             }
         } else if (vista == "pc") {
-            // Sul cursore del volume: muto sì/no, come l'altoparlante.
-            if (volume-disponibile) {
+            // Sul cursore del volume: muto sì/no, come l'altoparlante; sui riquadri acceso/spento;
+            // sulle righe la pagina di Windows.
+            if (fuoco-pc-valido == 0) {
                 root.muto-volume(!volume-muto);
+            } else if (fuoco-pc-valido == 1 || fuoco-pc-valido == 2) {
+                commuta(fuoco-pc-valido - 1);
+            } else if (fuoco-pc-valido == 3 || fuoco-pc-valido == 4) {
+                root.apri-pagina(fuoco-pc-valido - 3);
             }
         } else if (vista == "casa" && griglia.length == 0) {
             root.apri-app("impostazioni");
@@ -688,7 +788,7 @@ export component Pannello inherits Window {
             }
             if (evento.text == Key.Tab || evento.text == Key.Backtab) {
                 da-tastiera = true;
-                passa-zona(evento.text == Key.Tab && !evento.modifiers.shift);
+                premi-tab(evento.text == Key.Tab && !evento.modifiers.shift);
                 return accept;
             }
             if (evento.text == Key.Backspace || (evento.text == Key.LeftArrow && evento.modifiers.alt)) {
@@ -729,7 +829,7 @@ export component Pannello inherits Window {
             }
             // Home/Fine sul cursore del volume: 0 e 100.
             if ((evento.text == Key.Home || evento.text == Key.End) && zona == Zona.contenuto && vista == "pc"
-                    && volume-disponibile) {
+                    && fuoco-pc-valido == 0) {
                 da-tastiera = true;
                 cambia-volume(evento.text == Key.Home ? 0 : 1);
                 return accept;
@@ -1039,7 +1139,29 @@ export component Pannello inherits Window {
                     volume-disponibile: root.volume-disponibile;
                     volume: root.volume;
                     volume-muto: root.volume-muto;
-                    fuoco-volume: da-tastiera && zona == Zona.contenuto && vista == "pc";
+                    connessioni-disponibili: root.connessioni-disponibili;
+                    radio-lette: root.radio-lette;
+                    wifi-presente: root.wifi-presente;
+                    wifi-acceso: root.wifi-acceso;
+                    bt-presente: root.bt-presente;
+                    bt-acceso: root.bt-acceso;
+                    nome-rete: root.nome-rete;
+                    rete-nota: root.rete-nota;
+                    rete: root.rete;
+                    tacche: root.tacche;
+                    errore-radio: root.errore-radio;
+                    // Come nelle altre viste, il fuoco chiede anche la vista (lasciandola non si
+                    // accende su un elemento che sta sparendo).
+                    fuoco: da-tastiera && zona == Zona.contenuto && vista == "pc" ? fuoco-pc-valido : -1;
+                    commuta-radio(tipo, acceso) => {
+                        da-tastiera = false;
+                        fuoco-pc = tipo + 1;
+                        commuta(tipo);
+                    }
+                    apri-pagina(i) => {
+                        da-tastiera = false;
+                        root.apri-pagina(i);
+                    }
                     imposta-volume(v) => {
                         da-tastiera = false;
                         cambia-volume(v);

@@ -1,9 +1,39 @@
-// Vista PC, la «card del PC»: l'elenco dettagliato delle statistiche (CPU, RAM, disco, rete,
-// batteria se c'è) e i comandi del PC (M2, Task 7: il volume; poi Wi-Fi/Bluetooth, cuffie, GPU).
+// Vista PC, la «card del PC»: tutta la gestione del PC in tre colonne (M2, Task 8, decisione di
+// Paolo che sostituisce il pannellino sopra il dock). «Sistema»: CPU, RAM, disco (poi la GPU,
+// Task 10). «Energia e audio»: batteria (se c'è) e volume (Task 7; poi le cuffie BT, Task 9).
+// «Connessioni»: la rete (icona con le tacche e velocità), i riquadri Wi-Fi e Bluetooth e le
+// righe che aprono le pagine di Windows (solo su Windows: altrove la colonna ha solo la rete).
+// Le righe sono alte 38 (testi ≥ 12 px): con l'intestazione stanno quattro righe per colonna nei
+// 172 px della card.
 import { Tema } from "../tema.slint";
 import { Icone, Icona, Vetro } from "../icone.slint";
-import { StatPcUi, TintaBatteriaUi } from "../voci.slint";
-import { Etichetta, GlifoBatteria, Fuoco, Anello } from "../componenti.slint";
+import { StatPcUi, TintaBatteriaUi, TipoReteUi } from "../voci.slint";
+import { Etichetta, GlifoBatteria, Fuoco, Anello, IconaRete, NomeRete } from "../componenti.slint";
+
+// La colonna del valore (testo e barra) di ogni riga, a destra.
+global MisurePc {
+    out property <length> colonna: 120px;
+    out property <length> alto-riga: 38px;
+    out property <length> margine: 14px;
+}
+
+// L'intestazione di una colonna («Sistema», «Energia e audio», «Connessioni»).
+component Intestazione inherits Rectangle {
+    in property <string> text;
+    height: 18px;
+
+    Text {
+        x: MisurePc.margine;
+        width: parent.width - 2 * MisurePc.margine;
+        text: root.text;
+        overflow: elide;
+        font-size: Tema.testo-piccolo;
+        font-weight: 600;
+        color: Tema.testo-tenue;
+        vertical-alignment: center;
+        accessible-role: none;
+    }
+}
 
 // Una riga: etichetta, valore e (se serve) una barra sottile con la frazione usata.
 component Riga inherits Rectangle {
@@ -17,7 +47,8 @@ component Riga inherits Rectangle {
     // Batteria: glifo accanto al valore, con la sua tinta (vedi `GlifoBatteria`).
     in property <bool> con-glifo: false;
     in property <TintaBatteriaUi> tinta: TintaBatteriaUi.normale;
-    height: 44px;
+    property <length> colonna-x: root.width - MisurePc.margine - MisurePc.colonna;
+    height: MisurePc.alto-riga;
     // Per Narrator: nome, valore e dettaglio (FE16).
     accessible-role: progress-indicator;
     accessible-label: etichetta;
@@ -25,28 +56,27 @@ component Riga inherits Rectangle {
     accessible-description: dettaglio;
 
     Etichetta {
-        x: 14px;
-        y: 7px;
+        x: MisurePc.margine;
+        y: 3px;
+        height: 18px;
         text: etichetta;
     }
 
     // Il dettaglio si ferma prima della colonna del valore e della barra.
     Text {
-        x: 14px;
-        y: 24px;
-        width: max(0px, parent.width - 14px - 150px - 22px);
+        x: MisurePc.margine;
+        y: 20px;
+        width: max(0px, colonna-x - MisurePc.margine - 8px);
         text: dettaglio;
         overflow: elide;
         font-size: Tema.testo-piccolo;
         color: Tema.testo-tenue;
     }
 
-    // Il valore: largo quanto la barra; senza barra (rete) può prendersi tutta la riga dopo
-    // l'etichetta, così «↓ 1,6 KB/s · ↑ 286 B/s» sta su una riga sola.
     if !con-glifo: Text {
-        x: parent.width - 14px - self.width;
-        y: 7px;
-        width: frazione >= 0 ? 150px : max(150px, parent.width - 28px - 110px);
+        x: parent.width - MisurePc.margine - self.width;
+        y: 2px;
+        width: MisurePc.colonna;
         text: valore;
         horizontal-alignment: right;
         font-weight: 500;
@@ -56,10 +86,10 @@ component Riga inherits Rectangle {
 
     // Con il glifo (batteria): glifo e valore insieme, a destra, sulla stessa linea di base.
     if con-glifo: HorizontalLayout {
-        x: parent.width - 14px - 150px;
-        y: 7px;
-        width: 150px;
-        height: 22px;
+        x: colonna-x;
+        y: 2px;
+        width: MisurePc.colonna;
+        height: 20px;
         alignment: end;
         spacing: 6px;
 
@@ -81,9 +111,9 @@ component Riga inherits Rectangle {
     }
 
     if frazione >= 0: Rectangle {
-        x: parent.width - 14px - 150px;
-        y: 29px;
-        width: 150px;
+        x: colonna-x;
+        y: 27px;
+        width: MisurePc.colonna;
         height: 4px;
         border-radius: self.height / 2;
         background: Tema.traccia;
@@ -98,11 +128,11 @@ component Riga inherits Rectangle {
 }
 
 // La riga del volume del PC (M2, Task 7; solo Windows con un'uscita audio, altrimenti non c'è):
-// alta e impaginata come le altre righe (etichetta a sinistra; nella colonna del valore,
-// larga 150, l'altoparlante e la percentuale in alto e il cursore al posto della barra). Il cursore
-// è sempre visibile. Altoparlante: clic o Narrator = muto sì/no. Cursore: clic o trascinamento;
-// la tastiera la tiene il pannello (←/→ ±2 punti, Home/Fine 0/100, Invio o Spazio muto sì/no),
-// qui solo il fuoco vero (`fuoco`, per Narrator) e l'anello.
+// alta e impaginata come le altre righe (etichetta a sinistra; nella colonna del valore
+// l'altoparlante e la percentuale in alto e il cursore al posto della barra). Il cursore è sempre
+// visibile. Altoparlante: clic o Narrator = muto sì/no. Cursore: clic o trascinamento; la tastiera
+// la tiene il pannello (←/→ ±2 punti, Home/Fine 0/100, Invio o Spazio muto sì/no), qui solo il
+// fuoco vero (`fuoco`, per Narrator) e l'anello.
 component RigaVolume inherits Rectangle {
     // 0..1 come lo dice Rust (l'ultimo stato letto, o l'ultimo comando dato da qui).
     in property <float> livello;
@@ -116,12 +146,12 @@ component RigaVolume inherits Rectangle {
     property <float> posizione;
     property <float> mostrato: trascina ? posizione : min(max(livello, 0), 1);
     property <int> pct: round(mostrato * 100);
-    property <length> colonna-x: root.width - 14px - 150px;
+    property <length> colonna-x: root.width - MisurePc.margine - MisurePc.colonna;
     property <length> lato-pomello: 12px;
-    height: 44px;
+    height: MisurePc.alto-riga;
 
     function al-punto(x: length) {
-        posizione = round(min(max(x / 150px, 0), 1) * 100) / 100;
+        posizione = round(min(max(x / MisurePc.colonna, 0), 1) * 100) / 100;
         root.imposta(posizione);
     }
 
@@ -130,15 +160,16 @@ component RigaVolume inherits Rectangle {
     }
 
     Etichetta {
-        x: 14px;
-        y: 7px;
+        x: MisurePc.margine;
+        y: 3px;
+        height: 18px;
         text: "VOLUME";
     }
 
     if muto: Text {
-        x: 14px;
-        y: 24px;
-        width: max(0px, colonna-x - 14px - 22px);
+        x: MisurePc.margine;
+        y: 20px;
+        width: max(0px, colonna-x - MisurePc.margine - 10px);
         text: "Audio disattivato";
         overflow: elide;
         font-size: Tema.testo-piccolo;
@@ -146,12 +177,12 @@ component RigaVolume inherits Rectangle {
         accessible-role: none;
     }
 
-    // L'altoparlante: bersaglio 28 × 24, icona 18, all'inizio della colonna del valore.
+    // L'altoparlante: bersaglio 28 × 22, icona 18, all'inizio della colonna del valore.
     Rectangle {
         x: colonna-x - 6px;
-        y: 4px;
+        y: 1px;
         width: 28px;
-        height: 24px;
+        height: 22px;
         border-radius: Tema.raggio-s;
         background: tocco-altoparlante.has-hover ? Tema.scheda-sopra : transparent;
         accessible-role: button;
@@ -175,9 +206,9 @@ component RigaVolume inherits Rectangle {
     }
 
     Text {
-        x: root.width - 14px - self.width;
-        y: 7px;
-        width: 100px;
+        x: root.width - MisurePc.margine - self.width;
+        y: 2px;
+        width: 70px;
         text: pct + "%";
         horizontal-alignment: right;
         font-weight: 500;
@@ -186,12 +217,13 @@ component RigaVolume inherits Rectangle {
         accessible-role: none;
     }
 
-    // Il cursore: traccia 150 × 4 dove le altre righe hanno la barra, riempimento e pomello.
+    // Il cursore: traccia larga quanto la colonna dove le altre righe hanno la barra,
+    // riempimento e pomello.
     cursore := Rectangle {
         x: colonna-x;
-        y: 21px;
-        width: 150px;
-        height: 20px;
+        y: 19px;
+        width: MisurePc.colonna;
+        height: 18px;
         accessible-role: slider;
         accessible-label: "Volume";
         accessible-description: "Invio: silenzia o riattiva";
@@ -206,7 +238,7 @@ component RigaVolume inherits Rectangle {
         fuoco-volume := Fuoco { chiede: fuoco; }
 
         Rectangle {
-            y: 8px;
+            y: 7px;
             height: 4px;
             border-radius: self.height / 2;
             background: Tema.traccia;
@@ -252,29 +284,216 @@ component RigaVolume inherits Rectangle {
     }
 }
 
+// La riga della rete in «Connessioni»: etichetta, icona (cavo o Wi-Fi con le tacche, solo su
+// Windows) e velocità. Per Narrator è testo: velocità e, se nota, la rete (mai il nome).
+component RigaRete inherits Rectangle {
+    in property <string> velocita;
+    in property <bool> con-icona;
+    in property <TipoReteUi> tipo;
+    in property <int> tacche;
+    height: 26px;
+    accessible-role: text;
+    accessible-label: "RETE";
+    accessible-value: velocita + (con-icona ? ", " + NomeRete.di(tipo, tacche) : "");
+
+    Etichetta {
+        x: MisurePc.margine;
+        height: parent.height;
+        text: "RETE";
+        accessible-role: none;
+    }
+
+    HorizontalLayout {
+        x: MisurePc.margine + 44px;
+        width: parent.width - 2 * MisurePc.margine - 44px;
+        alignment: end;
+        spacing: 6px;
+
+        if con-icona: VerticalLayout {
+            alignment: center;
+            IconaRete {
+                tipo: root.tipo;
+                tacche: root.tacche;
+            }
+        }
+
+        Text {
+            text: velocita;
+            overflow: elide;
+            vertical-alignment: center;
+            font-weight: 500;
+            font-size: Tema.testo-corpo;
+            color: Tema.testo;
+            accessible-role: none;
+        }
+    }
+}
+
+// Un riquadro Wi-Fi o Bluetooth (M2, Task 8): raggio 14, interruttore per Narrator (`switch`,
+// acceso = `checked`). Acceso: fondo, bordo e icona nel token `radio-acceso`. Radio assente:
+// «Non presente», spento e non cliccabile. Il clic e Invio li gira al pannello (`commuta`).
+component Riquadro inherits Rectangle {
+    in property <string> nome;
+    in property <image> icona;
+    // Stato letto (finché non è letto il riquadro dice «—» e non risponde).
+    in property <bool> letto;
+    in property <bool> presente;
+    in property <bool> acceso;
+    // La riga sotto il nome: il nome della rete, «Acceso», «Spento», «Non presente».
+    in property <string> stato;
+    in property <bool> fuoco;
+    callback commuta();
+    property <bool> attivo: letto && presente;
+    border-radius: 14px;
+    border-width: 1px;
+    border-color: attivo && acceso ? Tema.radio-acceso-bordo : Tema.vetro-bordo;
+    background: attivo && acceso ? Tema.radio-acceso-fondo
+        : attivo && tocco.has-hover ? Tema.scheda-sopra : Tema.card-fondo;
+    accessible-role: switch;
+    accessible-label: nome;
+    accessible-checked: attivo && acceso;
+    accessible-enabled: attivo;
+    accessible-description: stato;
+    accessible-action-default => {
+        if (attivo) {
+            root.commuta();
+        }
+    }
+
+    fuoco-riquadro := Fuoco { chiede: fuoco; }
+
+    Image {
+        x: 10px;
+        y: 9px;
+        width: 16px;
+        height: 16px;
+        source: icona;
+        colorize: attivo && acceso ? Tema.radio-acceso : attivo ? Tema.icona : Tema.icona-spenta;
+        image-rendering: smooth;
+        accessible-role: none;
+    }
+
+    Text {
+        x: 32px;
+        y: 7px;
+        width: parent.width - 32px - 8px;
+        height: 20px;
+        text: nome;
+        overflow: elide;
+        vertical-alignment: center;
+        font-weight: 600;
+        font-size: Tema.testo-corpo;
+        color: attivo ? Tema.testo : Tema.testo-tenue;
+        accessible-role: none;
+    }
+
+    Text {
+        x: 10px;
+        y: 31px;
+        width: parent.width - 20px;
+        height: 16px;
+        text: stato;
+        overflow: elide;
+        vertical-alignment: center;
+        font-size: Tema.testo-piccolo;
+        color: Tema.testo-tenue;
+        accessible-role: none;
+    }
+
+    tocco := TouchArea {
+        enabled: attivo;
+        mouse-cursor: attivo ? pointer : default;
+        clicked => { root.commuta(); }
+    }
+
+    if fuoco: Anello { raggio: root.border-radius; }
+}
+
+// Una riga che apre una pagina di Windows («Reti Wi-Fi ›», «Dispositivi Bluetooth ›»): un
+// collegamento per Narrator, bersaglio alto 24.
+component Collegamento inherits Rectangle {
+    in property <string> testo;
+    in property <bool> fuoco;
+    callback apri();
+    width: scritta.preferred-width + 12px;
+    height: 24px;
+    border-radius: Tema.raggio-s;
+    background: tocco.has-hover ? Tema.scheda-sopra : transparent;
+    accessible-role: button;
+    accessible-label: testo;
+    accessible-description: "Apre le Impostazioni di Windows";
+    accessible-action-default => { root.apri(); }
+
+    fuoco-collegamento := Fuoco { chiede: fuoco; }
+
+    scritta := Text {
+        x: 6px;
+        text: testo;
+        vertical-alignment: center;
+        font-size: Tema.testo-piccolo;
+        font-weight: 500;
+        color: Tema.testo-ora;
+        accessible-role: none;
+    }
+
+    tocco := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.apri(); }
+    }
+
+    if fuoco: Anello { raggio: Tema.raggio-s; distanza: 0px; }
+}
+
 export component VistaPc inherits Rectangle {
     in property <StatPcUi> stat;
     // Il volume del PC (M2, Task 7): la riga c'è solo se disponibile (Windows con un'uscita
-    // audio); `fuoco-volume`: il cursore ha il fuoco da tastiera del pannello.
+    // audio).
     in property <bool> volume-disponibile: false;
     in property <float> volume;
     in property <bool> volume-muto;
-    in property <bool> fuoco-volume;
+    // Le connessioni (M2, Task 8, solo Windows): riquadri e righe ci sono solo se disponibili.
+    in property <bool> connessioni-disponibili: false;
+    in property <bool> radio-lette;
+    in property <bool> wifi-presente;
+    in property <bool> wifi-acceso;
+    in property <bool> bt-presente;
+    in property <bool> bt-acceso;
+    // Il nome della rete Wi-Fi (solo qui, mai nella pillola né nei log); vuoto se non si sa.
+    in property <string> nome-rete;
+    in property <bool> rete-nota;
+    in property <TipoReteUi> rete;
+    in property <int> tacche;
+    // Un cambio rifiutato da Windows: la riga in ambra.
+    in property <bool> errore-radio;
+    // Elemento col fuoco da tastiera del pannello (-1 nessuno): 0 volume, 1 Wi-Fi, 2 Bluetooth,
+    // 3 «Reti Wi-Fi ›», 4 «Dispositivi Bluetooth ›».
+    in property <int> fuoco: -1;
     callback imposta-volume(float);
     callback muto-volume(bool);
-    property <length> alto-riga: 44px;
+    // (0 Wi-Fi / 1 Bluetooth, acceso voluto).
+    callback commuta-radio(int, bool);
+    // 0 reti Wi-Fi, 1 Bluetooth.
+    callback apri-pagina(int);
 
-    // Pannello basso: le righe stanno su due colonne (PC a sinistra, rete, batteria e volume a destra),
-    // tre posti per colonna distribuiti su tutta l'altezza della card (UX22: niente terzo
-    // inferiore vuoto) e allineati fra le colonne (i posti senza riga restano vuoti).
+    out property <length> largo-colonna: 240px;
+    property <string> stato-wifi: !radio-lette ? "—" : !wifi-presente ? "Non presente" : !wifi-acceso ? "Spento"
+        : nome-rete != "" ? nome-rete : "Acceso";
+    property <string> stato-bt: !radio-lette ? "—" : !bt-presente ? "Non presente" : bt-acceso ? "Acceso" : "Spento";
+
     Vetro {
         HorizontalLayout {
             padding-top: 8px;
             padding-bottom: 8px;
-            spacing: 8px;
+            spacing: 4px;
 
+            // Sistema (la GPU del Task 10 andrà sotto il disco: c'è il posto per una riga).
             VerticalLayout {
-                alignment: space-around;
+                width: largo-colonna;
+                alignment: start;
+                accessible-role: groupbox;
+                accessible-label: "Sistema";
+
+                Intestazione { text: "Sistema"; }
 
                 // Prima del primo campione i testi sono vuoti: «—» e niente barra, come nei
                 // Quadranti e nell'Orologio.
@@ -299,19 +518,14 @@ export component VistaPc inherits Rectangle {
                 }
             }
 
+            // Energia e audio (le cuffie BT del Task 9 andranno sotto il volume).
             VerticalLayout {
-                alignment: space-around;
+                width: largo-colonna;
+                alignment: start;
+                accessible-role: groupbox;
+                accessible-label: "Energia e audio";
 
-                // Giù e su con lo stesso peso, sulla stessa riga (UX22). Frecce solo con un valore
-                // accanto (mai «↓ » orfano).
-                Riga {
-                    etichetta: "RETE";
-                    // Una velocità, non un avanzamento: per Narrator è testo.
-                    accessible-role: text;
-                    valore: stat.rete-giu == "" ? "—"
-                        : stat.rete-su == "" ? "↓ " + stat.rete-giu
-                        : "↓ " + stat.rete-giu + " · ↑ " + stat.rete-su;
-                }
+                Intestazione { text: "Energia e audio"; }
 
                 if stat.ha-batteria: Riga {
                     etichetta: "BATTERIA";
@@ -326,15 +540,91 @@ export component VistaPc inherits Rectangle {
                 if volume-disponibile: RigaVolume {
                     livello: root.volume;
                     muto: root.volume-muto;
-                    fuoco: root.fuoco-volume;
+                    fuoco: root.fuoco == 0;
                     imposta(v) => { root.imposta-volume(v); }
                     cambia-muto(si) => { root.muto-volume(si); }
                 }
+            }
 
-                // Posti vuoti: le righe restano allineate a quelle della colonna del PC (tre posti
-                // per colonna).
-                if !stat.ha-batteria && !volume-disponibile: Rectangle { height: alto-riga; }
-                if !(stat.ha-batteria && volume-disponibile): Rectangle { height: alto-riga; }
+            // Connessioni.
+            colonna-connessioni := VerticalLayout {
+                alignment: start;
+                accessible-role: groupbox;
+                accessible-label: "Connessioni";
+
+                Intestazione { text: "Connessioni"; }
+
+                // Giù e su con lo stesso peso, sulla stessa riga (UX22). Frecce solo con un valore
+                // accanto (mai «↓ » orfano).
+                RigaRete {
+                    velocita: stat.rete-giu == "" ? "—"
+                        : stat.rete-su == "" ? "↓ " + stat.rete-giu
+                        : "↓ " + stat.rete-giu + " · ↑ " + stat.rete-su;
+                    con-icona: connessioni-disponibili && rete-nota;
+                    tipo: root.rete;
+                    tacche: root.tacche;
+                }
+
+                if connessioni-disponibili: VerticalLayout {
+                    padding-left: MisurePc.margine - 2px;
+                    padding-right: MisurePc.margine - 2px;
+                    padding-top: 4px;
+                    spacing: 6px;
+
+                    riquadri := HorizontalLayout {
+                        spacing: 8px;
+                        height: 52px;
+
+                        Riquadro {
+                            nome: "Wi-Fi";
+                            icona: Icone.wifi[3];
+                            letto: root.radio-lette;
+                            presente: root.wifi-presente;
+                            acceso: root.wifi-acceso;
+                            stato: root.stato-wifi;
+                            fuoco: root.fuoco == 1;
+                            commuta => { root.commuta-radio(0, !root.wifi-acceso); }
+                        }
+
+                        Riquadro {
+                            nome: "Bluetooth";
+                            icona: Icone.bluetooth;
+                            letto: root.radio-lette;
+                            presente: root.bt-presente;
+                            acceso: root.bt-acceso;
+                            stato: root.stato-bt;
+                            fuoco: root.fuoco == 2;
+                            commuta => { root.commuta-radio(1, !root.bt-acceso); }
+                        }
+                    }
+
+                    collegamenti := HorizontalLayout {
+                        alignment: space-between;
+                        height: 24px;
+
+                        Collegamento {
+                            testo: "Reti Wi-Fi ›";
+                            fuoco: root.fuoco == 3;
+                            apri => { root.apri-pagina(0); }
+                        }
+
+                        Collegamento {
+                            testo: "Dispositivi Bluetooth ›";
+                            fuoco: root.fuoco == 4;
+                            apri => { root.apri-pagina(1); }
+                        }
+                    }
+
+                    // Un cambio rifiutato: in ambra, e la pagina giusta di Windows è già aperta.
+                    if errore-radio: errore := Text {
+                        text: "Non riuscito: apro le Impostazioni di Windows";
+                        wrap: word-wrap;
+                        font-size: Tema.testo-piccolo;
+                        color: Tema.attenzione;
+                        accessible-role: text;
+                        accessible-label: self.text;
+                    }
+                }
             }
         }
     }

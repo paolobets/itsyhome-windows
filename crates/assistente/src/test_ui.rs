@@ -1568,7 +1568,7 @@ mod accessibilita {
                 .unwrap_or_else(|| panic!("selettore «{nome}»"));
             assert_eq!(e.accessible_expandable(), Some(true));
         }
-        assert!(ElementHandle::find_by_accessible_label(&f, "Il nome della rete non compare mai nella pillola.").next().is_some());
+        assert!(ElementHandle::find_by_accessible_label(&f, "«Rete»: Solo su Windows, solo l'icona della connessione. Il nome della rete non compare mai nella pillola.").next().is_some());
     }
 
     /// Le scelte arrivate a Rust: (0/1 lato o 10 + posizione del quadrante, indice).
@@ -1808,7 +1808,7 @@ mod accessibilita {
         assert_eq!(cursore.accessible_role(), Some(AccessibleRole::Slider));
         assert_eq!(cursore.accessible_value().as_deref(), Some("40%"));
         assert_eq!((cursore.accessible_value_minimum(), cursore.accessible_value_maximum()), (Some(0.0), Some(100.0)));
-        assert_eq!(cursore.size().width, 150.0, "largo quanto le barre delle altre righe");
+        assert_eq!(cursore.size().width, 120.0, "largo quanto le barre delle altre righe");
         let muti = std::rc::Rc::new(std::cell::RefCell::new(Vec::<bool>::new()));
         let m = muti.clone();
         p.on_muto_volume(move |si| m.borrow_mut().push(si));
@@ -1881,5 +1881,258 @@ mod accessibilita {
         i.invoke_accessible_default_action();
         assert_eq!(*cambi.borrow(), [false]);
         assert_eq!(i.accessible_checked(), Some(false));
+    }
+
+    // ─── M2, Task 8: Wi-Fi, Bluetooth e icona della rete ───
+
+    use crate::sistema::radio::{EsitoRadio, StatoRadio, TipoRadio};
+
+    /// Un pannello sulla vista PC con tutto: batteria, volume muto, connessioni con nome lungo,
+    /// rete veloce, Wi-Fi acceso e Bluetooth spento.
+    fn pannello_connessioni() -> Pannello {
+        let p = pannello();
+        p.set_app(app());
+        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        p.global::<crate::Fuochi>().set_pronti(true);
+        p.set_pc(StatPcUi {
+            pronta: true,
+            cpu: 0.5,
+            cpu_testo: "100%".into(),
+            ram: 0.6,
+            ram_testo: "100%".into(),
+            ram_dettaglio: "15,9 GB di 15,9 GB".into(),
+            disco: 0.7,
+            disco_testo: "100%".into(),
+            disco_dettaglio: "1023,9 GB di 1023,9 GB".into(),
+            rete_giu: "999,9 MB/s".into(),
+            rete_su: "999,9 MB/s".into(),
+            ha_batteria: true,
+            batteria_testo: "100%".into(),
+            batteria_frazione: 1.0,
+            in_carica: true,
+            ..Default::default()
+        });
+        p.set_volume_disponibile(true);
+        p.set_volume(0.4);
+        p.set_volume_muto(true);
+        p.set_connessioni_disponibili(true);
+        p.set_rete_nota(true);
+        p.set_rete(crate::TipoReteUi::Wifi);
+        p.set_tacche(2);
+        p.set_nome_rete("Una rete di prova dal nome davvero lunghissimo".into());
+        crate::connessioni::scrivi_radio(
+            &p,
+            &[
+                StatoRadio { tipo: TipoRadio::WiFi, acceso: true },
+                StatoRadio { tipo: TipoRadio::Bluetooth, acceso: false },
+            ],
+        );
+        p.set_vista("pc".into());
+        p
+    }
+
+    /// Il pannello è 800 × 300 fisso: nella vista PC, col caso più pieno (batteria, volume muto,
+    /// rete veloce, nome della rete lungo, riga del rifiuto), nulla esce dalla card né dalla sua
+    /// colonna.
+    #[test]
+    fn vista_pc_entra_nel_pannello() {
+        piattaforma_di_prova();
+        let p = pannello_connessioni();
+        p.set_errore_radio(true);
+        let vista = ElementHandle::find_by_element_type_name(&p, "VistaPc").next().expect("vista PC");
+        let dentro = |contenitore: &ElementHandle, nome: &str| {
+            let (cp, cs) = (contenitore.absolute_position(), contenitore.size());
+            for e in contenitore.query_descendants().find_all() {
+                let (pos, lato) = (e.absolute_position(), e.size());
+                if lato.width <= 0.0 || lato.height <= 0.0 {
+                    continue;
+                }
+                let fuori = pos.x < cp.x - 0.5
+                    || pos.y < cp.y - 0.5
+                    || pos.x + lato.width > cp.x + cs.width + 0.5
+                    || pos.y + lato.height > cp.y + cs.height + 0.5;
+                assert!(
+                    !fuori,
+                    "{:?} «{}» esce da {nome}: {pos:?} {lato:?} fuori da {cp:?} {cs:?}",
+                    e.type_name(),
+                    e.accessible_label().unwrap_or_default()
+                );
+            }
+        };
+        dentro(&vista, "la vista PC");
+        let (pos, lato) = (vista.absolute_position(), vista.size());
+        assert!(pos.x >= 0.0 && pos.y >= 0.0 && pos.x + lato.width <= 800.0 && pos.y + lato.height <= 300.0);
+        for colonna in ["Sistema", "Energia e audio", "Connessioni"] {
+            dentro(&elemento(&p, colonna), colonna);
+        }
+        // La riga del rifiuto c'è e il nome della rete si vede (accorciato).
+        assert!(ElementHandle::find_by_accessible_label(&p, "Non riuscito: apro le Impostazioni di Windows").next().is_some());
+        assert_eq!(
+            elemento(&p, "Wi-Fi").accessible_description().as_deref(),
+            Some("Una rete di prova dal nome davvero lunghissimo")
+        );
+        assert_eq!(
+            elemento(&p, "RETE").accessible_value().as_deref(),
+            Some("↓ 999,9 MB/s · ↑ 999,9 MB/s, Wi-Fi, 2 tacche su 3")
+        );
+    }
+
+    /// Riquadri: interruttori per Narrator con lo stato; Bluetooth spento; senza radio
+    /// «Non presente» e non cliccabile. Fuori da Windows solo la rete.
+    #[test]
+    fn riquadri_wifi_e_bluetooth() {
+        piattaforma_di_prova();
+        let p = pannello_connessioni();
+        let wifi = elemento(&p, "Wi-Fi");
+        assert_eq!(wifi.accessible_role(), Some(AccessibleRole::Switch));
+        assert_eq!(wifi.accessible_checked(), Some(true));
+        let bt = elemento(&p, "Bluetooth");
+        assert_eq!(bt.accessible_role(), Some(AccessibleRole::Switch));
+        assert_eq!(bt.accessible_checked(), Some(false));
+        assert_eq!(bt.accessible_description().as_deref(), Some("Spento"));
+        let comandi = std::rc::Rc::new(std::cell::RefCell::new(Vec::<(i32, bool)>::new()));
+        let c = comandi.clone();
+        p.on_commuta_radio(move |t, a| c.borrow_mut().push((t, a)));
+        bt.invoke_accessible_default_action();
+        assert_eq!(*comandi.borrow(), [(1, true)]);
+        assert_eq!(bt.accessible_checked(), Some(true), "l'interruttore si sposta subito");
+
+        // Senza Bluetooth: «Non presente», non cliccabile.
+        crate::connessioni::scrivi_radio(&p, &[StatoRadio { tipo: TipoRadio::WiFi, acceso: false }]);
+        let bt = elemento(&p, "Bluetooth");
+        assert_eq!(bt.accessible_description().as_deref(), Some("Non presente"));
+        assert_eq!(bt.accessible_enabled(), Some(false));
+        assert_eq!(bt.accessible_checked(), Some(false));
+        bt.invoke_accessible_default_action();
+        assert_eq!(comandi.borrow().len(), 1, "una radio che manca non si comanda");
+        assert_eq!(elemento(&p, "Wi-Fi").accessible_description().as_deref(), Some("Spento"));
+
+        // Fuori da Windows (connessioni non disponibili): solo la rete, niente riquadri né righe.
+        p.set_connessioni_disponibili(false);
+        assert!(ElementHandle::find_by_accessible_label(&p, "Wi-Fi").next().is_none());
+        assert!(ElementHandle::find_by_accessible_label(&p, "Reti Wi-Fi ›").next().is_none());
+        assert_eq!(elemento(&p, "RETE").accessible_value().as_deref(), Some("↓ 999,9 MB/s · ↑ 999,9 MB/s"));
+    }
+
+    /// Review focus 4: Windows rifiuta lo spegnimento del Wi-Fi. Il riquadro si sposta subito su
+    /// spento; all'esito `Negato` compare la riga in ambra, il riquadro torna allo stato vero
+    /// (acceso, l'ultimo `StateChanged`) e si apre la pagina del Wi-Fi delle Impostazioni.
+    #[test]
+    fn rifiuto_mostra_errore_e_stato_reale() {
+        use crate::sistema::browser::PaginaWindows;
+        piattaforma_di_prova();
+        let p = pannello_connessioni();
+        let reali = [
+            StatoRadio { tipo: TipoRadio::WiFi, acceso: true },
+            StatoRadio { tipo: TipoRadio::Bluetooth, acceso: false },
+        ];
+        let comandi = std::rc::Rc::new(std::cell::RefCell::new(Vec::<(i32, bool)>::new()));
+        let c = comandi.clone();
+        p.on_commuta_radio(move |t, a| c.borrow_mut().push((t, a)));
+        let riga = |p: &Pannello| {
+            ElementHandle::find_by_accessible_label(p, "Non riuscito: apro le Impostazioni di Windows").next().is_some()
+        };
+
+        elemento(&p, "Wi-Fi").invoke_accessible_default_action();
+        assert_eq!(*comandi.borrow(), [(0, false)], "il comando: Wi-Fi spento");
+        assert_eq!(elemento(&p, "Wi-Fi").accessible_checked(), Some(false));
+        assert!(!riga(&p));
+
+        let pagina = crate::connessioni::esito(&p, &reali, TipoRadio::WiFi, EsitoRadio::Negato);
+        assert_eq!(pagina, Some(PaginaWindows::ImpostazioniWifi), "si apre la pagina del Wi-Fi");
+        assert!(riga(&p), "la riga in ambra c'è");
+        assert_eq!(elemento(&p, "Wi-Fi").accessible_checked(), Some(true), "di nuovo acceso, lo stato vero");
+
+        // Un errore del Bluetooth apre la pagina del Bluetooth; un nuovo tocco toglie la riga.
+        assert_eq!(
+            crate::connessioni::esito(&p, &reali, TipoRadio::Bluetooth, EsitoRadio::Errore),
+            Some(PaginaWindows::Bluetooth)
+        );
+        elemento(&p, "Bluetooth").invoke_accessible_default_action();
+        assert!(!riga(&p), "il tocco nuovo toglie la riga del rifiuto");
+        assert_eq!(crate::connessioni::esito(&p, &reali, TipoRadio::Bluetooth, EsitoRadio::Fatto), None);
+        assert!(!riga(&p), "riuscito: nessuna riga");
+    }
+
+    /// Vista PC da tastiera: dal volume Tab passa ai riquadri e alle righe (Wi-Fi, Bluetooth,
+    /// «Reti Wi-Fi ›», «Dispositivi Bluetooth ›») e poi al dock; Maiusc+Tab torna indietro. Le
+    /// frecce girano nella colonna; Invio commuta un riquadro o apre la pagina; Esc chiude il
+    /// pannello come prima.
+    #[test]
+    fn connessioni_da_tastiera() {
+        use slint::platform::Key;
+        piattaforma_di_prova();
+        let p = pannello_connessioni();
+        let eventi = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let (e1, e2, e3) = (eventi.clone(), eventi.clone(), eventi.clone());
+        p.on_commuta_radio(move |t, a| e1.borrow_mut().push(format!("radio {t} {a}")));
+        p.on_apri_pagina(move |i| e2.borrow_mut().push(format!("pagina {i}")));
+        p.on_chiudi(move || e3.borrow_mut().push("chiudi".into()));
+        let ultimo = |e: &std::rc::Rc<std::cell::RefCell<Vec<String>>>| e.borrow().last().cloned().unwrap_or_default();
+
+        // Il contenuto parte dal volume; Tab: Wi-Fi (il fuoco vero sul riquadro), poi Bluetooth.
+        tasto(&p, Key::Tab);
+        assert!(col_fuoco_pannello(&p).ends_with("::fuoco-riquadro"), "fuoco sul riquadro: «{}»", col_fuoco_pannello(&p));
+        tasto(&p, Key::Tab);
+        tasto(&p, Key::Return);
+        assert_eq!(*eventi.borrow(), ["radio 1 true"], "Invio sul Bluetooth (spento) lo accende");
+        // ↓ dal Bluetooth: «Dispositivi Bluetooth ›»; Invio apre la pagina del Bluetooth.
+        tasto(&p, Key::DownArrow);
+        assert!(col_fuoco_pannello(&p).ends_with("::fuoco-collegamento"), "fuoco sulla riga: «{}»", col_fuoco_pannello(&p));
+        tasto(&p, Key::Return);
+        assert_eq!(ultimo(&eventi), "pagina 1");
+        // ←: «Reti Wi-Fi ›»; Spazio apre l'elenco delle reti.
+        tasto(&p, Key::LeftArrow);
+        tasto(&p, Key::Space);
+        assert_eq!(ultimo(&eventi), "pagina 0");
+        // ↑: di nuovo il Wi-Fi (Invio lo spegne).
+        tasto(&p, Key::UpArrow);
+        tasto(&p, Key::Return);
+        assert_eq!(ultimo(&eventi), "radio 0 false");
+        // Maiusc+Tab dal Wi-Fi torna al volume.
+        con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
+        assert!(col_fuoco_pannello(&p).ends_with("::fuoco-volume"), "fuoco sul cursore: «{}»", col_fuoco_pannello(&p));
+        // Quattro Tab: Wi-Fi, Bluetooth, reti, dispositivi.
+        for _ in 0..4 {
+            tasto(&p, Key::Tab);
+        }
+        tasto(&p, Key::Return);
+        assert_eq!(ultimo(&eventi), "pagina 1", "l'ultima riga");
+        // Ancora Tab: il dock (le frecce lì muovono il fuoco, non la vista).
+        tasto(&p, Key::Tab);
+        tasto(&p, Key::RightArrow);
+        assert_eq!(p.get_vista(), "pc");
+        assert_eq!(ultimo(&eventi), "pagina 1", "dal dock nessun comando delle connessioni");
+        // Esc fa quello che fa già nel pannello: lo chiude.
+        tasto(&p, Key::Escape);
+        assert_eq!(ultimo(&eventi), "chiudi");
+    }
+
+    /// La pillola col lato «Rete»: solo l'icona (16 px, posto riservato anche prima della
+    /// lettura), e Narrator dice il tipo e le tacche, mai il nome della rete.
+    #[test]
+    fn lato_rete_nella_pillola() {
+        use crate::lati::{DatiLati, Lato};
+        use crate::sistema::radio::StatoRete;
+        use crate::sorgenti_lati::lato_ui;
+        piattaforma_di_prova();
+        let p = Pillola::new().expect("pillola");
+        p.show().expect("pillola mostrata nel backend di prova");
+        let mut d = DatiLati::default();
+        p.set_lato_destro(lato_ui(&Lato::Rete, &d, false));
+        assert_eq!(p.get_ingombro_lato_destro(), 16.0, "il posto dell'icona c'è già");
+        assert!(ElementHandle::find_by_accessible_label(&p, "ItsyHome").next().is_some());
+        d.rete = Some(StatoRete::WiFi { tacche: 2 });
+        p.set_lato_destro(lato_ui(&Lato::Rete, &d, false));
+        assert_eq!(p.get_ingombro_lato_destro(), 16.0);
+        assert_eq!(p.get_larghezza_pillola(), crate::lati::larghezza_riposo(0.0, 16.0));
+        assert!(ElementHandle::find_by_accessible_label(&p, "ItsyHome, Wi-Fi, 2 tacche su 3").next().is_some());
+        assert_eq!(ElementHandle::find_by_element_type_name(&p, "IconaRete").count(), 1);
+        d.rete = Some(StatoRete::Cavo);
+        p.set_lato_destro(lato_ui(&Lato::Rete, &d, true));
+        assert!(
+            ElementHandle::find_by_accessible_label(&p, "ItsyHome, rete via cavo").next().is_some(),
+            "in «dorme» l'icona resta"
+        );
     }
 }
