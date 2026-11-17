@@ -1,0 +1,25 @@
+[package]
+name = "claude-hook"
+version = "0.1.0"
+edition = "2021"
+
+# Ascoltatore degli hook HTTP di Claude Code (M3). Per ora solo le costanti dei percorsi e
+# l'esempio `prova_permesso` (spike del permesso, spec M3 §6.3).
+[dependencies]
+
+[dev-dependencies]
+serde_json = "1"
+# Codice usa-e-getta dell'esempio.
+getrandom = "0.3"
+# Solo l'ora locale delle righe stampate dall'esempio.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+[target.'cfg(windows)'.dev-dependencies]
+# Stessa versione del resto del workspace: PID del mittente (tabella TCP) e catena dei genitori
+# (istantanea dei processi) per l'esempio.
+windows-sys = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
+    "Win32_System_Diagnostics_ToolHelp",
+] }

@@ -7,6 +7,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — v3 «assistente isola» (ramo `v3-assistente`, milestone M1 e M2)
 
+### Added (M3, Task 1: spike del permesso con hook HTTP)
+- Nuovo crate `claude-hook` (per ora solo i percorsi `/isola/v1/evento` e `/isola/v1/barra`) e l'esempio `prova_permesso`, non codice di prodotto: ascolta solo su 127.0.0.1, scrive `impostazioni-prova.json` in una cartella temporanea (mai `~/.claude/settings.json`) con hook `http` per `PermissionRequest` (120 s), `PreToolUse`, `Notification` e `Stop` (5 s), il codice usa-e-getta solo nella variabile `ISOLA_HOOK_TOKEN`. Per ogni richiesta stampa evento, strumento, nomi delle intestazioni, `Origin`, porta e PID del mittente (Windows: tabella TCP) con la catena dei genitori; mai `tool_input`, `prompt`, `cwd`. Sui permessi chiede in console consenti, nega, aspetta o chiudi, e controlla ogni 250 ms se il terminale ha chiuso la connessione. Serve a chiudere P1-P8 della spec M3 §6.3 con Paolo prima del Task 5.
+
 ### Fixed (M2, giro finale della revisione)
 - Solo Windows: il muto dall'altoparlante della vista PC (clic, Invio, Spazio o Narrator) si vede subito (icona e «Audio disattivato») e si toglie di nuovo con l'altoparlante, alzando il cursore o con la rotella in su. Prima l'eco di Windows del nostro comando veniva scartata e lo stato mostrato restava «non muto»: il PC restava muto senza modo di tornare indietro dal pannello. Il confronto del contesto in `OnNotify` ora ha un test.
 - `casa-core`: il cambio di valore di un sensore numerico pubblica i dati della casa solo se il sensore è scelto per un lato o un quadrante (o è mostrato, e allora lo pubblica già la sua sostituzione). Un sensore nascosto dall'utente e non scelto non sveglia più l'interfaccia, come in M1: il suo valore si aggiorna in memoria e parte con la prossima pubblicazione.

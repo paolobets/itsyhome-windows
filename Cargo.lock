@@ -889,6 +889,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "claude-hook"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "getrandom 0.3.4",
+ "serde_json",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "clipboard-win"
 version = "5.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
