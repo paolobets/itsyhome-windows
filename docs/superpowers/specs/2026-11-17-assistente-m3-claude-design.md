@@ -74,6 +74,10 @@ solo guardare / qualche azione sicura / gestione completa).
 - **Consumi API** (Usage and Cost Analytics API, beta): `/v1/organizations/analytics/usage` e `/cost`, chiave da
   amministratore (`sk-ant-admin…`), dati con **4–24 ore di ritardo**, al massimo 31 giorni per richiesta.
   Altri endpoint amministrativi in sola lettura: chiavi API, workspace, membri, report dei limiti di velocità.
+- **Correzioni dalla stesura del piano (17/11):** `SessionStart` non accetta hook `http` → non ci si iscrive,
+  la sessione compare al primo evento; l'elenco delle chiavi API **non ha «ultimo uso»** → al suo posto «chiamate
+  del mese» per chiave (l'API analytics dà `requests`); la chiave da amministratore della Console **non ha
+  permessi ridotti** → la difesa resta l'elenco chiuso di letture, e la guida consiglia una chiave con scadenza.
 - Le impostazioni di Claude Code di Paolo oggi **non hanno né hook né barra di stato** (verificato 17/11, solo le chiavi).
 
 ## 5. Modello delle minacce (cosa proteggiamo, da chi)
