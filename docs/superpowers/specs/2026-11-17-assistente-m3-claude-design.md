@@ -118,7 +118,7 @@ in chat o nel repo». La barra di stato prende il codice dalla stessa variabile.
   (`http://127.0.0.1:<porta>/isola/v1/…`) e portano un numero di versione per gli aggiornamenti.
 - Se esiste già una barra di stato **non nostra**, non la si tocca: i limiti restano non disponibili e lo si dice.
 - «Scollega Claude Code» toglie solo le voci nostre e la variabile d'ambiente.
-- Eventi a cui ci si iscrive: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`,
+- Eventi a cui ci si iscrive (`SessionStart` escluso: non accetta hook `http`, vedi §4): `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`,
   `Notification`, `Stop`, `StopFailure`, `SessionEnd`. Timeout: 5 s per tutti tranne `PermissionRequest`
   (vedi §6.3). Nessun `onFailure`.
 
@@ -193,8 +193,10 @@ in chat o nel repo». La barra di stato prende il codice dalla stessa variabile.
 
 ## 7. Vincoli
 
-- Budget §4 della spec generale: a riposo l'ascoltatore è un thread fermo su `accept`; nessun timer nuovo oltre
-  alla lettura API ogni 3 ore. Misura con lo script di §9 della spec generale prima della chiusura.
+- Budget §4 della spec generale: a riposo l'ascoltatore è un thread fermo su `accept`; **a riposo** nessun timer
+  nuovo oltre alla lettura API ogni 3 ore. Timer accesi solo quando c'è qualcosa (precisazione del 17/11 dal
+  piano): durata del lavoro al secondo solo mentre una sessione lavora e la pillola o la vista Claude si vedono;
+  una sveglia singola per far sparire le sessioni silenziose, solo se ci sono sessioni. Misura con lo script di §9 della spec generale prima della chiusura.
 - Rust 1.94 in locale e 1.100 in CI; CI su Windows, macOS, Linux verde (`clippy -D warnings`).
 - Ascoltatore, barra di stato e API multipiattaforma dove costa poco; variabile d'ambiente e «porta davanti» solo
   Windows (fuori Windows la guida spiega come impostare la variabile).
