@@ -76,6 +76,13 @@ pub struct Piano {
     pub comando_barra: Option<String>,
 }
 
+impl Piano {
+    /// Il percorso dell'aiutante si può scrivere in `settings.json` (testo UTF-8, senza perdite).
+    pub fn percorso_valido(&self) -> bool {
+        self.aiutante.to_str().is_some_and(|s| !s.is_empty())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ErroreInstalla {
     /// Il file c'è ma non è un `settings.json` che si possa riscrivere senza perdere nulla.
@@ -209,10 +216,24 @@ fn genere(e: &Value) -> Option<Genere> {
     }
 }
 
-/// La barra di stato è nostra: `…/isola-hook.exe barra` (o la vecchia `… --barra-stato …`).
+/// La vecchia barra del Task 6: esattamente `<percorso>/assistente.exe --barra-stato <cifre>`.
+fn barra_vecchia(c: &str) -> bool {
+    let mut parti = c.split_whitespace();
+    let (Some(p), Some(m), Some(porta), None) =
+        (parti.next(), parti.next(), parti.next(), parti.next())
+    else {
+        return false;
+    };
+    nome_file(p).eq_ignore_ascii_case("assistente.exe")
+        && m == MARCATORE_BARRA_VECCHIA
+        && !porta.is_empty()
+        && porta.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// La barra di stato è nostra: `…/isola-hook.exe barra` o la vecchia barra (`barra_vecchia`).
 fn barra_nostra(s: &Value) -> bool {
     s.get("command").and_then(Value::as_str).is_some_and(|c| {
-        c.contains(MARCATORE_BARRA_VECCHIA) || {
+        barra_vecchia(c) || {
             let mut parti = c.split_whitespace();
             parti
                 .next()
@@ -243,7 +264,11 @@ pub fn ha_nostre(v: &Value) -> bool {
 fn voce(p: &Piano, evento: &str) -> Value {
     let mut m = Map::new();
     m.insert("type".into(), json!("command"));
-    m.insert("command".into(), json!(p.aiutante.to_string_lossy()));
+    // Un percorso non UTF-8 non arriva qui: chi chiama lo rifiuta (`Piano::percorso_valido`).
+    m.insert(
+        "command".into(),
+        json!(p.aiutante.to_str().unwrap_or_default()),
+    );
     m.insert("args".into(), json!([ARGOMENTO_EVENTO]));
     if ASINCRONI.contains(&evento) {
         m.insert("async".into(), json!(true));
@@ -427,47 +452,112 @@ pub fn anteprima(v: &Value, p: &Piano) -> Anteprima {
     }
 }
 
-/// Scrive il file senza perdere nulla se qualcosa va storto. La riserva `<file>.isola-bak` si fa
-/// **solo** se il file com'è ora non ha niente di nostro: così è il file di prima di isola e le
-/// scritture successive non la sovrascrivono. Una riserva già presente e non sovrascrivibile
-/// (sola lettura) non ferma la scrittura; una che non si può fare e non c'è, sì. Poi `<file>.tmp`
-/// con `sync_all` e `rename`. Indentazione di 2 spazi, ritorno a capo finale. Una scorciatoia
-/// (symlink) si segue: si riscrive il file vero, non il collegamento.
-pub fn scrivi_sicuro(file: &Path, v: &Value) -> Result<(), ErroreInstalla> {
+/// Com'è andata `scrivi_se_invariato`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scrittura {
+    Scritto,
+    /// Il file non è più quello che si è letto: **nulla è stato scritto**.
+    Cambiato,
+}
+
+/// Un nome di file temporaneo accanto a `destinazione`, unico per processo e istante.
+fn nome_temporaneo(destinazione: &Path, tag: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let mut n = destinazione
+        .file_name()
+        .unwrap_or(OsStr::new("settings.json"))
+        .to_os_string();
+    n.push(format!(
+        ".isola-{tag}-{}-{}-{t}.tmp",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    destinazione.with_file_name(n)
+}
+
+/// Scrive `nuovo` al posto del file **solo se il file è ancora uguale ad `atteso`** (il valore già
+/// letto da chi chiama, da cui si decide anche la riserva): prima prepara il file temporaneo
+/// (nome unico, `sync_all`), poi rilegge il file una volta e, se è cambiato, non scrive
+/// (`Cambiato`). La riserva `<file>.isola-bak` si fa **solo** se `atteso` non ha niente di nostro
+/// (è il file di prima di isola; le scritture successive non la toccano): si copia in un file
+/// temporaneo e poi si rinomina, così una copia fallita non tronca una riserva esistente. Una
+/// riserva già presente e non sovrascrivibile (sola lettura) non ferma la scrittura; una che non
+/// si può fare e non c'è, sì. Infine `rename`.
+///
+/// Resta una finestra minima fra l'ultima rilettura e il `rename` (microsecondi): un'altra
+/// applicazione che scrive proprio lì perderebbe la sua modifica. Non si può chiudere senza
+/// blocchi sul file, che Claude Code non rispetta. Indentazione di 2 spazi, ritorno a capo
+/// finale. Una scorciatoia (symlink) si segue: si riscrive il file vero.
+pub fn scrivi_se_invariato(
+    file: &Path,
+    atteso: &Value,
+    nuovo: &Value,
+) -> Result<Scrittura, ErroreInstalla> {
     use std::io::Write;
     let io = |cosa: &str, e: std::io::Error| ErroreInstalla::Io(format!("{cosa}: {e}"));
     let destinazione = std::fs::canonicalize(file).unwrap_or_else(|_| file.to_path_buf());
     let mut testo =
-        serde_json::to_string_pretty(v).map_err(|e| ErroreInstalla::Io(e.to_string()))?;
+        serde_json::to_string_pretty(nuovo).map_err(|e| ErroreInstalla::Io(e.to_string()))?;
     testo.push('\n');
     if let Some(cartella) = destinazione.parent() {
         std::fs::create_dir_all(cartella).map_err(|e| io("Non riesco a creare la cartella", e))?;
     }
-    let con_suffisso = |s: &str| {
-        let mut n = destinazione
-            .file_name()
-            .unwrap_or(OsStr::new("settings.json"))
-            .to_os_string();
-        n.push(s);
-        destinazione.with_file_name(n)
-    };
-    if destinazione.exists() && !leggi(&destinazione).is_ok_and(|attuale| ha_nostre(&attuale)) {
-        let riserva = con_suffisso(".isola-bak");
-        if let Err(e) = std::fs::copy(&destinazione, &riserva) {
-            if !riserva.exists() {
-                return Err(io("Non riesco a fare la copia di riserva", e));
-            }
-        }
-    }
-    let tmp = con_suffisso(".tmp");
-    let esito = std::fs::File::create(&tmp)
-        .and_then(|mut f| f.write_all(testo.as_bytes()).and_then(|_| f.sync_all()))
-        .and_then(|_| std::fs::rename(&tmp, &destinazione));
-    if let Err(e) = esito {
+    let tmp = nome_temporaneo(&destinazione, "nuovo");
+    let preparato = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
+        .and_then(|mut f| f.write_all(testo.as_bytes()).and_then(|_| f.sync_all()));
+    if let Err(e) = preparato {
         let _ = std::fs::remove_file(&tmp);
         return Err(io("Non riesco a scrivere il file", e));
     }
-    Ok(())
+    let esito = (|| -> Result<Scrittura, ErroreInstalla> {
+        // Ancora quello che si è letto? Altrimenti non si scrive.
+        let ora = leggi(&destinazione)?;
+        if ora != *atteso {
+            return Ok(Scrittura::Cambiato);
+        }
+        if destinazione.exists() && !ha_nostre(atteso) {
+            let mut riserva_nome = destinazione
+                .file_name()
+                .unwrap_or(OsStr::new("settings.json"))
+                .to_os_string();
+            riserva_nome.push(".isola-bak");
+            let riserva = destinazione.with_file_name(riserva_nome);
+            let copia = nome_temporaneo(&destinazione, "bak");
+            let fatta = std::fs::copy(&destinazione, &copia)
+                .and_then(|_| std::fs::rename(&copia, &riserva));
+            if let Err(e) = fatta {
+                let _ = std::fs::remove_file(&copia);
+                if !riserva.exists() {
+                    return Err(io("Non riesco a fare la copia di riserva", e));
+                }
+            }
+        }
+        std::fs::rename(&tmp, &destinazione).map_err(|e| io("Non riesco a scrivere il file", e))?;
+        Ok(Scrittura::Scritto)
+    })();
+    if esito != Ok(Scrittura::Scritto) {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    esito
+}
+
+/// Come `scrivi_se_invariato`, con il file com'è ora come valore atteso (per chi non ha una
+/// lettura precedente da confrontare, come «Scollega»). Un file che cambia nel frattempo è un errore.
+pub fn scrivi_sicuro(file: &Path, v: &Value) -> Result<(), ErroreInstalla> {
+    let atteso = leggi(file)?;
+    match scrivi_se_invariato(file, &atteso, v)? {
+        Scrittura::Scritto => Ok(()),
+        Scrittura::Cambiato => Err(ErroreInstalla::Io(
+            "Il file è cambiato mentre lo scrivevo: non ho scritto nulla.".into(),
+        )),
+    }
 }
 
 /// I caratteri ammessi in un percorso scritto in un comando senza virgolette: la shell che lo
@@ -1111,6 +1201,98 @@ mod test {
             json!({"type":"command","command":"C:/a/altro.exe","args":["evento"]}),
         ] {
             assert!(genere(&e).is_none(), "{e}");
+        }
+    }
+
+    #[test]
+    fn la_vecchia_barra_solo_nella_forma_completa() {
+        let barra = |c: &str| json!({ "type": "command", "command": c });
+        for c in [
+            "C:/x/assistente.exe --barra-stato 47613",
+            r"C:\x\ASSISTENTE.EXE --barra-stato 1",
+        ] {
+            assert!(barra_nostra(&barra(c)), "{c}");
+        }
+        for c in [
+            "ccstatusline --barra-stato 1",
+            "C:/x/assistente.exe --barra-stato",
+            "C:/x/assistente.exe --barra-stato abc",
+            "C:/x/assistente.exe --barra-stato 1 altro",
+            "altro.exe --barra-stato 5",
+            "echo --barra-stato",
+        ] {
+            assert!(!barra_nostra(&barra(c)), "{c}");
+        }
+    }
+
+    #[test]
+    fn file_cambiato_prima_della_scrittura_non_si_scrive() {
+        let d = TempDir::new().unwrap();
+        let f = d.path().join("settings.json");
+        std::fs::write(&f, "{\"model\":\"opus\"}\n").unwrap();
+        let letto = leggi(&f).unwrap();
+        std::fs::write(&f, "{\"model\":\"sonnet\"}\n").unwrap();
+        let r = scrivi_se_invariato(&f, &letto, &unisci(letto.clone(), &piano())).unwrap();
+        assert_eq!(r, Scrittura::Cambiato);
+        assert_eq!(
+            std::fs::read_to_string(&f).unwrap(),
+            "{\"model\":\"sonnet\"}\n"
+        );
+        let nomi: Vec<String> = std::fs::read_dir(d.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            nomi,
+            ["settings.json"],
+            "né riserva né temporanei: {nomi:?}"
+        );
+        // Invariato: scrive.
+        let letto = leggi(&f).unwrap();
+        assert_eq!(
+            scrivi_se_invariato(&f, &letto, &unisci(letto.clone(), &piano())).unwrap(),
+            Scrittura::Scritto
+        );
+    }
+
+    #[test]
+    fn la_riserva_esistente_resta_intera_e_nessun_temporaneo_resta() {
+        let d = TempDir::new().unwrap();
+        let f = d.path().join("settings.json");
+        let bak = d.path().join("settings.json.isola-bak");
+        std::fs::write(&f, "{\"model\":\"opus\"}\n").unwrap();
+        std::fs::write(&bak, "riserva vecchia").unwrap();
+        scrivi_sicuro(&f, &unisci(leggi(&f).unwrap(), &piano())).unwrap();
+        // Copia in un temporaneo e rename: la riserva è intera (qui sostituita dalla nuova).
+        assert_eq!(
+            std::fs::read_to_string(&bak).unwrap(),
+            "{\"model\":\"opus\"}\n"
+        );
+        let rimasti: Vec<_> = std::fs::read_dir(d.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        assert!(rimasti.is_empty(), "{rimasti:?}");
+    }
+
+    #[test]
+    fn percorso_non_utf8_non_valido() {
+        assert!(piano().percorso_valido());
+        assert!(!Piano {
+            aiutante: PathBuf::new(),
+            ..piano()
+        }
+        .percorso_valido());
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStringExt;
+            let strano = std::ffi::OsString::from_wide(&[0x61, 0xD800, 0x62]);
+            assert!(!Piano {
+                aiutante: PathBuf::from(strano),
+                ..piano()
+            }
+            .percorso_valido());
         }
     }
 }

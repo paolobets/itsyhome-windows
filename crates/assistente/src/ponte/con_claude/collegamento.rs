@@ -17,7 +17,7 @@ use crate::attenzione::{Fonte, Livello, Pulsante, Voce, PULSANTE_IMPOSTAZIONI};
 use crate::claude::ID_AGGIORNA;
 use crate::ponte::Ponte;
 use crate::FinestraImpostazioni;
-use claude_hook::installa::{self, Anteprima, Piano, Stato};
+use claude_hook::installa::{self, Anteprima, Piano, Scrittura, Stato};
 use claude_hook::tubo::ConfigTubo;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -90,6 +90,12 @@ impl Contesto {
     fn controlla_per_scrivere(&self) -> Result<(), String> {
         self.controlla()?;
         let a = self.aiutante();
+        if !self.piano().percorso_valido() {
+            return Err(format!(
+                "Il percorso di {NOME_AIUTANTE} non è un testo UTF-8 valido e non si può scrivere in settings.json: {}",
+                a.display()
+            ));
+        }
         if !a.is_file() {
             return Err(format!(
                 "Non trovo {NOME_AIUTANTE} accanto al programma ({}): reinstalla isola.",
@@ -191,8 +197,18 @@ impl Ponte {
             *self.claude_preparato.borrow_mut() = Some(ora.clone());
             return Ok(Esito::Cambiato(self.preparazione(cx, ora, true)));
         }
-        installa::scrivi_sicuro(&cx.file, &installa::unisci(v, &piano))
-            .map_err(|e| e.to_string())?;
+        // Ultimo controllo dentro la scrittura: se il file cambia fra la lettura e il `rename` non si
+        // scrive e si mostra la nuova anteprima (resta solo la finestra di microsecondi del rename).
+        let unito = installa::unisci(v.clone(), &piano);
+        match installa::scrivi_se_invariato(&cx.file, &v, &unito).map_err(|e| e.to_string())? {
+            Scrittura::Scritto => {}
+            Scrittura::Cambiato => {
+                let v = installa::leggi(&cx.file).map_err(|e| e.to_string())?;
+                let nuova = installa::anteprima(&v, &piano);
+                *self.claude_preparato.borrow_mut() = Some(nuova.clone());
+                return Ok(Esito::Cambiato(self.preparazione(cx, nuova, true)));
+            }
+        }
         self.casa.aggiorna_config(|c| c.claude.collegato = true);
         self.togli_voce(ID_AGGIORNA);
         if let Some(tubo) = cx.tubo.clone() {
@@ -404,6 +420,17 @@ mod test {
         }
     }
 
+    /// Il tubo da aprire nel test di conferma: uno vero (con nome unico) su Windows, nessuno altrove.
+    #[cfg(windows)]
+    fn tubo_per_prova() -> Option<ConfigTubo> {
+        Some(tubo_di_prova())
+    }
+
+    #[cfg(not(windows))]
+    fn tubo_per_prova() -> Option<ConfigTubo> {
+        None
+    }
+
     fn scrivi_file(cx: &Contesto, testo: &str) {
         std::fs::create_dir_all(cx.file.parent().unwrap()).unwrap();
         std::fs::write(&cx.file, testo).unwrap();
@@ -442,11 +469,10 @@ mod test {
     #[test]
     fn conferma_scrive_solo_dopo_l_anteprima_e_conserva_il_resto() {
         let (_s, p, _pillola, d) = ponte_di_prova();
-        let mut cx = contesto(&d);
-        #[cfg(windows)]
-        {
-            cx.tubo = Some(tubo_di_prova());
-        }
+        let cx = Contesto {
+            tubo: tubo_per_prova(),
+            ..contesto(&d)
+        };
         scrivi_file(&cx, ALTRO);
         // L'anteprima non scrive nulla.
         let prep = p.prepara_collegamento(&cx).unwrap();
@@ -512,8 +538,8 @@ mod test {
         scrivi_file(&cx, ALTRO);
         let prima = p.prepara_collegamento(&cx).unwrap();
         assert!(!prima.anteprima.barra_occupata && prima.anteprima.sostituite.is_empty());
-        // Nel frattempo arriva una barra di stato di altri e una vecchia voce HTTP di isola.
-        let cambiato = file_del_task_7().replace("--barra-stato 4321", "--barra-stato 4321 altro");
+        // Nel frattempo arrivano le vecchie voci HTTP di isola e la sua vecchia barra.
+        let cambiato = file_del_task_7();
         scrivi_file(&cx, &cambiato);
         let esito = p.conferma_collegamento(&cx).unwrap();
         let Esito::Cambiato(nuova) = esito else {
@@ -590,6 +616,10 @@ mod test {
         let cx = contesto(&d);
         scrivi_file(&cx, ALTRO);
         collega(&p, &cx);
+        // Cosa controlla e cosa no: solo ciò che il codice di isola può scrivere (nessuna voce nel
+        // portachiavi di prova; nel file nessun codice, variabile, URL o intestazione). Non può
+        // provare l'assenza di scritture nel registro (`HKCU\Environment`): il modulo che le faceva
+        // non esiste più, e questo lo garantisce la revisione del codice, non il test.
         // Né nel portachiavi (nessuna voce), né nel file (nessun codice né riferimento a una variabile).
         assert_eq!(p.segreti.leggi("isola:claude-hook").unwrap(), None);
         let t = std::fs::read_to_string(&cx.file).unwrap();

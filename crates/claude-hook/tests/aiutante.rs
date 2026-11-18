@@ -28,7 +28,7 @@ fn aiutante_prova() -> Option<PathBuf> {
         .find(|p| p.exists());
     if trovato.is_none() {
         eprintln!(
-            "SALTATO: manca examples/{nome} sopra {} (non compilato: lancia `cargo test -p claude-hook`              o `cargo build -p claude-hook --examples` prima)",
+            "SALTATO: manca examples/{nome} sopra {} (non compilato: lancia `cargo test -p claude-hook` o `cargo build -p claude-hook --examples` prima)",
             test.display()
         );
     }
