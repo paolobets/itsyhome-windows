@@ -894,8 +894,6 @@ name = "claude-hook"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "getrandom 0.3.4",
- "httparse",
  "serde",
  "serde_json",
  "tempfile",

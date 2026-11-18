@@ -64,27 +64,7 @@ fn umore_forzato(mut argomenti: impl Iterator<Item = String>) -> Option<Umore> {
     None
 }
 
-/// `assistente --barra-stato <porta>`: il comando della barra di stato di Claude Code. Gira
-/// prima di tutto il resto (istanza unica, Slint, configurazione, registro): stampa una riga e
-/// inoltra pochi dati all'assistente in esecuzione, poi esce. Mai errori verso Claude Code.
-fn barra_di_stato(porta: &str) {
-    let porta: u16 = porta.parse().unwrap_or(0);
-    let codice = std::env::var(ponte::con_claude::VARIABILE_PROVA).ok();
-    let _ = claude_hook::barra::esegui(
-        std::io::stdin().lock(),
-        std::io::stdout().lock(),
-        porta,
-        codice.as_deref(),
-        std::time::Duration::from_millis(40),
-    );
-}
-
 fn main() -> Result<(), slint::PlatformError> {
-    let mut argomenti = std::env::args().skip(1);
-    if argomenti.next().as_deref() == Some("--barra-stato") {
-        barra_di_stato(&argomenti.next().unwrap_or_default());
-        return Ok(());
-    }
     // Istanza unica: se ce n'è già una, la si avvisa (apre il pannello) e si esce subito.
     let nome_istanza = sistema::istanza::nome(std::env::var_os(avvio::VAR_CARTELLA).as_deref());
     let Some(istanza) = sistema::istanza::prendi(&nome_istanza) else {

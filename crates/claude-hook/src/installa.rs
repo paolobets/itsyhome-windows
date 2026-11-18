@@ -23,7 +23,6 @@
 //! - Claude Code ricarica le modifiche a `hooks` senza riavvio; le variabili d'ambiente le legge
 //!   all'avvio del terminale, quindi i terminali già aperti vanno riaperti.
 
-use crate::PERCORSO_EVENTO;
 use serde_json::{json, Map, Value};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -31,6 +30,9 @@ use std::path::{Path, PathBuf};
 /// Il nome della variabile d'ambiente che porta il codice segreto (unica fonte: l'assistente, la
 /// barra di stato e le voci installate usano tutti questo).
 pub const VARIABILE_CODICE: &str = "ISOLA_HOOK_TOKEN";
+
+/// Il percorso degli hook HTTP del Task 7 (le voci che il Task 7B sostituisce con l'aiutante).
+pub const PERCORSO_EVENTO: &str = "/isola/v1/evento";
 
 /// Come comincia, in `PERCORSO_EVENTO` e nell'URL delle nostre voci, il percorso con la versione.
 const PREFISSO_PERCORSO: &str = "/isola/v";

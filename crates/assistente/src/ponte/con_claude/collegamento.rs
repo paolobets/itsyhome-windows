@@ -3,18 +3,20 @@
 //! **Mai una scrittura senza il «sì» dell'utente.** `prepara_collegamento` legge e basta: mostra
 //! che cosa verrebbe aggiunto a `settings.json`; solo `conferma_collegamento` (il pulsante «Scrivi
 //! in settings.json») scrive, e scrive esattamente il piano che l'utente ha letto. All'avvio
-//! `controlla_all_avvio` non scrive mai: al più mette una voce informativa. Il codice segreto non
-//! entra mai in `settings.json`: sta nel portachiavi e nella variabile d'ambiente dell'utente
-//! (`ISOLA_HOOK_TOKEN`), e gli hook la citano per nome.
+//! `controlla_all_avvio` non scrive mai: al più mette una voce informativa.
+//!
+//! Dal Task 7A non c'è più un codice segreto: il canale è il tubo protetto. «Scollega» toglie
+//! ancora il codice e la variabile lasciati dal Task 7, se ci sono. Le voci scritte in
+//! `settings.json` le rifà il Task 7B (aiutante `isola-hook.exe` al posto degli hook HTTP).
 
-use super::{avvia_con, codice_da, SEGRETO_HOOK};
+use super::{avvia_con, SEGRETO_HOOK};
 use crate::attenzione::{Fonte, Livello, Pulsante, Voce, PULSANTE_IMPOSTAZIONI};
 use crate::claude::ID_AGGIORNA;
 use crate::ponte::Ponte;
 use crate::sistema::ambiente_utente::{AmbienteUtente, VARIABILE};
 use crate::FinestraImpostazioni;
 use claude_hook::installa::{self, Anteprima, Piano, StatoInstallazione, VERSIONE_VOCI};
-use claude_hook::CodiceHook;
+use claude_hook::ConfigTubo;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -29,6 +31,9 @@ pub struct Contesto {
     pub in_prova: bool,
     /// Il percorso corto 8.3 di un file (sui percorsi con spazi); `None` se non c'è.
     pub corto: fn(&Path) -> Option<PathBuf>,
+    /// Il tubo da aprire dopo la conferma (`None`: nessun tubo, es. SID illeggibile). I test ne
+    /// usano uno con un nome unico.
+    pub tubo: Option<ConfigTubo>,
 }
 
 impl Contesto {
@@ -53,6 +58,7 @@ impl Contesto {
             exe: std::env::current_exe().unwrap_or_default(),
             in_prova,
             corto: crate::sistema::ambiente_utente::percorso_corto,
+            tubo: super::config_tubo(),
         }
     }
 
@@ -131,10 +137,9 @@ impl Ponte {
         Ok(Preparazione { anteprima, file: cx.file.clone(), barra_non_scrivibile })
     }
 
-    /// L'utente ha letto l'anteprima e ha confermato: ora si scrive. Prima il codice (portachiavi,
-    /// variabile), poi il file, poi la configurazione, poi l'ascolto. Se il file non si scrive il
-    /// codice nuovo si ritira, così non resta nulla a metà.
-    pub fn conferma_collegamento(&self, cx: &Contesto, amb: &dyn AmbienteUtente) -> Result<(), String> {
+    /// L'utente ha letto l'anteprima e ha confermato: ora si scrive. Prima il file, poi la
+    /// configurazione, poi il tubo. Nessun segreto: né portachiavi né variabili.
+    pub fn conferma_collegamento(&self, cx: &Contesto) -> Result<(), String> {
         cx.controlla()?;
         let piano = self
             .claude_preparato
@@ -143,32 +148,21 @@ impl Ponte {
             .ok_or_else(|| "Prima premi «Collega Claude Code» e leggi che cosa verrà scritto.".to_owned())?;
         // Il file si rilegge ora: se nel frattempo è diventato illeggibile, non si scrive niente.
         let v = installa::leggi(&cx.file).map_err(|e| e.to_string())?;
-        let esistente = codice_da(self.segreti.as_ref(), cx.in_prova, amb.leggi(VARIABILE));
-        let nuovo = esistente.is_none();
-        let codice = match esistente {
-            Some(c) => c,
-            None => CodiceHook::nuovo()?,
-        };
-        let testo = codice.come_testo();
-        self.metti_codice(cx, amb, &testo)?;
-        if let Err(e) = installa::scrivi_sicuro(&cx.file, &installa::unisci(v, &piano)) {
-            if nuovo {
-                self.ritira_codice(cx, amb);
-            }
-            return Err(e.to_string());
-        }
+        installa::scrivi_sicuro(&cx.file, &installa::unisci(v, &piano)).map_err(|e| e.to_string())?;
         self.casa.aggiorna_config(|c| {
             c.claude.porta = Some(piano.porta);
             c.claude.collegato = true;
         });
         self.togli_voce(ID_AGGIORNA);
-        avvia_con(self, codice);
+        if let Some(tubo) = cx.tubo.clone() {
+            avvia_con(self, tubo);
+        }
         Ok(())
     }
 
     /// Toglie il collegamento: via le nostre voci da `settings.json` (solo se ce ne sono; il resto
-    /// resta), l'ascolto, il codice e la variabile. Un file illeggibile non si riscrive e ferma
-    /// tutto.
+    /// resta), il tubo e, se rimasti dal Task 7, il codice e la variabile. Un file illeggibile non
+    /// si riscrive e ferma tutto.
     pub fn scollega(&self, cx: &Contesto, amb: &dyn AmbienteUtente) -> Result<(), String> {
         cx.controlla()?;
         let v = installa::leggi(&cx.file).map_err(|e| e.to_string())?;
@@ -199,60 +193,6 @@ impl Ponte {
             Some(e) => Err(format!("Scollegato, ma non ho potuto cancellare il codice: {e}")),
             None => Ok(()),
         }
-    }
-
-    /// Un codice nuovo, ovunque (portachiavi, variabile) e nell'ascolto. `settings.json` non cambia.
-    /// I terminali aperti prima hanno ancora il vecchio e finché non si riaprono i loro hook
-    /// vengono rifiutati.
-    pub fn rigenera_codice(&self, cx: &Contesto, amb: &dyn AmbienteUtente) -> Result<(), String> {
-        if !self.casa.con_config(|c| c.claude.collegato) {
-            return Err("Claude Code non è collegato.".to_owned());
-        }
-        let nuovo = CodiceHook::nuovo()?;
-        self.metti_codice(cx, amb, &nuovo.come_testo())?;
-        // Se la variabile non si scrive `metti_codice` ha già rimesso il portachiavi com'era.
-        avvia_con(self, nuovo);
-        Ok(())
-    }
-
-    /// Scrive il codice nel portachiavi (non in prova) e nella variabile (dove l'app può); se la
-    /// seconda scrittura fallisce rimette il portachiavi com'era.
-    fn metti_codice(&self, cx: &Contesto, amb: &dyn AmbienteUtente, testo: &str) -> Result<(), String> {
-        let precedente = if cx.in_prova { None } else { self.segreti.leggi(SEGRETO_HOOK).ok().flatten() };
-        if !cx.in_prova {
-            self.segreti.salva(SEGRETO_HOOK, testo).map_err(|e| format!("Non riesco a salvare il codice nel portachiavi: {e}"))?;
-        }
-        if amb.gestisce() {
-            if let Err(e) = amb.imposta(VARIABILE, testo) {
-                if !cx.in_prova {
-                    match &precedente {
-                        Some(p) => {
-                            let _ = self.segreti.salva(SEGRETO_HOOK, p);
-                        }
-                        None => {
-                            let _ = self.segreti.cancella(SEGRETO_HOOK);
-                        }
-                    }
-                }
-                return Err(format!("Non riesco a impostare la variabile {VARIABILE}: {e}"));
-            }
-        }
-        Ok(())
-    }
-
-    /// Ritira un codice appena creato (il file non si è scritto).
-    fn ritira_codice(&self, cx: &Contesto, amb: &dyn AmbienteUtente) {
-        if !cx.in_prova {
-            let _ = self.segreti.cancella(SEGRETO_HOOK);
-        }
-        if amb.gestisce() {
-            let _ = amb.togli(VARIABILE);
-        }
-    }
-
-    /// Il codice da copiare a mano, dove l'app non scrive la variabile (fuori da Windows).
-    pub fn codice_per_la_shell(&self, cx: &Contesto, amb: &dyn AmbienteUtente) -> Option<String> {
-        codice_da(self.segreti.as_ref(), cx.in_prova, amb.leggi(VARIABILE)).map(|c| c.come_testo())
     }
 
     /// Collegato, ma `settings.json` non dice più ciò che questo programma si aspetta (porta,
@@ -296,8 +236,8 @@ impl Ponte {
     /// Dà alla finestra delle Impostazioni lo stato di Claude Code e le sue azioni.
     pub(crate) fn collega_claude(&self, f: &FinestraImpostazioni) {
         let cx = Contesto::reale();
-        let amb = crate::sistema::ambiente_utente::ambiente(cx.in_prova);
-        f.set_claude_shell(!amb.gestisce());
+        // Nessun codice da copiare a mano: il riquadro per la shell non serve più (Task 7B lo toglie).
+        f.set_claude_shell(false);
         self.mostra_stato_claude(f, &cx);
         f.on_claude_prepara(|| {
             if let Some(p) = crate::ponte::ponte() {
@@ -318,17 +258,6 @@ impl Ponte {
             if let Some(p) = crate::ponte::ponte() {
                 p.claude_scollega_ui();
             }
-        });
-        f.on_claude_rigenera(|| {
-            if let Some(p) = crate::ponte::ponte() {
-                p.claude_rigenera_ui();
-            }
-        });
-        f.on_claude_codice(|| {
-            let Some(p) = crate::ponte::ponte() else { return "".into() };
-            let cx = Contesto::reale();
-            let amb = crate::sistema::ambiente_utente::ambiente(cx.in_prova);
-            p.codice_per_la_shell(&cx, &amb).unwrap_or_default().into()
         });
     }
 
@@ -387,14 +316,9 @@ impl Ponte {
 
     fn claude_conferma_ui(&self) {
         let cx = Contesto::reale();
-        let amb = crate::sistema::ambiente_utente::ambiente(cx.in_prova);
-        let esito = self.conferma_collegamento(&cx, &amb);
+        let esito = self.conferma_collegamento(&cx);
         self.con_finestra_claude(|f| match esito {
-            Ok(()) => self.esito_claude(
-                f,
-                &cx,
-                Ok("Collegato. I terminali aperti prima vanno chiusi e riaperti: solo quelli nuovi hanno il codice."),
-            ),
+            Ok(()) => self.esito_claude(f, &cx, Ok("Collegato.")),
             Err(e) => self.esito_claude(f, &cx, Err(e)),
         });
     }
@@ -409,19 +333,6 @@ impl Ponte {
         });
     }
 
-    fn claude_rigenera_ui(&self) {
-        let cx = Contesto::reale();
-        let amb = crate::sistema::ambiente_utente::ambiente(cx.in_prova);
-        let esito = self.rigenera_codice(&cx, &amb);
-        self.con_finestra_claude(|f| match esito {
-            Ok(()) => self.esito_claude(
-                f,
-                &cx,
-                Ok("Codice rigenerato. I terminali aperti prima vanno chiusi e riaperti: hanno ancora il vecchio."),
-            ),
-            Err(e) => self.esito_claude(f, &cx, Err(e)),
-        });
-    }
 }
 
 #[cfg(test)]
@@ -440,6 +351,7 @@ mod test {
             exe: "C:/x/assistente.exe".into(),
             in_prova,
             corto: |_| None,
+            tubo: Some(super::super::test::config_di_prova()),
         }
     }
 
@@ -471,19 +383,18 @@ mod test {
         assert_eq!(p.segreti.leggi(SEGRETO_HOOK).unwrap(), None);
         assert!(!p.casa.con_config(|c| c.claude.collegato));
 
-        p.conferma_collegamento(&cx, &amb).unwrap();
+        p.conferma_collegamento(&cx).unwrap();
         let scritto = std::fs::read_to_string(&cx.file).unwrap();
-        let codice = amb.leggi(VARIABILE).expect("variabile impostata");
-        assert_eq!(p.segreti.leggi(SEGRETO_HOOK).unwrap().as_deref(), Some(codice.as_str()), "stesso codice");
-        // Il codice non è nel file; il file porta il riferimento alla variabile.
-        assert!(!scritto.contains(&codice), "il codice non deve stare in settings.json");
-        assert!(scritto.contains("$ISOLA_HOOK_TOKEN"));
+        // Nessun segreto: né variabile né portachiavi.
+        assert_eq!(amb.leggi(VARIABILE), None);
+        assert_eq!(amb.scritture.get(), 0);
+        assert_eq!(p.segreti.leggi(SEGRETO_HOOK).unwrap(), None);
         assert!(scritto.contains("\"model\": \"opus\"") && scritto.contains("Bash(ls)"), "il resto resta");
         let (collegato, porta) = p.casa.con_config(|c| (c.claude.collegato, c.claude.porta));
         assert!(collegato);
         let porta = porta.expect("porta salvata");
         assert!(matches!(installa::nostre(&installa::leggi(&cx.file).unwrap()), StatoInstallazione::Presente { porta: q, .. } if q == porta));
-        assert_eq!(p.claude_ascolto.borrow().as_ref().map(|a| a.porta()), Some(porta), "ascolta");
+        assert_eq!(p.claude_ascolto.borrow().is_some(), cfg!(windows), "il tubo è aperto");
         assert!(!p.collegamento_da_aggiornare(&cx));
 
         p.scollega(&cx, &amb).unwrap();
@@ -498,32 +409,12 @@ mod test {
     }
 
     #[test]
-    fn rigenera_cambia_codice_ovunque() {
-        let (_s, p, _pillola, d) = ponte_di_prova();
-        let cx = contesto(&d, false);
-        let amb = AmbienteFinto::default();
-        assert!(p.rigenera_codice(&cx, &amb).is_err(), "non collegato: niente da rigenerare");
-        p.prepara_collegamento(&cx).unwrap();
-        p.conferma_collegamento(&cx, &amb).unwrap();
-        let vecchio = amb.leggi(VARIABILE).unwrap();
-        let file_prima = std::fs::read(&cx.file).unwrap();
-        let porta = p.claude_ascolto.borrow().as_ref().map(|a| a.porta());
-        p.rigenera_codice(&cx, &amb).unwrap();
-        let nuovo = amb.leggi(VARIABILE).unwrap();
-        assert_ne!(nuovo, vecchio);
-        assert_eq!(p.segreti.leggi(SEGRETO_HOOK).unwrap().as_deref(), Some(nuovo.as_str()));
-        assert_eq!(std::fs::read(&cx.file).unwrap(), file_prima, "settings.json non cambia");
-        assert_eq!(p.claude_ascolto.borrow().as_ref().map(|a| a.porta()), porta, "ascolta col codice nuovo");
-        ferma_ascolto(&p);
-    }
-
-    #[test]
     fn all_avvio_niente_scritture() {
         let (_s, p, _pillola, d) = ponte_di_prova();
         let cx = contesto(&d, false);
         let amb = AmbienteFinto::default();
         p.prepara_collegamento(&cx).unwrap();
-        p.conferma_collegamento(&cx, &amb).unwrap();
+        p.conferma_collegamento(&cx).unwrap();
         ferma_ascolto(&p);
         p.controlla_all_avvio(&cx);
         assert!(!p.attese.borrow().contiene(ID_AGGIORNA), "tutto a posto: nessuna voce");
@@ -569,10 +460,10 @@ mod test {
         let rotto = "{ // commento\n \"model\": \"opus\" }\n";
         scrivi_file(&cx, rotto);
         assert!(p.prepara_collegamento(&cx).is_err());
-        assert!(p.conferma_collegamento(&cx, &amb).is_err(), "senza anteprima non si conferma");
+        assert!(p.conferma_collegamento(&cx).is_err(), "senza anteprima non si conferma");
         // Anche forzando la preparazione a monte, il file rotto ferma la conferma prima di ogni scrittura.
         *p.claude_preparato.borrow_mut() = Some(Piano { porta: 1, comando_barra: None });
-        assert!(p.conferma_collegamento(&cx, &amb).is_err());
+        assert!(p.conferma_collegamento(&cx).is_err());
         assert_eq!(std::fs::read_to_string(&cx.file).unwrap(), rotto);
         assert_eq!(amb.scritture.get(), 0);
         assert_eq!(p.segreti.leggi(SEGRETO_HOOK).unwrap(), None);
@@ -582,17 +473,15 @@ mod test {
     }
 
     #[test]
-    fn ambiente_che_rifiuta_non_lascia_niente() {
+    fn scollega_toglie_il_codice_rimasto_dal_task_7() {
         let (_s, p, _pillola, d) = ponte_di_prova();
         let cx = contesto(&d, false);
         let amb = AmbienteFinto::default();
-        scrivi_file(&cx, ALTRO);
-        amb.rifiuta.set(true);
-        p.prepara_collegamento(&cx).unwrap();
-        assert!(p.conferma_collegamento(&cx, &amb).is_err());
-        assert_eq!(std::fs::read_to_string(&cx.file).unwrap(), ALTRO, "il file non cambia");
-        assert_eq!(p.segreti.leggi(SEGRETO_HOOK).unwrap(), None, "il codice nuovo non resta nel portachiavi");
-        assert!(!p.casa.con_config(|c| c.claude.collegato));
+        p.segreti.salva(SEGRETO_HOOK, "vecchio").unwrap();
+        amb.metti(VARIABILE, "vecchio");
+        p.scollega(&cx, &amb).unwrap();
+        assert_eq!(p.segreti.leggi(SEGRETO_HOOK).unwrap(), None);
+        assert_eq!(amb.leggi(VARIABILE), None);
     }
 
     #[test]
@@ -601,45 +490,13 @@ mod test {
         let cx = contesto(&d, true);
         let amb = AmbienteFinto::default();
         p.prepara_collegamento(&cx).unwrap();
-        p.conferma_collegamento(&cx, &amb).unwrap();
-        assert!(amb.leggi(VARIABILE).is_some(), "la variabile (di prova) c'è");
+        p.conferma_collegamento(&cx).unwrap();
+        assert_eq!(amb.leggi(VARIABILE), None);
         assert_eq!(p.segreti.leggi(SEGRETO_HOOK).unwrap(), None, "il portachiavi no");
-        // Il codice di partenza in prova viene dalla variabile di prova.
-        assert!(p.claude_ascolto.borrow().is_some());
+        assert_eq!(p.claude_ascolto.borrow().is_some(), cfg!(windows));
         ferma_ascolto(&p);
-        p.rigenera_codice(&cx, &amb).unwrap();
-        assert_eq!(p.segreti.leggi(SEGRETO_HOOK).unwrap(), None);
         p.scollega(&cx, &amb).unwrap();
         assert_eq!(amb.leggi(VARIABILE), None);
-        ferma_ascolto(&p);
-    }
-
-    #[test]
-    fn senza_ambiente_proprio_il_codice_lo_imposta_l_utente() {
-        // Fuori da Windows (`gestisce` falso) la variabile non si scrive: conferma funziona lo stesso.
-        struct Nessuno;
-        impl AmbienteUtente for Nessuno {
-            fn imposta(&self, _: &str, _: &str) -> Result<(), String> {
-                Err("solo su Windows".into())
-            }
-            fn togli(&self, _: &str) -> Result<(), String> {
-                Err("solo su Windows".into())
-            }
-            fn leggi(&self, _: &str) -> Option<String> {
-                None
-            }
-            fn gestisce(&self) -> bool {
-                false
-            }
-        }
-        let (_s, p, _pillola, d) = ponte_di_prova();
-        let cx = contesto(&d, false);
-        p.prepara_collegamento(&cx).unwrap();
-        p.conferma_collegamento(&cx, &Nessuno).unwrap();
-        assert!(p.segreti.leggi(SEGRETO_HOOK).unwrap().is_some(), "il codice sta nel portachiavi");
-        assert_eq!(p.codice_per_la_shell(&cx, &Nessuno).unwrap().len(), 64);
-        p.scollega(&cx, &Nessuno).unwrap();
-        assert!(p.segreti.leggi(SEGRETO_HOOK).unwrap().is_none());
         ferma_ascolto(&p);
     }
 

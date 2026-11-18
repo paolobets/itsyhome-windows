@@ -1,36 +1,21 @@
-//! Hook HTTP di Claude Code per l'assistente «isola» (M3).
+//! Claude Code per l'assistente «isola» (M3).
 //!
-//! L'ascoltatore locale blindato (spec M3 §6.2): solo 127.0.0.1, codice segreto, nessuna
-//! intestazione CORS, limiti stretti su intestazioni e corpo.
+//! Il canale protetto (spec M3 §10): isola serve un tubo con nome riservato all'utente
+//! (`tubo`), l'aiutante `isola-hook.exe` (`aiutante`, `barra`) lo usa dopo aver verificato che il
+//! server sia davvero isola (`verifica`). Per il tubo passano solo i campi già ridotti
+//! (`messaggio`).
 
-pub mod ascoltatore;
+pub mod aiutante;
 pub mod barra;
-pub mod codice;
 pub mod evento;
 pub mod installa;
-pub mod mittente;
+pub mod messaggio;
 pub mod sessioni;
+pub mod tubo;
+pub mod verifica;
 
-pub use ascoltatore::{
-    avvia, Arrivo, Ascoltatore, AttesaPermesso, ConfigAscolto, Decisione, ErroreAvvio, Gestore,
-    Percorso, ATTESA_MASSIMA,
-};
 pub use barra::{DatiBarra, Limite};
-pub use codice::CodiceHook;
-
-/// Percorso a cui Claude Code manda gli eventi degli hook.
-pub const PERCORSO_EVENTO: &str = "/isola/v1/evento";
-/// Percorso a cui il comando della barra di stato manda i suoi dati.
-pub const PERCORSO_BARRA: &str = "/isola/v1/barra";
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn percorsi_distinti_sotto_lo_stesso_prefisso() {
-        assert_ne!(PERCORSO_EVENTO, PERCORSO_BARRA);
-        assert!(PERCORSO_EVENTO.starts_with("/isola/v1/"));
-        assert!(PERCORSO_BARRA.starts_with("/isola/v1/"));
-    }
-}
+pub use tubo::{
+    avvia, nome_tubo, Arrivo, AttesaPermesso, ConfigTubo, Contenuto, Decisione, ErroreAvvio,
+    Gestore, Servitore, ATTESA_MASSIMA,
+};

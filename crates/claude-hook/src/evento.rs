@@ -5,10 +5,8 @@
 //! restano in memoria. Il solo contenuto di `tool_input` che si tiene è il riassunto di una
 //! `PermissionRequest` (comando, percorso, indirizzo o ricerca), tagliato.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
-
-use crate::ascoltatore::{sessione_valida, solo_testo};
 
 /// Lunghezza massima della cartella.
 const MASSIMO_CARTELLA: usize = 60;
@@ -19,7 +17,7 @@ const ERRORE_MASSIMO: usize = 200;
 /// Lunghezza massima del riassunto.
 const MASSIMO_RIASSUNTO: usize = 2000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TipoEvento {
     UserPromptSubmit,
     PreToolUse,
@@ -30,8 +28,10 @@ pub enum TipoEvento {
     SessionEnd,
 }
 
-/// L'evento ridotto: nessun testo di prompt, risposta o file.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// L'evento ridotto: nessun testo di prompt, risposta o file. È anche il record che l'aiutante
+/// manda per il tubo (`messaggio::RecordEvento`): chi lo riceve lo riconvalida con `convalida`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EventoHook {
     pub sessione: String,
     pub tipo: TipoEvento,
@@ -52,6 +52,59 @@ pub enum ErroreEvento {
     NonValido,
     /// Nome di evento che non gestiamo.
     Sconosciuto,
+}
+
+/// Un `session_id` si accetta se è di 1..=128 caratteri `[A-Za-z0-9_-]`.
+pub(crate) fn sessione_valida(s: Option<&str>) -> Option<&str> {
+    s.filter(|s| {
+        (1..=128).contains(&s.len())
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    })
+}
+
+/// Un testo; qualunque altro tipo JSON diventa `None` (senza costruirne l'albero).
+pub(crate) fn solo_testo<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<String>, D::Error> {
+    use serde::de::{Error, IgnoredAny, MapAccess, SeqAccess, Visitor};
+    struct V;
+    impl<'de> Visitor<'de> for V {
+        type Value = Option<String>;
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("un valore JSON")
+        }
+        fn visit_str<E: Error>(self, v: &str) -> Result<Self::Value, E> {
+            Ok(Some(v.to_owned()))
+        }
+        fn visit_string<E: Error>(self, v: String) -> Result<Self::Value, E> {
+            Ok(Some(v))
+        }
+        fn visit_unit<E: Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_bool<E: Error>(self, _: bool) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_i64<E: Error>(self, _: i64) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_u64<E: Error>(self, _: u64) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_f64<E: Error>(self, _: f64) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_seq<A: SeqAccess<'de>>(self, mut a: A) -> Result<Self::Value, A::Error> {
+            while a.next_element::<IgnoredAny>()?.is_some() {}
+            Ok(None)
+        }
+        fn visit_map<A: MapAccess<'de>>(self, mut a: A) -> Result<Self::Value, A::Error> {
+            while a.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+            Ok(None)
+        }
+    }
+    d.deserialize_any(V)
 }
 
 #[derive(Deserialize)]
@@ -111,13 +164,40 @@ fn riassunto(strumento: &str, input: &RawValue) -> Option<String> {
     testo.map(|t| taglia(&t, MASSIMO_RIASSUNTO))
 }
 
-/// Legge il corpo di una richiesta dell'ascoltatore.
+impl EventoHook {
+    /// Le regole di `evento_da_json` applicate a un record già ridotto (quello arrivato per il
+    /// tubo): sessione valida, lunghezze massime, cartella senza separatori, riassunto solo per
+    /// `PermissionRequest`. Ciò che non le rispetta è rifiutato, non corretto.
+    pub fn convalida(self) -> Result<EventoHook, ErroreEvento> {
+        let lungo =
+            |t: &Option<String>, n: usize| t.as_ref().is_some_and(|t| t.chars().count() > n);
+        let ok = sessione_valida(Some(&self.sessione)).is_some()
+            && self.cartella.chars().count() <= MASSIMO_CARTELLA
+            && !self.cartella.contains(['/', '\\'])
+            && !lungo(&self.strumento, MASSIMO_STRUMENTO)
+            && !lungo(&self.notifica, ERRORE_MASSIMO)
+            && !lungo(&self.errore, ERRORE_MASSIMO)
+            && !lungo(&self.riassunto, MASSIMO_RIASSUNTO)
+            && (self.riassunto.is_none() || self.tipo == TipoEvento::PermissionRequest);
+        if ok {
+            Ok(self)
+        } else {
+            Err(ErroreEvento::NonValido)
+        }
+    }
+}
+
+/// Legge lo stdin di un hook di Claude Code (nell'aiutante) e lo riduce ai soli campi ammessi.
 pub fn evento_da_json(corpo: &[u8]) -> Result<EventoHook, ErroreEvento> {
     let g: Grezzo = serde_json::from_slice(corpo).map_err(|_| ErroreEvento::NonValido)?;
     let sessione = sessione_valida(g.session_id.as_deref())
         .ok_or(ErroreEvento::NonValido)?
         .to_owned();
-    let tipo = match g.hook_event_name.as_deref().ok_or(ErroreEvento::NonValido)? {
+    let tipo = match g
+        .hook_event_name
+        .as_deref()
+        .ok_or(ErroreEvento::NonValido)?
+    {
         "UserPromptSubmit" => TipoEvento::UserPromptSubmit,
         "PreToolUse" => TipoEvento::PreToolUse,
         "PermissionRequest" => TipoEvento::PermissionRequest,
@@ -136,7 +216,10 @@ pub fn evento_da_json(corpo: &[u8]) -> Result<EventoHook, ErroreEvento> {
         tipo,
         cartella: g.cwd.as_deref().map(cartella_di).unwrap_or_default(),
         strumento: g.tool_name.as_deref().map(|s| taglia(s, MASSIMO_STRUMENTO)),
-        notifica: g.notification_type.as_deref().map(|s| taglia(s, ERRORE_MASSIMO)),
+        notifica: g
+            .notification_type
+            .as_deref()
+            .map(|s| taglia(s, ERRORE_MASSIMO)),
         errore: g.error.as_deref().map(|s| taglia(s, ERRORE_MASSIMO)),
         riassunto,
     })
@@ -163,7 +246,12 @@ mod test {
         for ammesso in ["cargo test", "s1"] {
             assert!(d.contains(ammesso));
         }
-        for vietato in ["TESTO-PROMPT", "TESTO-TRASCRIZIONE", "TESTO-RISPOSTA", "TESTO-DESCRIZIONE"] {
+        for vietato in [
+            "TESTO-PROMPT",
+            "TESTO-TRASCRIZIONE",
+            "TESTO-RISPOSTA",
+            "TESTO-DESCRIZIONE",
+        ] {
             assert!(!d.contains(vietato), "{vietato} è rimasto nell'evento");
         }
     }
@@ -203,14 +291,26 @@ mod test {
             .unwrap()
             .riassunto
         };
-        assert_eq!(r("Bash", r#"{"command":"cargo test"}"#).as_deref(), Some("cargo test"));
-        assert_eq!(r("PowerShell", r#"{"command":"Get-Date"}"#).as_deref(), Some("Get-Date"));
+        assert_eq!(
+            r("Bash", r#"{"command":"cargo test"}"#).as_deref(),
+            Some("cargo test")
+        );
+        assert_eq!(
+            r("PowerShell", r#"{"command":"Get-Date"}"#).as_deref(),
+            Some("Get-Date")
+        );
         assert_eq!(
             r("Write", r#"{"file_path":"src/a.rs","content":"corpo"}"#).as_deref(),
             Some("src/a.rs")
         );
-        assert_eq!(r("WebFetch", r#"{"url":"https://x.it"}"#).as_deref(), Some("https://x.it"));
-        assert_eq!(r("WebSearch", r#"{"query":"rust"}"#).as_deref(), Some("rust"));
+        assert_eq!(
+            r("WebFetch", r#"{"url":"https://x.it"}"#).as_deref(),
+            Some("https://x.it")
+        );
+        assert_eq!(
+            r("WebSearch", r#"{"query":"rust"}"#).as_deref(),
+            Some("rust")
+        );
         assert_eq!(r("Strano", r#"{"command":"x"}"#), None);
         assert_eq!(r("Bash", r#"{"altro":"x"}"#), None);
         let lungo = format!(r#"{{"command":"{}"}}"#, "a".repeat(3000));
@@ -233,9 +333,16 @@ mod test {
             let j = format!(r#"{{"session_id":"{id}","hook_event_name":"Stop"}}"#);
             assert_eq!(leggi(&j), Err(ErroreEvento::NonValido), "{id:?}");
         }
-        assert_eq!(leggi(r#"{"hook_event_name":"Stop"}"#), Err(ErroreEvento::NonValido));
+        assert_eq!(
+            leggi(r#"{"hook_event_name":"Stop"}"#),
+            Err(ErroreEvento::NonValido)
+        );
         assert_eq!(leggi("non json"), Err(ErroreEvento::NonValido));
-        assert!(leggi(&format!(r#"{{"session_id":"{}","hook_event_name":"Stop"}}"#, "a".repeat(128))).is_ok());
+        assert!(leggi(&format!(
+            r#"{{"session_id":"{}","hook_event_name":"Stop"}}"#,
+            "a".repeat(128)
+        ))
+        .is_ok());
     }
 
     #[test]
@@ -262,7 +369,8 @@ mod test {
         let n = leggi(r#"{"session_id":"s","hook_event_name":"Notification","notification_type":"idle_prompt"}"#)
             .unwrap();
         assert_eq!(n.notifica.as_deref(), Some("idle_prompt"));
-        let f = leggi(r#"{"session_id":"s","hook_event_name":"StopFailure","error":"rate_limit"}"#).unwrap();
+        let f = leggi(r#"{"session_id":"s","hook_event_name":"StopFailure","error":"rate_limit"}"#)
+            .unwrap();
         assert_eq!(f.errore.as_deref(), Some("rate_limit"));
     }
 }

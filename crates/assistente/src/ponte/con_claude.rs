@@ -1,5 +1,5 @@
-//! Claude Code nel ponte (M3, Task 4): l'ascoltatore degli hook, le voci delle sessioni, il
-//! colore degli occhi e la pillola media «attività dal vivo».
+//! Claude Code nel ponte (M3, Task 4 e 7A): il tubo protetto con l'aiutante `isola-hook`, le voci
+//! delle sessioni, il colore degli occhi e la pillola media «attività dal vivo».
 //!
 //! Nessun timer a riposo: una sveglia singola alla prossima scadenza di una sessione, e il timer
 //! da un secondo del testo di attività solo mentre serve (vedi `attivita_serve`).
@@ -14,25 +14,27 @@ use crate::pillola;
 use crate::umore::Umore;
 use crate::LivelloUi;
 use casa_core::diagnosi::{Contatore, Diagnosi};
-use crate::sistema::ambiente_utente::AmbienteUtente;
-use casa_core::segreti::Segreti;
-use claude_hook::evento::{evento_da_json, EventoHook, TipoEvento};
+use claude_hook::evento::{EventoHook, TipoEvento};
 use claude_hook::sessioni::Cambio;
+use claude_hook::tubo::NOME_AIUTANTE;
 use claude_hook::{DatiBarra, Limite};
 use claude_hook::{
-    avvia, Arrivo, AttesaPermesso, CodiceHook, ConfigAscolto, Decisione, ErroreAvvio, Gestore, ATTESA_MASSIMA,
+    avvia, nome_tubo, Arrivo, AttesaPermesso, ConfigTubo, Contenuto, Decisione, ErroreAvvio, Gestore, ATTESA_MASSIMA,
 };
 use std::cell::Cell;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// Dove sta il codice segreto nel portachiavi.
+/// Dove stava il codice segreto degli hook HTTP (Task 7) nel portachiavi: «Scollega» lo toglie
+/// ancora, se è rimasto (usato dal Task 7B).
 pub const SEGRETO_HOOK: &str = "isola:claude-hook";
-/// In prova (`ITSYHOME_ASSISTENTE_DIR`) il codice viene da questa variabile del processo: mai il
-/// portachiavi vero.
-pub const VARIABILE_PROVA: &str = crate::sistema::ambiente_utente::VARIABILE;
+/// In prova (e solo con `ITSYHOME_ASSISTENTE_DIR`) il cliente ammesso dal tubo è questo percorso
+/// invece di `isola-hook.exe` accanto all'assistente: serve alle prove con `sessioni_finte`.
+pub const VARIABILE_AIUTANTE: &str = "ITSYHOME_AIUTANTE_ATTESO";
 
 /// Quanti permessi possono aspettare insieme (quante connessioni accetta l'ascoltatore). Uno in
 /// più non ha voce né canale: Claude Code ripiega sul terminale.
@@ -70,74 +72,85 @@ pub(super) struct Pendente {
     sequenza: u64,
 }
 
-/// Il codice dell'ascoltatore: in prova il valore di `ISOLA_HOOK_TOKEN` (passato, i test non leggono
-/// l'ambiente), altrimenti il portachiavi. `None` se manca o non è un codice valido. Non lo scrive mai.
-fn codice_da(segreti: &dyn Segreti, in_prova: bool, variabile: Option<String>) -> Option<CodiceHook> {
-    let testo = if in_prova { variabile } else { segreti.leggi(SEGRETO_HOOK).ok().flatten() };
-    testo.as_deref().and_then(CodiceHook::da_testo)
+/// L'unico cliente che il tubo accetta: `isola-hook.exe` nella cartella di `exe`; in prova, se
+/// data, la variabile `ITSYHOME_AIUTANTE_ATTESO` (passata: i test non leggono l'ambiente).
+fn cliente_atteso(exe: &Path, in_prova: bool, variabile: Option<OsString>) -> PathBuf {
+    match variabile.filter(|v| in_prova && !v.is_empty()) {
+        Some(v) => PathBuf::from(v),
+        None => exe.with_file_name(NOME_AIUTANTE),
+    }
 }
 
-/// Chiamata da `main` dopo `ponte::collega`: se Claude Code è collegato, c'è una porta e c'è il
-/// codice, si mette in ascolto.
-pub fn avvia_se_collegato(p: &Ponte) {
+/// La configurazione vera del tubo: il nome dell'utente e l'aiutante accanto a questo programma.
+/// `None` se il nome non si può calcolare (SID dell'utente illeggibile).
+pub fn config_tubo() -> Option<ConfigTubo> {
     let in_prova = std::env::var_os(crate::avvio::VAR_CARTELLA).is_some_and(|v| !v.is_empty());
-    // In prova il codice parte dalla variabile del processo, se c'è, altrimenti da quella di prova
-    // nel registro (`HKCU\Software\ItsyHomeProva`): mai dal portachiavi vero.
-    let variabile = std::env::var(VARIABILE_PROVA).ok().or_else(|| {
-        in_prova.then(|| crate::sistema::ambiente_utente::ambiente(true).leggi(VARIABILE_PROVA)).flatten()
-    });
-    avvia_se_collegato_con(p, in_prova, variabile);
+    let exe = std::env::current_exe().ok()?;
+    Some(ConfigTubo {
+        nome: nome_tubo().ok()?,
+        cliente_atteso: cliente_atteso(&exe, in_prova, std::env::var_os(VARIABILE_AIUTANTE)),
+        attesa_massima: ATTESA_MASSIMA,
+    })
 }
 
-/// `avvia_se_collegato` con «in prova» e il valore di `ISOLA_HOOK_TOKEN` passati.
-fn avvia_se_collegato_con(p: &Ponte, in_prova: bool, variabile: Option<String>) {
-    let (collegato, porta) = p.casa.con_config(|c| (c.claude.collegato, c.claude.porta));
-    if !collegato || porta.is_none() {
+/// Chiamata da `main` dopo `ponte::collega`: se Claude Code è collegato, si apre il tubo.
+pub fn avvia_se_collegato(p: &Ponte) {
+    avvia_se_collegato_con(p, config_tubo());
+}
+
+/// `avvia_se_collegato` con la configurazione passata (i test usano un nome di tubo unico).
+fn avvia_se_collegato_con(p: &Ponte, config: Option<ConfigTubo>) {
+    if !p.casa.con_config(|c| c.claude.collegato) {
         return;
     }
-    match codice_da(p.segreti.as_ref(), in_prova, variabile) {
-        Some(codice) => avvia_con(p, codice),
-        None => eprintln!("Claude Code: codice di collegamento non trovato, ascolto non avviato"),
+    match config {
+        Some(c) => avvia_con(p, c),
+        None if cfg!(windows) => voce_non_disponibile(p, ErroreAvvio::Altro("nome del tubo".into())),
+        None => {}
     }
 }
 
-/// Mette in ascolto sulla porta della configurazione con questo codice (le Impostazioni, al
-/// collegamento, lo chiamano col codice appena creato). Un ascolto già attivo si ferma prima.
-pub fn avvia_con(p: &Ponte, codice: CodiceHook) {
-    let Some(porta) = p.casa.con_config(|c| c.claude.porta) else { return };
+/// Apre il tubo con questa configurazione (le Impostazioni, al collegamento, lo chiamano). Un tubo
+/// già aperto si chiude prima. Fuori da Windows non c'è tubo: non fa nulla.
+pub fn avvia_con(p: &Ponte, config: ConfigTubo) {
+    if !cfg!(windows) {
+        return;
+    }
     let vecchio = p.claude_ascolto.borrow_mut().take();
-    drop(vecchio); // libera la porta prima di riprenderla
-    // I permessi del vecchio ascolto non hanno più chi li aspetta: si chiudono (Nessuna) e le voci
+    drop(vecchio); // chiude tutte le istanze prima di riprendere il nome
+    // I permessi del vecchio tubo non hanno più chi li aspetta: si chiudono (Nessuna) e le voci
     // spariscono, così nessun clic può più indicarli.
     p.claude_chiudi_tutti();
-    let config = ConfigAscolto { porta, codice, attesa_massima: ATTESA_MASSIMA };
     match avvia(config, Arc::new(GestoreIsola::new(p.casa.diagnosi_condivisa()))) {
-        Ok(ascolto) => {
-            *p.claude_ascolto.borrow_mut() = Some(ascolto);
+        Ok(servitore) => {
+            *p.claude_ascolto.borrow_mut() = Some(servitore);
             p.togli_voce(ID_COLLEGAMENTO);
         }
-        Err(e) => {
-            let dettaglio = match e {
-                ErroreAvvio::PortaOccupata => format!("La porta {porta} è usata da un altro programma."),
-                ErroreAvvio::Altro(_) => "Non è stato possibile mettersi in ascolto.".to_owned(),
-            };
-            p.metti_voce(
-                Voce {
-                    id: ID_COLLEGAMENTO.into(),
-                    livello: Livello::Attenzione,
-                    fonte: Fonte::Claude,
-                    titolo: "Collegamento con Claude Code non disponibile".into(),
-                    dettaglio,
-                    pulsanti: vec![Pulsante::new(PULSANTE_IMPOSTAZIONI, "Impostazioni")],
-                    creata: Instant::now(),
-                },
-                true,
-            );
-        }
+        Err(e) => voce_non_disponibile(p, e),
     }
 }
 
-/// A fine programma, prima di `ponte::spegni`: l'ascolto si ferma (il thread si raccoglie) e le
+/// La voce *attenzione* «Collegamento con Claude Code non disponibile».
+fn voce_non_disponibile(p: &Ponte, e: ErroreAvvio) {
+    let dettaglio = match e {
+        ErroreAvvio::CanaleOccupato => "Il canale è occupato da un altro programma.",
+        ErroreAvvio::Altro(_) => "Non è stato possibile aprire il canale.",
+    };
+    p.metti_voce(
+        Voce {
+            id: ID_COLLEGAMENTO.into(),
+            livello: Livello::Attenzione,
+            fonte: Fonte::Claude,
+            titolo: "Collegamento con Claude Code non disponibile".into(),
+            dettaglio: dettaglio.into(),
+            pulsanti: vec![Pulsante::new(PULSANTE_IMPOSTAZIONI, "Impostazioni")],
+            creata: Instant::now(),
+        },
+        true,
+    );
+}
+
+/// A fine programma, prima di `ponte::spegni`: il tubo si chiude (i thread si raccolgono) e le
 /// sveglie si fermano.
 pub fn spegni() {
     if let Some(p) = ponte() {
@@ -168,8 +181,8 @@ pub fn azione(p: &Ponte, voce: &str, pulsante: &str) {
     }
 }
 
-/// Chi riceve ciò che l'ascoltatore ha accettato. Gira sui thread delle connessioni: legge il
-/// corpo e passa al thread dell'interfaccia solo l'evento ridotto (mai il corpo).
+/// Chi riceve ciò che il tubo ha accettato (già riconvalidato). Gira sui thread delle connessioni e
+/// passa al thread dell'interfaccia solo l'evento ridotto.
 struct GestoreIsola {
     /// Il registro condiviso (contatori atomici): i rifiuti si contano sul thread della connessione.
     diagnosi: Arc<Diagnosi>,
@@ -208,16 +221,16 @@ fn consegna_permesso(
 
 impl Gestore for GestoreIsola {
     fn evento(&self, a: Arrivo) {
-        if let Ok(e) = evento_da_json(&a.corpo) {
+        if let Contenuto::Evento(e) = a.contenuto {
             consegna(e, a.pid_mittente, a.sequenza);
         }
     }
 
     /// Un permesso: l'interfaccia ne fa una voce bloccante e questo thread aspetta la decisione
-    /// sul canale. Un corpo non valido, o che non è una richiesta di permesso, non apre nessuna
-    /// attesa (Claude Code prosegue col suo flusso); col ramo B la voce c'è ma la risposta no.
+    /// sul canale. Ciò che non è una richiesta di permesso non apre nessuna attesa (Claude Code
+    /// prosegue col suo flusso); col ramo B la voce c'è ma la risposta no.
     fn permesso(&self, a: Arrivo) -> Option<AttesaPermesso> {
-        let e = evento_da_json(&a.corpo).ok()?;
+        let Contenuto::Evento(e) = a.contenuto else { return None };
         let pid = a.pid_mittente;
         let sequenza = a.sequenza;
         if e.tipo != TipoEvento::PermissionRequest {
@@ -235,7 +248,7 @@ impl Gestore for GestoreIsola {
         Some(AttesaPermesso { id, decisione: rx })
     }
 
-    /// Nessuna risposta è arrivata (tempo scaduto, mittente sparito, ascolto fermo): la voce non
+    /// Nessuna risposta è arrivata (tempo scaduto, aiutante sparito, tubo chiuso): la voce non
     /// serve più.
     fn abbandonato(&self, id: u64) {
         let _ = slint::invoke_from_event_loop(move || {
@@ -245,28 +258,22 @@ impl Gestore for GestoreIsola {
         });
     }
 
-    /// Anche con nessun evento valido (un codice sbagliato dà solo 401) i rifiuti arrivano al
-    /// registro diagnostico, senza dati della richiesta.
+    /// Anche con nessun evento valido (un cliente che non è l'aiutante, un messaggio storto) i
+    /// rifiuti arrivano al registro diagnostico, senza dati della richiesta.
     fn rifiutata(&self) {
         self.diagnosi.conta(Contatore::claude_rifiutate);
     }
 
-    /// La barra di stato: sul thread della connessione si riconvalida il corpo inoltrato (stesse
-    /// regole del comando; ciò che non vale si scarta) e al thread dell'interfaccia va solo
+    /// La barra di stato (già riconvalidata dal tubo): al thread dell'interfaccia va solo
     /// `DatiBarra`.
     fn barra(&self, a: Arrivo) {
-        let Some(d) = barra_valida(&a.corpo) else { return };
+        let Contenuto::Barra(d) = a.contenuto else { return };
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(p) = ponte() {
                 p.claude_barra(d);
             }
         });
     }
-}
-
-/// Il corpo inoltrato dal comando della barra, riconvalidato; ciò che non vale si scarta.
-fn barra_valida(corpo: &[u8]) -> Option<DatiBarra> {
-    DatiBarra::da_corpo_inoltrato(corpo).ok()
 }
 
 /// Voci di contesto tenute al più (una per sessione, come le sessioni).
@@ -737,86 +744,99 @@ mod test {
         assert!(p.claude_sessioni.borrow().elenco()[0].vista);
     }
 
+    /// Una configurazione con un nome di tubo unico (mai quello vero) che accetta questo processo.
+    pub(crate) fn config_di_prova() -> ConfigTubo {
+        use std::sync::atomic::AtomicU64;
+        static N: AtomicU64 = AtomicU64::new(0);
+        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+        ConfigTubo {
+            nome: format!(r"\\.\pipe\isola-prova-assistente-{}-{}-{t}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)),
+            cliente_atteso: std::env::current_exe().unwrap(),
+            attesa_massima: ATTESA_MASSIMA,
+        }
+    }
+
     #[test]
-    fn scollegato_niente_ascoltatore() {
+    fn il_cliente_atteso_e_l_aiutante_accanto() {
+        let exe = Path::new("/app/assistente.exe");
+        let accanto = Path::new("/app/isola-hook.exe");
+        assert_eq!(cliente_atteso(exe, false, None), accanto);
+        // La variabile vale solo in prova.
+        let v = Some(OsString::from("/prova/sessioni_finte.exe"));
+        assert_eq!(cliente_atteso(exe, false, v.clone()), accanto);
+        assert_eq!(cliente_atteso(exe, true, v), Path::new("/prova/sessioni_finte.exe"));
+        assert_eq!(cliente_atteso(exe, true, Some(OsString::new())), accanto);
+        if cfg!(windows) {
+            let c = config_tubo().expect("configurazione vera");
+            assert!(c.nome.starts_with(r"\\.\pipe\isola-claude-S-1-"), "{}", c.nome);
+            assert_eq!(c.attesa_massima, ATTESA_MASSIMA);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn scollegato_niente_tubo() {
         let (_s, p, _pillola, _d) = ponte_di_prova();
         assert!(!p.casa.con_config(|c| c.claude.collegato));
-        avvia_se_collegato_con(&p, false, None);
-        assert!(p.claude_ascolto.borrow().is_none());
-        // Collegato ma senza codice nel portachiavi: nessun ascolto (e nessuna voce).
-        p.casa.aggiorna_config(|c| {
-            c.claude.collegato = true;
-            c.claude.porta = Some(1);
-        });
-        avvia_se_collegato_con(&p, false, None);
-        assert!(p.claude_ascolto.borrow().is_none());
-        // In prova, senza la variabile (o con una che non è un codice): nessun ascolto.
-        avvia_se_collegato_con(&p, true, None);
-        avvia_se_collegato_con(&p, true, Some("non un codice".into()));
+        avvia_se_collegato_con(&p, Some(config_di_prova()));
         assert!(p.claude_ascolto.borrow().is_none());
         assert!(voci_claude(&p).is_empty());
-        // In prova con un codice valido: ascolta (la porta è libera).
-        let porta = porta_libera();
-        p.casa.aggiorna_config(|c| c.claude.porta = Some(porta));
-        avvia_se_collegato_con(&p, true, Some(CodiceHook::nuovo().unwrap().come_testo()));
-        assert_eq!(p.claude_ascolto.borrow().as_ref().map(|a| a.porta()), Some(porta));
-    }
-
-    fn porta_libera() -> u16 {
-        let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        l.local_addr().unwrap().port()
-    }
-
-    #[test]
-    fn avvia_con_il_codice_e_si_ferma() {
-        let (_s, p, _pillola, _d) = ponte_di_prova();
-        let porta = porta_libera();
+        // Collegato: il tubo si apre, senza codice né porta.
         p.casa.aggiorna_config(|c| {
             c.claude.collegato = true;
-            c.claude.porta = Some(porta);
+            c.claude.porta = None;
         });
-        avvia_con(&p, CodiceHook::nuovo().unwrap());
-        assert_eq!(p.claude_ascolto.borrow().as_ref().map(|a| a.porta()), Some(porta));
+        avvia_se_collegato_con(&p, Some(config_di_prova()));
+        assert!(p.claude_ascolto.borrow().is_some());
         assert!(!p.attese.borrow().contiene(ID_COLLEGAMENTO));
-        // Di nuovo, con un altro codice: il vecchio ascolto lascia la porta e riparte.
-        avvia_con(&p, CodiceHook::nuovo().unwrap());
-        assert_eq!(p.claude_ascolto.borrow().as_ref().map(|a| a.porta()), Some(porta));
+        spegni();
+        // Senza configurazione (SID illeggibile): voce, nessun tubo.
+        avvia_se_collegato_con(&p, None);
+        assert!(p.claude_ascolto.borrow().is_none());
+        let a = p.attese.borrow();
+        assert_eq!(a.voce(ID_COLLEGAMENTO).unwrap().dettaglio, "Non è stato possibile aprire il canale.");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn avvia_e_si_ferma() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let c = config_di_prova();
+        avvia_con(&p, c.clone());
+        assert!(p.claude_ascolto.borrow().is_some());
+        assert!(!p.attese.borrow().contiene(ID_COLLEGAMENTO));
+        // Di nuovo con lo stesso nome: il vecchio tubo lascia il nome e il nuovo lo riprende.
+        avvia_con(&p, c);
+        assert!(p.claude_ascolto.borrow().is_some(), "riaperto");
+        assert!(!p.attese.borrow().contiene(ID_COLLEGAMENTO));
         spegni();
         assert!(p.claude_ascolto.borrow().is_none());
     }
 
+    #[cfg(windows)]
     #[test]
-    fn porta_occupata_da_avviso() {
+    fn canale_occupato_da_avviso() {
         let (_s, p, _pillola, _d) = ponte_di_prova();
-        let occupante = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let porta = occupante.local_addr().unwrap().port();
-        p.casa.aggiorna_config(|c| {
-            c.claude.collegato = true;
-            c.claude.porta = Some(porta);
-        });
-        avvia_con(&p, CodiceHook::nuovo().unwrap());
+        let c = config_di_prova();
+        // Un altro «programma» (un altro servitore) ha già il nome.
+        struct Nessuno;
+        impl Gestore for Nessuno {
+            fn evento(&self, _: Arrivo) {}
+            fn permesso(&self, _: Arrivo) -> Option<AttesaPermesso> {
+                None
+            }
+            fn abbandonato(&self, _: u64) {}
+            fn barra(&self, _: Arrivo) {}
+        }
+        let _occupante = avvia(c.clone(), Arc::new(Nessuno)).unwrap();
+        avvia_con(&p, c);
         assert!(p.claude_ascolto.borrow().is_none());
         let a = p.attese.borrow();
         let v = a.voce(ID_COLLEGAMENTO).expect("voce del collegamento");
         assert_eq!(v.livello, Livello::Attenzione);
         assert_eq!(v.titolo, "Collegamento con Claude Code non disponibile");
-        assert_eq!(v.dettaglio, format!("La porta {porta} è usata da un altro programma."));
+        assert_eq!(v.dettaglio, "Il canale è occupato da un altro programma.");
         assert_eq!(v.pulsanti, vec![Pulsante::new(PULSANTE_IMPOSTAZIONI, "Impostazioni")]);
-        drop(occupante);
-    }
-
-    #[test]
-    fn il_codice_dal_portachiavi() {
-        use casa_core::segreti::MemoriaSegreti;
-        let m = MemoriaSegreti::new();
-        assert!(codice_da(&m, false, None).is_none());
-        let codice = CodiceHook::nuovo().unwrap();
-        m.salva(SEGRETO_HOOK, &codice.come_testo()).unwrap();
-        let letto = codice_da(&m, false, None).expect("codice nel portachiavi");
-        assert_eq!(letto.come_testo(), codice.come_testo());
-        // Un valore che non è un codice non vale.
-        m.salva(SEGRETO_HOOK, "troppo corto").unwrap();
-        assert!(codice_da(&m, false, None).is_none());
     }
 
     #[test]
@@ -1161,17 +1181,14 @@ mod test {
         assert_eq!(rx2.try_recv(), Err(TryRecvError::Empty));
     }
 
+    #[cfg(windows)]
     #[test]
-    fn riavviando_l_ascolto_i_permessi_vecchi_si_chiudono() {
+    fn riavviando_il_tubo_i_permessi_vecchi_si_chiudono() {
         let (_s, p, _pillola, _d) = ponte_di_prova();
-        let porta = porta_libera();
-        p.casa.aggiorna_config(|c| {
-            c.claude.collegato = true;
-            c.claude.porta = Some(porta);
-        });
+        p.casa.aggiorna_config(|c| c.claude.collegato = true);
         let rx = permesso(&p, 1, "a");
         assert!(ha_voce(&p, &voce_di(1)));
-        avvia_con(&p, CodiceHook::nuovo().unwrap());
+        avvia_con(&p, config_di_prova());
         assert_eq!(rx.try_recv(), Ok(Decisione::Nessuna), "il vecchio permesso è chiuso");
         assert!(!ha_voce(&p, &voce_di(1)) && p.claude_permessi.borrow().is_empty());
         // Un id già in elenco non si sovrascrive: il nuovo arrivo ripiega sul terminale.
@@ -1325,15 +1342,5 @@ mod test {
             p.claude_barra(barra(&format!("x{i}"), None, None));
         }
         assert!(p.claude_contesto.borrow().len() <= 16);
-    }
-
-    #[test]
-    fn la_riconvalida_del_gestore_scarta_il_non_valido() {
-        // `GestoreIsola::barra` consegna solo ciò che `barra_valida` accetta (il resto del
-        // gestore passa dal ciclo eventi di Slint, che qui non c'è).
-        assert!(barra_valida(br#"{"sessione":"a b"}"#).is_none());
-        assert!(barra_valida(b"non json").is_none());
-        let buono = br#"{"sessione":"a","modello":"Opus 5.5","contesto":40.0,"cinque_ore":null,"sette_giorni":null}"#;
-        assert_eq!(barra_valida(buono), Some(barra("a", None, None)));
     }
 }

@@ -3,28 +3,32 @@ name = "claude-hook"
 version = "0.1.0"
 edition = "2021"
 
-# Ascoltatore locale degli hook HTTP di Claude Code (M3) e l'esempio `prova_permesso` (spike del
-# permesso, spec M3 §6.3).
+# Il canale protetto con Claude Code (M3, spec §10): il server del tubo con nome usato
+# dall'assistente e l'aiutante `isola-hook.exe` che Claude Code lancia come hook `command`.
+# Niente Slint, niente `casa-core`: l'aiutante deve restare piccolo e partire in pochi ms.
 [dependencies]
-# Analisi delle richieste HTTP, senza allocazioni e senza panico.
-httparse = "1"
-# Codice casuale dell'ascoltatore.
-getrandom = "0.3"
 serde = { version = "1", features = ["derive"] }
 # `preserve_order`: l'installazione in settings.json conserva l'ordine delle chiavi dell'utente.
 serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
-# Ora locale della barra di stato e delle righe dell'esempio.
+# Ora locale della barra di stato.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 [target.'cfg(windows)'.dependencies]
-# Stessa versione del resto del workspace: PID del mittente (tabella TCP) e catena dei genitori
-# (istantanea dei processi).
+# Stessa versione del resto del workspace: tubo con nome, descrittore di sicurezza, identità dei
+# processi ai due capi del tubo, I/O sovrapposto con scadenza.
 windows-sys = { version = "0.52", features = [
     "Win32_Foundation",
-    "Win32_NetworkManagement_IpHelper",
-    "Win32_Networking_WinSock",
-    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
 ] }
+
+[[bin]]
+name = "isola-hook"
+path = "src/bin/isola-hook.rs"
 
 [dev-dependencies]
 tempfile = "3"

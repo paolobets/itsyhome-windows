@@ -1,4 +1,6 @@
-//! La variabile d'ambiente dell'utente che porta il codice degli hook di Claude Code (M3, Task 7).
+//! La variabile d'ambiente dell'utente che portava il codice degli hook HTTP di Claude Code (M3,
+//! Task 7). Dal Task 7A non si scrive più: «Scollega» la toglie se è rimasta (il Task 7B decide se
+//! il modulo serve ancora).
 //!
 //! Su Windows è `HKCU\Environment` (solo il ramo dell'utente, mai `HKLM`); dopo ogni cambio si
 //! avvisa il sistema (`WM_SETTINGCHANGE`) perché i programmi nuovi la vedano. I terminali già
@@ -12,7 +14,6 @@ pub const VARIABILE: &str = claude_hook::installa::VARIABILE_CODICE;
 /// Dove vive la variabile dell'utente. Un'interfaccia piccola, perché i test usano `AmbienteFinto`
 /// e non toccano mai il registro.
 pub trait AmbienteUtente {
-    fn imposta(&self, nome: &str, valore: &str) -> Result<(), String>;
     /// Toglie la variabile; una variabile assente non è un errore.
     fn togli(&self, nome: &str) -> Result<(), String>;
     fn leggi(&self, nome: &str) -> Option<String>;
@@ -29,9 +30,6 @@ pub struct AmbienteNessuno;
 
 #[cfg(not(windows))]
 impl AmbienteUtente for AmbienteNessuno {
-    fn imposta(&self, _nome: &str, _valore: &str) -> Result<(), String> {
-        Err("solo su Windows".into())
-    }
     fn togli(&self, _nome: &str) -> Result<(), String> {
         Err("solo su Windows".into())
     }
@@ -102,15 +100,6 @@ impl RegistroUtente {
 
 #[cfg(windows)]
 impl AmbienteUtente for RegistroUtente {
-    fn imposta(&self, nome: &str, valore: &str) -> Result<(), String> {
-        windows_registry::CURRENT_USER
-            .create(self.chiave())
-            .and_then(|k| k.set_string(nome, valore))
-            .map_err(|e| format!("registro: {e}"))?;
-        self.avvisa();
-        Ok(())
-    }
-
     fn togli(&self, nome: &str) -> Result<(), String> {
         if self.leggi(nome).is_none() {
             return Ok(());
@@ -164,20 +153,20 @@ pub struct AmbienteFinto {
     valori: std::cell::RefCell<std::collections::HashMap<String, String>>,
     /// Quando è vero ogni scrittura fallisce (per provare il percorso d'errore).
     pub rifiuta: std::cell::Cell<bool>,
-    /// Quante scritture (imposta o togli) sono state chieste.
+    /// Quante scritture (togli) sono state chieste.
     pub scritture: std::cell::Cell<usize>,
 }
 
 #[cfg(test)]
-impl AmbienteUtente for AmbienteFinto {
-    fn imposta(&self, nome: &str, valore: &str) -> Result<(), String> {
-        self.scritture.set(self.scritture.get() + 1);
-        if self.rifiuta.get() {
-            return Err("rifiutato".into());
-        }
+impl AmbienteFinto {
+    /// Una variabile già presente (come se l'avesse lasciata il Task 7).
+    pub fn metti(&self, nome: &str, valore: &str) {
         self.valori.borrow_mut().insert(nome.into(), valore.into());
-        Ok(())
     }
+}
+
+#[cfg(test)]
+impl AmbienteUtente for AmbienteFinto {
     fn togli(&self, nome: &str) -> Result<(), String> {
         self.scritture.set(self.scritture.get() + 1);
         if self.rifiuta.get() {
@@ -204,7 +193,7 @@ mod test {
     fn ambiente_finto_imposta_legge_e_toglie() {
         let a = AmbienteFinto::default();
         assert_eq!(a.leggi(VARIABILE), None);
-        a.imposta(VARIABILE, "uno").unwrap();
+        a.metti(VARIABILE, "uno");
         assert_eq!(a.leggi(VARIABILE).as_deref(), Some("uno"));
         a.togli(VARIABILE).unwrap();
         a.togli(VARIABILE).unwrap(); // già assente: non è un errore
@@ -216,7 +205,7 @@ mod test {
     fn fuori_da_windows_nessuna_variabile() {
         let a = AmbienteNessuno;
         assert!(!a.gestisce());
-        assert!(a.imposta(VARIABILE, "x").is_err());
+        assert!(a.togli(VARIABILE).is_err());
         assert_eq!(a.leggi(VARIABILE), None);
     }
 

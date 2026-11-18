@@ -841,11 +841,11 @@ pub struct Ponte {
     /// La pillola si vede (`Visibilita::Pillola`, la dicono i servizi di sistema): i lati
     /// campionano solo allora.
     pillola_mostrata: Cell<bool>,
-    /// Claude Code (M3, Task 4): le sessioni, l'ascolto degli hook (solo se collegato), la
+    /// Claude Code (M3, Task 4 e 7A): le sessioni, il tubo protetto (solo se collegato), la
     /// sveglia singola alla prossima scadenza di una sessione, il timer da un secondo del testo di
     /// attività (acceso solo mentre serve: `attivita_serve`).
     claude_sessioni: RefCell<Sessioni>,
-    claude_ascolto: RefCell<Option<claude_hook::Ascoltatore>>,
+    claude_ascolto: RefCell<Option<claude_hook::Servitore>>,
     /// Limiti dell'abbonamento (5 ore, 7 giorni) dall'ultima barra che li portava (M3, Task 6) e
     /// contesto per sessione; mai scaduti per chi li legge (`limiti`).
     claude_limiti: RefCell<Option<(Option<claude_hook::Limite>, Option<claude_hook::Limite>)>>,
