@@ -16,7 +16,7 @@ use crate::claude::{
 };
 use crate::pillola;
 use crate::umore::Umore;
-use crate::{LimiteClaudeUi, LivelloUi, RigaSessioneUi};
+use crate::{FinestraImpostazioni, LimiteClaudeUi, LivelloUi, RigaSessioneUi};
 use casa_core::diagnosi::{Contatore, Diagnosi};
 use claude_hook::evento::{EventoHook, TipoEvento};
 use claude_hook::sessioni::Cambio;
@@ -184,6 +184,9 @@ pub fn azione(p: &Ponte, voce: &str, pulsante: &str) {
         crate::finestra_impostazioni::apri_alla_sezione(crate::finestra_impostazioni::SEZIONE_CLAUDE, || {
             p.chiedi_impostazioni()
         });
+    } else if claude::e_voce_di_avviso(voce) {
+        // «Ho capito» (e ogni altro pulsante): l'avviso è già segnato come dato e non torna.
+        p.togli_voce(voce);
     } else if let Some(id) = claude::id_permesso_da_voce(voce) {
         let decisione = match pulsante {
             PULSANTE_CONSENTI => Decisione::Consenti,
@@ -372,8 +375,159 @@ impl Ponte {
                 }
             }
         }
-        // Limiti e contesto cambiati: la vista Claude (se aperta) li riscrive.
+        // Limiti e contesto cambiati: avvisi, quadranti e vista Claude (se aperta).
+        self.claude_limiti_cambiati();
+    }
+
+    /// I limiti dell'abbonamento sono cambiati (una barra, la soglia, la sveglia dell'azzeramento).
+    pub(super) fn claude_limiti_cambiati(&self) {
+        let ora = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        self.claude_limiti_a(ora);
+    }
+
+    /// Come `claude_limiti_cambiati`, a un'ora data (i test ne passano una). Una sveglia singola
+    /// all'azzeramento del primo limite (anche a vista chiusa: toglie la voce d'avviso della
+    /// finestra che si azzera); gli avvisi a soglia, una volta per finestra; poi quadranti e vista.
+    pub(super) fn claude_limiti_a(&self, ora: i64) {
+        let (cinque, sette) = self.limiti_a(ora);
+        self.arma_sveglia_limiti([cinque, sette].into_iter().flatten().map(|l| l.azzera_alle).min(), ora);
+        let soglia = self.casa.con_config(|c| c.claude.soglia_limite);
+        for (finestra, limite) in [(claude::Finestra::CinqueOre, cinque), (claude::Finestra::SetteGiorni, sette)] {
+            let Some(l) = limite else {
+                // La finestra si è azzerata (o non c'è più il dato): l'avviso non ha più senso.
+                self.togli_voce(finestra.id_voce());
+                continue;
+            };
+            let avvisato = self.casa.con_config(|c| c.claude.limiti_avvisati.get(finestra.chiave()).copied());
+            if let Some(v) = claude::avviso_limite(finestra, &l, soglia, avvisato, ora) {
+                self.casa.aggiorna_config(|c| {
+                    c.claude.limiti_avvisati.insert(finestra.chiave().to_owned(), l.azzera_alle);
+                });
+                self.metti_voce(v, true);
+            }
+        }
+        self.claude_quadranti_cambiati();
         self.aggiorna_vista_claude();
+    }
+
+    /// Ciò che i quadranti di Claude leggono: i soli limiti validi di `limiti()` (PF9: mai un
+    /// limite scaduto né un numero inventato) e la spesa dell'ultima lettura riuscita.
+    pub(super) fn dati_claude_quadranti(&self) -> crate::lati::DatiClaude {
+        let (cinque, sette) = self.limiti();
+        let spesa = match self.api_ultimo.borrow().as_ref() {
+            Some((_, Ok(r))) if r.errore.is_none() => r.spesa_mese,
+            _ => None,
+        };
+        crate::lati::DatiClaude { cinque, sette, spesa, soglia_spesa: self.casa.con_config(|c| c.claude.soglia_spesa) }
+    }
+
+    /// Un dato di Claude è cambiato: i quadranti che lo mostrano si riscrivono (solo a modelli
+    /// vivi, cioè a pannello aperto, e solo se uno di loro è una fonte di Claude).
+    pub(super) fn claude_quadranti_cambiati(&self) {
+        use crate::lati::Lato;
+        let serve = self.casa.con_config(|c| {
+            crate::lati::quadranti(&c.quadranti).iter().any(|l| matches!(l, Lato::Limite5h | Lato::Limite7g | Lato::SpesaApi))
+        });
+        if serve && self.modelli_vivi.get() {
+            self.ricostruisci_quadranti();
+        }
+    }
+
+    /// Impostazioni › Claude › Avvisi: i campi partono dalla configurazione (il limite all'80 % di
+    /// serie, la soglia di spesa vuota = nessuna) e salvano al volo ciò che è valido.
+    pub(crate) fn collega_soglie(&self, f: &FinestraImpostazioni) {
+        let (limite, spesa) = self.casa.con_config(|c| (c.claude.soglia_limite, c.claude.soglia_spesa));
+        f.set_soglia_limite(limite.to_string().into());
+        f.set_soglia_spesa(spesa.map(crate::lati::testo_massimo).unwrap_or_default().into());
+        f.on_soglia_limite_scritta(|testo| ponte().map(|p| p.cambia_soglia_limite(&testo)).unwrap_or_default().into());
+        f.on_soglia_spesa_scritta(|testo| ponte().map(|p| p.cambia_soglia_spesa(&testo)).unwrap_or_default().into());
+    }
+
+    /// «Avvisa al … % del limite»: valida e salva; restituisce l'errore da mostrare (vuoto =
+    /// salvato). Un valore rifiutato non si salva.
+    pub(crate) fn cambia_soglia_limite(&self, testo: &str) -> String {
+        match claude::leggi_soglia_limite(testo) {
+            Err(e) => e.to_owned(),
+            Ok(v) => {
+                if self.casa.con_config(|c| c.claude.soglia_limite) != v {
+                    self.casa.aggiorna_config(|c| c.claude.soglia_limite = v);
+                    // Abbassata sotto un limite già alto: l'avviso scatta subito.
+                    self.claude_limiti_cambiati();
+                }
+                String::new()
+            }
+        }
+    }
+
+    /// «Soglia di spesa mensile ($)»: vuota = nessuna. Valida e salva; restituisce l'errore.
+    pub(crate) fn cambia_soglia_spesa(&self, testo: &str) -> String {
+        match claude::leggi_soglia_spesa(testo) {
+            Err(e) => e.to_owned(),
+            Ok(v) => {
+                if self.casa.con_config(|c| c.claude.soglia_spesa) != v {
+                    self.casa.aggiorna_config(|c| c.claude.soglia_spesa = v);
+                    // Sui dati che ci sono (se freschi) e sul fondo scala dell'arco e del campo «Massimo».
+                    self.claude_avviso_spesa(chrono::Utc::now());
+                    self.claude_quadranti_cambiati();
+                    self.con_finestra_claude(|f| self.riempi_isola(f));
+                }
+                String::new()
+            }
+        }
+    }
+
+    /// Un riepilogo nuovo (o la chiave tolta): quadranti, avviso di spesa a soglia e di spesa
+    /// insolita. Solo con dati completi e aggiornati.
+    pub(super) fn claude_riepilogo_cambiato(&self, adesso: chrono::DateTime<chrono::Utc>) {
+        self.claude_avviso_spesa(adesso);
+        self.claude_avviso_insolita(adesso);
+        self.claude_quadranti_cambiati();
+    }
+
+    /// Il riepilogo dell'ultima lettura se è riuscito, ha la spesa del mese e i suoi dati sono di
+    /// questo mese (UTC): mai un avviso da dati assenti, falliti o fermi al mese scorso.
+    fn riepilogo_fresco(&self, adesso: chrono::DateTime<chrono::Utc>) -> Option<api_claude::Riepilogo> {
+        let ultimo = self.api_ultimo.borrow();
+        let Some((_, Ok(r))) = ultimo.as_ref() else { return None };
+        let aggiornato = r.aggiornato_a?;
+        (r.errore.is_none() && aggiornato.format("%Y-%m").to_string() == adesso.format("%Y-%m").to_string()).then(|| r.clone())
+    }
+
+    /// L'avviso di spesa a soglia (80 % e 100 %), una volta per gradino e per mese UTC.
+    fn claude_avviso_spesa(&self, adesso: chrono::DateTime<chrono::Utc>) {
+        let Some(soglia) = self.casa.con_config(|c| c.claude.soglia_spesa) else { return };
+        let Some(spesa) = self.riepilogo_fresco(adesso).and_then(|r| r.spesa_mese) else { return };
+        let mese = adesso.format("%Y-%m").to_string();
+        let gia = self.casa.con_config(|c| c.claude.spesa_avvisata.get(&mese).copied());
+        if let Some((gradino, voce)) = claude::avviso_spesa(&spesa, soglia, &mese, gia) {
+            self.casa.aggiorna_config(|c| {
+                // Restano solo i gradini del mese corrente: il file non cresce.
+                c.claude.spesa_avvisata.retain(|m, _| *m == mese);
+                c.claude.spesa_avvisata.insert(mese.clone(), gradino);
+            });
+            self.metti_voce(voce, true);
+        }
+    }
+
+    /// L'avviso di spesa insolita: ieri è costato più di 3 volte la media dei 7 giorni prima
+    /// (`api_claude::spesa_insolita`, solo con dati completi), una volta al giorno.
+    fn claude_avviso_insolita(&self, adesso: chrono::DateTime<chrono::Utc>) {
+        let Some(r) = self.riepilogo_fresco(adesso) else { return };
+        let oggi = adesso.date_naive();
+        if !api_claude::spesa_insolita(&r, oggi) {
+            return;
+        }
+        let ieri = oggi - chrono::Days::new(1);
+        let Some(importo) = r.giorni.iter().find(|(d, _)| *d == ieri).map(|(_, i)| *i) else { return };
+        let giorno = ieri.format("%Y-%m-%d").to_string();
+        if self.casa.con_config(|c| c.claude.insolita_avvisata.as_deref() == Some(giorno.as_str())) {
+            return;
+        }
+        self.casa.aggiorna_config(|c| c.claude.insolita_avvisata = Some(giorno));
+        self.metti_voce(claude::voce_insolita(&importo, ieri), true);
     }
 
     /// I limiti dell'abbonamento (5 ore, 7 giorni) a un'ora data (secondi dall'epoca): un limite
@@ -783,10 +937,7 @@ impl Ponte {
             #[cfg(any(windows, test))]
             self.claude_rileggi_ripiego();
         }
-        if !si {
-            self.sveglia_limiti.stop();
-            self.limiti_armati.set(None);
-        }
+        // La sveglia dei limiti non dipende dalla vista: serve anche a togliere gli avvisi.
         self.aggiorna_claude_pillola();
     }
 
@@ -805,7 +956,7 @@ impl Ponte {
                 self.sveglia_limiti.start(slint::TimerMode::SingleShot, tra, || {
                     if let Some(p) = ponte() {
                         p.limiti_armati.set(None);
-                        p.aggiorna_vista_claude();
+                        p.claude_limiti_cambiati();
                     }
                 });
             }
@@ -857,7 +1008,6 @@ impl Ponte {
         }
         let adesso = chrono::Local::now();
         let (cinque, sette) = self.limiti();
-        self.arma_sveglia_limiti([cinque, sette].into_iter().flatten().map(|l| l.azzera_alle).min(), adesso.timestamp());
         let (cinque, sette) = (limite_ui(cinque, adesso), limite_ui(sette, adesso));
         if p.get_claude_cinque_ore() != cinque {
             p.set_claude_cinque_ore(cinque);
@@ -2121,7 +2271,7 @@ mod test {
     }
 
     #[test]
-    fn sveglia_singola_all_azzeramento_solo_a_vista_aperta() {
+    fn sveglia_singola_all_azzeramento_anche_a_vista_chiusa() {
         let (_s, p, _pillola, _d) = ponte_di_prova();
         let _pannello = con_pannello(&p);
         let ora = chrono::Local::now().timestamp();
@@ -2134,15 +2284,14 @@ mod test {
         // Cambia il primo: si riarma per il nuovo istante.
         p.claude_barra(barra("a", Some((10.0, ora + 300)), None));
         assert_eq!(p.limiti_armati.get(), Some(ora + 300));
-        // Vista chiusa: niente sveglia.
+        // Task 12: la sveglia serve anche a togliere la voce d'avviso di un limite, quindi non
+        // dipende dalla vista: chiusa, resta armata (una sola, mai ripetuta).
         p.vista_claude(false);
-        assert!(!p.sveglia_limiti.running());
-        assert_eq!(p.limiti_armati.get(), None);
-        p.claude_barra(barra("a", Some((10.0, ora + 300)), None));
-        assert!(!p.sveglia_limiti.running(), "a vista chiusa non si arma");
-        // Riaperta: si arma di nuovo; un limite che scade toglie l'anello e la sveglia.
+        assert!(p.sveglia_limiti.running());
+        assert_eq!(p.limiti_armati.get(), Some(ora + 300));
         p.vista_claude(true);
         assert!(p.sveglia_limiti.running());
+        // Un limite che scade toglie l'anello e la sveglia.
         p.claude_barra(barra("a", Some((10.0, 1000)), Some((20.0, 2000))));
         assert!(!p.sveglia_limiti.running(), "senza limiti validi la sveglia si ferma");
     }
@@ -2185,5 +2334,292 @@ mod test {
         p.vista_claude(true);
         assert_eq!(pannello.get_claude_spesa().as_str(), "");
         assert!(pannello.get_claude_spesa_nota().as_str().starts_with("Aggiungi una chiave"));
+    }
+
+    // ─── Quadranti e avvisi (Task 12) ────────────────────────────────────────
+
+    fn ora_adesso() -> i64 {
+        chrono::Local::now().timestamp()
+    }
+
+    fn ha_voce_claude(p: &Ponte, id: &str) -> bool {
+        p.attese.borrow().voce(id).is_some()
+    }
+
+    #[test]
+    fn limiti_avvisati_salvati_in_config() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let ora = ora_adesso();
+        // Sotto la soglia (80): niente voce e niente salvato.
+        p.claude_barra(barra("a", Some((50.0, ora + 600)), Some((30.0, ora + 90_000))));
+        assert!(!ha_voce_claude(&p, "claude.limite.5h"));
+        assert!(p.casa().config().claude.limiti_avvisati.is_empty());
+        // Oltre: la voce di attenzione e la fine della finestra salvata, una finestra alla volta.
+        p.claude_barra(barra("a", Some((82.0, ora + 600)), None));
+        assert!(ha_voce_claude(&p, "claude.limite.5h"));
+        assert!(!ha_voce_claude(&p, "claude.limite.7g"));
+        let c = p.casa().config().claude;
+        assert_eq!(c.limiti_avvisati.get("5h"), Some(&(ora + 600)));
+        assert!(!c.limiti_avvisati.contains_key("7g"));
+        let v = p.attese.borrow().voce("claude.limite.5h").cloned().unwrap();
+        assert_eq!((v.livello, v.titolo.as_str()), (Livello::Attenzione, "Limite 5 ore all'82%"));
+        p.claude_barra(barra("a", None, Some((90.0, ora + 90_000))));
+        assert_eq!(p.casa().config().claude.limiti_avvisati.get("7g"), Some(&(ora + 90_000)));
+    }
+
+    #[test]
+    fn un_avviso_di_limite_una_volta_sola_anche_dopo_un_riavvio() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let ora = ora_adesso();
+        p.claude_barra(barra("a", Some((82.0, ora + 600)), None));
+        assert!(ha_voce_claude(&p, "claude.limite.5h"));
+        // «Ho capito»: via, e con altre barre della stessa finestra non torna.
+        p.azione("claude.limite.5h", crate::attenzione::PULSANTE_HO_CAPITO);
+        assert!(!ha_voce_claude(&p, "claude.limite.5h"));
+        p.claude_barra(barra("a", Some((95.0, ora + 600)), None));
+        assert!(!ha_voce_claude(&p, "claude.limite.5h"), "una volta per finestra");
+        // Una finestra nuova avvisa di nuovo.
+        p.claude_barra(barra("a", Some((85.0, ora + 18_600)), None));
+        assert!(ha_voce_claude(&p, "claude.limite.5h"));
+        // Riavvio: ponte nuovo, stessa configurazione (la finestra era già avvisata).
+        let (_s2, q, _pillola2, _d2) = ponte_di_prova();
+        q.casa().aggiorna_config(|c| {
+            c.claude.limiti_avvisati.insert("7g".into(), ora + 90_000);
+        });
+        q.claude_barra(barra("a", None, Some((99.0, ora + 90_000))));
+        assert!(!ha_voce_claude(&q, "claude.limite.7g"), "già avvisata prima del riavvio");
+    }
+
+    #[test]
+    fn la_soglia_dei_limiti_e_quella_della_configurazione() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let ora = ora_adesso();
+        p.casa().aggiorna_config(|c| c.claude.soglia_limite = 10);
+        p.claude_barra(barra("a", Some((12.0, ora + 600)), None));
+        assert!(ha_voce_claude(&p, "claude.limite.5h"));
+    }
+
+    #[test]
+    fn niente_avvisi_di_limiti_scaduti_o_assenti() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        p.claude_barra(barra("a", Some((95.0, 1000)), Some((f32::NAN, FUTURO))));
+        p.claude_barra(barra("a", None, None));
+        assert!(!ha_voce_claude(&p, "claude.limite.5h") && !ha_voce_claude(&p, "claude.limite.7g"));
+        assert!(p.casa().config().claude.limiti_avvisati.is_empty());
+    }
+
+    #[test]
+    fn la_voce_del_limite_sparisce_quando_la_finestra_si_azzera() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let ora = ora_adesso();
+        p.claude_barra(barra("a", Some((82.0, ora + 600)), Some((85.0, ora + 90_000))));
+        assert!(ha_voce_claude(&p, "claude.limite.5h") && ha_voce_claude(&p, "claude.limite.7g"));
+        // Passa l'azzeramento della finestra delle 5 ore: la sua voce va, quella dei 7 giorni resta.
+        p.claude_limiti_a(ora + 601);
+        assert!(!ha_voce_claude(&p, "claude.limite.5h"));
+        assert!(ha_voce_claude(&p, "claude.limite.7g"));
+        p.claude_limiti_a(ora + 90_001);
+        assert!(!ha_voce_claude(&p, "claude.limite.7g"));
+    }
+
+    #[test]
+    fn una_sola_sveglia_senza_timer_ripetuti() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let ora = ora_adesso();
+        assert!(!p.sveglia_limiti.running(), "a riposo nessuna sveglia");
+        // L'avviso deve poter togliere la voce anche a vista chiusa: la sveglia c'è comunque.
+        p.claude_barra(barra("a", Some((82.0, ora + 600)), Some((20.0, ora + 90_000))));
+        assert!(p.sveglia_limiti.running());
+        assert_eq!(p.limiti_armati.get(), Some(ora + 600));
+        // Scaduti tutti: niente più sveglia.
+        p.claude_barra(barra("a", Some((10.0, 1000)), Some((20.0, 2000))));
+        assert!(!p.sveglia_limiti.running());
+    }
+
+    fn con_quadranti(p: &Ponte, fonti: &[&str]) {
+        p.casa().aggiorna_config(|c| c.quadranti = fonti.iter().map(|s| (*s).to_owned()).collect());
+        p.ricostruisci_quadranti();
+    }
+
+    fn quadrante(p: &Ponte, i: usize) -> crate::QuadranteUi {
+        p.quadranti.row_data(i).expect("il quadrante c'è")
+    }
+
+    #[test]
+    fn i_quadranti_leggono_solo_i_limiti_validi() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        con_quadranti(&p, &["limite_5h", "limite_7g", "spesa_api"]);
+        // PF9: senza dati il trattino, mai «0%» né «0 $».
+        for i in 0..3 {
+            assert_eq!((quadrante(&p, i).valore.as_str(), quadrante(&p, i).frazione), ("—", -1.0), "{i}");
+        }
+        // Arriva una barra: il quadrante si aggiorna da sé.
+        let ora = ora_adesso();
+        p.claude_barra(barra("a", Some((36.6, ora + 600)), None));
+        assert_eq!(quadrante(&p, 0).valore.as_str(), "37%");
+        assert_eq!(quadrante(&p, 1).valore.as_str(), "—", "la finestra dei 7 giorni non c'è");
+        // Il limite scaduto torna «—» (la sveglia ripassa di qui).
+        p.claude_barra(barra("a", Some((36.6, 1000)), None));
+        assert_eq!(quadrante(&p, 0).valore.as_str(), "—");
+    }
+
+    fn riepilogo_con_spesa(spesa: &str, fresco: bool) -> api_claude::Riepilogo {
+        api_claude::Riepilogo {
+            spesa_mese: api_claude::importo_da(spesa),
+            aggiornato_a: fresco.then(chrono::Utc::now),
+            ..Default::default()
+        }
+    }
+
+    fn arriva(p: &Ponte, r: api_claude::Riepilogo) {
+        p.api_arrivato(p.api_generazione.get(), "14:05".into(), Ok(r));
+    }
+
+    #[test]
+    fn il_quadrante_della_spesa_segue_la_lettura() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        p.api_salva_ui("sk-ant-admin01-di-prova-1a2b");
+        con_quadranti(&p, &["spesa_api"]);
+        assert_eq!(quadrante(&p, 0).valore.as_str(), "—");
+        p.casa().aggiorna_config(|c| c.claude.soglia_spesa = Some(1000.0));
+        arriva(&p, riepilogo_con_spesa("41280", true));
+        assert_eq!(quadrante(&p, 0).valore.as_str(), "413 $");
+        assert!((quadrante(&p, 0).frazione - 0.4128).abs() < 1e-4, "0..soglia");
+        // Una lettura fallita: nessun dato, «—».
+        p.api_arrivato(p.api_generazione.get(), "17:05".into(), Err("rete".into()));
+        assert_eq!(quadrante(&p, 0).valore.as_str(), "—");
+    }
+
+    fn voce_spesa(p: &Ponte) -> Option<String> {
+        p.attese.borrow().voce("claude.spesa").map(|v| v.titolo.clone())
+    }
+
+    fn mese_corrente() -> String {
+        chrono::Utc::now().format("%Y-%m").to_string()
+    }
+
+    #[test]
+    fn avvisi_di_spesa_ottanta_e_cento_una_volta_per_mese() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        p.api_salva_ui("sk-ant-admin01-di-prova-1a2b");
+        // Nessuna soglia: mai.
+        arriva(&p, riepilogo_con_spesa("30000", true));
+        assert_eq!(voce_spesa(&p), None);
+        p.casa().aggiorna_config(|c| c.claude.soglia_spesa = Some(250.0));
+        // Un mese vecchio nel file si pota quando si salva un avviso nuovo, quello corrente resta.
+        p.casa().aggiorna_config(|c| {
+            c.claude.spesa_avvisata.insert("2020-01".into(), 100);
+        });
+        // Sotto l'80 %: niente.
+        arriva(&p, riepilogo_con_spesa("19000", true));
+        assert_eq!(voce_spesa(&p), None);
+        // 80 %: la voce e il gradino salvato per il mese.
+        arriva(&p, riepilogo_con_spesa("20000", true));
+        assert_eq!(voce_spesa(&p).as_deref(), Some("Spesa API all'80% della soglia (250,00 $)"));
+        assert_eq!(p.casa().config().claude.spesa_avvisata.get(&mese_corrente()), Some(&80));
+        assert!(!p.casa().config().claude.spesa_avvisata.contains_key("2020-01"), "il mese vecchio si pota");
+        // Voce chiusa e riletta: non torna.
+        p.azione("claude.spesa", crate::attenzione::PULSANTE_HO_CAPITO);
+        arriva(&p, riepilogo_con_spesa("21000", true));
+        assert_eq!(voce_spesa(&p), None, "una volta per gradino");
+        // 100 %: il secondo gradino.
+        arriva(&p, riepilogo_con_spesa("25000", true));
+        assert_eq!(voce_spesa(&p).as_deref(), Some("Spesa API al 100% della soglia (250,00 $)"));
+        assert_eq!(p.casa().config().claude.spesa_avvisata.get(&mese_corrente()), Some(&100));
+    }
+
+    #[test]
+    fn niente_avvisi_di_spesa_con_dati_assenti_o_vecchi() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        p.api_salva_ui("sk-ant-admin01-di-prova-1a2b");
+        p.casa().aggiorna_config(|c| c.claude.soglia_spesa = Some(100.0));
+        // Dati senza data di aggiornamento: non si sa quanto sono vecchi.
+        arriva(&p, riepilogo_con_spesa("20000", false));
+        assert_eq!(voce_spesa(&p), None);
+        // Una lettura fallita e una senza spesa.
+        p.api_arrivato(p.api_generazione.get(), "14:05".into(), Err("rete".into()));
+        arriva(&p, riepilogo_con_spesa("", true));
+        assert_eq!(voce_spesa(&p), None);
+        // Dati fermi al mese scorso (aggiornati prima dell'inizio di questo mese): niente.
+        let mut vecchi = riepilogo_con_spesa("20000", true);
+        vecchi.aggiornato_a = Some(chrono::Utc::now() - chrono::Duration::days(40));
+        arriva(&p, vecchi);
+        assert_eq!(voce_spesa(&p), None);
+        assert!(p.casa().config().claude.spesa_avvisata.is_empty());
+    }
+
+    #[test]
+    fn la_soglia_di_spesa_cambiata_vale_sui_dati_che_ci_sono() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        p.api_salva_ui("sk-ant-admin01-di-prova-1a2b");
+        arriva(&p, riepilogo_con_spesa("20000", true));
+        assert_eq!(voce_spesa(&p), None);
+        assert_eq!(p.cambia_soglia_spesa("250"), "");
+        assert_eq!(voce_spesa(&p).as_deref(), Some("Spesa API all'80% della soglia (250,00 $)"));
+    }
+
+    fn riepilogo_insolito(oggi: chrono::NaiveDate) -> api_claude::Riepilogo {
+        let euro = |s: &str| api_claude::importo_da(s).unwrap();
+        let mut giorni = vec![(oggi - chrono::Days::new(1), euro("4000"))];
+        giorni.extend((2..=8).map(|n| (oggi - chrono::Days::new(n), euro("1000"))));
+        api_claude::Riepilogo {
+            aggiornato_a: Some(chrono::Utc::now()),
+            spesa_mese: Some(euro("10000")),
+            spesa_ieri: Some(euro("4000")),
+            giorni,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn spesa_insolita_una_volta_al_giorno() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        p.api_salva_ui("sk-ant-admin01-di-prova-1a2b");
+        let oggi = chrono::Utc::now().date_naive();
+        arriva(&p, riepilogo_insolito(oggi));
+        let v = p.attese.borrow().voce("claude.spesa.insolita").cloned().expect("la voce");
+        assert_eq!((v.livello, v.titolo.as_str()), (Livello::Informazione, "Spesa API insolita ieri: 40,00 $"));
+        let ieri = (oggi - chrono::Days::new(1)).format("%Y-%m-%d").to_string();
+        assert_eq!(p.casa().config().claude.insolita_avvisata.as_deref(), Some(ieri.as_str()));
+        // Chiusa e riletta lo stesso giorno: non torna.
+        p.azione("claude.spesa.insolita", crate::attenzione::PULSANTE_HO_CAPITO);
+        arriva(&p, riepilogo_insolito(oggi));
+        assert!(!ha_voce_claude(&p, "claude.spesa.insolita"), "una volta al giorno");
+        // Dati non completi (senza data di aggiornamento): niente, e niente avviso salvato.
+        let (_s2, q, _pillola2, _d2) = ponte_di_prova();
+        q.api_salva_ui("sk-ant-admin01-di-prova-1a2b");
+        let mut r = riepilogo_insolito(oggi);
+        r.aggiornato_a = None;
+        arriva(&q, r);
+        assert!(!ha_voce_claude(&q, "claude.spesa.insolita"));
+        assert_eq!(q.casa().config().claude.insolita_avvisata, None);
+    }
+
+    #[test]
+    fn soglie_scritte_validate_e_salvate() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        // Il limite: intero da 50 a 100.
+        assert_eq!(p.cambia_soglia_limite("90"), "");
+        assert_eq!(p.casa().config().claude.soglia_limite, 90);
+        for male in ["abc", "49", "101", "", "80,5", "-3"] {
+            assert!(!p.cambia_soglia_limite(male).is_empty(), "{male:?} si rifiuta");
+        }
+        assert_eq!(p.casa().config().claude.soglia_limite, 90, "un valore rifiutato non si salva");
+        assert_eq!(p.cambia_soglia_limite(" 50 "), "");
+        assert_eq!(p.cambia_soglia_limite("100"), "");
+        assert_eq!(p.casa().config().claude.soglia_limite, 100);
+        // La spesa: vuota = nessuna, altrimenti positiva con virgola o punto.
+        assert_eq!(p.cambia_soglia_spesa("250"), "");
+        assert_eq!(p.casa().config().claude.soglia_spesa, Some(250.0));
+        assert_eq!(p.cambia_soglia_spesa("99,5"), "");
+        assert_eq!(p.casa().config().claude.soglia_spesa, Some(99.5));
+        assert_eq!(p.cambia_soglia_spesa("12.25"), "");
+        assert_eq!(p.casa().config().claude.soglia_spesa, Some(12.25));
+        for male in ["abc", "0", "-5", "inf", "NaN", "1e400"] {
+            assert!(!p.cambia_soglia_spesa(male).is_empty(), "{male:?} si rifiuta");
+        }
+        assert_eq!(p.casa().config().claude.soglia_spesa, Some(12.25));
+        assert_eq!(p.cambia_soglia_spesa("  "), "");
+        assert_eq!(p.casa().config().claude.soglia_spesa, None, "vuota: nessuna soglia");
     }
 }

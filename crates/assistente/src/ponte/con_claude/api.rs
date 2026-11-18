@@ -220,6 +220,8 @@ impl Ponte {
         // La spesa del mese nella vista Claude, se è aperta; e le schede, se la finestra è aperta.
         self.aggiorna_vista_claude();
         self.dettagli_dati_nuovi();
+        // I quadranti della spesa e gli avvisi (a soglia e di spesa insolita), solo con dati freschi.
+        self.claude_riepilogo_cambiato(Utc::now());
     }
 
     fn mostra_api_stato(&self, f: &FinestraImpostazioni) {
@@ -319,6 +321,8 @@ impl Ponte {
         self.sveglia_api.stop();
         self.api_nuova_generazione();
         *self.api_ultimo.borrow_mut() = None;
+        // Il quadrante della spesa torna «—».
+        self.claude_quadranti_cambiati();
         // Senza la chiave non restano dati: la finestra delle schede si chiude.
         self.dettagli_chiudi();
         self.con_finestra_claude(|f| {

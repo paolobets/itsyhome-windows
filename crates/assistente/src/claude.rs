@@ -5,8 +5,8 @@
 
 use crate::attenzione::{Fonte, Livello, Pulsante, Voce};
 use claude_hook::evento::EventoHook;
-use api_claude::Riepilogo;
-use chrono::{DateTime, Datelike, Local, TimeZone, Weekday};
+use api_claude::{Importo, Riepilogo};
+use chrono::{DateTime, Datelike, Local, NaiveDate, TimeZone, Weekday};
 use claude_hook::sessioni::{Sessione, Sessioni, Stato};
 use claude_hook::Limite;
 use gestione_protocollo::{testo_pulito, SchedaDati};
@@ -413,6 +413,181 @@ pub fn testo_limite(l: &Limite, ora: DateTime<Local>) -> TestoLimite {
         }
     };
     TestoLimite { frazione: pct / 100.0, testo: format!("{}%", pct.round() as u32), azzera }
+}
+
+// ─── Avvisi a soglia: limiti dell'abbonamento e spesa delle API (Task 12) ──────────────────
+
+/// La voce d'avviso del limite delle 5 ore e di quello dei 7 giorni.
+pub const ID_LIMITE_5H: &str = "claude.limite.5h";
+pub const ID_LIMITE_7G: &str = "claude.limite.7g";
+/// La voce d'avviso della spesa del mese (80 % e 100 % della soglia: una voce che si aggiorna).
+pub const ID_SPESA: &str = "claude.spesa";
+/// La voce informativa della spesa insolita.
+pub const ID_SPESA_INSOLITA: &str = "claude.spesa.insolita";
+
+/// Le due finestre dei limiti dell'abbonamento.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Finestra {
+    CinqueOre,
+    SetteGiorni,
+}
+
+impl Finestra {
+    /// La chiave in `ConfigClaude::limiti_avvisati`.
+    pub fn chiave(self) -> &'static str {
+        match self {
+            Finestra::CinqueOre => "5h",
+            Finestra::SetteGiorni => "7g",
+        }
+    }
+
+    pub fn id_voce(self) -> &'static str {
+        match self {
+            Finestra::CinqueOre => ID_LIMITE_5H,
+            Finestra::SetteGiorni => ID_LIMITE_7G,
+        }
+    }
+
+    fn nome(self) -> &'static str {
+        match self {
+            Finestra::CinqueOre => "Limite 5 ore",
+            Finestra::SetteGiorni => "Limite settimanale",
+        }
+    }
+}
+
+/// L'id è di una delle voci d'avviso a soglia (limiti, spesa, spesa insolita).
+pub fn e_voce_di_avviso(id: &str) -> bool {
+    matches!(id, ID_LIMITE_5H | ID_LIMITE_7G | ID_SPESA | ID_SPESA_INSOLITA)
+}
+
+/// «all'82%», «al 61%»: l'articolo segue come si legge il numero (otto…, undici → «all'»).
+fn alla_percentuale(n: u32) -> String {
+    let elisa = n == 8 || n == 11 || (80..=89).contains(&n);
+    if elisa {
+        format!("all'{n}%")
+    } else {
+        format!("al {n}%")
+    }
+}
+
+fn pulsante_ho_capito() -> Vec<Pulsante> {
+    vec![Pulsante::new(crate::attenzione::PULSANTE_HO_CAPITO, "Ho capito")]
+}
+
+/// L'avviso «il limite sta finendo»: la percentuale ha raggiunto la `soglia`, la finestra non si è
+/// ancora azzerata (`azzera_alle > ora`, secondi Unix) e non è già stata avvisata (`avvisato` è la
+/// fine della finestra salvata: finestra nuova = `azzera_alle` diverso). Una voce di *attenzione*.
+pub fn avviso_limite(f: Finestra, l: &Limite, soglia: u8, avvisato: Option<i64>, ora: i64) -> Option<Voce> {
+    if !l.percentuale.is_finite() || l.percentuale < f32::from(soglia) || l.azzera_alle <= ora || avvisato == Some(l.azzera_alle) {
+        return None;
+    }
+    let adesso = Local.timestamp_opt(ora, 0).single()?;
+    let azzera = testo_limite(l, adesso).azzera;
+    // «si azzera alle 14:30» → «Si azzera alle 14:30.»
+    let mut lettere = azzera.chars();
+    let dettaglio = match lettere.next() {
+        Some(prima) => format!("{}{}.", prima.to_uppercase(), lettere.as_str()),
+        None => String::new(),
+    };
+    Some(Voce {
+        id: f.id_voce().into(),
+        livello: Livello::Attenzione,
+        fonte: Fonte::Claude,
+        titolo: format!("{} {}", f.nome(), alla_percentuale(l.percentuale.round() as u32)),
+        dettaglio,
+        pulsanti: pulsante_ho_capito(),
+        creata: Instant::now(),
+    })
+}
+
+/// «novembre 2026» da «2026-11»; se il testo non è un mese, il testo com'è.
+fn mese_a_parole(mese: &str) -> String {
+    const MESI: [&str; 12] = [
+        "gennaio",
+        "febbraio",
+        "marzo",
+        "aprile",
+        "maggio",
+        "giugno",
+        "luglio",
+        "agosto",
+        "settembre",
+        "ottobre",
+        "novembre",
+        "dicembre",
+    ];
+    mese.split_once('-')
+        .and_then(|(anno, m)| Some((anno, MESI.get(m.parse::<usize>().ok()?.checked_sub(1)?)?)))
+        .map_or_else(|| mese.to_owned(), |(anno, nome)| format!("{nome} {anno}"))
+}
+
+/// L'avviso di spesa: all'80 % e al 100 % della `soglia` (dollari), una volta per gradino e per
+/// `mese` («2026-11»); `gia` è l'ultimo gradino avvisato nel mese. Restituisce il gradino da
+/// salvare e la voce di *attenzione*. Una soglia assente o non valida non avvisa mai.
+pub fn avviso_spesa(spesa: &Importo, soglia: f64, mese: &str, gia: Option<u8>) -> Option<(u8, Voce)> {
+    if !soglia.is_finite() || soglia <= 0.0 {
+        return None;
+    }
+    let dollari = spesa.micro_centesimi as f64 / crate::lati::MICRO_PER_DOLLARO;
+    let gradino: u8 = if dollari >= soglia {
+        100
+    } else if dollari * 100.0 >= soglia * 80.0 {
+        80
+    } else {
+        return None;
+    };
+    if gia.is_some_and(|g| g >= gradino) {
+        return None;
+    }
+    let tetto = crate::lati::importo_da_dollari(soglia).in_dollari();
+    Some((
+        gradino,
+        Voce {
+            id: ID_SPESA.into(),
+            livello: Livello::Attenzione,
+            fonte: Fonte::Claude,
+            titolo: format!("Spesa API {} della soglia ({tetto})", alla_percentuale(u32::from(gradino))),
+            dettaglio: format!("Spesa del mese ({}): {}.", mese_a_parole(mese), spesa.in_dollari()),
+            pulsanti: pulsante_ho_capito(),
+            creata: Instant::now(),
+        },
+    ))
+}
+
+/// La voce «spesa insolita»: ieri (`giorno`) è costato più di 3 volte la media dei 7 giorni prima.
+/// Solo un'*informazione*.
+pub fn voce_insolita(ieri: &Importo, giorno: NaiveDate) -> Voce {
+    Voce {
+        id: ID_SPESA_INSOLITA.into(),
+        livello: Livello::Informazione,
+        fonte: Fonte::Claude,
+        titolo: format!("Spesa API insolita ieri: {}", ieri.in_dollari()),
+        dettaglio: format!("Più di 3 volte la media dei 7 giorni prima ({}).", giorno.format("%d/%m")),
+        pulsanti: pulsante_ho_capito(),
+        creata: Instant::now(),
+    }
+}
+
+/// «Avvisa al … % del limite» come scritto nelle Impostazioni: un intero da 50 a 100.
+pub fn leggi_soglia_limite(testo: &str) -> Result<u8, &'static str> {
+    match testo.trim().parse::<u8>() {
+        Ok(v) if (50..=100).contains(&v) => Ok(v),
+        _ => Err("Scrivi un numero intero da 50 a 100, per esempio 80."),
+    }
+}
+
+/// La soglia di spesa mensile come scritta nelle Impostazioni: vuota = nessuna soglia, altrimenti
+/// un importo positivo in dollari, con la virgola o il punto.
+pub fn leggi_soglia_spesa(testo: &str) -> Result<Option<f64>, &'static str> {
+    let t = testo.trim();
+    if t.is_empty() {
+        return Ok(None);
+    }
+    match t.replace(',', ".").parse::<f64>() {
+        Ok(v) if v.is_finite() && v > 0.0 && v <= 1_000_000_000.0 => Ok(Some(v)),
+        _ => Err("Scrivi un importo maggiore di zero, per esempio 250 o 99,50, oppure lascia vuoto per non avere una soglia."),
+    }
 }
 
 // ─── Dettaglio delle API nelle schede della finestra di gestione (Task 11) ─────────────────
@@ -950,6 +1125,93 @@ mod test {
         // PF18: un mese ancora a zero ma con dati aggiornati fino a fine periodo è «0,00 $».
         let zero = riepilogo_con_spesa(Some("0"), Some((10, 0)));
         assert_eq!(testo_spesa(Some(&zero), true).0, "0,00 $");
+    }
+
+    // ─── Avvisi a soglia (Task 12) ───────────────────────────────────────────
+
+    fn lim(percentuale: f32, azzera_alle: i64) -> Limite {
+        Limite { percentuale, azzera_alle }
+    }
+
+    /// Un'ora locale fissa: 18/11/2026 alle `h`:`m`.
+    fn ora_locale(h: u32, m: u32) -> i64 {
+        Local.with_ymd_and_hms(2026, 11, 18, h, m, 0).single().expect("ora locale valida").timestamp()
+    }
+
+    #[test]
+    fn avviso_limite_una_volta_per_finestra() {
+        let (ora, azzera) = (ora_locale(10, 0), ora_locale(14, 30));
+        let v = avviso_limite(Finestra::CinqueOre, &lim(82.0, azzera), 80, None, ora).expect("82 >= 80: avvisa");
+        assert_eq!(v.id, "claude.limite.5h");
+        assert_eq!((v.livello, v.fonte), (Livello::Attenzione, Fonte::Claude));
+        assert_eq!(v.titolo, "Limite 5 ore all'82%");
+        assert_eq!(v.dettaglio, "Si azzera alle 14:30.");
+        assert_eq!(v.pulsanti, vec![Pulsante::new(crate::attenzione::PULSANTE_HO_CAPITO, "Ho capito")]);
+        // Già avvisata questa finestra (anche prima di un riavvio): niente.
+        assert!(avviso_limite(Finestra::CinqueOre, &lim(95.0, azzera), 80, Some(azzera), ora).is_none());
+        // Una finestra nuova (azzera_alle diverso): di nuovo.
+        assert!(avviso_limite(Finestra::CinqueOre, &lim(82.0, azzera + 18_000), 80, Some(azzera), ora).is_some());
+        // Sotto la soglia: niente; alla soglia: sì.
+        assert!(avviso_limite(Finestra::CinqueOre, &lim(79.9, azzera), 80, None, ora).is_none());
+        assert!(avviso_limite(Finestra::CinqueOre, &lim(80.0, azzera), 80, None, ora).is_some());
+        // La finestra dei 7 giorni, con la sua voce e il suo nome; l'articolo segue il numero.
+        let v = avviso_limite(Finestra::SetteGiorni, &lim(61.0, azzera), 50, None, ora).unwrap();
+        assert_eq!((v.id.as_str(), v.titolo.as_str()), ("claude.limite.7g", "Limite settimanale al 61%"));
+        let titolo = |p: f32| avviso_limite(Finestra::CinqueOre, &lim(p, azzera), 10, None, ora).unwrap().titolo;
+        assert_eq!(titolo(80.0), "Limite 5 ore all'80%");
+        assert_eq!(titolo(100.0), "Limite 5 ore al 100%");
+        assert_eq!(titolo(11.0), "Limite 5 ore all'11%");
+        assert_eq!(titolo(18.0), "Limite 5 ore al 18%");
+        assert_eq!(titolo(85.4), "Limite 5 ore all'85%");
+    }
+
+    #[test]
+    fn avviso_limite_scaduto_niente() {
+        let (ora, azzera) = (ora_locale(10, 0), ora_locale(14, 30));
+        assert!(avviso_limite(Finestra::CinqueOre, &lim(90.0, ora), 80, None, ora).is_none(), "azzera_alle == ora");
+        assert!(avviso_limite(Finestra::SetteGiorni, &lim(90.0, azzera), 80, None, azzera + 1).is_none());
+        // Una percentuale non finita non avvisa mai.
+        assert!(avviso_limite(Finestra::CinqueOre, &lim(f32::NAN, azzera), 80, None, ora).is_none());
+        assert!(avviso_limite(Finestra::CinqueOre, &lim(f32::INFINITY, azzera), 80, None, ora).is_none());
+    }
+
+    fn dollari(s: &str) -> api_claude::Importo {
+        api_claude::importo_da(s).expect("importo valido")
+    }
+
+    #[test]
+    fn spesa_ottanta_e_cento() {
+        // 200 $ su 250 $ = 80 %: il primo gradino.
+        let (gradino, v) = avviso_spesa(&dollari("20000"), 250.0, "2026-11", None).expect("80%");
+        assert_eq!(gradino, 80);
+        assert_eq!((v.id.as_str(), v.livello, v.fonte), ("claude.spesa", Livello::Attenzione, Fonte::Claude));
+        assert_eq!(v.titolo, "Spesa API all'80% della soglia (250,00 $)");
+        assert!(v.dettaglio.contains("200,00 $") && v.dettaglio.contains("novembre 2026"), "{}", v.dettaglio);
+        assert_eq!(v.pulsanti, vec![Pulsante::new(crate::attenzione::PULSANTE_HO_CAPITO, "Ho capito")]);
+        // Già avvisato a 80 e ancora a 80: niente.
+        assert!(avviso_spesa(&dollari("20000"), 250.0, "2026-11", Some(80)).is_none());
+        assert!(avviso_spesa(&dollari("22000"), 250.0, "2026-11", Some(80)).is_none());
+        // 250 $ su 250 $ con già 80: il secondo gradino.
+        let (gradino, v) = avviso_spesa(&dollari("25000"), 250.0, "2026-11", Some(80)).expect("100%");
+        assert_eq!((gradino, v.titolo.as_str()), (100, "Spesa API al 100% della soglia (250,00 $)"));
+        // Saltato l'80 si arriva dritti al 100, una voce sola; già avvisato a 100: mai più.
+        assert_eq!(avviso_spesa(&dollari("30000"), 250.0, "2026-11", None).map(|(g, _)| g), Some(100));
+        assert!(avviso_spesa(&dollari("30000"), 250.0, "2026-11", Some(100)).is_none());
+        // Sotto l'80 % niente; nessuna soglia (o non valida): mai.
+        assert!(avviso_spesa(&dollari("19900"), 250.0, "2026-11", None).is_none());
+        assert!(avviso_spesa(&dollari("30000"), 0.0, "2026-11", None).is_none());
+        assert!(avviso_spesa(&dollari("30000"), -5.0, "2026-11", None).is_none());
+        assert!(avviso_spesa(&dollari("30000"), f64::NAN, "2026-11", None).is_none());
+    }
+
+    #[test]
+    fn spesa_insolita_in_una_voce_informativa() {
+        let giorno = chrono::NaiveDate::from_ymd_opt(2026, 11, 17).unwrap();
+        let v = voce_insolita(&dollari("4000"), giorno);
+        assert_eq!((v.id.as_str(), v.livello, v.fonte), ("claude.spesa.insolita", Livello::Informazione, Fonte::Claude));
+        assert_eq!(v.titolo, "Spesa API insolita ieri: 40,00 $");
+        assert_eq!(v.pulsanti, vec![Pulsante::new(crate::attenzione::PULSANTE_HO_CAPITO, "Ho capito")]);
+        assert!(v.dettaglio.contains("17/11"), "{}", v.dettaglio);
     }
 
     // ─── Dettaglio API nelle schede (Task 11) ────────────────────────────────

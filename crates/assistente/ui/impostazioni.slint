@@ -52,6 +52,8 @@ component Campo inherits Rectangle {
     in property <string> errore;
     // Il nome per Narrator, se dev'essere più preciso dell'etichetta («Quadrante 1, massimo»).
     in property <string> nome-accessibile: etichetta;
+    // Quanto spazio ha l'etichetta a sinistra del campo (le più lunghe ne vogliono di più).
+    in property <length> larghezza-etichetta: 92px;
     in-out property <string> testo <=> input.text;
     // Esc nel campo (il fuoco torna alla finestra) e Invio (salva).
     callback esci();
@@ -68,7 +70,7 @@ component Campo inherits Rectangle {
 
     Text {
         x: 0;
-        width: 92px;
+        width: larghezza-etichetta;
         height: parent.height;
         text: etichetta;
         vertical-alignment: center;
@@ -77,7 +79,7 @@ component Campo inherits Rectangle {
     }
 
     casella := Rectangle {
-        x: 100px;
+        x: larghezza-etichetta + 8px;
         width: parent.width - self.x;
         height: parent.height;
         border-radius: Tema.raggio-m;
@@ -722,6 +724,16 @@ export component FinestraImpostazioni inherits Window {
     callback api-salva(string);
     callback api-prova(string);
     callback api-togli();
+
+    // Avvisi di Claude (M3, Task 12): le soglie dei limiti dell'abbonamento e della spesa del mese.
+    // Rust valida, salva e restituisce l'errore da mostrare (vuoto = salvato): un valore rifiutato
+    // resta nel campo, con la frase che dice cosa scrivere, e non si salva.
+    in property <string> soglia-limite: "80";
+    in property <string> soglia-spesa;
+    callback soglia-limite-scritta(string) -> string;
+    callback soglia-spesa-scritta(string) -> string;
+    property <string> errore-soglia-limite;
+    property <string> errore-soglia-spesa;
 
     // 0 Home Assistant, 1 Dispositivi, 2 Collegamenti, 3 Isola, 4 Claude, 5 Sistema, 6 Informazioni.
     in-out property <int> sezione: 0;
@@ -2493,6 +2505,73 @@ export component FinestraImpostazioni inherits Window {
                                 wrap: word-wrap;
                                 font-size: Tema.testo-piccolo;
                                 color: Tema.testo-tenue;
+                            }
+                        }
+                    }
+
+                    // Avvisi: una sola volta per finestra di limite, per gradino di spesa e per mese.
+                    Rectangle {
+                        height: colonna-avvisi.preferred-height;
+                        border-radius: Tema.raggio-xl;
+                        background: Tema.card-fondo;
+                        border-width: 1px;
+                        border-color: Tema.vetro-bordo;
+
+                        colonna-avvisi := VerticalLayout {
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            padding-top: 12px;
+                            padding-bottom: 14px;
+                            spacing: 8px;
+
+                            Text {
+                                text: "Avvisi";
+                                font-weight: 500;
+                                font-size: Tema.testo-medio;
+                                color: Tema.testo;
+                            }
+
+                            Text {
+                                text: "Isola ti avvisa una sola volta quando i limiti dell'abbonamento o la spesa delle API superano questi valori. Lascia vuota la soglia di spesa per non avere l'avviso.";
+                                wrap: word-wrap;
+                                font-size: Tema.testo-piccolo;
+                                color: Tema.testo-tenue;
+                            }
+
+                            Campo {
+                                etichetta: "Avvisa al … % del limite";
+                                larghezza-etichetta: 190px;
+                                suggerimento: "80";
+                                testo: root.soglia-limite;
+                                errore: errore-soglia-limite;
+                                invio => { errore-soglia-limite = root.soglia-limite-scritta(self.testo); }
+                                lasciato => { errore-soglia-limite = root.soglia-limite-scritta(self.testo); }
+                            }
+
+                            if errore-soglia-limite != "": Text {
+                                text: errore-soglia-limite;
+                                wrap: word-wrap;
+                                font-size: Tema.testo-corpo;
+                                color: Tema.caldo-1;
+                                accessible-role: none;
+                            }
+
+                            Campo {
+                                etichetta: "Soglia di spesa mensile ($)";
+                                larghezza-etichetta: 190px;
+                                suggerimento: "Per esempio 250";
+                                testo: root.soglia-spesa;
+                                errore: errore-soglia-spesa;
+                                invio => { errore-soglia-spesa = root.soglia-spesa-scritta(self.testo); }
+                                lasciato => { errore-soglia-spesa = root.soglia-spesa-scritta(self.testo); }
+                            }
+
+                            if errore-soglia-spesa != "": Text {
+                                text: errore-soglia-spesa;
+                                wrap: word-wrap;
+                                font-size: Tema.testo-corpo;
+                                color: Tema.caldo-1;
+                                accessible-role: none;
                             }
                         }
                     }

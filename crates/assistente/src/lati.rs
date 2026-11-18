@@ -6,11 +6,15 @@
 //! I timer e i dati vivi stanno in `sorgenti_lati`; le misure qui coincidono con quelle di
 //! pillola.slint (lo controlla `test_ui::misure_dei_lati_slint_e_rust`).
 
+use crate::claude;
 use crate::finestre;
 use crate::pc_stats::{tinta_batteria, Fonti, LetturaBatteria, TintaBatteria};
 use crate::sistema::radio::StatoRete;
+use api_claude::Importo;
 use casa_core::config::PREFISSO_SENSORE;
 use casa_core::types::{MenuData, SensoreNumerico};
+use chrono::{DateTime, Local};
+use claude_hook::Limite;
 use std::collections::HashMap;
 
 /// Una fonte per un lato della pillola o per un quadrante.
@@ -34,6 +38,12 @@ pub enum Lato {
     ReteSu,
     /// Solo per i quadranti e solo su Windows (M2, Task 10): l'utilizzo della GPU, 0..100 %.
     Gpu,
+    /// Solo per i quadranti (M3, Task 12): il limite di 5 ore dell'abbonamento a Claude.
+    Limite5h,
+    /// Solo per i quadranti: il limite di 7 giorni dell'abbonamento a Claude.
+    Limite7g,
+    /// Solo per i quadranti: la spesa del mese delle API di Claude.
+    SpesaApi,
 }
 
 impl Lato {
@@ -50,6 +60,9 @@ impl Lato {
             "rete_giu" => Lato::ReteGiu,
             "rete_su" => Lato::ReteSu,
             "gpu" => Lato::Gpu,
+            "limite_5h" => Lato::Limite5h,
+            "limite_7g" => Lato::Limite7g,
+            "spesa_api" => Lato::SpesaApi,
             _ => match s.strip_prefix(PREFISSO_SENSORE) {
                 Some(id) if !id.is_empty() => Lato::Sensore(id.to_owned()),
                 _ => Lato::Niente,
@@ -71,6 +84,9 @@ impl Lato {
             Lato::ReteGiu => "rete_giu".into(),
             Lato::ReteSu => "rete_su".into(),
             Lato::Gpu => "gpu".into(),
+            Lato::Limite5h => "limite_5h".into(),
+            Lato::Limite7g => "limite_7g".into(),
+            Lato::SpesaApi => "spesa_api".into(),
             Lato::Sensore(id) => format!("{PREFISSO_SENSORE}{id}"),
         }
     }
@@ -130,6 +146,9 @@ pub fn scelte(
         if windows {
             v.push((Lato::Gpu, "GPU".into()));
         }
+        v.push((Lato::Limite5h, "Limite 5 ore".into()));
+        v.push((Lato::Limite7g, "Limite settimanale".into()));
+        v.push((Lato::SpesaApi, "Spesa API del mese".into()));
     } else if windows {
         v.push((Lato::Rete, "Rete".into()));
     }
@@ -160,7 +179,14 @@ pub fn bisogni(sinistro: &Lato, destro: &Lato) -> Bisogni {
             Lato::Cpu | Lato::Ram => b.cpu_ram = true,
             Lato::Rete => b.rete = true,
             Lato::Meteo | Lato::Sensore(_) => b.casa = true,
-            Lato::Niente | Lato::Disco | Lato::ReteGiu | Lato::ReteSu | Lato::Gpu => {}
+            Lato::Niente
+            | Lato::Disco
+            | Lato::ReteGiu
+            | Lato::ReteSu
+            | Lato::Gpu
+            | Lato::Limite5h
+            | Lato::Limite7g
+            | Lato::SpesaApi => {}
         }
     }
     b
@@ -279,7 +305,15 @@ pub fn a_tempo(l: &Lato) -> bool {
 /// l'interfaccia). La batteria riserva anche il posto del glifo.
 pub fn campione(l: &Lato, d: &DatiLati) -> Option<String> {
     Some(match l {
-        Lato::Niente | Lato::Rete | Lato::Disco | Lato::ReteGiu | Lato::ReteSu | Lato::Gpu => return None,
+        Lato::Niente
+        | Lato::Rete
+        | Lato::Disco
+        | Lato::ReteGiu
+        | Lato::ReteSu
+        | Lato::Gpu
+        | Lato::Limite5h
+        | Lato::Limite7g
+        | Lato::SpesaApi => return None,
         Lato::Ora => "00:00".into(),
         Lato::Batteria => "100%".into(),
         Lato::Cpu => "CPU 100%".into(),
@@ -371,6 +405,76 @@ pub fn fonti_dei_quadranti(q: &[Lato]) -> Fonti {
     }
 }
 
+/// Ciò che Claude dà ai quadranti (M3, Task 12): i limiti dell'abbonamento già filtrati
+/// (`Ponte::limiti`: mai scaduti né non finiti) e la spesa del mese dell'ultima lettura riuscita.
+/// Tutto `None` finché non c'è un dato.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DatiClaude {
+    pub cinque: Option<Limite>,
+    pub sette: Option<Limite>,
+    pub spesa: Option<Importo>,
+    /// La soglia di spesa mensile (dollari): se c'è, è il fondo scala dell'arco della spesa.
+    pub soglia_spesa: Option<f64>,
+}
+
+/// Valore, arco e riga piccola di un quadrante di Claude.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QuadranteClaude {
+    /// «37%», «413 $»; «—» senza dato, mai «0%» né «0 $».
+    pub valore: String,
+    /// 0..1; -1 = niente arco.
+    pub frazione: f32,
+    /// «si azzera alle 14:30», «soglia 250,00 $»; vuota senza dato.
+    pub dettaglio: String,
+}
+
+/// Il quadrante di una fonte di Claude; `None` per ogni altra fonte. `massimo_utente`: il massimo
+/// scritto per la spesa quando non c'è una soglia. `ora`: quando si legge «si azzera alle…».
+pub fn quadrante_claude(
+    l: &Lato,
+    d: &DatiClaude,
+    massimo_utente: Option<f64>,
+    ora: DateTime<Local>,
+) -> Option<QuadranteClaude> {
+    let senza_dato = || QuadranteClaude { valore: "—".into(), frazione: -1.0, dettaglio: String::new() };
+    let limite = |l: &Option<Limite>| match l.filter(|l| l.percentuale.is_finite()) {
+        Some(l) => {
+            let t = claude::testo_limite(&l, ora);
+            QuadranteClaude { valore: t.testo, frazione: t.frazione, dettaglio: t.azzera }
+        }
+        None => senza_dato(),
+    };
+    Some(match l {
+        Lato::Limite5h => limite(&d.cinque),
+        Lato::Limite7g => limite(&d.sette),
+        Lato::SpesaApi => match d.spesa {
+            None => senza_dato(),
+            Some(s) => {
+                let dollari = s.micro_centesimi as f64 / MICRO_PER_DOLLARO;
+                let tetto = d.soglia_spesa.filter(|t| t.is_finite() && *t > 0.0).or(massimo_utente);
+                QuadranteClaude {
+                    // Breve come gli altri valori dei quadranti («413 $»): i centesimi stanno nella vista Claude.
+                    valore: testo_con_unita(dollari, "$"),
+                    frazione: frazione(l, None, tetto, dollari),
+                    dettaglio: d
+                        .soglia_spesa
+                        .filter(|t| t.is_finite() && *t > 0.0)
+                        .map_or_else(String::new, |t| format!("soglia {}", importo_da_dollari(t).in_dollari())),
+                }
+            }
+        },
+        _ => return None,
+    })
+}
+
+/// Quanti micro-centesimi (l'unità di `Importo`) fanno un dollaro.
+pub const MICRO_PER_DOLLARO: f64 = 100_000_000.0;
+
+/// Un importo da dollari scritti dall'utente (soglie).
+pub fn importo_da_dollari(d: f64) -> Importo {
+    Importo { micro_centesimi: (d * MICRO_PER_DOLLARO).round() as i128 }
+}
+
 /// Massimo predefinito dell'arco per i watt e per i chilowatt.
 pub const MASSIMO_W: f64 = 3000.0;
 pub const MASSIMO_KW: f64 = 6.0;
@@ -388,7 +492,7 @@ pub fn chiede_massimo(unita: Option<&str>) -> bool {
 pub fn scala(fonte: &Lato, unita: Option<&str>, massimo_utente: Option<f64>, valore: f64) -> (f64, f64) {
     let utente = massimo_utente.filter(|m| m.is_finite() && *m > 0.0);
     match fonte {
-        Lato::Cpu | Lato::Ram | Lato::Disco | Lato::Batteria | Lato::Gpu => (0.0, 100.0),
+        Lato::Cpu | Lato::Ram | Lato::Disco | Lato::Batteria | Lato::Gpu | Lato::Limite5h | Lato::Limite7g => (0.0, 100.0),
         Lato::Meteo if unita.map(str::trim) == Some("°F") => (14.0, 104.0),
         Lato::Meteo => (-10.0, 40.0),
         _ => match unita.map(str::trim) {
@@ -454,6 +558,9 @@ mod test {
             Lato::ReteGiu,
             Lato::ReteSu,
             Lato::Gpu,
+            Lato::Limite5h,
+            Lato::Limite7g,
+            Lato::SpesaApi,
         ] {
             assert_eq!(Lato::da_str(&l.come_str()), l, "andata e ritorno di {l:?}");
         }
@@ -492,7 +599,22 @@ mod test {
         let nomi: Vec<&str> = q.iter().map(|(_, n)| n.as_str()).collect();
         assert_eq!(
             nomi,
-            ["Niente", "Ora", "CPU", "RAM", "Disco", "Rete in arrivo", "Rete in uscita", "GPU", "Temperatura esterna", "Temperatura · Sala", "Potenza · Fotovoltaico"]
+            [
+                "Niente",
+                "Ora",
+                "CPU",
+                "RAM",
+                "Disco",
+                "Rete in arrivo",
+                "Rete in uscita",
+                "GPU",
+                "Limite 5 ore",
+                "Limite settimanale",
+                "Spesa API del mese",
+                "Temperatura esterna",
+                "Temperatura · Sala",
+                "Potenza · Fotovoltaico"
+            ]
         );
         // Fuori da Windows la GPU non c'è (assente, non spenta).
         let q = scelte(false, &[], false, false, true);
@@ -678,6 +800,72 @@ mod test {
         // Chi chiede un massimo nelle Impostazioni.
         assert!(chiede_massimo(Some("W")) && chiede_massimo(Some("kW")) && chiede_massimo(None) && chiede_massimo(Some("lx")));
         assert!(!chiede_massimo(Some("%")) && !chiede_massimo(Some("°C")));
+    }
+
+    /// M3, Task 12: limiti dell'abbonamento e spesa API sono fonti dei soli quadranti.
+    #[test]
+    fn fonti_claude_andata_e_ritorno() {
+        for (s, l) in [("limite_5h", Lato::Limite5h), ("limite_7g", Lato::Limite7g), ("spesa_api", Lato::SpesaApi)] {
+            assert_eq!(Lato::da_str(s), l);
+            assert_eq!(l.come_str(), s);
+        }
+        // Non fra le scelte dei lati della pillola; sì fra quelle dei quadranti, coi loro nomi.
+        let lati: Vec<Lato> = scelte(true, &[], true, true, false).into_iter().map(|(l, _)| l).collect();
+        assert!(![Lato::Limite5h, Lato::Limite7g, Lato::SpesaApi].iter().any(|l| lati.contains(l)));
+        let q = scelte(true, &[], true, true, true);
+        for (l, nome) in
+            [(Lato::Limite5h, "Limite 5 ore"), (Lato::Limite7g, "Limite settimanale"), (Lato::SpesaApi, "Spesa API del mese")]
+        {
+            assert!(q.contains(&(l.clone(), nome.into())), "{nome}");
+            // Mai testo né campione a lato della pillola, e nessuna sorgente da accendere.
+            assert_eq!(contenuto(&l, &DatiLati::default()), ContenutoLato::Vuoto);
+            assert_eq!(campione(&l, &DatiLati::default()), None);
+            assert_eq!(bisogni(&l, &Lato::Niente), Bisogni::default());
+        }
+    }
+
+    fn limite(percentuale: f32, azzera_alle: i64) -> Limite {
+        Limite { percentuale, azzera_alle }
+    }
+
+    /// PF9: senza dato il quadrante dice «—», mai «0%» né «0 $», e non ha arco.
+    #[test]
+    fn quadrante_senza_dato_trattino() {
+        let ora = chrono::Local::now();
+        let nessuno = DatiClaude::default();
+        for l in [Lato::Limite5h, Lato::Limite7g, Lato::SpesaApi] {
+            let q = quadrante_claude(&l, &nessuno, None, ora).expect("è una fonte di Claude");
+            assert_eq!((q.valore.as_str(), q.frazione, q.dettaglio.as_str()), ("—", -1.0, ""), "{l:?}");
+        }
+        assert_eq!(quadrante_claude(&Lato::Cpu, &nessuno, None, ora), None, "le altre fonti non sono sue");
+        // Con il dato: percentuale e arco, e quando si azzera.
+        let dati = DatiClaude { cinque: Some(limite(36.6, ora.timestamp() + 600)), ..Default::default() };
+        let q = quadrante_claude(&Lato::Limite5h, &dati, None, ora).unwrap();
+        assert_eq!(q.valore, "37%");
+        assert!((q.frazione - 0.366).abs() < 1e-5);
+        assert!(q.dettaglio.starts_with("si azzera"), "{}", q.dettaglio);
+        assert_eq!(quadrante_claude(&Lato::Limite7g, &dati, None, ora).unwrap().valore, "—", "la finestra dei 7 giorni non c'è");
+        // La spesa: «412,80 $»; col tetto è la frazione della soglia, senza è il massimo dell'utente o il doppio.
+        let spesa = api_claude::importo_da("41280").unwrap();
+        let dati = DatiClaude { spesa: Some(spesa), soglia_spesa: Some(1000.0), ..Default::default() };
+        let q = quadrante_claude(&Lato::SpesaApi, &dati, Some(500.0), ora).unwrap();
+        assert_eq!(q.valore, "413 $");
+        assert!((q.frazione - 0.4128).abs() < 1e-4, "la soglia vince sul massimo dell'utente");
+        let dati = DatiClaude { soglia_spesa: None, ..dati };
+        assert!((quadrante_claude(&Lato::SpesaApi, &dati, Some(500.0), ora).unwrap().frazione - 0.8256).abs() < 1e-4);
+        assert!((quadrante_claude(&Lato::SpesaApi, &dati, None, ora).unwrap().frazione - 0.5).abs() < 1e-4, "0..(valore × 2)");
+        // Un limite non finito è assente.
+        let dati = DatiClaude { cinque: Some(limite(f32::NAN, ora.timestamp() + 600)), ..Default::default() };
+        assert_eq!(quadrante_claude(&Lato::Limite5h, &dati, None, ora).unwrap().valore, "—");
+    }
+
+    #[test]
+    fn scala_dei_limiti_e_della_spesa() {
+        assert_eq!(scala(&Lato::Limite5h, None, None, 40.0), (0.0, 100.0));
+        assert_eq!(scala(&Lato::Limite7g, None, Some(5.0), 40.0), (0.0, 100.0));
+        assert_eq!(scala(&Lato::SpesaApi, None, Some(250.0), 40.0), (0.0, 250.0));
+        assert_eq!(scala(&Lato::SpesaApi, None, None, 40.0), (0.0, 80.0));
+        assert!(chiede_massimo(None), "la spesa senza soglia chiede un massimo");
     }
 
     #[test]

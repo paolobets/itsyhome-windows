@@ -2269,6 +2269,79 @@ mod accessibilita {
         assert_eq!(campi(&f)[0].accessible_value().as_deref(), Some("6000"));
     }
 
+    /// M3, Task 12: Impostazioni › Claude › Avvisi. «Avvisa al … % del limite» parte da 80;
+    /// un testo che non è un numero da 50 a 100 si rifiuta con un errore che dice cosa scrivere e
+    /// non si salva; lo stesso per la soglia di spesa (vuota = nessuna).
+    #[test]
+    fn soglie_nelle_impostazioni() {
+        use slint::platform::{Key, PointerEventButton, WindowEvent};
+        piattaforma_di_prova();
+        let f = FinestraImpostazioni::new().expect("impostazioni");
+        f.set_soglia_limite("80".into());
+        f.set_sezione(crate::finestra_impostazioni::SEZIONE_CLAUDE);
+        f.show().expect("impostazioni mostrate nel backend di prova");
+        f.window().set_size(slint::LogicalSize::new(760.0, 1400.0));
+        f.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
+        let salvati = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let s = salvati.clone();
+        f.on_soglia_limite_scritta(move |t| match crate::claude::leggi_soglia_limite(&t) {
+            Ok(v) => {
+                s.borrow_mut().push(format!("limite {v}"));
+                "".into()
+            }
+            Err(e) => e.into(),
+        });
+        let s = salvati.clone();
+        f.on_soglia_spesa_scritta(move |t| match crate::claude::leggi_soglia_spesa(&t) {
+            Ok(v) => {
+                s.borrow_mut().push(format!("spesa {v:?}"));
+                "".into()
+            }
+            Err(e) => e.into(),
+        });
+        let campo = |nome: &str| {
+            ElementHandle::find_by_accessible_label(&f, nome)
+                .find(|e| e.accessible_role() == Some(AccessibleRole::TextInput))
+                .unwrap_or_else(|| panic!("campo «{nome}»"))
+        };
+        // Scrive nel campo e preme Invio (dopo averci dato il fuoco con un clic).
+        let scrivi = |nome: &str, testo: &str| {
+            let c = campo(nome);
+            let (pos, misura) = (c.absolute_position(), c.size());
+            let centro = slint::LogicalPosition::new(pos.x + misura.width / 2.0, pos.y + misura.height / 2.0);
+            f.window().dispatch_event(WindowEvent::PointerMoved { position: centro });
+            f.window().dispatch_event(WindowEvent::PointerPressed { position: centro, button: PointerEventButton::Left });
+            f.window().dispatch_event(WindowEvent::PointerReleased { position: centro, button: PointerEventButton::Left });
+            c.set_accessible_value(testo);
+            f.window().dispatch_event(WindowEvent::KeyPressed { text: Key::Return.into() });
+            f.window().dispatch_event(WindowEvent::KeyReleased { text: Key::Return.into() });
+        };
+        const LIMITE: &str = "Avvisa al … % del limite";
+        const SPESA: &str = "Soglia di spesa mensile ($)";
+        assert_eq!(campo(LIMITE).accessible_value().as_deref(), Some("80"), "il predefinito");
+        assert_eq!(campo(SPESA).accessible_value().as_deref(), Some(""), "nessuna soglia di spesa");
+        assert_eq!(campo(LIMITE).accessible_description().as_deref(), Some(""), "nessun errore a riposo");
+
+        scrivi(LIMITE, "abc");
+        assert!(salvati.borrow().is_empty(), "«abc» non si salva");
+        let errore = campo(LIMITE).accessible_description().unwrap_or_default();
+        assert!(errore.contains("50 a 100"), "l'errore dice cosa scrivere: {errore:?}");
+        scrivi(LIMITE, "101");
+        assert!(salvati.borrow().is_empty(), "oltre 100 non si salva");
+        scrivi(LIMITE, "90");
+        assert!(!salvati.borrow().is_empty() && salvati.borrow().iter().all(|s| s == "limite 90"), "{:?}", salvati.borrow());
+        assert_eq!(campo(LIMITE).accessible_description().as_deref(), Some(""), "salvato: l'errore sparisce");
+
+        let spese = || salvati.borrow().iter().filter(|s| s.starts_with("spesa")).cloned().collect::<Vec<_>>();
+        scrivi(SPESA, "zero");
+        assert!(spese().is_empty(), "«zero» non si salva");
+        assert!(campo(SPESA).accessible_description().unwrap_or_default().contains("maggiore di zero"));
+        scrivi(SPESA, "99,5");
+        assert_eq!(spese(), ["spesa Some(99.5)"]);
+        scrivi(SPESA, "");
+        assert_eq!(spese(), ["spesa Some(99.5)", "spesa None"], "vuota = nessuna soglia");
+    }
+
     /// Di serie il pannello mostra i tre quadranti di M1; il modello del ponte li sostituisce
     /// (un sensore col suo valore, l'ora del pannello) e «niente» non c'è.
     #[test]
@@ -2658,6 +2731,7 @@ mod accessibilita {
             &[crate::lati::Lato::Gpu],
             None,
             &std::collections::HashMap::new(),
+            &crate::lati::DatiClaude::default(),
         ))));
         let gpu = elemento(&p, "GPU");
         assert_eq!(gpu.accessible_value().as_deref(), Some("—"));

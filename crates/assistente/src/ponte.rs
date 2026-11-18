@@ -8,7 +8,7 @@ use crate::attenzione::{
     PULSANTE_ARCHIVIA, PULSANTE_APRI, PULSANTE_HO_CAPITO, PULSANTE_IMPOSTAZIONI, PULSANTE_RIPROVA,
 };
 use crate::claude::PREFISSO_CLAUDE;
-use crate::lati::{self, Lato};
+use crate::lati::{self, DatiClaude, Lato};
 use crate::layout::Layout;
 use crate::orologio;
 use crate::pc_stats::{Fonti, LetturaBatteria};
@@ -538,7 +538,8 @@ fn genere_di_unita(unita: &str) -> GenereUi {
 /// l'interfaccia; meteo e sensori (da `MenuData::sensori_numerici`: anche W, kWh e FV, che stanze
 /// e preferiti non hanno) hanno qui valore, arco (scala di `lati::scala`, col massimo
 /// dell'utente) e nome. Un sensore che non c'è più resta, col trattino.
-pub fn quadranti_ui(q: &[Lato], menu: Option<&MenuData>, massimi: &HashMap<String, f64>) -> Vec<QuadranteUi> {
+pub fn quadranti_ui(q: &[Lato], menu: Option<&MenuData>, massimi: &HashMap<String, f64>, claude: &DatiClaude) -> Vec<QuadranteUi> {
+    let ora = chrono::Local::now();
     let pc = |fonte, etichetta: &str| QuadranteUi { fonte, etichetta: etichetta.into(), frazione: -1.0, ..Default::default() };
     q.iter()
         .filter_map(|l| {
@@ -562,6 +563,23 @@ pub fn quadranti_ui(q: &[Lato], menu: Option<&MenuData>, massimi: &HashMap<Strin
                         frazione: t.map_or(-1.0, |t| lati::frazione(l, meteo.map(|m| m.unita.as_str()), None, t)),
                         dettaglio: meteo.map(|m| orologio::condizione_italiana(&m.condizione)).unwrap_or_default().into(),
                         genere: GenereUi::Casa,
+                    }
+                }
+                Lato::Limite5h | Lato::Limite7g | Lato::SpesaApi => {
+                    let (fonte, etichetta) = match l {
+                        Lato::Limite5h => (FonteQuadranteUi::Limite5h, "LIMITE 5 ORE"),
+                        Lato::Limite7g => (FonteQuadranteUi::Limite7g, "LIMITE SETTIMANALE"),
+                        _ => (FonteQuadranteUi::SpesaApi, "SPESA API"),
+                    };
+                    // Senza dato «—» e nessun arco (PF9): mai «0%» né «0 $».
+                    let q = lati::quadrante_claude(l, claude, massimi.get(&l.come_str()).copied(), ora)?;
+                    QuadranteUi {
+                        fonte,
+                        etichetta: etichetta.into(),
+                        valore: q.valore.into(),
+                        frazione: q.frazione,
+                        dettaglio: q.dettaglio.into(),
+                        genere: GenereUi::Sensore,
                     }
                 }
                 Lato::Sensore(id) => {
@@ -671,6 +689,9 @@ pub fn isola(config: &Config, menu: Option<&MenuData>, batteria: bool) -> Isola 
             Lato::Sensore(id) => {
                 sensori_q.iter().find(|s| &s.entity_id == id).map(|s| Some(s.unita.as_str()).filter(|u| !u.is_empty()))
             }
+            // La spesa dei quadranti ha come fondo scala la soglia; senza, chiede il massimo (come
+            // un'unità senza scala); i limiti sono sempre 0..100.
+            Lato::SpesaApi if config.claude.soglia_spesa.is_none() => Some(None),
             _ => None,
         };
         // Il massimo si chiede solo per un sensore che c'è e la cui unità non ha una scala.
@@ -1332,7 +1353,7 @@ impl Ponte {
     /// con gli altri modelli della casa).
     fn ricostruisci_quadranti(&self) {
         let (q, massimi) = self.casa.con_config(|c| (lati::quadranti(&c.quadranti), c.massimi_quadranti.clone()));
-        let voci = quadranti_ui(&q, self.menu.borrow().as_deref(), &massimi);
+        let voci = quadranti_ui(&q, self.menu.borrow().as_deref(), &massimi, &self.dati_claude_quadranti());
         let n = aggiorna_modello(&self.quadranti, voci);
         self.casa.diagnosi().conta_n(Contatore::ui_righe, n);
     }
@@ -1887,6 +1908,8 @@ impl Ponte {
         self.collega_claude(f);
         // Impostazioni › Claude › Chiave da amministratore (M3, Task 8).
         self.collega_api(f);
+        // Impostazioni › Claude › Avvisi (M3, Task 12).
+        self.collega_soglie(f);
         f.on_salva_ambiente(|id, nome, url, token| {
             let Some(ponte) = ponte() else { return "".into() };
             let m = Modulo { id: id.into(), nome: nome.into(), url: url.into(), token: token.into() };
@@ -3718,7 +3741,7 @@ pub(crate) mod test {
     fn quadranti_configurabili_dai_dati() {
         let m = menu(vec![sensore("sensor.t", "15", Some("°C")), potenza("sensor.fv", "1500")], vec![]);
         let q = [Lato::Cpu, Lato::Niente, Lato::Sensore("sensor.t".into())];
-        let v = quadranti_ui(&q, Some(&m), &HashMap::new());
+        let v = quadranti_ui(&q, Some(&m), &HashMap::new(), &DatiClaude::default());
         assert_eq!(v.len(), 2, "«niente» non si mostra");
         assert_eq!((v[0].fonte, v[0].etichetta.as_str()), (FonteQuadranteUi::Cpu, "CPU"));
         assert_eq!(v[1].fonte, FonteQuadranteUi::Sensore);
@@ -3727,13 +3750,13 @@ pub(crate) mod test {
         assert_eq!(v[1].dettaglio, "Nome sensor.t");
         // Watt: 3000 di serie, poi il massimo dell'utente.
         let fv = [Lato::Sensore("sensor.fv".into())];
-        assert!((quadranti_ui(&fv, Some(&m), &HashMap::new())[0].frazione - 0.5).abs() < 1e-6);
+        assert!((quadranti_ui(&fv, Some(&m), &HashMap::new(), &DatiClaude::default())[0].frazione - 0.5).abs() < 1e-6);
         let massimi = HashMap::from([("sensore:sensor.fv".to_owned(), 6000.0)]);
-        assert!((quadranti_ui(&fv, Some(&m), &massimi)[0].frazione - 0.25).abs() < 1e-6);
+        assert!((quadranti_ui(&fv, Some(&m), &massimi, &DatiClaude::default())[0].frazione - 0.25).abs() < 1e-6);
         // Un sensore sparito resta col trattino; senza dati i quadranti del PC ci sono lo stesso.
-        let sparito = quadranti_ui(&[Lato::Sensore("sensor.via".into())], Some(&m), &HashMap::new());
+        let sparito = quadranti_ui(&[Lato::Sensore("sensor.via".into())], Some(&m), &HashMap::new(), &DatiClaude::default());
         assert_eq!((sparito[0].valore.as_str(), sparito[0].frazione), ("", -1.0));
-        assert_eq!(quadranti_ui(&lati::QUADRANTI_DI_M1, None, &HashMap::new()).len(), 3);
+        assert_eq!(quadranti_ui(&lati::QUADRANTI_DI_M1, None, &HashMap::new(), &DatiClaude::default()).len(), 3);
     }
 
     #[test]

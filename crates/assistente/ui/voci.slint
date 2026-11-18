@@ -178,10 +178,11 @@ export struct ContenutoLatoUi {
 }
 
 // La fonte di un quadrante configurabile (vedi `lati::Lato`).
-export enum FonteQuadranteUi { niente, cpu, ram, disco, rete-giu, rete-su, batteria, ora, meteo, sensore, gpu }
+export enum FonteQuadranteUi { niente, cpu, ram, disco, rete-giu, rete-su, batteria, ora, meteo, sensore, gpu, limite-5h, limite-7g, spesa-api }
 
 // Un quadrante configurabile dei Quadranti (vedi `ponte::quadranti_ui`). Per le fonti del PC e
-// per l'ora i valori li legge l'interfaccia (`StatPcUi`, l'ora del pannello); per meteo e sensori
+// per l'ora i valori li legge l'interfaccia (`StatPcUi`, l'ora del pannello); per meteo, sensori e le fonti
+// di Claude (limiti e spesa, `lati::quadrante_claude`)
 // li scrive Rust: `valore`, `frazione` 0..1 dell'arco (-1 = niente arco), `dettaglio` (il nome),
 // `genere` (l'icona del sensore).
 export struct QuadranteUi {
