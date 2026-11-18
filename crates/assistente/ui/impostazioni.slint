@@ -852,6 +852,13 @@ export component FinestraImpostazioni inherits Window {
     callback api-salva(string);
     callback api-prova(string);
     callback api-togli();
+    // «Dettagli delle API»: le schede dell'ultima lettura nella finestra di gestione.
+    callback api-dettagli();
+    // La conferma di «Togli» aperta (RC-33). Si chiude da sola se la chiave sparisce.
+    property <bool> api-conferma-togli;
+    changed api-presente => { api-conferma-togli = false; }
+    // Una colonna sola per le etichette dei campi della sezione Claude (RC-47).
+    property <length> etichette-claude: 220px;
 
     // Avvisi di Claude (M3, Task 12): le soglie dei limiti dell'abbonamento e della spesa del mese.
     // Rust valida, salva e restituisce l'errore da mostrare (vuoto = salvato): un valore rifiutato
@@ -1087,9 +1094,16 @@ export component FinestraImpostazioni inherits Window {
         radice.focus();
     }
 
+    // Chiude la conferma di «Togli»: il fuoco torna alla finestra.
+    function chiudi-togli() {
+        api-conferma-togli = false;
+        radice.focus();
+    }
+
     // Lasciando la sezione la conferma non resta in sospeso.
     changed sezione => {
         conferma-c-id = "";
+        api-conferma-togli = false;
         if (claude-passo != 0) {
             chiudi-claude();
         }
@@ -1127,6 +1141,8 @@ export component FinestraImpostazioni inherits Window {
                 // Un livello alla volta: la conferma, il modulo (ambienti o collegamenti), la finestra.
                 if (sezione == 4 && claude-passo != 0) {
                     chiudi-claude();
+                } else if (sezione == 4 && api-conferma-togli) {
+                    chiudi-togli();
                 } else if (sezione == 2 && conferma-c-id != "") {
                     annulla-elimina-collegamento();
                 } else if (sezione == 0 && modo == ModoAmbienti.modulo) {
@@ -2194,27 +2210,51 @@ export component FinestraImpostazioni inherits Window {
                             text: "CLAUDE CODE";
                         }
 
-                        // Lo stato e, a riposo, il pulsante per collegare (o aggiornare).
+                        // RC-46: una card sola per Claude Code, con lo stato e le azioni di adesso
+                        // (collega; da collegato scollega, e aggiorna se serve). «Collega» ha la tinta
+                        // d'azione: è l'unica cosa da fare.
                         card-stato := CardRiga {
                             titolo: claude-stato;
-                            descrizione: claude-disponibile ? "Le sessioni di Claude Code compaiono nella pillola, coi permessi da consentire." : "Il collegamento con le sessioni di Claude Code è solo per Windows; la lettura dei consumi via API funziona ovunque.";
+                            descrizione: !claude-disponibile
+                                ? "Il collegamento con le sessioni di Claude Code è solo per Windows; la lettura dei consumi via API funziona ovunque."
+                                : claude-collegato
+                                    ? "Le sessioni di Claude Code compaiono nella pillola, coi permessi da consentire. «Scollega» toglie da settings.json solo le voci di isola."
+                                    : "Le sessioni di Claude Code compaiono nella pillola, coi permessi da consentire.";
 
-                            if claude-passo == 0 && claude-disponibile && (!claude-collegato || claude-da-aggiornare): Bottone {
-                                testo: claude-da-aggiornare ? "Aggiorna il collegamento" : "Collega Claude Code";
-                                premuto => {
-                                    claude-esito = "";
-                                    root.claude-prepara();
+                            HorizontalLayout {
+                                spacing: 10px;
+
+                                if claude-passo == 0 && claude-disponibile && claude-collegato: Bottone {
+                                    testo: "Scollega";
+                                    premuto => {
+                                        claude-esito = "";
+                                        claude-passo = 2;
+                                    }
+                                    changed has-focus => {
+                                        if (self.has-focus) {
+                                            claude.porta-in-vista(card-stato.y, card-stato.height);
+                                        }
+                                    }
                                 }
-                                changed has-focus => {
-                                    if (self.has-focus) {
-                                        claude.porta-in-vista(card-stato.y, card-stato.height);
+
+                                if claude-passo == 0 && claude-disponibile && (!claude-collegato || claude-da-aggiornare): Bottone {
+                                    testo: claude-da-aggiornare ? "Aggiorna il collegamento" : "Collega Claude Code";
+                                    tipo: TipoPulsante.azione;
+                                    premuto => {
+                                        claude-esito = "";
+                                        root.claude-prepara();
+                                    }
+                                    changed has-focus => {
+                                        if (self.has-focus) {
+                                            claude.porta-in-vista(card-stato.y, card-stato.height);
+                                        }
                                     }
                                 }
                             }
                         }
 
                         // L'anteprima di ciò che si scrive: nulla è scritto finché non si preme «Scrivi».
-                        if claude-passo == 1: Rectangle {
+                        if claude-passo == 1: card-anteprima := Rectangle {
                             height: corpo-anteprima.preferred-height;
                             border-radius: Tema.raggio-xl;
                             background: Tema.card-fondo;
@@ -2236,17 +2276,20 @@ export component FinestraImpostazioni inherits Window {
                                     color: Tema.testo;
                                 }
 
+                                // RC-40: il percorso non ha spazi; a capo dove finisce la riga (non
+                                // dopo «C:» da solo).
                                 Text {
                                     text: claude-file;
-                                    wrap: word-wrap;
+                                    wrap: char-wrap;
                                     font-family: Tema.carattere-mono;
                                     font-size: Tema.testo-piccolo;
                                     color: Tema.testo-tenue;
                                 }
 
-                                // Il riquadro mono: scorre col mouse e, con il fuoco dentro, con le frecce.
+                                // Il riquadro mono: scorre col mouse e, con il fuoco dentro, con le
+                                // frecce. Basso abbastanza da lasciare in vista i pulsanti (RC-31).
                                 Rectangle {
-                                    height: 190px;
+                                    height: 120px;
                                     border-radius: Tema.raggio-m;
                                     background: Tema.riquadro-fondo;
                                     border-width: 1px;
@@ -2287,7 +2330,10 @@ export component FinestraImpostazioni inherits Window {
                                     color: Tema.testo-tenue;
                                 }
 
-                                HorizontalLayout {
+                                // In vista tutta la riga dei pulsanti: la sua posizione nella colonna è
+                                // quella della card più la sua nella card (RC-31: prima si passava la
+                                // posizione nella card, e la riga restava mezza sotto il bordo).
+                                pulsanti-anteprima := HorizontalLayout {
                                     height: 30px;
                                     spacing: 10px;
                                     alignment: end;
@@ -2297,7 +2343,7 @@ export component FinestraImpostazioni inherits Window {
                                         premuto => { chiudi-claude(); }
                                         changed has-focus => {
                                             if (self.has-focus) {
-                                                claude.porta-in-vista(parent.y, parent.height);
+                                                claude.porta-in-vista(card-anteprima.y + pulsanti-anteprima.y, pulsanti-anteprima.height + 16px);
                                             }
                                         }
                                     }
@@ -2308,7 +2354,7 @@ export component FinestraImpostazioni inherits Window {
                                         premuto => { root.claude-conferma(); }
                                         changed has-focus => {
                                             if (self.has-focus) {
-                                                claude.porta-in-vista(parent.y, parent.height);
+                                                claude.porta-in-vista(card-anteprima.y + pulsanti-anteprima.y, pulsanti-anteprima.height + 16px);
                                             }
                                         }
                                     }
@@ -2316,27 +2362,8 @@ export component FinestraImpostazioni inherits Window {
                             }
                         }
 
-                        // Collegato: lo scollegamento.
-                        if claude-passo == 0 && claude-disponibile && claude-collegato: card-scollega := CardRiga {
-                            titolo: "Collegamento";
-                            descrizione: "Toglie da settings.json solo le voci di isola.";
-
-                            Bottone {
-                                testo: "Scollega";
-                                premuto => {
-                                    claude-esito = "";
-                                    claude-passo = 2;
-                                }
-                                changed has-focus => {
-                                    if (self.has-focus) {
-                                        claude.porta-in-vista(card-scollega.y, card-scollega.height);
-                                    }
-                                }
-                            }
-                        }
-
                         // La conferma dello scollegamento: nomina ciò che succede.
-                        if claude-passo == 2: Rectangle {
+                        if claude-passo == 2: card-scollega := Rectangle {
                             height: corpo-scollega.preferred-height;
                             border-radius: Tema.raggio-xl;
                             background: Tema.riquadro-pieno;
@@ -2374,7 +2401,7 @@ export component FinestraImpostazioni inherits Window {
                                         premuto => { chiudi-claude(); }
                                         changed has-focus => {
                                             if (self.has-focus) {
-                                                claude.porta-in-vista(parent.y, parent.height);
+                                                claude.porta-in-vista(card-scollega.y, card-scollega.height);
                                             }
                                         }
                                     }
@@ -2385,7 +2412,7 @@ export component FinestraImpostazioni inherits Window {
                                         premuto => { root.claude-scollega(); }
                                         changed has-focus => {
                                             if (self.has-focus) {
-                                                claude.porta-in-vista(parent.y, parent.height);
+                                                claude.porta-in-vista(card-scollega.y, card-scollega.height);
                                             }
                                         }
                                     }
@@ -2409,7 +2436,13 @@ export component FinestraImpostazioni inherits Window {
                         }
 
                         // Chiave da amministratore: consumi e dati dell'organizzazione, solo letture.
-                        Rectangle {
+                        // Un blocco a sé (RC-46): funziona anche senza collegare Claude Code.
+                        Etichetta {
+                            height: 30px;
+                            text: "CHIAVE DA AMMINISTRATORE";
+                        }
+
+                        card-api := Rectangle {
                             height: colonna-api.preferred-height;
                             border-radius: Tema.raggio-xl;
                             background: Tema.card-fondo;
@@ -2424,13 +2457,6 @@ export component FinestraImpostazioni inherits Window {
                                 spacing: 8px;
 
                                 Text {
-                                    text: "Chiave da amministratore";
-                                    font-weight: 500;
-                                    font-size: Tema.testo-medio;
-                                    color: Tema.testo;
-                                }
-
-                                Text {
                                     text: "Crea una chiave da amministratore con scadenza nella Console (Impostazioni › Admin keys). Serve solo per leggere consumi e dati dell'organizzazione: non modifica nulla.";
                                     wrap: word-wrap;
                                     font-size: Tema.testo-piccolo;
@@ -2439,6 +2465,7 @@ export component FinestraImpostazioni inherits Window {
 
                                 if !api-presente: Campo {
                                     etichetta: "Chiave";
+                                    larghezza-etichetta: etichette-claude;
                                     suggerimento: "sk-ant-admin01-…";
                                     nome-accessibile: "Chiave da amministratore";
                                     password: true;
@@ -2454,7 +2481,8 @@ export component FinestraImpostazioni inherits Window {
                                     accessible-label: "Chiave salvata, finisce con " + api-ultime;
                                 }
 
-                                HorizontalLayout {
+                                // Con la conferma di «Togli» aperta i pulsanti lasciano il posto a lei.
+                                if !api-conferma-togli: HorizontalLayout {
                                     height: 30px;
                                     spacing: 10px;
                                     alignment: start;
@@ -2476,7 +2504,76 @@ export component FinestraImpostazioni inherits Window {
 
                                     if api-presente: Bottone {
                                         testo: "Togli";
-                                        premuto => { root.api-togli(); }
+                                        premuto => { api-conferma-togli = true; }
+                                    }
+
+                                    // Le schede delle API anche da qui, appena c'è la chiave (RC-46).
+                                    if api-presente: Bottone {
+                                        testo: "Dettagli delle API";
+                                        tipo: TipoPulsante.azione;
+                                        premuto => { root.api-dettagli(); }
+                                    }
+                                }
+
+                                // RC-33: la conferma di «Togli», come quella di «Scollega»: una chiave
+                                // da amministratore la Console la mostra una volta sola.
+                                if api-conferma-togli: conferma-api := Rectangle {
+                                    height: corpo-togli.preferred-height;
+                                    border-radius: Tema.raggio-l;
+                                    background: Tema.riquadro-pieno;
+                                    border-width: 1px;
+                                    border-color: Tema.pericolo-filo;
+                                    init => { annulla-togli.focus(); }
+                                    accessible-role: groupbox;
+                                    accessible-label: "Conferma: togliere la chiave da amministratore";
+
+                                    corpo-togli := VerticalLayout {
+                                        padding: 14px;
+                                        spacing: 8px;
+
+                                        Text {
+                                            text: "Togliere la chiave da amministratore?";
+                                            font-weight: 500;
+                                            font-size: Tema.testo-medio;
+                                            color: Tema.testo;
+                                        }
+
+                                        Text {
+                                            text: "Esce dal portachiavi e le letture si fermano. Per rimetterla serve la chiave intera, che la Console mostra una volta sola.";
+                                            wrap: word-wrap;
+                                            font-size: Tema.testo-corpo;
+                                            color: Tema.testo-tenue;
+                                        }
+
+                                        HorizontalLayout {
+                                            height: 30px;
+                                            spacing: 10px;
+                                            alignment: end;
+
+                                            annulla-togli := Bottone {
+                                                testo: "Annulla";
+                                                premuto => { chiudi-togli(); }
+                                                changed has-focus => {
+                                                    if (self.has-focus) {
+                                                        claude.porta-in-vista(card-api.y + conferma-api.y, conferma-api.height);
+                                                    }
+                                                }
+                                            }
+
+                                            conferma-togli := Bottone {
+                                                testo: "Togli";
+                                                tipo: TipoPulsante.pericolo;
+                                                premuto => {
+                                                    chiudi-togli();
+                                                    root.api-togli();
+                                                }
+                                                changed has-focus => {
+                                                    if (self.has-focus) {
+                                                        claude.porta-in-vista(card-api.y + conferma-api.y, conferma-api.height);
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
 
@@ -2497,6 +2594,11 @@ export component FinestraImpostazioni inherits Window {
                         }
 
                         // Avvisi: una sola volta per finestra di limite, per gradino di spesa e per mese.
+                        Etichetta {
+                            height: 30px;
+                            text: "AVVISI";
+                        }
+
                         Rectangle {
                             height: colonna-avvisi.preferred-height;
                             border-radius: Tema.raggio-xl;
@@ -2512,13 +2614,6 @@ export component FinestraImpostazioni inherits Window {
                                 spacing: 8px;
 
                                 Text {
-                                    text: "Avvisi";
-                                    font-weight: 500;
-                                    font-size: Tema.testo-medio;
-                                    color: Tema.testo;
-                                }
-
-                                Text {
                                     text: "Isola ti avvisa una sola volta quando i limiti dell'abbonamento o la spesa delle API superano questi valori. Lascia vuota la soglia di spesa per non avere l'avviso.";
                                     wrap: word-wrap;
                                     font-size: Tema.testo-piccolo;
@@ -2526,8 +2621,8 @@ export component FinestraImpostazioni inherits Window {
                                 }
 
                                 Campo {
-                                    etichetta: "Avvisa al … % del limite";
-                                    larghezza-etichetta: 190px;
+                                    etichetta: "Avvisa quando un limite supera (%)";
+                                    larghezza-etichetta: etichette-claude;
                                     suggerimento: "80";
                                     testo: root.soglia-limite;
                                     errore: errore-soglia-limite;
@@ -2545,7 +2640,7 @@ export component FinestraImpostazioni inherits Window {
 
                                 Campo {
                                     etichetta: "Soglia di spesa mensile ($)";
-                                    larghezza-etichetta: 190px;
+                                    larghezza-etichetta: etichette-claude;
                                     suggerimento: "Per esempio 250";
                                     testo: root.soglia-spesa;
                                     errore: errore-soglia-spesa;
@@ -2638,7 +2733,11 @@ export component FinestraImpostazioni inherits Window {
                         color: Tema.testo-ora;
                     }
 
-                    // Attribuzione richiesta dalla licenza Slint royalty-free 2.0 (punto 2(a)).
+                    // Attribuzione richiesta dalla licenza Slint royalty-free 2.0, punto 2(a)
+                    // (https://github.com/slint-ui/slint/blob/master/LICENSES/LicenseRef-Slint-Royalty-free-2.0.md):
+                    // «Display the `AboutSlint` widget in an "About" screen or dialog that is
+                    // accessible from the top level menu of the Application.» Il testo non dice se
+                    // il widget si possa rimpicciolire o scurire (R1-25): resta com'è.
                     // Largo quanto il logo (alto 48, circa 105 di larghezza) più 12 di margine interno
                     // per lato, e spostato indietro di quel margine: il logo parte allineato a
                     // «© Paolo Bets».

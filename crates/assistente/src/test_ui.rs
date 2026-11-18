@@ -2368,6 +2368,93 @@ mod accessibilita {
         assert!(ce("Disponibile solo su Windows") && !ce("Collega Claude Code"));
     }
 
+    /// RC-31: aperta l'anteprima nella finestra della misura di serie, i due pulsanti stanno interi
+    /// nella parte visibile (prima «Scrivi in settings.json» finiva mezzo sotto il bordo).
+    #[test]
+    fn anteprima_claude_coi_pulsanti_in_vista() {
+        piattaforma_di_prova();
+        let f = FinestraImpostazioni::new().expect("impostazioni");
+        f.set_sezione(crate::finestra_impostazioni::SEZIONE_CLAUDE);
+        f.show().expect("impostazioni mostrate nel backend di prova");
+        f.window().set_size(slint::LogicalSize::new(720.0, 520.0));
+        f.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        let debole = f.as_weak();
+        f.on_claude_prepara(move || {
+            let f = debole.upgrade().unwrap();
+            f.set_claude_anteprima((0..30).map(|i| format!("  \"voce{i}\": {i},\n")).collect::<String>().into());
+            f.set_claude_avvisi("La barra di stato è già usata: i limiti dell'abbonamento non saranno disponibili.".into());
+            f.set_claude_file(r"C:\Users\prova\.claude\settings.json".into());
+            f.set_claude_passo(1);
+        });
+        elemento(&f, "Collega Claude Code").invoke_accessible_default_action();
+        let alto = f.window().size().to_logical(f.window().scale_factor()).height;
+        for nome in ["Annulla", "Scrivi in settings.json"] {
+            let p = ElementHandle::find_by_accessible_label(&f, nome)
+                .find(|e| e.accessible_role() == Some(AccessibleRole::Button))
+                .unwrap_or_else(|| panic!("pulsante «{nome}»"));
+            let (y, h) = (p.absolute_position().y, p.size().height);
+            // Il contenuto finisce 24 sopra il bordo della finestra e comincia sotto il filo.
+            assert!(y >= 18.0 && y + h <= alto - 24.0 + 0.5, "«{nome}» fuori vista: y {y} + {h} su {alto}");
+        }
+        assert!(col_fuoco(&f).ends_with("annulla-claude"), "fuoco su «{}»", col_fuoco(&f));
+    }
+
+    /// RC-33: «Togli» la chiave chiede conferma come «Scollega»: domanda, fuoco su «Annulla»
+    /// (Invio lì non toglie nulla), Esc annulla, «Togli» rosso toglie davvero.
+    #[test]
+    fn togli_la_chiave_chiede_conferma() {
+        use slint::platform::{Key, WindowEvent};
+        piattaforma_di_prova();
+        let f = FinestraImpostazioni::new().expect("impostazioni");
+        f.set_sezione(crate::finestra_impostazioni::SEZIONE_CLAUDE);
+        f.set_api_presente(true);
+        f.set_api_ultime("1a2b".into());
+        f.show().expect("impostazioni mostrate nel backend di prova");
+        f.window().set_size(slint::LogicalSize::new(760.0, 1400.0));
+        f.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
+        let tolte = std::rc::Rc::new(std::cell::Cell::new(0));
+        let t = tolte.clone();
+        f.on_api_togli(move || t.set(t.get() + 1));
+        let chiusa = std::rc::Rc::new(std::cell::Cell::new(false));
+        let c = chiusa.clone();
+        f.on_chiudi(move || c.set(true));
+        let domanda = "Togliere la chiave da amministratore?";
+        let ce = |nome: &str| ElementHandle::find_by_accessible_label(&f, nome).next().is_some();
+        let pulsante = |nome: &str| {
+            ElementHandle::find_by_accessible_label(&f, nome)
+                .find(|e| e.accessible_role() == Some(AccessibleRole::Button))
+                .unwrap_or_else(|| panic!("pulsante «{nome}»"))
+        };
+
+        // RC-46: con la chiave, le schede delle API si aprono anche da qui.
+        let dettagli = std::rc::Rc::new(std::cell::Cell::new(0));
+        let d = dettagli.clone();
+        f.on_api_dettagli(move || d.set(d.get() + 1));
+        pulsante("Dettagli delle API").invoke_accessible_default_action();
+        assert_eq!(dettagli.get(), 1);
+
+        pulsante("Togli").invoke_accessible_default_action();
+        assert_eq!(tolte.get(), 0, "il primo «Togli» chiede soltanto");
+        assert!(ce(domanda), "la domanda c'è");
+        assert!(col_fuoco(&f).ends_with("annulla-togli"), "fuoco su «{}»", col_fuoco(&f));
+        tasto_finestra(&f, Key::Return);
+        assert!(!ce(domanda) && tolte.get() == 0, "Invio su «Annulla» chiude senza togliere");
+
+        pulsante("Togli").invoke_accessible_default_action();
+        tasto_finestra(&f, Key::Escape);
+        assert!(!ce(domanda) && tolte.get() == 0 && !chiusa.get(), "Esc chiude la conferma, non la finestra");
+
+        pulsante("Togli").invoke_accessible_default_action();
+        tasto_finestra(&f, Key::Tab);
+        assert!(col_fuoco(&f).ends_with("conferma-togli"), "Tab porta a «Togli»: «{}»", col_fuoco(&f));
+        tasto_finestra(&f, Key::Return);
+        assert_eq!(tolte.get(), 1, "il «Togli» rosso toglie");
+        assert!(!ce(domanda));
+        // Tolta la chiave (Rust riscrive lo stato) la conferma non resta appesa.
+        f.set_api_presente(false);
+        assert!(!ce("Togli"));
+    }
+
     /// Le Impostazioni sulla scheda Collegamenti, coi controlli veri dei campi; restituisce gli
     /// eventi (salvataggi, eliminazioni, spostamenti, chiusura della finestra).
     fn scheda_collegamenti() -> (FinestraImpostazioni, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
@@ -2877,7 +2964,7 @@ mod accessibilita {
         assert_eq!(campi(&f)[0].accessible_value().as_deref(), Some("6000"));
     }
 
-    /// M3, Task 12: Impostazioni › Claude › Avvisi. «Avvisa al … % del limite» parte da 80;
+    /// M3, Task 12: Impostazioni › Claude › Avvisi. «Avvisa quando un limite supera (%)» parte da 80;
     /// un testo che non è un numero da 50 a 100 si rifiuta con un errore che dice cosa scrivere e
     /// non si salva; lo stesso per la soglia di spesa (vuota = nessuna).
     #[test]
@@ -2924,8 +3011,13 @@ mod accessibilita {
             f.window().dispatch_event(WindowEvent::KeyPressed { text: Key::Return.into() });
             f.window().dispatch_event(WindowEvent::KeyReleased { text: Key::Return.into() });
         };
-        const LIMITE: &str = "Avvisa al … % del limite";
+        // RC-47: un'etichetta senza i puntini che sembravano un testo tagliato.
+        const LIMITE: &str = "Avvisa quando un limite supera (%)";
         const SPESA: &str = "Soglia di spesa mensile ($)";
+        // RC-47: le caselle della chiave e degli avvisi partono dalla stessa colonna.
+        let x = |nome: &str| campo(nome).absolute_position().x;
+        assert_eq!(x("Chiave da amministratore"), x(LIMITE));
+        assert_eq!(x(SPESA), x(LIMITE));
         assert_eq!(campo(LIMITE).accessible_value().as_deref(), Some("80"), "il predefinito");
         assert_eq!(campo(SPESA).accessible_value().as_deref(), Some(""), "nessuna soglia di spesa");
         assert_eq!(campo(LIMITE).accessible_description().as_deref(), Some(""), "nessun errore a riposo");

@@ -139,6 +139,14 @@ pub(crate) fn riga_stato(
     parti.join(" · ")
 }
 
+/// Cancella l'esito dell'ultima azione sulla chiave quando non è più vero (si riscrive solo se c'è).
+pub(crate) fn togli_esito_api(f: &FinestraImpostazioni) {
+    if !f.get_api_esito().is_empty() {
+        f.set_api_esito("".into());
+        f.set_api_esito_errore(false);
+    }
+}
+
 impl Ponte {
     /// All'avvio (chiamata da `main`): se la chiave c'è, la prima lettura fra 60 s e poi ogni 3 ore.
     pub fn avvia_api(&self) {
@@ -216,7 +224,12 @@ impl Ponte {
             return;
         }
         *self.api_ultimo.borrow_mut() = Some((ora, esito));
-        self.con_finestra_claude(|f| self.mostra_api_stato(f));
+        self.con_finestra_claude(|f| {
+            self.mostra_api_stato(f);
+            // RC-34: «Chiave salvata. La prima lettura parte fra pochi secondi.» (o l'esito di una
+            // prova) non vale più: lo dice la riga di stato appena scritta.
+            togli_esito_api(f);
+        });
         // La spesa del mese nella vista Claude, se è aperta; e le schede, se la finestra è aperta.
         self.aggiorna_vista_claude();
         self.dettagli_dati_nuovi();
@@ -275,6 +288,12 @@ impl Ponte {
         f.on_api_togli(|| {
             if let Some(p) = ponte() {
                 p.api_togli_ui();
+            }
+        });
+        // Le stesse schede del pulsante «Dettagli» della vista Claude (RC-46).
+        f.on_api_dettagli(|| {
+            if let Some(p) = ponte() {
+                p.claude_apri_dettagli();
             }
         });
     }
@@ -582,6 +601,21 @@ mod test {
         );
         assert!(p.api_ultimo.borrow().is_some());
         assert!(!p.api_in_corso.borrow().load(Ordering::SeqCst));
+        p.sveglia_api.stop();
+    }
+
+    /// RC-34: arrivata la lettura, «Chiave salvata. La prima lettura parte fra pochi secondi.»
+    /// non è più vero: l'esito si cancella e resta la riga di stato con la lettura.
+    #[test]
+    fn la_lettura_arrivata_cancella_l_esito_del_salvataggio() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let f = crate::FinestraImpostazioni::new().unwrap();
+        *p.finestra.borrow_mut() = slint::ComponentHandle::as_weak(&f);
+        p.api_salva_ui("sk-ant-admin01-di-prova-1a2b");
+        assert!(f.get_api_esito().starts_with("Chiave salvata"), "{}", f.get_api_esito());
+        p.api_arrivato(p.api_generazione.get(), "10:05".into(), Ok(Riepilogo::default()));
+        assert_eq!(f.get_api_esito().as_str(), "", "l'esito vecchio non resta");
+        assert!(f.get_api_stato().starts_with("Lettura delle 10:05"), "{}", f.get_api_stato());
         p.sveglia_api.stop();
     }
 

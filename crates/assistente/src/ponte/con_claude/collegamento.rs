@@ -358,6 +358,9 @@ impl Ponte {
         f.set_claude_passo(0);
         f.set_claude_anteprima("".into());
         f.set_claude_avvisi("".into());
+        // RC-34: collegato o scollegato, l'esito della chiave (es. «Incolla prima la chiave…»)
+        // non parla più di ciò che si vede.
+        super::api::togli_esito_api(f);
         match esito {
             Ok(testo) => {
                 f.set_claude_esito(testo.into());
@@ -389,26 +392,35 @@ impl Ponte {
     }
 
     fn claude_conferma_ui(&self) {
-        let cx = Contesto::reale();
-        let esito = self.conferma_collegamento(&cx);
+        self.claude_conferma_in(&Contesto::reale());
+    }
+
+    /// «Scrivi in settings.json» su un contesto dato (quello vero, o uno di prova nei test).
+    fn claude_conferma_in(&self, cx: &Contesto) {
+        let esito = self.conferma_collegamento(cx);
         self.con_finestra_claude(|f| match esito {
-            Ok(Esito::Scritto) => self.esito_claude(f, &cx, Ok("Collegato.")),
+            // Nessun «Collegato.»: lo dice già lo stato della card (RC-34).
+            Ok(Esito::Scritto) => self.esito_claude(f, cx, Ok("")),
             // Nulla scritto: si resta all'anteprima, aggiornata, con l'avviso in cima.
             Ok(Esito::Cambiato(prep)) => self.mostra_anteprima_claude(f, &prep),
-            Err(e) => self.esito_claude(f, &cx, Err(e)),
+            Err(e) => self.esito_claude(f, cx, Err(e)),
         });
     }
 
     fn claude_scollega_ui(&self) {
-        let cx = Contesto::reale();
-        let esito = self.scollega(&cx);
+        self.claude_scollega_in(&Contesto::reale());
+    }
+
+    /// «Scollega» su un contesto dato (quello vero, o uno di prova nei test).
+    fn claude_scollega_in(&self, cx: &Contesto) {
+        let esito = self.scollega(cx);
         self.con_finestra_claude(|f| match esito {
             Ok(()) => self.esito_claude(
                 f,
-                &cx,
+                cx,
                 Ok("Scollegato: le voci di isola non sono più in settings.json."),
             ),
-            Err(e) => self.esito_claude(f, &cx, Err(e)),
+            Err(e) => self.esito_claude(f, cx, Err(e)),
         });
     }
 }
@@ -671,6 +683,32 @@ mod test {
         // Scollegare non tocca nemmeno il portachiavi: nessuna scrittura né cancellazione.
         p.scollega(&cx).unwrap();
         assert_eq!(p.segreti.leggi("isola:claude-hook").unwrap(), None);
+    }
+
+    /// RC-34: collegare e scollegare cancellano l'esito della chiave (non è più vero: «Incolla prima
+    /// la chiave…» dopo aver collegato Claude Code); collegato, nessun «Collegato.» sotto la card
+    /// (lo dice già lo stato).
+    #[test]
+    fn collega_e_scollega_cancellano_gli_esiti_vecchi() {
+        let (_s, p, _pillola, d) = ponte_di_prova();
+        let cx = contesto(&d);
+        scrivi_file(&cx, ALTRO);
+        let f = crate::FinestraImpostazioni::new().unwrap();
+        *p.finestra.borrow_mut() = slint::ComponentHandle::as_weak(&f);
+        f.set_api_esito("Incolla prima la chiave da amministratore.".into());
+        f.set_api_esito_errore(true);
+        p.prepara_collegamento(&cx).unwrap();
+        p.claude_conferma_in(&cx);
+        assert!(p.casa.con_config(|c| c.claude.collegato), "collegato davvero");
+        assert_eq!(f.get_claude_esito().as_str(), "", "nessun «Collegato.» ripetuto");
+        assert_eq!(f.get_api_esito().as_str(), "", "l'esito della chiave non resta");
+        assert!(!f.get_api_esito_errore());
+
+        f.set_api_esito("Chiave valida".into());
+        p.claude_scollega_in(&cx);
+        assert!(!p.casa.con_config(|c| c.claude.collegato));
+        assert_eq!(f.get_api_esito().as_str(), "");
+        assert!(f.get_claude_esito().starts_with("Scollegato"), "{}", f.get_claude_esito());
     }
 
     #[test]
