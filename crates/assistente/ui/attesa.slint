@@ -185,12 +185,12 @@ export component VoceEspansa inherits Rectangle {
         image-rendering: smooth;
     }
 
-    // Il titolo si legge intero: va a capo (al massimo 4 righe) e il resto scende di conseguenza.
+    // Il titolo si legge intero: va a capo (al massimo 3 righe) e il resto scende di conseguenza.
     titolo := Text {
         x: 54px;
         y: 12px;
         width: naviga.x - self.x - 12px;
-        height: min(self.preferred-height, 76px);
+        height: min(self.preferred-height, 57px);
         text: voce.titolo;
         wrap: word-wrap;
         overflow: elide;

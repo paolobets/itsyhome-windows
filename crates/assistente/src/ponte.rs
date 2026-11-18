@@ -1604,7 +1604,7 @@ impl Ponte {
     }
 
     /// Dopo una modifica il fuoco delle Impostazioni va su un pulsante di una riga (`id`, azione
-    /// «su», «giu», «modifica», «elimina») o su «Aggiungi collegamento» (`id` vuoto, «aggiungi»).
+    /// «su», «giu», «modifica», «elimina») o su «Aggiungi un collegamento» (`id` vuoto, «aggiungi»).
     fn fuoco_collegamento(&self, id: &str, azione: &str) {
         if let Some(f) = self.finestra.borrow().upgrade() {
             f.set_fuoco_collegamento(id.into());
@@ -1629,7 +1629,7 @@ impl Ponte {
     }
 
     /// Elimina (la conferma l'ha già chiesta la finestra); il fuoco va sulla riga che prende il
-    /// suo posto, o su «Aggiungi collegamento» se non ne resta nessuna.
+    /// suo posto, o su «Aggiungi un collegamento» se non ne resta nessuna.
     fn elimina_collegamento(&self, id: &str) {
         let indice = self.casa.con_config(|c| c.collegamenti.iter().position(|x| x.id == id));
         self.casa.aggiorna_config(|c| {

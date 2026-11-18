@@ -1002,7 +1002,8 @@ export component FinestraImpostazioni inherits Window {
             Text {
                 x: 90px;
                 y: 0;
-                width: parent.width - self.x - 190px;
+                // 190 = «Aggiungi un ambiente» (circa 153) più 12 di respiro; senza il pulsante in alto niente riserva.
+                width: parent.width - self.x - (ambienti.length > 0 ? 190px : 0px);
                 height: 30px;
                 text: errore-elenco;
                 vertical-alignment: center;
@@ -1919,7 +1920,15 @@ export component FinestraImpostazioni inherits Window {
                         fuoco-preso => { isola.porta-in-vista(self.y, self.height); }
                     }
 
-                    // Dove l'app gira (Windows) la nota non serve: la mostra solo chi non ha la fonte.
+                    // Su Windows, sotto i selettori, la rassicurazione quando uno dei due vale «Rete».
+                    if !fuori-da-windows && (scelte-lati[indice-lato-sinistro] == "Rete" || scelte-lati[indice-lato-destro] == "Rete"): Text {
+                        text: "«Rete»: solo l'icona della connessione. Il nome della rete non compare mai nella pillola.";
+                        wrap: word-wrap;
+                        font-size: Tema.testo-piccolo;
+                        color: Tema.testo-tenue;
+                    }
+
+                    // Dove l'app gira (Windows) la nota «solo su Windows» non serve: la mostra solo chi non ha la fonte.
                     if fuori-da-windows: Text {
                         text: "«Rete»: solo su Windows, solo l'icona della connessione. Il nome della rete non compare mai nella pillola.";
                         wrap: word-wrap;

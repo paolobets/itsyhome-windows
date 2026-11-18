@@ -272,7 +272,10 @@ mod accessibilita {
         let (_, una_riga) = altezza(&p, "VoceEspansa::titolo");
         let (y_sotto_corto, _) = altezza(&p, "VoceEspansa::sotto-testo");
 
-        let lungo = "Consentire a un programma di prova di cancellare la cartella dei documenti temporanei                      e di tutte le sue sottocartelle, compresi i file nascosti e quelli di sistema?";
+        let lungo = concat!(
+            "Consentire a un programma di prova di cancellare la cartella dei documenti temporanei ",
+            "e di tutte le sue sottocartelle, compresi i file nascosti e quelli di sistema?"
+        );
         p.set_attese(ModelRc::new(VecModel::from(vec![voce(lungo)])));
         let (_, piu_righe) = altezza(&p, "VoceEspansa::titolo");
         let (y_sotto_lungo, _) = altezza(&p, "VoceEspansa::sotto-testo");
@@ -293,6 +296,15 @@ mod accessibilita {
         assert_eq!(regola.invoke_tipo(true, true), TipoPulsante::Neutro, "Consenti");
         // Un'azione sicura in coda la mantiene.
         assert_eq!(regola.invoke_tipo(true, false), TipoPulsante::Azione, "Apri");
+        // La regola vale solo se pannello e pillola la usano davvero: se tornassero a decidere da
+        // sé (ultimo = azione) questo test deve fallire.
+        for (nome, sorgente) in [
+            ("attesa.slint", include_str!("../ui/attesa.slint")),
+            ("pillola.slint", include_str!("../ui/pillola.slint")),
+        ] {
+            assert!(sorgente.contains("RegolaPulsanti.tipo("), "{nome} non usa RegolaPulsanti.tipo");
+            assert!(!sorgente.contains("? TipoPulsante.azione"), "{nome} decide la tinta da sé");
+        }
     }
 
     #[test]
