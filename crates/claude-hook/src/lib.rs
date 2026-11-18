@@ -7,6 +7,7 @@ pub mod ascoltatore;
 pub mod barra;
 pub mod codice;
 pub mod evento;
+pub mod installa;
 pub mod mittente;
 pub mod sessioni;
 

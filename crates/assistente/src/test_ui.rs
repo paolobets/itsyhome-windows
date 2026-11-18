@@ -404,7 +404,7 @@ mod accessibilita {
     fn interruttore_dell_icona_nella_barra() {
         piattaforma_di_prova();
         let f = FinestraImpostazioni::new().expect("impostazioni");
-        f.set_sezione(4);
+        f.set_sezione(5);
         f.show().expect("impostazioni mostrate nel backend di prova");
         let chiesti = std::rc::Rc::new(std::cell::RefCell::new(Vec::<bool>::new()));
         let c = chiesti.clone();
@@ -430,7 +430,7 @@ mod accessibilita {
         use slint::platform::{Key, WindowEvent};
         piattaforma_di_prova();
         let f = FinestraImpostazioni::new().expect("impostazioni");
-        f.set_sezione(4);
+        f.set_sezione(5);
         f.show().expect("impostazioni mostrate nel backend di prova");
         f.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
         let chiamate = std::rc::Rc::new(std::cell::Cell::new(0));
@@ -459,7 +459,7 @@ mod accessibilita {
             tasto(Key::Tab);
             tasto(Key::Return);
             // Invio su una voce del menu laterale cambia sezione: si torna a Sistema, il fuoco resta.
-            f.set_sezione(4);
+            f.set_sezione(5);
         }
         assert_eq!(chiamate.get(), 2, "Tab raggiunge il pulsante e Invio lo preme");
         f.set_fuori_da_windows(false);
@@ -472,7 +472,7 @@ mod accessibilita {
         let f = FinestraImpostazioni::new().expect("impostazioni");
         let ha = elemento(&f, "Home Assistant");
         assert_eq!(ha.accessible_role(), Some(AccessibleRole::Tab));
-        assert_eq!((ha.accessible_item_selected(), ha.accessible_item_count()), (Some(true), Some(6)));
+        assert_eq!((ha.accessible_item_selected(), ha.accessible_item_count()), (Some(true), Some(7)));
         assert_eq!(elemento(&f, "Collegamenti").accessible_item_index(), Some(2));
         f.set_sezione(crate::finestra_impostazioni::SEZIONE_INFORMAZIONI);
         assert_eq!(elemento(&f, "Informazioni").accessible_item_selected(), Some(true));
@@ -1428,6 +1428,98 @@ mod accessibilita {
         assert!(ElementHandle::find_by_accessible_label(&p, "«NAS» non si è aperto").next().is_some());
     }
 
+    /// Impostazioni › Claude (M3, Task 7): l'anteprima si apre col fuoco su «Annulla» (Invio per
+    /// sbaglio non scrive), «Scrivi in settings.json» è raggiungibile con Tab, Esc annulla; lo
+    /// scollegamento chiede conferma; i pulsanti hanno il loro nome per Narrator.
+    #[test]
+    fn sezione_claude_anteprima_conferma_e_annulla() {
+        use slint::platform::{Key, WindowEvent};
+        piattaforma_di_prova();
+        let f = FinestraImpostazioni::new().expect("impostazioni");
+        f.set_sezione(crate::finestra_impostazioni::SEZIONE_CLAUDE);
+        f.show().expect("impostazioni mostrate nel backend di prova");
+        f.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
+        let eventi = std::rc::Rc::new(std::cell::RefCell::new(Vec::<&'static str>::new()));
+        let debole = f.as_weak();
+        let e = eventi.clone();
+        f.on_claude_prepara(move || {
+            e.borrow_mut().push("prepara");
+            let f = debole.upgrade().unwrap();
+            f.set_claude_anteprima("{\n  \"hooks\": {}\n}".into());
+            f.set_claude_avvisi("La barra di stato è già usata: i limiti dell'abbonamento non saranno disponibili.".into());
+            f.set_claude_file("settings-finto.json".into());
+            f.set_claude_passo(1);
+        });
+        let e = eventi.clone();
+        f.on_claude_conferma(move || e.borrow_mut().push("conferma"));
+        let e = eventi.clone();
+        f.on_claude_annulla(move || e.borrow_mut().push("annulla"));
+        let e = eventi.clone();
+        f.on_claude_scollega(move || e.borrow_mut().push("scollega"));
+        let e = eventi.clone();
+        f.on_claude_rigenera(move || e.borrow_mut().push("rigenera"));
+        let tasto = |k: Key| {
+            f.window().dispatch_event(WindowEvent::KeyPressed { text: k.into() });
+            f.window().dispatch_event(WindowEvent::KeyReleased { text: k.into() });
+        };
+        let ce = |nome: &str| ElementHandle::find_by_accessible_label(&f, nome).next().is_some();
+
+        // A riposo, non collegato: solo «Collega Claude Code», e la nota sul «hook failed».
+        assert!(ce("Collega Claude Code"));
+        assert!(!ce("Scrivi in settings.json") && !ce("Rigenera il codice") && !ce("Scollega"));
+        assert!(ce("Con isola chiusa Claude Code segnala \"hook failed\" a fine risposta: è innocuo; per toglierlo usa Scollega."));
+        assert!(ce("Non collegato"));
+
+        // Anteprima: avviso, riquadro leggibile, i due pulsanti.
+        elemento(&f, "Collega Claude Code").invoke_accessible_default_action();
+        assert_eq!(*eventi.borrow(), ["prepara"]);
+        assert!(ce("Scrivi in settings.json") && ce("Annulla"));
+        assert!(ce("Voci che verranno aggiunte a settings.json"));
+        assert!(ce("La barra di stato è già usata: i limiti dell'abbonamento non saranno disponibili."));
+        assert!(ce("Il resto di settings.json resta com'è (ne tengo una copia accanto). I terminali aperti prima vanno chiusi e riaperti."));
+        assert!(!ce("Collega Claude Code"), "durante l'anteprima il pulsante non c'è");
+
+        // Il fuoco parte da «Annulla»: Invio annulla (non scrive).
+        tasto(Key::Return);
+        assert_eq!(*eventi.borrow(), ["prepara", "annulla"]);
+        assert!(!ce("Scrivi in settings.json"));
+        assert_eq!(f.get_claude_passo(), 0);
+
+        // Di nuovo: Tab porta a «Scrivi in settings.json» e Invio conferma.
+        elemento(&f, "Collega Claude Code").invoke_accessible_default_action();
+        tasto(Key::Tab);
+        tasto(Key::Return);
+        assert_eq!(eventi.borrow().last(), Some(&"conferma"), "{:?}", eventi.borrow());
+        // Esc dall'anteprima annulla.
+        tasto(Key::Escape);
+        assert_eq!(eventi.borrow().last(), Some(&"annulla"));
+        assert_eq!(f.get_claude_passo(), 0);
+
+        // Collegato: Rigenera e Scollega; lo scollegamento chiede conferma, col fuoco su «Annulla».
+        eventi.borrow_mut().clear();
+        f.set_claude_collegato(true);
+        f.set_claude_stato("Collegato · porta 47613".into());
+        assert!(ce("Collegato · porta 47613"));
+        elemento(&f, "Rigenera il codice").invoke_accessible_default_action();
+        assert_eq!(*eventi.borrow(), ["rigenera"]);
+        elemento(&f, "Scollega").invoke_accessible_default_action();
+        assert_eq!(f.get_claude_passo(), 2);
+        assert!(ce("Togliere il collegamento con Claude Code?"));
+        tasto(Key::Return);
+        assert_eq!(eventi.borrow().last(), Some(&"annulla"));
+        assert_eq!(f.get_claude_passo(), 0);
+        elemento(&f, "Scollega").invoke_accessible_default_action();
+        tasto(Key::Tab);
+        tasto(Key::Return);
+        assert_eq!(eventi.borrow().last(), Some(&"scollega"), "{:?}", eventi.borrow());
+
+        // Fuori da Windows: la riga «Imposta ISOLA_HOOK_TOKEN nella tua shell» con «Copia il codice».
+        f.set_claude_passo(0);
+        assert!(!ce("Copia il codice"));
+        f.set_claude_shell(true);
+        assert!(ce("Imposta ISOLA_HOOK_TOKEN nella tua shell") && ce("Copia il codice"));
+    }
+
     /// Le Impostazioni sulla scheda Collegamenti, coi controlli veri dei campi; restituisce gli
     /// eventi (salvataggi, eliminazioni, spostamenti, chiusura della finestra).
     fn scheda_collegamenti() -> (FinestraImpostazioni, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
@@ -1755,9 +1847,11 @@ mod accessibilita {
         let (f, _) = scheda_isola();
         f.set_sezione(0);
         assert_eq!(elemento(&f, "Isola").accessible_item_index(), Some(3));
-        assert_eq!(elemento(&f, "Sistema").accessible_item_index(), Some(4));
-        assert_eq!(elemento(&f, "Informazioni").accessible_item_index(), Some(5));
-        assert_eq!(crate::finestra_impostazioni::SEZIONE_INFORMAZIONI, 5);
+        assert_eq!(elemento(&f, "Claude").accessible_item_index(), Some(4));
+        assert_eq!(elemento(&f, "Sistema").accessible_item_index(), Some(5));
+        assert_eq!(elemento(&f, "Informazioni").accessible_item_index(), Some(6));
+        assert_eq!(crate::finestra_impostazioni::SEZIONE_CLAUDE, 4);
+        assert_eq!(crate::finestra_impostazioni::SEZIONE_INFORMAZIONI, 6);
         f.set_sezione(3);
         assert_eq!(elemento(&f, "Isola").accessible_item_selected(), Some(true));
         for nome in ["A sinistra degli occhi", "A destra degli occhi", "Meteo da", "Quadrante 1", "Quadrante 3"] {

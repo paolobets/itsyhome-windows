@@ -31,6 +31,8 @@ windows-sys = { version = "0.52", features = [
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
     "Win32_System_ProcessStatus",
+    # Percorso corto 8.3 dell'exe (comando della barra di stato di Claude Code, M3 Task 7).
+    "Win32_Storage_FileSystem",
     "Win32_Security",
     "Win32_UI_Accessibility",
     # Batteria dei dispositivi Bluetooth (M2, Task 9): SetupAPI e proprietà dei dispositivi.

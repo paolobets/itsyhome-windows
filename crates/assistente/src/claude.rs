@@ -13,6 +13,8 @@ use std::time::{Duration, Instant};
 pub const PREFISSO_CLAUDE: &str = "claude.";
 /// La voce «porta occupata»: l'ascoltatore non è partito.
 pub const ID_COLLEGAMENTO: &str = "claude.collegamento";
+/// La voce informativa «il collegamento va aggiornato» (le voci di `settings.json` non corrispondono più).
+pub const ID_AGGIORNA: &str = "claude.aggiorna";
 
 /// Il prefisso delle voci dei permessi (`claude.permesso.<id>`).
 pub const PREFISSO_PERMESSO: &str = "claude.permesso.";

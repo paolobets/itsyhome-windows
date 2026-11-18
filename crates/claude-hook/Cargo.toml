@@ -11,7 +11,8 @@ httparse = "1"
 # Codice casuale dell'ascoltatore.
 getrandom = "0.3"
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["raw_value"] }
+# `preserve_order`: l'installazione in settings.json conserva l'ordine delle chiavi dell'utente.
+serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
 # Ora locale della barra di stato e delle righe dell'esempio.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
@@ -24,3 +25,6 @@ windows-sys = { version = "0.52", features = [
     "Win32_Networking_WinSock",
     "Win32_System_Diagnostics_ToolHelp",
 ] }
+
+[dev-dependencies]
+tempfile = "3"

@@ -690,7 +690,31 @@ export component FinestraImpostazioni inherits Window {
     in property <bool> avvisi-bt-disponibile: false;
     callback cambia-avvisi-bt(bool);
 
-    // 0 Home Assistant, 1 Dispositivi, 2 Collegamenti, 3 Isola, 4 Sistema, 5 Informazioni.
+    // Claude Code (M3, Task 7). Il passo: 0 a riposo, 1 anteprima di ciò che si scrive in
+    // settings.json, 2 conferma dello scollegamento. Nulla si scrive prima di «Scrivi in settings.json».
+    in-out property <int> claude-passo: 0;
+    in-out property <string> claude-anteprima;
+    in-out property <string> claude-avvisi;
+    // L'esito dell'ultima azione (errore in giallo, altrimenti tenue).
+    in-out property <string> claude-esito;
+    in-out property <bool> claude-esito-errore;
+    in property <string> claude-stato: "Non collegato";
+    in property <bool> claude-collegato;
+    in property <bool> claude-da-aggiornare;
+    // Il file di Claude Code che si scriverebbe.
+    in property <string> claude-file;
+    // Fuori da Windows la variabile la imposta l'utente nella sua shell.
+    in property <bool> claude-shell;
+    callback claude-prepara();
+    callback claude-conferma();
+    // Chiude l'anteprima senza scrivere (il piano preparato si butta).
+    callback claude-annulla();
+    callback claude-scollega();
+    callback claude-rigenera();
+    // Il codice segreto, da copiare a mano (solo dove l'app non scrive la variabile).
+    callback claude-codice() -> string;
+
+    // 0 Home Assistant, 1 Dispositivi, 2 Collegamenti, 3 Isola, 4 Claude, 5 Sistema, 6 Informazioni.
     in-out property <int> sezione: 0;
     // L'elenco o il modulo (aggiungi/modifica).
     property <ModoAmbienti> modo: ModoAmbienti.elenco;
@@ -907,9 +931,31 @@ export component FinestraImpostazioni inherits Window {
         }
     }
 
+    // Chiude l'anteprima o la conferma di Claude senza scrivere.
+    function chiudi-claude() {
+        claude-passo = 0;
+        claude-anteprima = "";
+        claude-avvisi = "";
+        root.claude-annulla();
+        radice.focus();
+    }
+
+    // Copia il codice negli appunti (solo fuori da Windows): passa da un campo invisibile.
+    function copia-codice() {
+        copiatore.text = root.claude-codice();
+        copiatore.select-all();
+        copiatore.copy();
+        copiatore.text = "";
+        claude-esito = "Codice copiato.";
+        claude-esito-errore = false;
+    }
+
     // Lasciando la sezione la conferma non resta in sospeso.
     changed sezione => {
         conferma-c-id = "";
+        if (claude-passo != 0) {
+            chiudi-claude();
+        }
     }
 
     function cambia-avvio-ora() {
@@ -942,7 +988,9 @@ export component FinestraImpostazioni inherits Window {
         key-pressed(evento) => {
             if (evento.text == Key.Escape) {
                 // Un livello alla volta: la conferma, il modulo (ambienti o collegamenti), la finestra.
-                if (sezione == 2 && conferma-c-id != "") {
+                if (sezione == 4 && claude-passo != 0) {
+                    chiudi-claude();
+                } else if (sezione == 2 && conferma-c-id != "") {
                     annulla-elimina-collegamento();
                 } else if (sezione == 0 && modo == ModoAmbienti.modulo) {
                     chiudi-modulo();
@@ -956,6 +1004,16 @@ export component FinestraImpostazioni inherits Window {
             return reject;
         }
 
+        // Il campo invisibile da cui «Copia il codice» (fuori da Windows) mette il testo negli appunti.
+        copiatore := TextInput {
+            x: 0;
+            y: 0;
+            width: 0;
+            height: 0;
+            enabled: false;
+            accessible-role: none;
+        }
+
         // Filo dei petali in cima, come il bordo dell'isola.
         Rectangle {
             y: 0;
@@ -966,14 +1024,14 @@ export component FinestraImpostazioni inherits Window {
         // Niente titolo «Impostazioni»: lo dice già la barra della finestra.
 
         // ─── Sezioni ───
-        for nome[i] in ["Home Assistant", "Dispositivi", "Collegamenti", "Isola", "Sistema", "Informazioni"]: Sezione {
+        for nome[i] in ["Home Assistant", "Dispositivi", "Collegamenti", "Isola", "Claude", "Sistema", "Informazioni"]: Sezione {
             x: margine - 8px;
             y: alto-testata + i * 42px;
             width: largo-sezioni;
             nome: nome;
             attiva: sezione == i;
             indice: i;
-            quante: 6;
+            quante: 7;
             scelta => { sezione = i; }
         }
 
@@ -2073,8 +2131,393 @@ export component FinestraImpostazioni inherits Window {
             }
         }
 
-        // ─── Sistema ───
+        // ─── Claude ───
         if sezione == 4: Rectangle {
+            x: contenuto-x;
+            y: alto-testata;
+            width: parent.width - self.x - margine;
+            height: parent.height - self.y - 24px;
+
+            claude := Flickable {
+                // Larga quanto la finestra: il riquadro dell'anteprima scorre da sé, non allarga la colonna.
+                content-width: self.width;
+                content-height: max(self.height, colonna-claude.preferred-height + 8px);
+
+                // Tab su un pulsante fuori vista: la sua riga scorre in vista.
+                function porta-in-vista(y: length, h: length) {
+                    if (y + self.content-y < 0) {
+                        self.content-y = -y;
+                    } else if (y + h + self.content-y > self.height) {
+                        self.content-y = self.height - y - h;
+                    }
+                }
+
+                colonna-claude := VerticalLayout {
+                    width: parent.width;
+                    alignment: start;
+                    spacing: 8px;
+
+                    Etichetta {
+                        height: 30px;
+                        text: "CLAUDE CODE";
+                    }
+
+                    // Lo stato e, a riposo, il pulsante per collegare (o aggiornare).
+                    Rectangle {
+                        height: 64px;
+                        border-radius: Tema.raggio-xl;
+                        background: Tema.card-fondo;
+                        border-width: 1px;
+                        border-color: Tema.vetro-bordo;
+
+                        Text {
+                            x: 16px;
+                            y: 12px;
+                            width: parent.width - 32px - (claude-passo == 0 && (!claude-collegato || claude-da-aggiornare) ? 220px : 0px);
+                            text: claude-stato;
+                            overflow: elide;
+                            font-weight: 500;
+                            font-size: Tema.testo-medio;
+                            color: Tema.testo;
+                        }
+
+                        Text {
+                            x: 16px;
+                            y: 35px;
+                            width: parent.width - 32px - (claude-passo == 0 && (!claude-collegato || claude-da-aggiornare) ? 220px : 0px);
+                            text: "Le sessioni di Claude Code compaiono nella pillola, coi permessi da consentire.";
+                            overflow: elide;
+                            font-size: Tema.testo-piccolo;
+                            color: Tema.testo-tenue;
+                        }
+
+                        if claude-passo == 0 && (!claude-collegato || claude-da-aggiornare): Bottone {
+                            x: parent.width - self.width - 18px;
+                            y: (parent.height - self.height) / 2;
+                            testo: claude-da-aggiornare ? "Aggiorna il collegamento" : "Collega Claude Code";
+                            premuto => {
+                                claude-esito = "";
+                                root.claude-prepara();
+                            }
+                            changed has-focus => {
+                                if (self.has-focus) {
+                                    claude.porta-in-vista(parent.y, parent.height);
+                                }
+                            }
+                        }
+                    }
+
+                    // L'anteprima di ciò che si scrive: nulla è scritto finché non si preme «Scrivi».
+                    if claude-passo == 1: Rectangle {
+                        height: corpo-anteprima.preferred-height;
+                        border-radius: Tema.raggio-xl;
+                        background: Tema.card-fondo;
+                        border-width: 1px;
+                        border-color: Tema.vetro-bordo;
+                        // Il fuoco parte da «Annulla»: Invio per sbaglio non scrive.
+                        init => { annulla-claude.focus(); }
+                        accessible-role: groupbox;
+                        accessible-label: "Anteprima della scrittura in settings.json";
+
+                        corpo-anteprima := VerticalLayout {
+                            padding: 16px;
+                            spacing: 8px;
+
+                            Text {
+                                text: "Questo verrà aggiunto a settings.json";
+                                font-weight: 500;
+                                font-size: Tema.testo-medio;
+                                color: Tema.testo;
+                            }
+
+                            Text {
+                                text: claude-file;
+                                wrap: word-wrap;
+                                font-family: Tema.carattere-mono;
+                                font-size: Tema.testo-piccolo;
+                                color: Tema.testo-tenue;
+                            }
+
+                            // Il riquadro mono: scorre col mouse e, con il fuoco dentro, con le frecce.
+                            Rectangle {
+                                height: 190px;
+                                border-radius: Tema.raggio-m;
+                                background: Tema.riquadro-fondo;
+                                border-width: 1px;
+                                border-color: Tema.vetro-bordo;
+                                clip: true;
+
+                                Flickable {
+                                    content-width: max(self.width, anteprima-testo.preferred-width + 24px);
+                                    content-height: max(self.height, anteprima-testo.preferred-height + 16px);
+
+                                    anteprima-testo := TextInput {
+                                        x: 12px;
+                                        y: 8px;
+                                        width: parent.content-width - 24px;
+                                        height: parent.content-height - 16px;
+                                        text: claude-anteprima;
+                                        read-only: true;
+                                        wrap: no-wrap;
+                                        font-family: Tema.carattere-mono;
+                                        font-size: Tema.testo-piccolo;
+                                        color: Tema.testo;
+                                        accessible-label: "Voci che verranno aggiunte a settings.json";
+                                    }
+                                }
+                            }
+
+                            if claude-avvisi != "": Text {
+                                text: claude-avvisi;
+                                wrap: word-wrap;
+                                font-size: Tema.testo-corpo;
+                                color: Tema.caldo-1;
+                            }
+
+                            Text {
+                                text: "Il resto di settings.json resta com'è (ne tengo una copia accanto). I terminali aperti prima vanno chiusi e riaperti.";
+                                wrap: word-wrap;
+                                font-size: Tema.testo-piccolo;
+                                color: Tema.testo-tenue;
+                            }
+
+                            HorizontalLayout {
+                                height: 30px;
+                                spacing: 10px;
+                                alignment: end;
+
+                                annulla-claude := Bottone {
+                                    testo: "Annulla";
+                                    premuto => { chiudi-claude(); }
+                                    changed has-focus => {
+                                        if (self.has-focus) {
+                                            claude.porta-in-vista(parent.y, parent.height);
+                                        }
+                                    }
+                                }
+
+                                Bottone {
+                                    testo: "Scrivi in settings.json";
+                                    tipo: TipoPulsante.azione;
+                                    premuto => { root.claude-conferma(); }
+                                    changed has-focus => {
+                                        if (self.has-focus) {
+                                            claude.porta-in-vista(parent.y, parent.height);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Collegato: il codice e lo scollegamento.
+                    if claude-passo == 0 && claude-collegato: Rectangle {
+                        height: 64px;
+                        border-radius: Tema.raggio-xl;
+                        background: Tema.card-fondo;
+                        border-width: 1px;
+                        border-color: Tema.vetro-bordo;
+
+                        Text {
+                            x: 16px;
+                            y: 12px;
+                            width: parent.width - 240px;
+                            text: "Codice segreto";
+                            overflow: elide;
+                            font-weight: 500;
+                            font-size: Tema.testo-medio;
+                            color: Tema.testo;
+                        }
+
+                        Text {
+                            x: 16px;
+                            y: 35px;
+                            width: parent.width - 240px;
+                            text: "Ne crea uno nuovo (riapri i terminali).";
+                            overflow: elide;
+                            font-size: Tema.testo-piccolo;
+                            color: Tema.testo-tenue;
+                        }
+
+                        Bottone {
+                            x: parent.width - self.width - 18px;
+                            y: (parent.height - self.height) / 2;
+                            testo: "Rigenera il codice";
+                            premuto => {
+                                claude-esito = "";
+                                root.claude-rigenera();
+                            }
+                            changed has-focus => {
+                                if (self.has-focus) {
+                                    claude.porta-in-vista(parent.y, parent.height);
+                                }
+                            }
+                        }
+                    }
+
+                    if claude-passo == 0 && claude-collegato: Rectangle {
+                        height: 64px;
+                        border-radius: Tema.raggio-xl;
+                        background: Tema.card-fondo;
+                        border-width: 1px;
+                        border-color: Tema.vetro-bordo;
+
+                        Text {
+                            x: 16px;
+                            y: 12px;
+                            width: parent.width - 240px;
+                            text: "Collegamento";
+                            overflow: elide;
+                            font-weight: 500;
+                            font-size: Tema.testo-medio;
+                            color: Tema.testo;
+                        }
+
+                        Text {
+                            x: 16px;
+                            y: 35px;
+                            width: parent.width - 240px;
+                            text: "Toglie da settings.json solo le voci di isola.";
+                            overflow: elide;
+                            font-size: Tema.testo-piccolo;
+                            color: Tema.testo-tenue;
+                        }
+
+                        Bottone {
+                            x: parent.width - self.width - 18px;
+                            y: (parent.height - self.height) / 2;
+                            testo: "Scollega";
+                            premuto => {
+                                claude-esito = "";
+                                claude-passo = 2;
+                            }
+                            changed has-focus => {
+                                if (self.has-focus) {
+                                    claude.porta-in-vista(parent.y, parent.height);
+                                }
+                            }
+                        }
+                    }
+
+                    // Fuori da Windows la variabile la imposta l'utente nella sua shell.
+                    if claude-passo == 0 && claude-collegato && claude-shell: Rectangle {
+                        height: 64px;
+                        border-radius: Tema.raggio-xl;
+                        background: Tema.card-fondo;
+                        border-width: 1px;
+                        border-color: Tema.vetro-bordo;
+
+                        Text {
+                            x: 16px;
+                            y: 12px;
+                            width: parent.width - 240px;
+                            text: "Imposta ISOLA_HOOK_TOKEN nella tua shell";
+                            overflow: elide;
+                            font-weight: 500;
+                            font-size: Tema.testo-medio;
+                            color: Tema.testo;
+                        }
+
+                        Text {
+                            x: 16px;
+                            y: 35px;
+                            width: parent.width - 240px;
+                            text: "Qui l'app non può scriverla: copia il codice e impostalo tu.";
+                            overflow: elide;
+                            font-size: Tema.testo-piccolo;
+                            color: Tema.testo-tenue;
+                        }
+
+                        Bottone {
+                            x: parent.width - self.width - 18px;
+                            y: (parent.height - self.height) / 2;
+                            testo: "Copia il codice";
+                            premuto => { copia-codice(); }
+                            changed has-focus => {
+                                if (self.has-focus) {
+                                    claude.porta-in-vista(parent.y, parent.height);
+                                }
+                            }
+                        }
+                    }
+
+                    // La conferma dello scollegamento: nomina ciò che succede.
+                    if claude-passo == 2: Rectangle {
+                        height: corpo-scollega.preferred-height;
+                        border-radius: Tema.raggio-xl;
+                        background: Tema.riquadro-pieno;
+                        border-width: 1px;
+                        border-color: Tema.pericolo-filo;
+                        init => { annulla-scollega.focus(); }
+                        accessible-role: groupbox;
+                        accessible-label: "Conferma dello scollegamento da Claude Code";
+
+                        corpo-scollega := VerticalLayout {
+                            padding: 16px;
+                            spacing: 8px;
+
+                            Text {
+                                text: "Togliere il collegamento con Claude Code?";
+                                font-weight: 500;
+                                font-size: Tema.testo-medio;
+                                color: Tema.testo;
+                            }
+
+                            Text {
+                                text: "Da settings.json escono solo le voci di isola, il resto resta com'è; il codice segreto viene cancellato.";
+                                wrap: word-wrap;
+                                font-size: Tema.testo-corpo;
+                                color: Tema.testo-tenue;
+                            }
+
+                            HorizontalLayout {
+                                height: 30px;
+                                spacing: 10px;
+                                alignment: end;
+
+                                annulla-scollega := Bottone {
+                                    testo: "Annulla";
+                                    premuto => { chiudi-claude(); }
+                                    changed has-focus => {
+                                        if (self.has-focus) {
+                                            claude.porta-in-vista(parent.y, parent.height);
+                                        }
+                                    }
+                                }
+
+                                Bottone {
+                                    testo: "Scollega";
+                                    tipo: TipoPulsante.pericolo;
+                                    premuto => { root.claude-scollega(); }
+                                    changed has-focus => {
+                                        if (self.has-focus) {
+                                            claude.porta-in-vista(parent.y, parent.height);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if claude-esito != "": Text {
+                        text: claude-esito;
+                        wrap: word-wrap;
+                        font-size: Tema.testo-corpo;
+                        color: claude-esito-errore ? Tema.caldo-1 : Tema.testo-tenue;
+                    }
+
+                    Text {
+                        text: "Con isola chiusa Claude Code segnala \"hook failed\" a fine risposta: è innocuo; per toglierlo usa Scollega.";
+                        wrap: word-wrap;
+                        font-size: Tema.testo-piccolo;
+                        color: Tema.testo-tenue;
+                    }
+                }
+            }
+        }
+
+        // ─── Sistema ───
+        if sezione == 5: Rectangle {
             x: contenuto-x;
             y: alto-testata;
             width: parent.width - self.x - margine;
@@ -2206,7 +2649,7 @@ export component FinestraImpostazioni inherits Window {
         }
 
         // ─── Informazioni ───
-        if sezione == 5: Rectangle {
+        if sezione == 6: Rectangle {
             x: contenuto-x;
             y: alto-testata;
             width: parent.width - self.x - margine;

@@ -855,6 +855,9 @@ pub struct Ponte {
     claude_permessi: RefCell<HashMap<u64, con_claude::Pendente>>,
     /// Da quando «Consenti» risponde dopo un cambio della voce mostrata.
     claude_armamento: RefCell<con_claude::Armamento>,
+    /// Il piano di collegamento che l'utente sta leggendo nell'anteprima (M3, Task 7): la conferma
+    /// scrive esattamente questo. `None` finché non ha premuto «Collega Claude Code».
+    claude_preparato: RefCell<Option<claude_hook::installa::Piano>>,
     sveglia_claude: slint::Timer,
     timer_attivita: slint::Timer,
     /// Impostazioni › Isola: i modelli dei selettori e i cataloghi da cui vengono (un indice
@@ -965,6 +968,7 @@ pub fn collega(
         claude_contesto: RefCell::new(HashMap::new()),
         claude_permessi: RefCell::new(HashMap::new()),
         claude_armamento: RefCell::new(con_claude::Armamento::nuovo()),
+        claude_preparato: RefCell::new(None),
         sveglia_claude: slint::Timer::default(),
         timer_attivita: slint::Timer::default(),
         isola: RefCell::new(Isola::default()),
@@ -1813,6 +1817,8 @@ impl Ponte {
             }
         });
         self.riempi_impostazioni(f);
+        // Impostazioni › Claude (M3, Task 7).
+        self.collega_claude(f);
         f.on_salva_ambiente(|id, nome, url, token| {
             let Some(ponte) = ponte() else { return "".into() };
             let m = Modulo { id: id.into(), nome: nome.into(), url: url.into(), token: token.into() };

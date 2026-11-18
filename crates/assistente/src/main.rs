@@ -162,6 +162,8 @@ fn main() -> Result<(), slint::PlatformError> {
     let ponte_servizi = ponte.clone();
     // Claude Code (M3): se è collegato, l'ascolto degli hook parte ora.
     ponte::con_claude::avvia_se_collegato(&ponte);
+    // Se `settings.json` non dice più ciò che serve, una voce informativa: mai scritture da sole.
+    ponte.controlla_all_avvio(&ponte::con_claude::Contesto::reale());
     let ponte_prova = ponte.clone();
     // `--prova-avviso <bloccante|attenzione|informazione> [--dopo <s>] [--lungo]`: una voce finta
     // con 2 pulsanti finti, subito o dopo `s` secondi (per provarla mentre la pillola è ritirata);

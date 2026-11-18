@@ -7,6 +7,7 @@
 //! pillola con un solo timer da 5 s più sveglie singole, e un sondaggio del mouse (100 ms) solo
 //! mentre la pillola è ritirata.
 
+pub mod ambiente_utente;
 pub mod autoavvio;
 // Fuori da Windows il modulo c'è solo per i test (la lettura e il thread sono solo Windows).
 #[cfg(any(windows, test))]

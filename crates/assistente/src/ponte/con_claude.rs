@@ -4,13 +4,17 @@
 //! Nessun timer a riposo: una sveglia singola alla prossima scadenza di una sessione, e il timer
 //! da un secondo del testo di attività solo mentre serve (vedi `attivita_serve`).
 
+mod collegamento;
+
+pub use collegamento::Contesto;
 use super::{ponte, Ponte, MARGINE_SVEGLIA};
 use crate::attenzione::{Fonte, Livello, Pulsante, Voce, PULSANTE_IMPOSTAZIONI};
-use crate::claude::{self, ID_COLLEGAMENTO, PERMESSI_RISOLVIBILI, PULSANTE_CONSENTI, PULSANTE_NEGA};
+use crate::claude::{self, ID_AGGIORNA, ID_COLLEGAMENTO, PERMESSI_RISOLVIBILI, PULSANTE_CONSENTI, PULSANTE_NEGA};
 use crate::pillola;
 use crate::umore::Umore;
 use crate::LivelloUi;
 use casa_core::diagnosi::{Contatore, Diagnosi};
+use crate::sistema::ambiente_utente::AmbienteUtente;
 use casa_core::segreti::Segreti;
 use claude_hook::evento::{evento_da_json, EventoHook, TipoEvento};
 use claude_hook::sessioni::Cambio;
@@ -28,7 +32,7 @@ use std::time::{Duration, Instant};
 pub const SEGRETO_HOOK: &str = "isola:claude-hook";
 /// In prova (`ITSYHOME_ASSISTENTE_DIR`) il codice viene da questa variabile del processo: mai il
 /// portachiavi vero.
-pub const VARIABILE_PROVA: &str = "ISOLA_HOOK_TOKEN";
+pub const VARIABILE_PROVA: &str = crate::sistema::ambiente_utente::VARIABILE;
 
 /// Quanti permessi possono aspettare insieme (quante connessioni accetta l'ascoltatore). Uno in
 /// più non ha voce né canale: Claude Code ripiega sul terminale.
@@ -77,7 +81,12 @@ fn codice_da(segreti: &dyn Segreti, in_prova: bool, variabile: Option<String>) -
 /// codice, si mette in ascolto.
 pub fn avvia_se_collegato(p: &Ponte) {
     let in_prova = std::env::var_os(crate::avvio::VAR_CARTELLA).is_some_and(|v| !v.is_empty());
-    avvia_se_collegato_con(p, in_prova, std::env::var(VARIABILE_PROVA).ok());
+    // In prova il codice parte dalla variabile del processo, se c'è, altrimenti da quella di prova
+    // nel registro (`HKCU\Software\ItsyHomeProva`): mai dal portachiavi vero.
+    let variabile = std::env::var(VARIABILE_PROVA).ok().or_else(|| {
+        in_prova.then(|| crate::sistema::ambiente_utente::ambiente(true).leggi(VARIABILE_PROVA)).flatten()
+    });
+    avvia_se_collegato_con(p, in_prova, variabile);
 }
 
 /// `avvia_se_collegato` con «in prova» e il valore di `ISOLA_HOOK_TOKEN` passati.
@@ -143,6 +152,11 @@ pub fn spegni() {
 pub fn azione(p: &Ponte, voce: &str, pulsante: &str) {
     if voce == ID_COLLEGAMENTO && pulsante == PULSANTE_IMPOSTAZIONI {
         p.chiedi_impostazioni();
+    } else if voce == ID_AGGIORNA && pulsante == PULSANTE_IMPOSTAZIONI {
+        // Si apre direttamente la sezione Claude, dove il collegamento si aggiorna (con anteprima e conferma).
+        crate::finestra_impostazioni::apri_alla_sezione(crate::finestra_impostazioni::SEZIONE_CLAUDE, || {
+            p.chiedi_impostazioni()
+        });
     } else if let Some(id) = claude::id_permesso_da_voce(voce) {
         let decisione = match pulsante {
             PULSANTE_CONSENTI => Decisione::Consenti,
