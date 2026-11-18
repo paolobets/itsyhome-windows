@@ -385,6 +385,74 @@ L'esempio (`cargo run -p claude-hook --example prova_permesso -- [--porta N] [--
 - [ ] **Step 5: prova dal vivo in modalità di prova** (file finto, chiave di registro di prova): collega, anteprima, scollega, rigenera; Narrator e tastiera nella sezione. **Poi con Paolo** sul vero `settings.json`: lui legge l'anteprima e conferma; nuova scheda di Windows Terminal e PowerShell da solo vedono la variabile (verificare se Windows Terminal la ricarica per le nuove schede o va riaperto: scriverlo nella guida); barra di stato in Git Bash e, se Paolo ce l'ha, senza Git Bash.
 - [ ] **Step 6:** commit `feat(assistente): collegamento sicuro a Claude Code` (con l'ok di Paolo).
 
+### Task 7A: Canale protetto (tubo con nome e aiutante `isola-hook`)
+
+> Aggiunto il 18/11 dopo la revisione di sicurezza: spec §10. Sostituisce il trasporto HTTP dei task 2, 6 e 7.
+
+**Files:**
+- Create: `crates/claude-hook/src/tubo.rs` (server del tubo), `crates/claude-hook/src/verifica.rs` (percorso dell'immagine del processo dall'altra parte del tubo), `crates/claude-hook/src/messaggio.rs` (record minimo e risposta), `crates/claude-hook/src/bin/isola-hook.rs`
+- Modify: `crates/claude-hook/src/lib.rs`, `crates/claude-hook/Cargo.toml` (windows-sys: `Win32_System_Pipes`, `Win32_Security`, `Win32_Security_Authorization`, `Win32_System_Threading`, `Win32_Storage_FileSystem`, `Win32_System_IO`), `crates/claude-hook/src/barra.rs` (`esegui` manda per il tubo), `crates/assistente/src/main.rs` (via il ramo `--barra-stato`), `crates/assistente/src/ponte/con_claude.rs` (+ `con_claude/collegamento.rs` dove serve), `CHANGELOG.md`
+- Delete: `crates/claude-hook/src/ascoltatore.rs` (TCP/HTTP), `crates/claude-hook/src/codice.rs`, `crates/claude-hook/src/mittente.rs` (tabella TCP) — i test che valgono ancora si spostano su `tubo.rs`.
+
+**Interfaces:**
+- Restano con lo stesso nome e significato: `Gestore { evento, permesso -> Option<AttesaPermesso>, abbandonato, barra, rifiutata }`, `Arrivo` (senza `porta_mittente`; `pid_mittente` = PID dell'aiutante; `sequenza` all'accettazione), `AttesaPermesso`, `Decisione`, `ErroreAvvio` (`PortaOccupata` → `CanaleOccupato`).
+- `tubo.rs`: `pub fn nome_tubo() -> Result<String, String>` (`\\.\pipe\isola-claude-<SID>`); `pub struct ConfigTubo { pub nome: String, pub cliente_atteso: PathBuf, pub attesa_massima: Duration }`; `pub fn avvia(c: ConfigTubo, g: Arc<dyn Gestore>) -> Result<Servitore, ErroreAvvio>`; `Servitore::rifiutate()`; `Drop` chiude e raccoglie i thread (sveglia con una connessione a sé stesso). Creazione: SDDL che ammette solo il SID dell'utente corrente (`D:P(A;;GA;;;<SID>)`), `FILE_FLAG_FIRST_PIPE_INSTANCE` sulla prima istanza, `PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_REJECT_REMOTE_CLIENTS`, `PIPE_UNLIMITED_INSTANCES` no: **16**. Un thread fermo su `ConnectNamedPipe` (nessun polling); un thread per connessione col contatore come nel Task 2.
+- Regole del server, **prima di leggere**: oltre 16 → chiusa; cliente il cui percorso d'immagine non è `cliente_atteso` → `rifiutata` e chiusa. Poi: un messaggio ≤ 64 KB letto entro 2 s, JSON di `messaggio::Richiesta` riconvalidato (stesse regole dei task 3 e 6), altrimenti `rifiutata`.
+- `messaggio.rs`: `pub enum Richiesta { Evento(RecordEvento), Barra(DatiBarra) }` con `RecordEvento` = i soli campi di `EventoHook` (§10); `pub fn decisione_json(d: Decisione) -> Option<String>` (l'unico testo che l'aiutante può stampare; `Nessuna` → `None`).
+- `verifica.rs` (`cfg(windows)`): `pub fn immagine_server(h) -> Option<PathBuf>`, `pub fn immagine_cliente(h) -> Option<PathBuf>`, `pub fn stesso_file(a: &Path, b: &Path) -> bool` (canonico, senza maiuscole). Fuori da Windows: stub che restituiscono `None`.
+- `isola-hook.exe`: `evento` → legge ≤ 256 KB da stdin, costruisce `RecordEvento` (minimizzazione qui), apre il tubo (`CreateFileW` con `SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION`), **verifica il server** (`assistente.exe` nella sua cartella), manda; per `PermissionRequest` aspetta la risposta ≤ 115 s e stampa `decisione_json`; per gli altri eventi esce subito (≤ 300 ms in tutto) senza stampare. `barra` → come `barra::esegui` (riga prima, poi invio per il tubo, budget 40 ms). Ogni errore: uscita 0 senza output. Nessuna dipendenza da Slint né da `casa-core`.
+
+- [ ] **Step 0:** rileggere su `code.claude.com/docs/en/hooks` forma exec (`args`), `async`, `shell`, uscita vuota = nessuna decisione, timeout; su learn.microsoft.com `CreateNamedPipeW`, `GetNamedPipeServerProcessId`, `GetNamedPipeClientProcessId`, `QueryFullProcessImageNameW`, `ConvertStringSecurityDescriptorToSecurityDescriptorW`. Annotarle in testa a `tubo.rs`.
+- [ ] **Step 1: test (falliscono)**
+
+```rust
+// tubo.rs (Windows; nome di tubo unico per test)
+#[test] fn solo_il_cliente_atteso() // cliente_atteso = l'exe del test → accettato; un altro percorso atteso → rifiutata, gestore mai chiamato
+#[test] fn canale_occupato_errore_esplicito() // tubo con lo stesso nome già creato dal test → Err(CanaleOccupato)
+#[test] fn messaggio_troppo_grande_o_malformato() // 70 KB, "", "[", 10 000 "[" → rifiutata, nessun panico; dopo, un messaggio valido passa
+#[test] fn lettura_lenta_chiusa_dopo_2s()
+#[test] fn diciassettesima_connessione_chiusa()
+#[test] fn permesso_consenti_nega_scaduto_chiuso() // risposta allow/deny; scaduto → nessuna risposta + abbandonato; cliente chiuso → abbandonato entro 1 s
+#[test] fn sequenza_cresce_per_connessione()
+// messaggio.rs
+#[test] fn decisione_json_unica_uscita() // Consenti/Nega → JSON esatto; Nessuna → None
+#[test] fn record_senza_campi_estranei() // stdin con prompt, transcript_path, tool_input.content → il record serializzato non li contiene
+// bin isola-hook (test d'integrazione in crates/claude-hook/tests/aiutante.rs)
+#[test] fn senza_isola_esce_in_silenzio() // nessun tubo → uscita 0, stdout vuoto, < 300 ms
+#[test] fn server_falso_non_riceve_nulla() // tubo creato dal test (immagine ≠ assistente.exe) → il test non legge byte, stdout vuoto
+#[test] fn mai_decisioni_fuori_dal_permesso() // server di prova che risponde «Consenti» a un PreToolUse → stdout vuoto
+```
+
+- [ ] **Step 2:** `cargo test -p claude-hook` → FAIL.
+- [ ] **Step 3:** implementa; poi l'assistente usa `tubo::avvia` (in prova `cliente_atteso` dalla variabile `ITSYHOME_AIUTANTE_ATTESO`, solo con `ITSYHOME_ASSISTENTE_DIR`), toglie codice, porta, portachiavi e variabile del Task 7 dal percorso di avvio; il ramo `--barra-stato` sparisce da `main.rs`.
+- [ ] **Step 4:** `cargo test --workspace` e clippy → PASS; misura in release: mediana di 50 `isola-hook evento` con un `PreToolUse` finto e isola di prova accesa < 30 ms; `barra` < 50 ms (annotare nel CHANGELOG).
+- [ ] **Step 5:** commit `feat(claude-hook): canale protetto con l'aiutante isola-hook`.
+
+### Task 7B: Collegamento rifatto sul canale protetto
+
+**Files:**
+- Modify: `crates/claude-hook/src/installa.rs`, `crates/assistente/src/ponte/con_claude/collegamento.rs` (e `con_claude.rs`), `src/finestra_impostazioni.rs`, `ui/impostazioni.slint`, `crates/assistente/src/sistema/` (via `ambiente_utente.rs` se non serve più), `CHANGELOG.md`, guida/README della sezione Claude se esiste
+- Test: `installa.rs`, `con_claude`, `test_ui.rs`
+
+**Interfaces:**
+- `installa.rs`: ogni voce = `{"type":"command","command":"<percorso assoluto>\\isola-hook.exe","args":["evento"],"timeout":T}` più `"async": true` per `UserPromptSubmit`, `Notification`, `Stop`, `StopFailure`, `SessionEnd`; `PreToolUse` sincrono `timeout: 5`; `PermissionRequest` sincrono `timeout: 120`; mai `onFailure`, mai `headers`/`allowedEnvVars`. `statusLine` = `{"type":"command","command":"<percorso corto con />/isola-hook.exe barra"}` (D5). `Piano { aiutante: PathBuf, comando_barra: Option<String> }`. `nostre()` riconosce le voci dal nome `isola-hook.exe` + `args[0] == "evento"` **e** le vecchie voci HTTP (`http://127.0.0.1:` + `/isola/v`), che `unisci`/`togli` rimuovono sempre (migrazione). Restano: unione che conserva tutto, riserva, scrittura atomica, anteprima, `barra_occupata`, `hook_disabilitati`; `fuori_lista` non serve più (niente URL) → togliere.
+- Collegamento: «Collega» → anteprima → «Scrivi in settings.json» → scrive e avvia il tubo; «Scollega» → toglie le voci; **niente codice, niente variabile, niente «Rigenera»**. Prima di scrivere si **rilegge** il file e si rifà l'unione: se nel frattempo è cambiato rispetto all'anteprima, si mostra la nuova anteprima invece di scrivere. `controlla_all_avvio`: voci assenti, di un altro percorso o vecchie HTTP → voce *informazione* `claude.aggiorna`, mai scrittura.
+- Interfaccia: sezione «Claude» senza «Rigenera il codice» né nota sui terminali da riaprire; nota PF14 aggiornata («Con isola chiusa Claude Code prosegue da solo: i permessi li decidi nel terminale»); fuori da Windows «Disponibile solo su Windows».
+
+- [ ] **Step 1: test (falliscono)** — adattare quelli del Task 7 e aggiungere:
+
+```rust
+#[test] fn voci_command_in_forma_exec() // command = percorso assoluto dell'aiutante, args ["evento"], nessun headers/allowedEnvVars/url
+#[test] fn async_solo_dove_serve() // async true esattamente per i 5 eventi; PreToolUse e PermissionRequest senza async; timeout 5 e 120
+#[test] fn vecchie_voci_http_tolte() // file con le voci HTTP del Task 7 → unisci le toglie e mette le nuove; togli lascia il file originale altrui
+#[test] fn file_cambiato_dopo_l_anteprima() // anteprima, poi il file cambia → conferma non scrive e restituisce la nuova anteprima
+#[test] fn nessun_segreto_scritto() // dopo la conferma: nessuna voce nel portachiavi, nessuna variabile (AmbienteFinto vuoto)
+```
+
+- [ ] **Step 2–4:** FAIL → implementa → `cargo test --workspace` e clippy PASS.
+- [ ] **Step 5: prova dal vivo in modalità di prova** (file finto), poi **con Paolo** sul vero `settings.json` (lui legge l'anteprima e conferma): stato dal vivo, permesso dalla pillola (Consenti/Nega), risposta nel terminale (cosa succede all'aiutante), isola chiusa (Claude prosegue senza errori visibili?), barra di stato in Git Bash.
+- [ ] **Step 6:** commit `feat(assistente): collegamento sul canale protetto`.
+
 ### Task 8: API Claude in sola lettura
 
 **Files:**
