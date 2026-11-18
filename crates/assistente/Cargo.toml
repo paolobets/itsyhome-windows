@@ -9,6 +9,8 @@ casa-core = { path = "../casa-core" }
 gestione-protocollo = { path = "../gestione-protocollo" }
 # Hook di Claude Code (M3): ascoltatore locale blindato e stato delle sessioni.
 claude-hook = { path = "../claude-hook" }
+# Consumi e dati dell'organizzazione Anthropic in sola lettura (M3, Task 8): chiave da amministratore nel portachiavi.
+api-claude = { path = "../api-claude" }
 slint = { version = "=1.18.1", features = ["renderer-skia", "unstable-winit-030", "raw-window-handle-06"] }
 # Solo l'ora locale per l'orologio del pannello.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

@@ -4,6 +4,7 @@
 //! Nessun timer a riposo: una sveglia singola alla prossima scadenza di una sessione, e il timer
 //! da un secondo del testo di attività solo mentre serve (vedi `attivita_serve`).
 
+mod api;
 mod collegamento;
 
 pub use collegamento::Contesto;

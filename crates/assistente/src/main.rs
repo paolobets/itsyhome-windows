@@ -142,6 +142,8 @@ fn main() -> Result<(), slint::PlatformError> {
     let ponte_servizi = ponte.clone();
     // Claude Code (M3): se è collegato, l'ascolto degli hook parte ora.
     ponte::con_claude::avvia_se_collegato(&ponte);
+    // Chiave da amministratore (M3, Task 8): se c'è, la prima lettura fra 60 s e poi ogni 3 ore.
+    ponte.avvia_api();
     // Se `settings.json` non dice più ciò che serve, una voce informativa: mai scritture da sole.
     ponte.controlla_all_avvio(&ponte::con_claude::Contesto::reale());
     let ponte_prova = ponte.clone();

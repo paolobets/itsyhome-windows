@@ -863,6 +863,12 @@ pub struct Ponte {
     /// servitore vecchio («canale perso») non ferma quello nuovo (M3, Task 7B).
     claude_generazione: Cell<u64>,
     sveglia_claude: slint::Timer,
+    /// Chiave da amministratore e letture delle API (M3, Task 8): il timer da 3 ore (esiste solo con
+    /// la chiave), una lettura in corso, una prova in corso, l'ultimo esito (ora e riepilogo).
+    sveglia_api: slint::Timer,
+    api_in_corso: Cell<bool>,
+    api_prova_in_corso: Cell<bool>,
+    api_ultimo: RefCell<Option<(String, Result<api_claude::Riepilogo, String>)>>,
     timer_attivita: slint::Timer,
     /// Impostazioni › Isola: i modelli dei selettori e i cataloghi da cui vengono (un indice
     /// scelto nell'interfaccia diventa la fonte da salvare).
@@ -975,6 +981,10 @@ pub fn collega(
         claude_preparato: RefCell::new(None),
         claude_generazione: Cell::new(0),
         sveglia_claude: slint::Timer::default(),
+        sveglia_api: slint::Timer::default(),
+        api_in_corso: Cell::new(false),
+        api_prova_in_corso: Cell::new(false),
+        api_ultimo: RefCell::new(None),
         timer_attivita: slint::Timer::default(),
         isola: RefCell::new(Isola::default()),
         voci_lati: Rc::new(VecModel::default()),
@@ -1824,6 +1834,8 @@ impl Ponte {
         self.riempi_impostazioni(f);
         // Impostazioni › Claude (M3, Task 7).
         self.collega_claude(f);
+        // Impostazioni › Claude › Chiave da amministratore (M3, Task 8).
+        self.collega_api(f);
         f.on_salva_ambiente(|id, nome, url, token| {
             let Some(ponte) = ponte() else { return "".into() };
             let m = Modulo { id: id.into(), nome: nome.into(), url: url.into(), token: token.into() };

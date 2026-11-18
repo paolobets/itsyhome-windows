@@ -1,0 +1,15 @@
+{
+  "data": [
+    {"cost":{"amount":"1000.000000","currency":"USD","list_amount":"1000.000000","requests":16},"ending_at":"2026-11-10T00:00:00Z","group":{},"starting_at":"2026-11-09T00:00:00Z"},
+    {"cost":{"amount":"1000.000000","currency":"USD","list_amount":"1000.000000","requests":16},"ending_at":"2026-11-11T00:00:00Z","group":{},"starting_at":"2026-11-10T00:00:00Z"},
+    {"cost":{"amount":"1000.000000","currency":"USD","list_amount":"1000.000000","requests":16},"ending_at":"2026-11-12T00:00:00Z","group":{},"starting_at":"2026-11-11T00:00:00Z"},
+    {"cost":{"amount":"1000.000000","currency":"USD","list_amount":"1000.000000","requests":16},"ending_at":"2026-11-13T00:00:00Z","group":{},"starting_at":"2026-11-12T00:00:00Z"},
+    {"cost":{"amount":"1000.000000","currency":"USD","list_amount":"1000.000000","requests":16},"ending_at":"2026-11-14T00:00:00Z","group":{},"starting_at":"2026-11-13T00:00:00Z"},
+    {"cost":{"amount":"1000.000000","currency":"USD","list_amount":"1000.000000","requests":16},"ending_at":"2026-11-15T00:00:00Z","group":{},"starting_at":"2026-11-14T00:00:00Z"},
+    {"cost":{"amount":"1000.000000","currency":"USD","list_amount":"1000.000000","requests":16},"ending_at":"2026-11-16T00:00:00Z","group":{},"starting_at":"2026-11-15T00:00:00Z"},
+    {"cost":{"amount":"4000.000000","currency":"USD","list_amount":"4000.000000","requests":64},"ending_at":"2026-11-17T00:00:00Z","group":{},"starting_at":"2026-11-16T00:00:00Z"}
+  ],
+  "data_refreshed_at": "2026-11-17T08:02:11Z",
+  "has_more": false,
+  "next_page": null
+}

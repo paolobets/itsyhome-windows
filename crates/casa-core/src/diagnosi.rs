@@ -117,6 +117,10 @@ contatori!(
     claude_rifiutate,
     claude_permessi,
     claude_barre,
+    // M3 (API Claude in sola lettura): letture complete dell'organizzazione partite e quelle con
+    // errori (chiave rifiutata, rete, servizio).
+    api_letture,
+    api_errori,
 );
 
 /// Il contatore del campo `campo` di `changes` (elenco fisso; il resto è `registro_campo_altro`).

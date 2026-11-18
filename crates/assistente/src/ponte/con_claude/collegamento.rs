@@ -304,7 +304,7 @@ impl Ponte {
         });
     }
 
-    fn con_finestra_claude(&self, f: impl FnOnce(&FinestraImpostazioni)) {
+    pub(crate) fn con_finestra_claude(&self, f: impl FnOnce(&FinestraImpostazioni)) {
         if let Some(finestra) = self.finestra.borrow().upgrade() {
             f(&finestra);
         }

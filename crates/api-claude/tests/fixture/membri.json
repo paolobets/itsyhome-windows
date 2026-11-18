@@ -1,0 +1,8 @@
+{
+  "data": [
+    {"id":"user_FAKE0001","added_at":"2026-01-01T00:00:00Z","email":"membro@example.com","name":"Membro di prova","role":"admin","type":"user"}
+  ],
+  "first_id": "user_FAKE0001",
+  "has_more": false,
+  "last_id": "user_FAKE0001"
+}

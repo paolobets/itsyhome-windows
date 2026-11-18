@@ -1,0 +1,9 @@
+{
+  "data": [
+    {"cost":{"amount":"25000.000000","currency":"USD","list_amount":"30000.000000","requests":90},"ending_at":"2026-11-17T10:00:00Z","group":{"api_key_id":"apikey_FAKE0001"},"starting_at":"2026-11-01T00:00:00Z"},
+    {"cost":{"amount":"16280.000000","currency":"USD","list_amount":"19000.000000","requests":38},"ending_at":"2026-11-17T10:00:00Z","group":{"api_key_id":"apikey_FAKE0002"},"starting_at":"2026-11-01T00:00:00Z"}
+  ],
+  "data_refreshed_at": "2026-11-17T08:02:11Z",
+  "has_more": false,
+  "next_page": null
+}

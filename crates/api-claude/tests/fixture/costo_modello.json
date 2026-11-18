@@ -1,0 +1,9 @@
+{
+  "data": [
+    {"cost":{"amount":"30000.000000","currency":"USD","list_amount":"36000.000000","requests":null},"ending_at":"2026-11-17T10:00:00Z","group":{"model":"claude-opus-5-5"},"starting_at":"2026-11-01T00:00:00Z"},
+    {"cost":{"amount":"11280.000000","currency":"USD","list_amount":"13000.000000","requests":null},"ending_at":"2026-11-17T10:00:00Z","group":{"model":"claude-sonnet-5-5"},"starting_at":"2026-11-01T00:00:00Z"}
+  ],
+  "data_refreshed_at": "2026-11-17T08:02:11Z",
+  "has_more": false,
+  "next_page": null
+}

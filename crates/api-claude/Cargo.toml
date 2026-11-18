@@ -1,0 +1,24 @@
+[package]
+name = "api-claude"
+version = "0.1.0"
+edition = "2021"
+
+# Le API di Anthropic in SOLA LETTURA per l'assistente (M3, Task 8): consumi e dati
+# dell'organizzazione con una chiave da amministratore (che non ha permessi ridotti: la difesa è
+# l'elenco chiuso di percorsi, tutti `GET`, vedi `letture` e `client`).
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# `serde`: date delle risposte (`data_refreshed_at`, `starting_at`). Niente `wasmbind`/`oldtime`.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+# `rustls-no-provider`: TLS con rustls (verifica del certificato sempre accesa) SENZA il set di
+# radici `webpki-roots` che porta `rustls` e senza `gzip` (le risposte non servono compresse).
+# Il provider crittografico (ring) e le radici del sistema li passa `client.rs`: stesso `rustls 0.23`
+# e stesso provider di `casa-core` (nessun secondo rustls, nessun aws-lc).
+ureq = { version = "3", default-features = false, features = ["rustls-no-provider"] }
+# Stessa versione di `casa-core`/`tokio-tungstenite`: `ring` + `std` + `tls12`, già nel Cargo.lock.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+# Certificati radice del sistema (Windows: store di Windows), come `casa-core`: già nel Cargo.lock.
+rustls-native-certs = "0.8"
+
+[dev-dependencies]

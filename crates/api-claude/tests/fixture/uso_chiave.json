@@ -1,0 +1,9 @@
+{
+  "data": [
+    {"ending_at":"2026-11-17T10:00:00Z","group":{"api_key_id":"apikey_FAKE0001"},"starting_at":"2026-11-01T00:00:00Z","usage":{"cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":0},"cache_read_input_tokens":2000000,"output_tokens":600000,"requests":90,"total_tokens":3300000,"uncached_input_tokens":700000}},
+    {"ending_at":"2026-11-17T10:00:00Z","group":{"api_key_id":"apikey_FAKE0002"},"starting_at":"2026-11-01T00:00:00Z","usage":{"cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":0},"cache_read_input_tokens":1200000,"output_tokens":291000,"requests":38,"total_tokens":2000000,"uncached_input_tokens":509000}}
+  ],
+  "data_refreshed_at": "2026-11-17T08:02:11Z",
+  "has_more": false,
+  "next_page": null
+}

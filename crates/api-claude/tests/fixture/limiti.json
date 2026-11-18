@@ -1,0 +1,7 @@
+{
+  "data": [
+    {"id":"rl_FAKE0001","group":{"id":"rlg_FAKE0001","display_name":"Claude Sonnet di prova","type":"model_group"},"limits":[{"type":"requests_per_minute","value":4000},{"type":"input_tokens_per_minute","value":2000000}],"models":["claude-sonnet-5-5"],"type":"rate_limit"},
+    {"id":"rl_FAKE0002","group":{"id":"rlg_FAKE0002","type":"batch"},"limits":[{"type":"requests_per_minute","value":4000}],"models":null,"type":"rate_limit"}
+  ],
+  "next_page": null
+}

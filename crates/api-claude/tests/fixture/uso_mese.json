@@ -1,0 +1,8 @@
+{
+  "data": [
+    {"ending_at":"2026-11-17T10:00:00Z","group":{},"starting_at":"2026-11-01T00:00:00Z","usage":{"cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":120000},"cache_read_input_tokens":3200000,"output_tokens":891000,"requests":128,"server_tool_use":{"web_search_requests":10},"total_tokens":5495500,"uncached_input_tokens":1284500}}
+  ],
+  "data_refreshed_at": "2026-11-17T08:02:11Z",
+  "has_more": false,
+  "next_page": null
+}

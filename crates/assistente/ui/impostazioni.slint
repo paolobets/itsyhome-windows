@@ -710,6 +710,18 @@ export component FinestraImpostazioni inherits Window {
     // Chiude l'anteprima senza scrivere (il piano preparato si butta).
     callback claude-annulla();
     callback claude-scollega();
+    // Chiave da amministratore (M3, Task 8): consumi e dati dell'organizzazione, sola lettura.
+    // La chiave vive solo nel portachiavi: il campo si svuota dopo «Salva» e si vedono le ultime 4 cifre.
+    in-out property <string> api-campo;
+    in property <bool> api-presente;
+    in property <string> api-ultime;
+    in property <bool> api-occupato;
+    in property <string> api-esito;
+    in property <bool> api-esito-errore;
+    in property <string> api-stato;
+    callback api-salva(string);
+    callback api-prova(string);
+    callback api-togli();
 
     // 0 Home Assistant, 1 Dispositivi, 2 Collegamenti, 3 Isola, 4 Claude, 5 Sistema, 6 Informazioni.
     in-out property <int> sezione: 0;
@@ -2395,6 +2407,94 @@ export component FinestraImpostazioni inherits Window {
                         wrap: word-wrap;
                         font-size: Tema.testo-corpo;
                         color: claude-esito-errore ? Tema.caldo-1 : Tema.testo-tenue;
+                    }
+
+                    // Chiave da amministratore: consumi e dati dell'organizzazione, solo letture.
+                    Rectangle {
+                        height: colonna-api.preferred-height;
+                        border-radius: Tema.raggio-xl;
+                        background: Tema.card-fondo;
+                        border-width: 1px;
+                        border-color: Tema.vetro-bordo;
+
+                        colonna-api := VerticalLayout {
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            padding-top: 12px;
+                            padding-bottom: 14px;
+                            spacing: 8px;
+
+                            Text {
+                                text: "Chiave da amministratore";
+                                font-weight: 500;
+                                font-size: Tema.testo-medio;
+                                color: Tema.testo;
+                            }
+
+                            Text {
+                                text: "Crea una chiave da amministratore con scadenza nella Console (Impostazioni › Admin keys). Serve solo per leggere consumi e dati dell'organizzazione: non modifica nulla.";
+                                wrap: word-wrap;
+                                font-size: Tema.testo-piccolo;
+                                color: Tema.testo-tenue;
+                            }
+
+                            if !api-presente: Campo {
+                                etichetta: "Chiave";
+                                suggerimento: "sk-ant-admin01-…";
+                                nome-accessibile: "Chiave da amministratore";
+                                password: true;
+                                testo <=> api-campo;
+                                invio => { root.api-salva(api-campo); }
+                            }
+
+                            if api-presente: Text {
+                                text: "•••• " + api-ultime;
+                                font-size: Tema.testo-medio;
+                                color: Tema.testo;
+                                accessible-role: text;
+                                accessible-label: "Chiave salvata, finisce con " + api-ultime;
+                            }
+
+                            HorizontalLayout {
+                                height: 30px;
+                                spacing: 10px;
+                                alignment: start;
+
+                                if !api-presente: Bottone {
+                                    testo: "Salva";
+                                    tipo: TipoPulsante.azione;
+                                    premuto => { root.api-salva(api-campo); }
+                                }
+
+                                Bottone {
+                                    testo: api-occupato ? "Provo…" : "Prova";
+                                    premuto => {
+                                        if (!api-occupato) {
+                                            root.api-prova(api-campo);
+                                        }
+                                    }
+                                }
+
+                                if api-presente: Bottone {
+                                    testo: "Togli";
+                                    premuto => { root.api-togli(); }
+                                }
+                            }
+
+                            if api-esito != "": Text {
+                                text: api-esito;
+                                wrap: word-wrap;
+                                font-size: Tema.testo-corpo;
+                                color: api-esito-errore ? Tema.caldo-1 : Tema.testo-tenue;
+                            }
+
+                            if api-stato != "": Text {
+                                text: api-stato;
+                                wrap: word-wrap;
+                                font-size: Tema.testo-piccolo;
+                                color: Tema.testo-tenue;
+                            }
+                        }
                     }
 
                     Text {
