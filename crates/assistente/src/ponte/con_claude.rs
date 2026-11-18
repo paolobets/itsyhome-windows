@@ -241,13 +241,18 @@ impl Gestore for GestoreIsola {
     /// regole del comando; ciò che non vale si scarta) e al thread dell'interfaccia va solo
     /// `DatiBarra`.
     fn barra(&self, a: Arrivo) {
-        let Ok(d) = DatiBarra::da_corpo_inoltrato(&a.corpo) else { return };
+        let Some(d) = barra_valida(&a.corpo) else { return };
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(p) = ponte() {
                 p.claude_barra(d);
             }
         });
     }
+}
+
+/// Il corpo inoltrato dal comando della barra, riconvalidato; ciò che non vale si scarta.
+fn barra_valida(corpo: &[u8]) -> Option<DatiBarra> {
+    DatiBarra::da_corpo_inoltrato(corpo).ok()
 }
 
 /// Voci di contesto tenute al più (una per sessione, come le sessioni).
@@ -1309,13 +1314,12 @@ mod test {
     }
 
     #[test]
-    fn il_gestore_scarta_una_barra_non_valida() {
-        // Il gestore riconvalida sul thread della connessione: sessione strana o testo che non
-        // è un `DatiBarra` non arrivano mai all'interfaccia.
-        assert!(DatiBarra::da_corpo_inoltrato(br#"{"sessione":"a b"}"#).is_err());
-        assert!(DatiBarra::da_corpo_inoltrato(b"non json").is_err());
-        let (_s, p, _pillola, _d) = ponte_di_prova();
-        p.claude_barra(barra("a", None, None));
-        assert_eq!(p.limiti(), (None, None));
+    fn la_riconvalida_del_gestore_scarta_il_non_valido() {
+        // `GestoreIsola::barra` consegna solo ciò che `barra_valida` accetta (il resto del
+        // gestore passa dal ciclo eventi di Slint, che qui non c'è).
+        assert!(barra_valida(br#"{"sessione":"a b"}"#).is_none());
+        assert!(barra_valida(b"non json").is_none());
+        let buono = br#"{"sessione":"a","modello":"Opus 5.5","contesto":40.0,"cinque_ore":null,"sette_giorni":null}"#;
+        assert_eq!(barra_valida(buono), Some(barra("a", None, None)));
     }
 }

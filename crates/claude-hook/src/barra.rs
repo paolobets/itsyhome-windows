@@ -143,6 +143,8 @@ impl DatiBarra {
 /// Legge i dati dallo stdin di Claude Code (solo i campi dei fatti verificati). `null`, tipi
 /// strani e valori non finiti diventano «assente»; `session_id` con le regole degli eventi.
 pub fn dati_da_json(corpo: &[u8]) -> Result<DatiBarra, ErroreEvento> {
+    // Un BOM UTF-8 iniziale (alcuni strumenti lo scrivono) non è JSON.
+    let corpo = corpo.strip_prefix(&[0xEF, 0xBB, 0xBF][..]).unwrap_or(corpo);
     let g: Grezzo = serde_json::from_slice(corpo).map_err(|_| ErroreEvento::NonValido)?;
     let sessione = sessione_valida(g.session_id.as_deref()).ok_or(ErroreEvento::NonValido)?.to_string();
     let r = g.rate_limits.unwrap_or_default();
@@ -405,6 +407,49 @@ mod test {
         let s = String::from_utf8(uscita).unwrap();
         assert!(s.starts_with("Opus 5.5"), "{s}");
         assert!(!s.contains("codice-di-prova"));
+    }
+
+    #[test]
+    fn bom_iniziale_ignorato() {
+        let mut con_bom = vec![0xEF, 0xBB, 0xBF];
+        con_bom.extend_from_slice(completo().as_bytes());
+        assert_eq!(dati_da_json(&con_bom).unwrap(), dati_da_json(completo().as_bytes()).unwrap());
+    }
+
+    /// Un gestore che tiene le barre ricevute.
+    struct Raccolta(std::sync::Mutex<Vec<crate::Arrivo>>);
+    impl crate::Gestore for Raccolta {
+        fn evento(&self, _: crate::Arrivo) {}
+        fn permesso(&self, _: crate::Arrivo) -> Option<crate::AttesaPermesso> {
+            None
+        }
+        fn abbandonato(&self, _: u64) {}
+        fn barra(&self, a: crate::Arrivo) {
+            self.0.lock().unwrap().push(a);
+        }
+    }
+
+    #[test]
+    fn esegui_contro_l_ascoltatore_vero() {
+        use crate::{avvia, CodiceHook, ConfigAscolto, Gestore, ATTESA_MASSIMA};
+        let g = std::sync::Arc::new(Raccolta(Default::default()));
+        let codice = CodiceHook::nuovo().unwrap();
+        let a = avvia(
+            ConfigAscolto { porta: 0, codice: codice.clone(), attesa_massima: ATTESA_MASSIMA },
+            g.clone() as std::sync::Arc<dyn Gestore>,
+        )
+        .unwrap();
+        let mut uscita = Vec::new();
+        esegui(completo().as_bytes(), &mut uscita, a.porta(), Some(&codice.come_testo()), Duration::from_millis(500)).unwrap();
+        let inizio = Instant::now();
+        while g.0.lock().unwrap().is_empty() && inizio.elapsed() < Duration::from_secs(3) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let ricevute = g.0.lock().unwrap();
+        assert_eq!(ricevute.len(), 1, "il gestore doveva ricevere la barra");
+        let d = DatiBarra::da_corpo_inoltrato(&ricevute[0].corpo).unwrap();
+        assert_eq!(d, dati_da_json(completo().as_bytes()).unwrap());
+        assert_eq!(a.rifiutate(), 0, "Host, Content-Type e Authorization devono passare");
     }
 
     #[test]

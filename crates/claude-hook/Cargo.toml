@@ -15,7 +15,6 @@ serde_json = { version = "1", features = ["raw_value"] }
 # Ora locale della barra di stato e delle righe dell'esempio.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
-
 [target.'cfg(windows)'.dependencies]
 # Stessa versione del resto del workspace: PID del mittente (tabella TCP) e catena dei genitori
 # (istantanea dei processi).
