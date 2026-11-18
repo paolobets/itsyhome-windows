@@ -855,9 +855,13 @@ pub struct Ponte {
     claude_permessi: RefCell<HashMap<u64, con_claude::Pendente>>,
     /// Da quando «Consenti» risponde dopo un cambio della voce mostrata.
     claude_armamento: RefCell<con_claude::Armamento>,
-    /// Il piano di collegamento che l'utente sta leggendo nell'anteprima (M3, Task 7): la conferma
-    /// scrive esattamente questo. `None` finché non ha premuto «Collega Claude Code».
-    claude_preparato: RefCell<Option<claude_hook::installa::Piano>>,
+    /// L'anteprima che l'utente sta leggendo (M3, Task 7B): la conferma rilegge il file, rifà
+    /// l'unione e scrive solo se la modifica è identica a questa. `None` finché non ha premuto
+    /// «Collega Claude Code».
+    claude_preparato: RefCell<Option<claude_hook::installa::Anteprima>>,
+    /// Il numero del tubo in funzione: sale a ogni apertura e a ogni chiusura, così l'avviso di un
+    /// servitore vecchio («canale perso») non ferma quello nuovo (M3, Task 7B).
+    claude_generazione: Cell<u64>,
     sveglia_claude: slint::Timer,
     timer_attivita: slint::Timer,
     /// Impostazioni › Isola: i modelli dei selettori e i cataloghi da cui vengono (un indice
@@ -969,6 +973,7 @@ pub fn collega(
         claude_permessi: RefCell::new(HashMap::new()),
         claude_armamento: RefCell::new(con_claude::Armamento::nuovo()),
         claude_preparato: RefCell::new(None),
+        claude_generazione: Cell::new(0),
         sveglia_claude: slint::Timer::default(),
         timer_attivita: slint::Timer::default(),
         isola: RefCell::new(Isola::default()),

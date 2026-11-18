@@ -77,6 +77,8 @@ auto-launch = "0.6"
 
 [dev-dependencies]
 tempfile = "3"
+# Solo nei test del collegamento (costruire e rileggere `settings.json` di prova); stessa versione di claude-hook.
+serde_json = { version = "1", features = ["preserve_order"] }
 # Backend di prova di Slint: crea pillola, pannello e Impostazioni nei test, senza finestre
 # (misure Slint↔Rust, ruoli e nomi per l'accessibilità).
 i-slint-backend-testing = "=1.18.1"

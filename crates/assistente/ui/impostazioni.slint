@@ -690,7 +690,7 @@ export component FinestraImpostazioni inherits Window {
     in property <bool> avvisi-bt-disponibile: false;
     callback cambia-avvisi-bt(bool);
 
-    // Claude Code (M3, Task 7). Il passo: 0 a riposo, 1 anteprima di ciò che si scrive in
+    // Claude Code (M3, Task 7 e 7B). Il passo: 0 a riposo, 1 anteprima di ciò che si scrive in
     // settings.json, 2 conferma dello scollegamento. Nulla si scrive prima di «Scrivi in settings.json».
     in-out property <int> claude-passo: 0;
     in-out property <string> claude-anteprima;
@@ -703,16 +703,13 @@ export component FinestraImpostazioni inherits Window {
     in property <bool> claude-da-aggiornare;
     // Il file di Claude Code che si scriverebbe.
     in property <string> claude-file;
-    // Fuori da Windows la variabile la imposta l'utente nella sua shell.
-    in property <bool> claude-shell;
+    // Fuori da Windows il collegamento non c'è: «Disponibile solo su Windows», nessun pulsante.
+    in property <bool> claude-disponibile: true;
     callback claude-prepara();
     callback claude-conferma();
     // Chiude l'anteprima senza scrivere (il piano preparato si butta).
     callback claude-annulla();
     callback claude-scollega();
-    callback claude-rigenera();
-    // Il codice segreto, da copiare a mano (solo dove l'app non scrive la variabile).
-    callback claude-codice() -> string;
 
     // 0 Home Assistant, 1 Dispositivi, 2 Collegamenti, 3 Isola, 4 Claude, 5 Sistema, 6 Informazioni.
     in-out property <int> sezione: 0;
@@ -940,16 +937,6 @@ export component FinestraImpostazioni inherits Window {
         radice.focus();
     }
 
-    // Copia il codice negli appunti (solo fuori da Windows): passa da un campo invisibile.
-    function copia-codice() {
-        copiatore.text = root.claude-codice();
-        copiatore.select-all();
-        copiatore.copy();
-        copiatore.text = "";
-        claude-esito = "Codice copiato.";
-        claude-esito-errore = false;
-    }
-
     // Lasciando la sezione la conferma non resta in sospeso.
     changed sezione => {
         conferma-c-id = "";
@@ -1002,16 +989,6 @@ export component FinestraImpostazioni inherits Window {
                 return accept;
             }
             return reject;
-        }
-
-        // Il campo invisibile da cui «Copia il codice» (fuori da Windows) mette il testo negli appunti.
-        copiatore := TextInput {
-            x: 0;
-            y: 0;
-            width: 0;
-            height: 0;
-            enabled: false;
-            accessible-role: none;
         }
 
         // Filo dei petali in cima, come il bordo dell'isola.
@@ -2173,7 +2150,7 @@ export component FinestraImpostazioni inherits Window {
                         Text {
                             x: 16px;
                             y: 12px;
-                            width: parent.width - 32px - (claude-passo == 0 && (!claude-collegato || claude-da-aggiornare) ? 220px : 0px);
+                            width: parent.width - 32px - (claude-passo == 0 && claude-disponibile && (!claude-collegato || claude-da-aggiornare) ? 220px : 0px);
                             text: claude-stato;
                             overflow: elide;
                             font-weight: 500;
@@ -2184,14 +2161,14 @@ export component FinestraImpostazioni inherits Window {
                         Text {
                             x: 16px;
                             y: 35px;
-                            width: parent.width - 32px - (claude-passo == 0 && (!claude-collegato || claude-da-aggiornare) ? 220px : 0px);
+                            width: parent.width - 32px - (claude-passo == 0 && claude-disponibile && (!claude-collegato || claude-da-aggiornare) ? 220px : 0px);
                             text: "Le sessioni di Claude Code compaiono nella pillola, coi permessi da consentire.";
                             overflow: elide;
                             font-size: Tema.testo-piccolo;
                             color: Tema.testo-tenue;
                         }
 
-                        if claude-passo == 0 && (!claude-collegato || claude-da-aggiornare): Bottone {
+                        if claude-passo == 0 && claude-disponibile && (!claude-collegato || claude-da-aggiornare): Bottone {
                             x: parent.width - self.width - 18px;
                             y: (parent.height - self.height) / 2;
                             testo: claude-da-aggiornare ? "Aggiorna il collegamento" : "Collega Claude Code";
@@ -2224,7 +2201,7 @@ export component FinestraImpostazioni inherits Window {
                             spacing: 8px;
 
                             Text {
-                                text: "Questo verrà aggiunto a settings.json";
+                                text: "Così resteranno le voci di isola in settings.json";
                                 font-weight: 500;
                                 font-size: Tema.testo-medio;
                                 color: Tema.testo;
@@ -2262,7 +2239,7 @@ export component FinestraImpostazioni inherits Window {
                                         font-family: Tema.carattere-mono;
                                         font-size: Tema.testo-piccolo;
                                         color: Tema.testo;
-                                        accessible-label: "Voci che verranno aggiunte a settings.json";
+                                        accessible-label: "Voci di isola come resteranno in settings.json";
                                     }
                                 }
                             }
@@ -2275,7 +2252,7 @@ export component FinestraImpostazioni inherits Window {
                             }
 
                             Text {
-                                text: "Il resto di settings.json resta com'è (ne tengo una copia accanto). I terminali aperti prima vanno chiusi e riaperti.";
+                                text: "Il resto di settings.json resta com'è (la prima volta ne tengo una copia accanto). Claude Code rilegge le modifiche da solo.";
                                 wrap: word-wrap;
                                 font-size: Tema.testo-piccolo;
                                 color: Tema.testo-tenue;
@@ -2310,51 +2287,7 @@ export component FinestraImpostazioni inherits Window {
                         }
                     }
 
-                    // Collegato: il codice e lo scollegamento.
-                    if claude-passo == 0 && claude-collegato: Rectangle {
-                        height: 64px;
-                        border-radius: Tema.raggio-xl;
-                        background: Tema.card-fondo;
-                        border-width: 1px;
-                        border-color: Tema.vetro-bordo;
-
-                        Text {
-                            x: 16px;
-                            y: 12px;
-                            width: parent.width - 240px;
-                            text: "Codice segreto";
-                            overflow: elide;
-                            font-weight: 500;
-                            font-size: Tema.testo-medio;
-                            color: Tema.testo;
-                        }
-
-                        Text {
-                            x: 16px;
-                            y: 35px;
-                            width: parent.width - 240px;
-                            text: "Ne crea uno nuovo (riapri i terminali).";
-                            overflow: elide;
-                            font-size: Tema.testo-piccolo;
-                            color: Tema.testo-tenue;
-                        }
-
-                        Bottone {
-                            x: parent.width - self.width - 18px;
-                            y: (parent.height - self.height) / 2;
-                            testo: "Rigenera il codice";
-                            premuto => {
-                                claude-esito = "";
-                                root.claude-rigenera();
-                            }
-                            changed has-focus => {
-                                if (self.has-focus) {
-                                    claude.porta-in-vista(parent.y, parent.height);
-                                }
-                            }
-                        }
-                    }
-
+                    // Collegato: lo scollegamento.
                     if claude-passo == 0 && claude-collegato: Rectangle {
                         height: 64px;
                         border-radius: Tema.raggio-xl;
@@ -2391,48 +2324,6 @@ export component FinestraImpostazioni inherits Window {
                                 claude-esito = "";
                                 claude-passo = 2;
                             }
-                            changed has-focus => {
-                                if (self.has-focus) {
-                                    claude.porta-in-vista(parent.y, parent.height);
-                                }
-                            }
-                        }
-                    }
-
-                    // Fuori da Windows la variabile la imposta l'utente nella sua shell.
-                    if claude-passo == 0 && claude-collegato && claude-shell: Rectangle {
-                        height: 64px;
-                        border-radius: Tema.raggio-xl;
-                        background: Tema.card-fondo;
-                        border-width: 1px;
-                        border-color: Tema.vetro-bordo;
-
-                        Text {
-                            x: 16px;
-                            y: 12px;
-                            width: parent.width - 240px;
-                            text: "Imposta ISOLA_HOOK_TOKEN nella tua shell";
-                            overflow: elide;
-                            font-weight: 500;
-                            font-size: Tema.testo-medio;
-                            color: Tema.testo;
-                        }
-
-                        Text {
-                            x: 16px;
-                            y: 35px;
-                            width: parent.width - 240px;
-                            text: "Qui l'app non può scriverla: copia il codice e impostalo tu.";
-                            overflow: elide;
-                            font-size: Tema.testo-piccolo;
-                            color: Tema.testo-tenue;
-                        }
-
-                        Bottone {
-                            x: parent.width - self.width - 18px;
-                            y: (parent.height - self.height) / 2;
-                            testo: "Copia il codice";
-                            premuto => { copia-codice(); }
                             changed has-focus => {
                                 if (self.has-focus) {
                                     claude.porta-in-vista(parent.y, parent.height);
@@ -2507,7 +2398,7 @@ export component FinestraImpostazioni inherits Window {
                     }
 
                     Text {
-                        text: "Con isola chiusa Claude Code segnala \"hook failed\" a fine risposta: è innocuo; per toglierlo usa Scollega.";
+                        text: "Con isola chiusa Claude Code prosegue da solo: i permessi li decidi nel terminale.";
                         wrap: word-wrap;
                         font-size: Tema.testo-piccolo;
                         color: Tema.testo-tenue;

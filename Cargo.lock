@@ -290,6 +290,7 @@ dependencies = [
  "i-slint-core",
  "image",
  "notify-rust",
+ "serde_json",
  "slint",
  "slint-build",
  "starship-battery",

@@ -29,9 +29,6 @@ use std::sync::mpsc::{channel, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// Dove stava il codice segreto degli hook HTTP (Task 7) nel portachiavi: «Scollega» lo toglie
-/// ancora, se è rimasto (usato dal Task 7B).
-pub const SEGRETO_HOOK: &str = "isola:claude-hook";
 /// In prova (e solo con `ITSYHOME_ASSISTENTE_DIR`) il cliente ammesso dal tubo è questo percorso
 /// invece di `isola-hook.exe` accanto all'assistente: serve alle prove con `sessioni_finte`.
 pub const VARIABILE_AIUTANTE: &str = "ITSYHOME_AIUTANTE_ATTESO";
@@ -121,12 +118,9 @@ pub fn avvia_con(p: &Ponte, config: ConfigTubo) {
     if !cfg!(windows) {
         return;
     }
-    let vecchio = p.claude_ascolto.borrow_mut().take();
-    drop(vecchio); // chiude tutte le istanze prima di riprendere il nome
-    // I permessi del vecchio tubo non hanno più chi li aspetta: si chiudono (Nessuna) e le voci
-    // spariscono, così nessun clic può più indicarli.
-    p.claude_chiudi_tutti();
-    match avvia(config, Arc::new(GestoreIsola::new(p.casa.diagnosi_condivisa()))) {
+    // Chiude il vecchio (tutte le istanze, prima di riprendere il nome) e i suoi permessi.
+    let generazione = p.claude_ferma_tubo();
+    match avvia(config, Arc::new(GestoreIsola::new(p.casa.diagnosi_condivisa(), generazione))) {
         Ok(servitore) => {
             *p.claude_ascolto.borrow_mut() = Some(servitore);
             p.togli_voce(ID_COLLEGAMENTO);
@@ -159,8 +153,7 @@ fn voce_non_disponibile(p: &Ponte, e: ErroreAvvio) {
 /// sveglie si fermano.
 pub fn spegni() {
     if let Some(p) = ponte() {
-        let ascolto = p.claude_ascolto.borrow_mut().take();
-        drop(ascolto);
+        p.claude_ferma_tubo();
         p.sveglia_claude.stop();
         p.timer_attivita.stop();
     }
@@ -191,11 +184,38 @@ pub fn azione(p: &Ponte, voce: &str, pulsante: &str) {
 struct GestoreIsola {
     /// Il registro condiviso (contatori atomici): i rifiuti si contano sul thread della connessione.
     diagnosi: Arc<Diagnosi>,
+    /// Il numero del tubo a cui appartiene questo gestore (`Ponte::claude_generazione` al momento
+    /// dell'apertura): un avviso arrivato quando il tubo è già un altro si ignora.
+    generazione: u64,
 }
 
 impl GestoreIsola {
-    fn new(diagnosi: Arc<Diagnosi>) -> GestoreIsola {
-        GestoreIsola { diagnosi }
+    fn new(diagnosi: Arc<Diagnosi>, generazione: u64) -> GestoreIsola {
+        GestoreIsola { diagnosi, generazione }
+    }
+}
+
+impl Ponte {
+    /// Ferma il tubo in funzione (se c'è), chiude i suoi permessi (nessuna decisione: spariscono le
+    /// voci, nessun clic può più indicarli) e fa salire il numero del tubo. Restituisce il nuovo
+    /// numero, per il tubo che si apre subito dopo.
+    pub(super) fn claude_ferma_tubo(&self) -> u64 {
+        let g = self.claude_generazione.get() + 1;
+        self.claude_generazione.set(g);
+        let servitore = self.claude_ascolto.borrow_mut().take();
+        drop(servitore);
+        self.claude_chiudi_tutti();
+        g
+    }
+
+    /// Il tubo numero `generazione` ha detto di aver perso il canale. Vale solo se è ancora quello
+    /// in funzione: un avviso in ritardo di un servitore già sostituito o chiuso non fa nulla.
+    pub(super) fn claude_canale_perso(&self, generazione: u64) {
+        if generazione != self.claude_generazione.get() {
+            return;
+        }
+        self.claude_ferma_tubo();
+        voce_non_disponibile(self, ErroreAvvio::CanaleOccupato);
     }
 }
 
@@ -273,12 +293,10 @@ impl Gestore for GestoreIsola {
     /// ha smesso. Lo si chiude davvero, i permessi in attesa si chiudono e compare la voce
     /// «Collegamento con Claude Code non disponibile».
     fn canale_perso(&self) {
-        let _ = slint::invoke_from_event_loop(|| {
+        let generazione = self.generazione;
+        let _ = slint::invoke_from_event_loop(move || {
             if let Some(p) = ponte() {
-                let servitore = p.claude_ascolto.borrow_mut().take();
-                drop(servitore);
-                p.claude_chiudi_tutti();
-                voce_non_disponibile(&p, ErroreAvvio::CanaleOccupato);
+                p.claude_canale_perso(generazione);
             }
         });
     }
@@ -810,7 +828,6 @@ mod test {
         // Collegato: il tubo si apre, senza codice né porta.
         p.casa.aggiorna_config(|c| {
             c.claude.collegato = true;
-            c.claude.porta = None;
         });
         avvia_se_collegato_con(&p, Some(config_di_prova()));
         assert!(p.claude_ascolto.borrow().is_some());
@@ -865,10 +882,40 @@ mod test {
         assert_eq!(v.pulsanti, vec![Pulsante::new(PULSANTE_IMPOSTAZIONI, "Impostazioni")]);
     }
 
+    /// Un «canale perso» in ritardo di un tubo già sostituito (o chiuso) non ferma quello nuovo.
+    #[cfg(windows)]
+    #[test]
+    fn l_avviso_di_un_tubo_vecchio_non_ferma_quello_nuovo() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        avvia_con(&p, config_di_prova());
+        let vecchia = p.claude_generazione.get();
+        avvia_con(&p, config_di_prova());
+        let nuova = p.claude_generazione.get();
+        assert!(nuova > vecchia);
+        // L'avviso del vecchio arriva solo ora: ignorato, il nuovo resta aperto e nessuna voce.
+        p.claude_canale_perso(vecchia);
+        assert!(p.claude_ascolto.borrow().is_some(), "il tubo nuovo resta");
+        assert!(!p.attese.borrow().contiene(ID_COLLEGAMENTO));
+        // L'avviso del tubo in funzione vale: si ferma e compare la voce.
+        p.claude_canale_perso(nuova);
+        assert!(p.claude_ascolto.borrow().is_none());
+        assert!(p.attese.borrow().contiene(ID_COLLEGAMENTO));
+        // Un tubo riaperto dopo: l'avviso della «nuova» di prima non lo tocca.
+        avvia_con(&p, config_di_prova());
+        p.claude_canale_perso(nuova);
+        assert!(p.claude_ascolto.borrow().is_some());
+        // Chiuso a mano (spegni, scollega): un avviso in ritardo non riapre nulla né mette voci.
+        let attuale = p.claude_generazione.get();
+        spegni();
+        p.togli_voce(ID_COLLEGAMENTO);
+        p.claude_canale_perso(attuale);
+        assert!(!p.attese.borrow().contiene(ID_COLLEGAMENTO), "tubo già chiuso: nessun avviso");
+    }
+
     #[test]
     fn i_rifiuti_dell_ascoltatore_arrivano_alla_diagnosi() {
         let diagnosi = Arc::new(Diagnosi::new(true));
-        let g = GestoreIsola::new(diagnosi.clone());
+        let g = GestoreIsola::new(diagnosi.clone(), 1);
         g.rifiutata();
         g.rifiutata();
         assert_eq!(diagnosi.valore(Contatore::claude_rifiutate), 2);

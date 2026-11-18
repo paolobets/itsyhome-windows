@@ -1428,7 +1428,7 @@ mod accessibilita {
         assert!(ElementHandle::find_by_accessible_label(&p, "«NAS» non si è aperto").next().is_some());
     }
 
-    /// Impostazioni › Claude (M3, Task 7): l'anteprima si apre col fuoco su «Annulla» (Invio per
+    /// Impostazioni › Claude (M3, Task 7 e 7B): l'anteprima si apre col fuoco su «Annulla» (Invio per
     /// sbaglio non scrive), «Scrivi in settings.json» è raggiungibile con Tab, Esc annulla; lo
     /// scollegamento chiede conferma; i pulsanti hanno il loro nome per Narrator.
     #[test]
@@ -1456,27 +1456,28 @@ mod accessibilita {
         f.on_claude_annulla(move || e.borrow_mut().push("annulla"));
         let e = eventi.clone();
         f.on_claude_scollega(move || e.borrow_mut().push("scollega"));
-        let e = eventi.clone();
-        f.on_claude_rigenera(move || e.borrow_mut().push("rigenera"));
         let tasto = |k: Key| {
             f.window().dispatch_event(WindowEvent::KeyPressed { text: k.into() });
             f.window().dispatch_event(WindowEvent::KeyReleased { text: k.into() });
         };
         let ce = |nome: &str| ElementHandle::find_by_accessible_label(&f, nome).next().is_some();
 
-        // A riposo, non collegato: solo «Collega Claude Code», e la nota sul «hook failed».
+        // A riposo, non collegato: solo «Collega Claude Code», e la nota sui permessi nel terminale
+        // (nessun «Rigenera il codice», nessuna nota sul terminale da riaprire: il codice non c'è più).
         assert!(ce("Collega Claude Code"));
         assert!(!ce("Scrivi in settings.json") && !ce("Rigenera il codice") && !ce("Scollega"));
-        assert!(ce("Con isola chiusa Claude Code segnala \"hook failed\" a fine risposta: è innocuo; per toglierlo usa Scollega."));
+        assert!(ce("Con isola chiusa Claude Code prosegue da solo: i permessi li decidi nel terminale."));
+        assert!(!ce("Codice segreto") && !ce("Copia il codice"));
         assert!(ce("Non collegato"));
 
         // Anteprima: avviso, riquadro leggibile, i due pulsanti.
         elemento(&f, "Collega Claude Code").invoke_accessible_default_action();
         assert_eq!(*eventi.borrow(), ["prepara"]);
         assert!(ce("Scrivi in settings.json") && ce("Annulla"));
-        assert!(ce("Voci che verranno aggiunte a settings.json"));
+        assert!(ce("Voci di isola come resteranno in settings.json"));
         assert!(ce("La barra di stato è già usata: i limiti dell'abbonamento non saranno disponibili."));
-        assert!(ce("Il resto di settings.json resta com'è (ne tengo una copia accanto). I terminali aperti prima vanno chiusi e riaperti."));
+        assert!(ce("Il resto di settings.json resta com'è (la prima volta ne tengo una copia accanto). Claude Code rilegge le modifiche da solo."));
+        assert!(!ce("I terminali aperti prima vanno chiusi e riaperti."));
         assert!(!ce("Collega Claude Code"), "durante l'anteprima il pulsante non c'è");
 
         // Il fuoco parte da «Annulla»: Invio annulla (non scrive).
@@ -1495,13 +1496,11 @@ mod accessibilita {
         assert_eq!(eventi.borrow().last(), Some(&"annulla"));
         assert_eq!(f.get_claude_passo(), 0);
 
-        // Collegato: Rigenera e Scollega; lo scollegamento chiede conferma, col fuoco su «Annulla».
+        // Collegato: solo Scollega (niente «Rigenera il codice»); chiede conferma, col fuoco su «Annulla».
         eventi.borrow_mut().clear();
         f.set_claude_collegato(true);
-        f.set_claude_stato("Collegato · porta 47613".into());
-        assert!(ce("Collegato · porta 47613"));
-        elemento(&f, "Rigenera il codice").invoke_accessible_default_action();
-        assert_eq!(*eventi.borrow(), ["rigenera"]);
+        f.set_claude_stato("Collegato".into());
+        assert!(ce("Collegato") && !ce("Rigenera il codice"));
         elemento(&f, "Scollega").invoke_accessible_default_action();
         assert_eq!(f.get_claude_passo(), 2);
         assert!(ce("Togliere il collegamento con Claude Code?"));
@@ -1513,11 +1512,13 @@ mod accessibilita {
         tasto(Key::Return);
         assert_eq!(eventi.borrow().last(), Some(&"scollega"), "{:?}", eventi.borrow());
 
-        // Fuori da Windows: la riga «Imposta ISOLA_HOOK_TOKEN nella tua shell» con «Copia il codice».
+        // Fuori da Windows: «Disponibile solo su Windows», nessun pulsante per collegare.
         f.set_claude_passo(0);
-        assert!(!ce("Copia il codice"));
-        f.set_claude_shell(true);
-        assert!(ce("Imposta ISOLA_HOOK_TOKEN nella tua shell") && ce("Copia il codice"));
+        f.set_claude_collegato(false);
+        assert!(ce("Collega Claude Code"));
+        f.set_claude_disponibile(false);
+        f.set_claude_stato("Disponibile solo su Windows".into());
+        assert!(ce("Disponibile solo su Windows") && !ce("Collega Claude Code"));
     }
 
     /// Le Impostazioni sulla scheda Collegamenti, coi controlli veri dei campi; restituisce gli
