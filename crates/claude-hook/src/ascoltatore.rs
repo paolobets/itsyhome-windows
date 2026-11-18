@@ -46,7 +46,7 @@ pub enum Percorso {
 }
 
 /// Una richiesta accettata, passata al gestore.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Arrivo {
     pub percorso: Percorso,
     pub corpo: Vec<u8>,
@@ -54,6 +54,18 @@ pub struct Arrivo {
     /// Il PID del mittente, cercato solo alla prima richiesta di un `session_id` nuovo (e solo se
     /// la ricerca riesce); altrimenti `None`. Sul percorso della barra è sempre `None`.
     pub pid_mittente: Option<u32>,
+}
+
+impl std::fmt::Debug for Arrivo {
+    // Il corpo può contenere comandi, richieste e percorsi: mai nei log, solo la sua lunghezza.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Arrivo")
+            .field("percorso", &self.percorso)
+            .field("corpo_byte", &self.corpo.len())
+            .field("porta_mittente", &self.porta_mittente)
+            .field("pid_mittente", &self.pid_mittente)
+            .finish()
+    }
 }
 
 /// Risposta a un permesso.
@@ -198,10 +210,14 @@ fn accetta(ascolto: TcpListener, ctx: Arc<Contesto>) {
             continue;
         }
         let c2 = Arc::clone(&ctx);
-        let _ = thread::Builder::new().name("claude-conn".into()).spawn(move || {
+        let esito = thread::Builder::new().name("claude-conn".into()).spawn(move || {
             let _guardiano = guardiano;
             servi(flusso, &c2);
         });
+        if esito.is_err() {
+            // Il closure è stato lasciato cadere: connessione chiusa e contatore restituito.
+            ctx.rifiutate.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 
@@ -233,7 +249,50 @@ enum Fine {
 #[derive(Deserialize)]
 struct Testata {
     hook_event_name: String,
-    session_id: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "solo_testo")]
+    session_id: Option<String>,
+}
+
+/// Un testo; qualunque altro tipo JSON diventa `None` (senza costruirne l'albero).
+fn solo_testo<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    use serde::de::{Error, IgnoredAny, MapAccess, SeqAccess, Visitor};
+    struct V;
+    impl<'de> Visitor<'de> for V {
+        type Value = Option<String>;
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("un valore JSON")
+        }
+        fn visit_str<E: Error>(self, v: &str) -> Result<Self::Value, E> {
+            Ok(Some(v.to_owned()))
+        }
+        fn visit_string<E: Error>(self, v: String) -> Result<Self::Value, E> {
+            Ok(Some(v))
+        }
+        fn visit_unit<E: Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_bool<E: Error>(self, _: bool) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_i64<E: Error>(self, _: i64) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_u64<E: Error>(self, _: u64) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_f64<E: Error>(self, _: f64) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_seq<A: SeqAccess<'de>>(self, mut a: A) -> Result<Self::Value, A::Error> {
+            while a.next_element::<IgnoredAny>()?.is_some() {}
+            Ok(None)
+        }
+        fn visit_map<A: MapAccess<'de>>(self, mut a: A) -> Result<Self::Value, A::Error> {
+            while a.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+            Ok(None)
+        }
+    }
+    d.deserialize_any(V)
 }
 
 /// Le sole intestazioni che servono, già copiate.
@@ -251,12 +310,13 @@ struct Testa {
 fn servi(mut flusso: TcpStream, ctx: &Contesto) {
     let _ = flusso.set_write_timeout(Some(TEMPO_LETTURA));
     let porta_mittente = flusso.peer_addr().map(|a| a.port()).unwrap_or(0);
+    let fine = Instant::now() + TEMPO_LETTURA;
     match istruisci(&mut flusso, ctx, porta_mittente) {
         Ok(()) => {}
         Err(Fine::Rifiuto(codice)) => {
             ctx.rifiutate.fetch_add(1, Ordering::Relaxed);
             scrivi(&mut flusso, codice, "");
-            svuota_residuo(&mut flusso);
+            svuota_residuo(&mut flusso, fine);
         }
         Err(Fine::Chiudi) => {
             ctx.rifiutate.fetch_add(1, Ordering::Relaxed);
@@ -264,13 +324,18 @@ fn servi(mut flusso: TcpStream, ctx: &Contesto) {
     }
 }
 
-/// Dopo la risposta, un po' di ciò che il client ha ancora in volo viene letto e buttato (breve e
-/// limitato), per non chiudere con dati non letti (RST).
-fn svuota_residuo(flusso: &mut TcpStream) {
-    let _ = flusso.set_read_timeout(Some(Duration::from_millis(100)));
+/// Dopo la risposta, ciò che il client ha ancora in volo viene letto e buttato, per non chiudere
+/// con dati non letti (RST). Una sola scadenza totale: al più 200 ms e mai oltre `fine` (i 2 s
+/// della connessione), qualunque ritmo abbia il client.
+fn svuota_residuo(flusso: &mut TcpStream, fine: Instant) {
+    let limite = (Instant::now() + Duration::from_millis(200)).min(fine);
     let mut b = [0u8; 4096];
     let mut totale = 0;
     while totale < 64 * 1024 {
+        let resto = limite.saturating_duration_since(Instant::now());
+        if resto.is_zero() || flusso.set_read_timeout(Some(resto)).is_err() {
+            break;
+        }
         match flusso.read(&mut b) {
             Ok(n) if n > 0 => totale += n,
             _ => break,
@@ -443,7 +508,7 @@ fn istruisci(flusso: &mut TcpStream, ctx: &Contesto, porta_mittente: u16) -> Res
         }
         Percorso::Evento => {
             let t: Testata = serde_json::from_slice(&corpo).map_err(|_| Fine::Rifiuto(400))?;
-            let sessione = t.session_id.as_ref().and_then(|v| v.as_str());
+            let sessione = t.session_id.as_deref();
             // Una sola ricerca per sessione nuova, prima di rispondere (il mittente è ancora lì).
             let pid_mittente = match sessione_valida(sessione) {
                 Some(id) if ctx.sessioni.nuova(id) => mittente::pid_mittente(porta_mittente, ctx.porta),
@@ -1135,6 +1200,87 @@ mod test {
         assert_eq!(sessione_valida(Some(&lungo)), None);
         let limite = "a".repeat(128);
         assert_eq!(sessione_valida(Some(&limite)), Some(limite.as_str()));
+    }
+
+    /// Un client che dopo un rifiuto continua a mandare un byte ogni ~90 ms.
+    fn goccia_dopo_rifiuto(porta: u16, c: &CodiceHook) -> TcpStream {
+        let mut s = collega(porta);
+        s.write_all(
+            &Rich::valida(porta, c, PERCORSO_EVENTO, EVENTO).con("Origin", "http://x.example").byte(),
+        )
+        .unwrap();
+        s.set_read_timeout(Some(Duration::from_millis(20))).unwrap();
+        s
+    }
+
+    /// `true` quando il server ha chiuso davvero: una scrittura fallisce o la lettura dà errore
+    /// (il solo EOF arriva già alla risposta, con la connessione ancora in svuotamento).
+    fn chiuso_dal_server(s: &mut TcpStream) -> bool {
+        if s.write_all(b"x").is_err() {
+            return true;
+        }
+        let mut b = [0u8; 512];
+        match s.read(&mut b) {
+            Ok(n) => {
+                assert!(n <= b.len());
+                false
+            }
+            Err(e) => !matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut),
+        }
+    }
+
+    #[test]
+    fn goccia_dopo_rifiuto_chiusa_e_posto_liberato() {
+        let g = Registro::nuovo(Modo::Subito);
+        let (a, c, porta) = avvia_prova(&g, ATTESA_MASSIMA);
+        let inizio = Instant::now();
+        let mut flussi: Vec<TcpStream> =
+            (0..CONNESSIONI_MASSIME).map(|_| goccia_dopo_rifiuto(porta, &c)).collect();
+        let mut aperte: Vec<bool> = vec![true; flussi.len()];
+        while aperte.iter().any(|x| *x) && inizio.elapsed() < Duration::from_secs(5) {
+            for (i, s) in flussi.iter_mut().enumerate() {
+                if aperte[i] && chiuso_dal_server(s) {
+                    aperte[i] = false;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(70));
+        }
+        assert!(aperte.iter().all(|x| !*x), "qualche connessione a goccia è ancora aperta");
+        assert!(inizio.elapsed() < Duration::from_millis(2500), "{:?}", inizio.elapsed());
+        assert_eq!(a.rifiutate(), CONNESSIONI_MASSIME as u64);
+        // I posti sono liberi: una richiesta vera passa.
+        let r = invia(porta, &Rich::valida(porta, &c, PERCORSO_EVENTO, EVENTO));
+        assert_eq!(stato(&r), 200);
+    }
+
+    #[test]
+    fn session_id_non_testo_accettato_senza_ricerca() {
+        let g = Registro::nuovo(Modo::Subito);
+        let (_a, c, porta) = avvia_prova(&g, ATTESA_MASSIMA);
+        for corpo in [
+            r#"{"hook_event_name":"Stop","session_id":42}"#,
+            r#"{"hook_event_name":"Stop","session_id":{"a":[1,2,{"b":null}]}}"#,
+            r#"{"hook_event_name":"Stop","session_id":[1,"x"]}"#,
+            r#"{"hook_event_name":"Stop","session_id":null}"#,
+        ] {
+            let r = invia(porta, &Rich::valida(porta, &c, PERCORSO_EVENTO, corpo.as_bytes()));
+            assert_eq!(stato(&r), 200, "{corpo}");
+        }
+        assert!(aspetta(|| g.eventi.lock().unwrap().len() == 4, 3));
+        assert!(g.eventi.lock().unwrap().iter().all(|e| e.pid_mittente.is_none()));
+    }
+
+    #[test]
+    fn debug_di_arrivo_senza_corpo() {
+        let a = Arrivo {
+            percorso: Percorso::Evento,
+            corpo: b"SEGRETO-DEL-CORPO".to_vec(),
+            porta_mittente: 1234,
+            pid_mittente: Some(7),
+        };
+        let d = format!("{a:?}");
+        assert!(!d.contains("SEGRETO"), "{d}");
+        assert!(d.contains("17") && d.contains("1234") && d.contains("Some(7)"), "{d}");
     }
 
     #[test]

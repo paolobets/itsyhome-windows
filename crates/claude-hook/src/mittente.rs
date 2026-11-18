@@ -34,6 +34,8 @@ mod windows {
     };
 
     const AF_INET: u32 = 2;
+    /// 127.0.0.1 come lo scrive la tabella (ordine di rete, letto da un u32 little-endian).
+    const LOOPBACK: u32 = u32::from_ne_bytes([127, 0, 0, 1]);
     const ERRORE_BUFFER_PICCOLO: u32 = 122;
 
     pub fn pid_mittente(porta_mittente: u16, porta_nostra: u16) -> Option<u32> {
@@ -74,7 +76,12 @@ mod windows {
             };
             return righe
                 .iter()
-                .find(|r| porta(r.dwLocalPort) == porta_mittente && porta(r.dwRemotePort) == porta_nostra)
+                .find(|r| {
+                    r.dwLocalAddr == LOOPBACK
+                        && r.dwRemoteAddr == LOOPBACK
+                        && porta(r.dwLocalPort) == porta_mittente
+                        && porta(r.dwRemotePort) == porta_nostra
+                })
                 .map(|r| r.dwOwningPid);
         }
         None
