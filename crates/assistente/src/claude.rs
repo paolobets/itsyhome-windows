@@ -47,6 +47,15 @@ pub fn id_sessione(id: &str) -> String {
     format!("{h:016x}")
 }
 
+/// L'impronta di sessione dentro l'id di una voce `claude.<impronta>.<aspetta|errore|fatto>`;
+/// `None` per le altre voci di Claude (permessi, collegamento, aggiornamento).
+pub fn impronta_da_voce(voce: &str) -> Option<&str> {
+    let resto = voce.strip_prefix(PREFISSO_CLAUDE)?;
+    let (impronta, suffisso) = resto.split_once('.')?;
+    let valida = impronta.len() == 16 && impronta.bytes().all(|b| b.is_ascii_hexdigit());
+    (valida && matches!(suffisso, "aspetta" | "errore" | "fatto")).then_some(impronta)
+}
+
 /// I tre id che una sessione può avere in «In attesa» (uno alla volta, a seconda dello stato).
 pub fn id_voci(id: &str) -> [String; 3] {
     let i = id_sessione(id);
@@ -128,7 +137,12 @@ pub fn voce_sessione(s: &Sessione, ora: Instant) -> Option<Voce> {
         ),
         (Stato::Lavora, _) | (Stato::Fatto, true) => return None,
     };
-    Some(Voce { id, livello, fonte: Fonte::Claude, titolo, dettaglio, pulsanti: vec![], creata: ora })
+    // Chi aspetta e chi ha finito possono portare davanti il suo terminale; l'errore no.
+    let pulsanti = match s.stato {
+        Stato::TiAspetta | Stato::Fatto => vec![Pulsante::new(PULSANTE_TERMINALE, "Apri il terminale")],
+        _ => vec![],
+    };
+    Some(Voce { id, livello, fonte: Fonte::Claude, titolo, dettaglio, pulsanti, creata: ora })
 }
 
 /// Il nome dello strumento in italiano per la pillola. Un nome che non conosciamo si mostra
@@ -422,6 +436,32 @@ mod test {
 
         con(&mut s, ev("a", TipoEvento::UserPromptSubmit), t);
         assert!(voce_sessione(prima(&s), t).is_none(), "chi lavora non ha voce");
+    }
+
+    #[test]
+    fn le_voci_di_chi_aspetta_e_di_chi_ha_finito_aprono_il_terminale() {
+        let t = Instant::now();
+        let apri = vec![Pulsante::new(PULSANTE_TERMINALE, "Apri il terminale")];
+        let mut s = Sessioni::new();
+        con(&mut s, ev("a", TipoEvento::PermissionRequest), t);
+        assert_eq!(voce_sessione(prima(&s), t).unwrap().pulsanti, apri);
+        con(&mut s, ev("a", TipoEvento::Stop), t);
+        assert_eq!(voce_sessione(prima(&s), t).unwrap().pulsanti, apri);
+        let errore = EventoHook { errore: Some("rate_limit".into()), ..ev("a", TipoEvento::StopFailure) };
+        con(&mut s, errore, t);
+        assert!(voce_sessione(prima(&s), t).unwrap().pulsanti.is_empty(), "l'errore non ha il pulsante");
+    }
+
+    #[test]
+    fn l_impronta_dentro_l_id_della_voce() {
+        let [aspetta, errore, fatto] = id_voci("a");
+        for v in [&aspetta, &errore, &fatto] {
+            assert_eq!(impronta_da_voce(v), Some(id_sessione("a").as_str()));
+        }
+        assert_eq!(impronta_da_voce(&id_voce_permesso(7)), None);
+        assert_eq!(impronta_da_voce(ID_COLLEGAMENTO), None);
+        assert_eq!(impronta_da_voce(ID_AGGIORNA), None);
+        assert_eq!(impronta_da_voce("casa.offline"), None);
     }
 
     #[test]

@@ -28,8 +28,10 @@ component RigaClaude inherits Rectangle {
     accessible-role: button;
     accessible-label: riga.cartella + ", " + riga.stato;
     // Senza la durata: cambia ogni secondo e Narrator non deve ripeterla.
-    accessible-description: riga.strumento != "" && riga.contesto != "" ? riga.strumento + ", contesto " + riga.contesto
-        : riga.strumento != "" ? riga.strumento : riga.contesto != "" ? "contesto " + riga.contesto : "";
+    // Il clic porta davanti la finestra del terminale (con Windows Terminal la finestra, non la scheda).
+    accessible-description: (riga.strumento != "" && riga.contesto != "" ? riga.strumento + ", contesto " + riga.contesto
+        : riga.strumento != "" ? riga.strumento : riga.contesto != "" ? "contesto " + riga.contesto : "")
+        + (riga.terminale != "" ? ". " + riga.terminale + ". " : ". ") + "Apre il terminale: la finestra, non la scheda";
     accessible-action-default => { root.apri(); }
 
     Fuoco { chiede: anello; }
@@ -86,8 +88,15 @@ component RigaClaude inherits Rectangle {
             accessible-role: none;
         }
 
-        Rectangle {
+        Text {
             horizontal-stretch: 1;
+            preferred-width: 0px;
+            text: riga.terminale != "" ? "· " + riga.terminale : "";
+            vertical-alignment: center;
+            overflow: elide;
+            font-size: Tema.testo-piccolo;
+            color: Tema.testo-tenue;
+            accessible-role: none;
         }
 
         Text {

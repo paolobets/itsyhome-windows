@@ -1,7 +1,8 @@
 //! Servizi di sistema: istanza unica, menu dell'isola e icona nella barra, scorciatoie globali,
 //! avvio con il sistema, notifiche, schermo intero, inattività, modalità «ritirata» (spec §3bis),
 //! apertura dei collegamenti nel browser predefinito e delle pagine di Windows, Wi-Fi, Bluetooth e
-//! icona della rete (`radio`), batteria dei dispositivi Bluetooth (`batterie_bt`).
+//! icona della rete (`radio`), batteria dei dispositivi Bluetooth (`batterie_bt`), terminale di una
+//! sessione di Claude Code da portare davanti (`terminale`).
 //!
 //! Qui le decisioni pure (tempo e osservazioni arrivano dal chiamante); `servizi` le applica alla
 //! pillola con un solo timer da 5 s più sveglie singole, e un sondaggio del mouse (100 ms) solo
@@ -25,6 +26,9 @@ pub mod ritirata;
 pub mod schermo_intero;
 pub mod scorciatoie;
 pub mod servizi;
+// Le decisioni pure (catena, scelta della finestra) si provano ovunque; fuori da Windows non le usa nessuno.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub mod terminale;
 pub mod tray;
 pub mod volume;
 

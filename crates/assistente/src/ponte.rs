@@ -850,6 +850,9 @@ pub struct Ponte {
     /// contesto per sessione; mai scaduti per chi li legge (`limiti`).
     claude_limiti: RefCell<Option<(Option<claude_hook::Limite>, Option<claude_hook::Limite>)>>,
     claude_contesto: RefCell<HashMap<String, f32>>,
+    /// La catena dei processi dell'aiutante per sessione (`session_id`), presa al primo evento:
+    /// serve a portare davanti il terminale (Task 10). Al più 16, tolta con la sessione.
+    claude_catene: RefCell<HashMap<String, Vec<(u32, String)>>>,
     /// La vista Claude del pannello (Task 9): si vede (pannello aperto su di lei) e il modello delle
     /// sue righe. Chiusa, niente si calcola né si scrive.
     vista_claude: Cell<bool>,
@@ -988,6 +991,7 @@ pub fn collega(
         claude_ascolto: RefCell::new(None),
         claude_limiti: RefCell::new(None),
         claude_contesto: RefCell::new(HashMap::new()),
+        claude_catene: RefCell::new(HashMap::new()),
         vista_claude: Cell::new(false),
         claude_righe: Rc::new(VecModel::default()),
         claude_permessi: RefCell::new(HashMap::new()),
@@ -2076,6 +2080,13 @@ impl Ponte {
         p.on_azione(|voce, pulsante| {
             if let Some(ponte) = ponte() {
                 ponte.azione(&voce, &pulsante);
+            }
+        });
+        // Clic o Invio su una riga della vista Claude (Task 10): porta davanti il terminale. Va
+        // chiamato solo da qui, cioè subito dopo il gesto dell'utente.
+        p.on_apri_sessione(|impronta| {
+            if let Some(ponte) = ponte() {
+                ponte.claude_apri_terminale(&impronta);
             }
         });
         p.on_riprova_casa(|| {

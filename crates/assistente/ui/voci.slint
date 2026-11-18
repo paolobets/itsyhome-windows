@@ -215,6 +215,9 @@ export struct RigaSessioneUi {
     strumento: string,
     durata: string,
     contesto: string,
+    // «ultimo terminale usato» se non si conosce il terminale della sessione (il clic ripiega
+    // sull'ultimo usato); vuoto altrimenti.
+    terminale: string,
 }
 
 // Un limite dell'abbonamento (5 ore o 7 giorni): `presente` falso = niente anello (limite assente

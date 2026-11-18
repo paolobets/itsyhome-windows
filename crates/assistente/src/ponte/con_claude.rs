@@ -10,7 +10,9 @@ mod collegamento;
 pub use collegamento::Contesto;
 use super::{ponte, Ponte, MARGINE_SVEGLIA};
 use crate::attenzione::{Fonte, Livello, Pulsante, Voce, PULSANTE_IMPOSTAZIONI};
-use crate::claude::{self, ID_AGGIORNA, ID_COLLEGAMENTO, PERMESSI_RISOLVIBILI, PULSANTE_CONSENTI, PULSANTE_NEGA};
+use crate::claude::{
+    self, ID_AGGIORNA, ID_COLLEGAMENTO, PERMESSI_RISOLVIBILI, PULSANTE_CONSENTI, PULSANTE_NEGA, PULSANTE_TERMINALE,
+};
 use crate::pillola;
 use crate::umore::Umore;
 use crate::{LimiteClaudeUi, LivelloUi, RigaSessioneUi};
@@ -160,9 +162,15 @@ pub fn spegni() {
     }
 }
 
-/// Un pulsante di una voce di Claude Code (i task 10 e 12 ci aggiungono i loro).
+/// Un pulsante di una voce di Claude Code (il Task 12 ci aggiunge i suoi).
 pub fn azione(p: &Ponte, voce: &str, pulsante: &str) {
-    if voce == ID_COLLEGAMENTO && pulsante == PULSANTE_IMPOSTAZIONI {
+    if pulsante == PULSANTE_TERMINALE {
+        // «Apri il terminale» sulle voci «ti aspetta» e «ha finito»: la stessa strada del clic su
+        // una riga della vista Claude (`apri-sessione`).
+        if let Some(impronta) = claude::impronta_da_voce(voce) {
+            p.claude_apri_terminale(impronta);
+        }
+    } else if voce == ID_COLLEGAMENTO && pulsante == PULSANTE_IMPOSTAZIONI {
         p.chiedi_impostazioni();
     } else if voce == ID_AGGIORNA && pulsante == PULSANTE_IMPOSTAZIONI {
         // Si apre direttamente la sezione Claude, dove il collegamento si aggiorna (con anteprima e conferma).
@@ -173,7 +181,6 @@ pub fn azione(p: &Ponte, voce: &str, pulsante: &str) {
         let decisione = match pulsante {
             PULSANTE_CONSENTI => Decisione::Consenti,
             PULSANTE_NEGA => Decisione::Nega,
-            // «Apri il terminale» (ramo B) arriva col Task 10.
             _ => return,
         };
         p.claude_decidi(id, decisione, Instant::now());
@@ -222,10 +229,12 @@ impl Ponte {
 
 /// Porta un evento al thread dell'interfaccia. Se il ciclo eventi è finito non c'è più nessuno:
 /// si ignora.
-fn consegna(e: EventoHook, pid: Option<u32>, sequenza: u64) {
+fn consegna(e: EventoHook, pid: Option<u32>, catena: Vec<(u32, String)>, sequenza: u64) {
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(p) = ponte() {
+            let sessione = e.sessione.clone();
             p.claude_evento(e, pid, sequenza, Instant::now());
+            p.claude_imposta_catena(&sessione, catena);
         }
     });
 }
@@ -235,12 +244,15 @@ fn consegna_permesso(
     id: u64,
     e: EventoHook,
     pid: Option<u32>,
+    catena: Vec<(u32, String)>,
     tx: Option<Sender<Decisione>>,
     sequenza: u64,
 ) -> Result<(), slint::EventLoopError> {
     slint::invoke_from_event_loop(move || {
         if let Some(p) = ponte() {
+            let sessione = e.sessione.clone();
             p.claude_permesso(id, e, pid, tx, sequenza, Instant::now());
+            p.claude_imposta_catena(&sessione, catena);
         }
     })
 }
@@ -248,7 +260,7 @@ fn consegna_permesso(
 impl Gestore for GestoreIsola {
     fn evento(&self, a: Arrivo) {
         if let Contenuto::Evento(e) = a.contenuto {
-            consegna(e, a.pid_mittente, a.sequenza);
+            consegna(e, a.pid_mittente, a.catena_mittente, a.sequenza);
         }
     }
 
@@ -258,19 +270,20 @@ impl Gestore for GestoreIsola {
     fn permesso(&self, a: Arrivo) -> Option<AttesaPermesso> {
         let Contenuto::Evento(e) = a.contenuto else { return None };
         let pid = a.pid_mittente;
+        let catena = a.catena_mittente;
         let sequenza = a.sequenza;
         if e.tipo != TipoEvento::PermissionRequest {
-            consegna(e, pid, sequenza);
+            consegna(e, pid, catena, sequenza);
             return None;
         }
         let id = PROSSIMO_PERMESSO.fetch_add(1, Ordering::Relaxed);
         if !PERMESSI_RISOLVIBILI {
-            let _ = consegna_permesso(id, e, pid, None, sequenza);
+            let _ = consegna_permesso(id, e, pid, catena, None, sequenza);
             return None;
         }
         let (tx, rx) = channel();
         // Senza ciclo eventi nessuno può rispondere: il canale cade e Claude ripiega.
-        consegna_permesso(id, e, pid, Some(tx), sequenza).ok()?;
+        consegna_permesso(id, e, pid, catena, Some(tx), sequenza).ok()?;
         Some(AttesaPermesso { id, decisione: rx })
     }
 
@@ -400,6 +413,44 @@ impl Ponte {
             cambi
         };
         self.claude_cambiate(&cambi, ora);
+    }
+
+    /// La catena dei processi (aiutante -> `claude.exe` -> terminale...) che il tubo ha preso al
+    /// primo evento di una sessione, tenuta per portare davanti il suo terminale. Vale solo per
+    /// una sessione già nota e solo se non è vuota (di norma arriva col primo evento e basta);
+    /// una per sessione, quindi 16 al più; tolta con la sessione.
+    pub(super) fn claude_imposta_catena(&self, sessione: &str, catena: Vec<(u32, String)>) {
+        if catena.is_empty() || !self.claude_sessioni.borrow().elenco().iter().any(|s| s.id == sessione) {
+            return;
+        }
+        let mut catene = self.claude_catene.borrow_mut();
+        if !catene.contains_key(sessione) && catene.len() >= MASSIMO_CONTESTI {
+            // Pieno: si lasciano solo le sessioni che gli eventi conoscono ancora.
+            let note: Vec<String> = self.claude_sessioni.borrow().elenco().iter().map(|s| s.id.clone()).collect();
+            catene.retain(|id, _| note.contains(id));
+        }
+        if catene.contains_key(sessione) || catene.len() < MASSIMO_CONTESTI {
+            catene.insert(sessione.to_owned(), catena);
+        }
+    }
+
+    /// Porta davanti il terminale della sessione con quell'impronta (il pulsante «Apri il
+    /// terminale» di una voce, o il clic o l'Invio su una riga della vista Claude). Va chiamata
+    /// solo subito dopo un gesto dell'utente: Windows concede il primo piano solo allora.
+    /// Un'impronta che non è più di nessuna sessione non fa nulla.
+    pub(crate) fn claude_apri_terminale(&self, impronta: &str) {
+        let Some(id) = self
+            .claude_sessioni
+            .borrow()
+            .elenco()
+            .iter()
+            .find(|s| claude::id_sessione(&s.id) == impronta)
+            .map(|s| s.id.clone())
+        else {
+            return;
+        };
+        let salvata = self.claude_catene.borrow().get(&id).cloned().unwrap_or_default();
+        porta_davanti_il_terminale(salvata);
     }
 
     /// Un permesso chiesto da Claude Code, sul thread dell'interfaccia: una voce bloccante e il
@@ -553,6 +604,7 @@ impl Ponte {
 
     fn togli_voci_sessione(&self, id: &str) {
         self.claude_contesto.borrow_mut().remove(id);
+        self.claude_catene.borrow_mut().remove(id);
         for voce in claude::id_voci(id) {
             self.togli_voce(&voce);
         }
@@ -682,7 +734,14 @@ impl Ponte {
         } else {
             (Vec::new(), 0)
         };
-        let voci = righe.into_iter().map(riga_ui).collect();
+        let con_catena: Vec<String> = self.claude_catene.borrow().keys().map(|id| claude::id_sessione(id)).collect();
+        let voci = righe
+            .into_iter()
+            .map(|r| {
+                let senza = !con_catena.contains(&r.id);
+                riga_ui(r, senza)
+            })
+            .collect();
         let n = super::aggiorna_modello(&self.claude_righe, voci);
         self.casa.diagnosi().conta_n(Contatore::ui_righe, n);
         let altre = altre as i32;
@@ -774,9 +833,41 @@ impl Ponte {
     }
 }
 
-/// Una riga della vista Claude come la vuole l'interfaccia.
-fn riga_ui(r: claude::RigaSessione) -> RigaSessioneUi {
+/// Il passo finale di «Apri il terminale» (solo Windows): la catena salvata, l'elenco dei processi
+/// di adesso e le finestre visibili danno la finestra del terminale; senza, quella dell'ultimo
+/// terminale in primo piano (`primo_piano`). Niente se non c'è né l'una né l'altra.
+#[cfg(all(windows, not(test)))]
+fn porta_davanti_il_terminale(salvata: Vec<(u32, String)>) {
+    use crate::sistema::{primo_piano, terminale};
+    let hwnd = terminale::finestra_della_sessione(&salvata, &terminale::processi(), &terminale::finestre_visibili())
+        .or_else(primo_piano::ultimo_terminale);
+    if let Some(h) = hwnd {
+        terminale::porta_davanti(h);
+    }
+}
+
+/// Fuori da Windows non c'è un terminale da portare davanti: il clic apre il pannello.
+#[cfg(all(not(windows), not(test)))]
+fn porta_davanti_il_terminale(_salvata: Vec<(u32, String)>) {
+    crate::sistema::servizi::apri();
+}
+
+// Nei test non si tocca nessuna finestra: si annota la catena con cui sarebbe partita.
+#[cfg(test)]
+thread_local! {
+    static PORTATI_DAVANTI: std::cell::RefCell<Vec<Vec<(u32, String)>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+fn porta_davanti_il_terminale(salvata: Vec<(u32, String)>) {
+    PORTATI_DAVANTI.with(|v| v.borrow_mut().push(salvata));
+}
+
+/// Una riga della vista Claude come la vuole l'interfaccia. `senza_catena`: nessuna catena di
+/// processi salvata per la sessione, il clic ripiega sull'ultimo terminale usato (solo Windows).
+fn riga_ui(r: claude::RigaSessione, senza_catena: bool) -> RigaSessioneUi {
     RigaSessioneUi {
+        terminale: if senza_catena && cfg!(windows) { "ultimo terminale usato" } else { "" }.into(),
         id: r.id.into(),
         cartella: r.cartella.into(),
         stato: r.stato_testo.into(),
@@ -868,6 +959,100 @@ mod test {
         let (_s, p, _pillola, _d) = ponte_di_prova();
         p.claude_evento(ev("a", TipoEvento::UserPromptSubmit), Some(4321), SEQUENZA.fetch_add(1, Ordering::Relaxed), Instant::now());
         assert_eq!(p.claude_sessioni.borrow().elenco()[0].pid, Some(4321));
+    }
+
+    fn catena_prova() -> Vec<(u32, String)> {
+        vec![(7, "isola-hook.exe".into()), (5, "claude.exe".into()), (3, "WindowsTerminal.exe".into())]
+    }
+
+    fn portati_davanti() -> Vec<Vec<(u32, String)>> {
+        PORTATI_DAVANTI.with(|v| std::mem::take(&mut *v.borrow_mut()))
+    }
+
+    /// Una sessione con la catena arrivata col primo evento.
+    fn con_catena(p: &Ponte, id: &str, tipo: TipoEvento) {
+        manda(p, ev(id, tipo));
+        p.claude_imposta_catena(id, catena_prova());
+    }
+
+    #[test]
+    fn la_catena_si_tiene_per_sessione_con_tetto_e_si_toglie_con_la_sessione() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        // Sessione ignota: niente. Catena vuota: niente.
+        p.claude_imposta_catena("a", catena_prova());
+        assert!(p.claude_catene.borrow().is_empty());
+        manda(&p, ev("a", TipoEvento::UserPromptSubmit));
+        p.claude_imposta_catena("a", Vec::new());
+        assert!(p.claude_catene.borrow().is_empty());
+        p.claude_imposta_catena("a", catena_prova());
+        assert_eq!(p.claude_catene.borrow().get("a"), Some(&catena_prova()));
+        manda(&p, ev("a", TipoEvento::SessionEnd));
+        assert!(p.claude_catene.borrow().is_empty(), "sparisce con la sessione");
+        // Al più 16 (come le sessioni).
+        for i in 0..40 {
+            con_catena(&p, &format!("s{i}"), TipoEvento::UserPromptSubmit);
+        }
+        assert!(p.claude_catene.borrow().len() <= 16);
+        manda(&p, ev("s0", TipoEvento::SessionEnd));
+        assert!(!p.claude_catene.borrow().contains_key("s0"));
+    }
+
+    #[test]
+    fn il_pulsante_terminale_porta_davanti_la_catena_della_sessione() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        portati_davanti();
+        con_catena(&p, "a", TipoEvento::Stop);
+        manda(&p, ev("b", TipoEvento::PermissionRequest));
+        let voci = voci_claude(&p);
+        let fatto = voci.iter().find(|v| v.0.ends_with(".fatto")).expect("voce fatto").0.clone();
+        let aspetta = voci.iter().find(|v| v.0.ends_with(".aspetta")).expect("voce aspetta").0.clone();
+        for v in [&fatto, &aspetta] {
+            let pulsanti = p.attese.borrow().voce(v).unwrap().pulsanti.clone();
+            assert_eq!(pulsanti.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), [PULSANTE_TERMINALE]);
+        }
+        p.azione(&fatto, PULSANTE_TERMINALE);
+        assert_eq!(portati_davanti(), vec![catena_prova()]);
+        // La sessione senza catena (aiutante non visto): parte lo stesso, con la catena vuota (ripiego).
+        p.azione(&aspetta, PULSANTE_TERMINALE);
+        assert_eq!(portati_davanti(), vec![Vec::<(u32, String)>::new()]);
+        // Altri pulsanti, voci che non sono sessioni e impronte ignote: nessuna finestra.
+        p.azione(&fatto, "altro");
+        p.azione(ID_COLLEGAMENTO, PULSANTE_TERMINALE);
+        p.azione("claude.permesso.1", PULSANTE_TERMINALE);
+        p.azione("claude.0123456789abcdef.fatto", PULSANTE_TERMINALE);
+        assert!(portati_davanti().is_empty());
+    }
+
+    #[test]
+    fn il_clic_sulla_riga_della_vista_porta_davanti_lo_stesso_terminale() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        portati_davanti();
+        con_catena(&p, "a", TipoEvento::UserPromptSubmit);
+        let impronta = claude::id_sessione("a");
+        p.claude_apri_terminale(&impronta);
+        assert_eq!(portati_davanti(), vec![catena_prova()]);
+        // Una sessione sparita (impronta ormai di nessuno): niente.
+        manda(&p, ev("a", TipoEvento::SessionEnd));
+        p.claude_apri_terminale(&impronta);
+        assert!(portati_davanti().is_empty());
+    }
+
+    #[test]
+    fn la_riga_dice_ultimo_terminale_usato_solo_senza_catena() {
+        let riga = |senza| riga_ui(
+            claude::RigaSessione {
+                id: "x".into(),
+                cartella: "c".into(),
+                stato_testo: "Fatto",
+                livello: None,
+                strumento: String::new(),
+                durata: String::new(),
+                contesto: None,
+            },
+            senza,
+        );
+        assert_eq!(riga(false).terminale.as_str(), "");
+        assert_eq!(riga(true).terminale.as_str(), if cfg!(windows) { "ultimo terminale usato" } else { "" });
     }
 
     #[test]

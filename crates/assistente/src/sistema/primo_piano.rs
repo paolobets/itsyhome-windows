@@ -25,19 +25,65 @@
 //! volte al minuto); niente `EVENT_OBJECT_LOCATIONCHANGE`, che scatta a ogni movimento del cursore
 //! e sveglierebbe l'app di continuo. L'F11 di un browser non cambia la finestra in primo piano:
 //! per quello resta il controllo da 5 s.
+//!
+//! Lo stesso gancio ricorda l'ultima finestra in primo piano il cui eseguibile è un terminale
+//! (`terminale::e_terminale`): il ripiego di «Apri il terminale» (M3, Task 10) quando la catena
+//! dei processi di una sessione non porta a nessuna finestra. Il nome dell'eseguibile si legge con
+//! `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` + `QueryFullProcessImageNameW` (basta il
+//! permesso limitato; fallisce per i processi protetti, che non sono terminali).
 
 use std::cell::Cell;
 use std::marker::PhantomData;
-use windows_sys::Win32::Foundation::HWND;
+use super::terminale::e_terminale;
+use windows_sys::Win32::Foundation::{CloseHandle, HWND};
+use windows_sys::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION};
 use windows_sys::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EVENT_SYSTEM_FOREGROUND, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
+    GetWindowThreadProcessId, IsWindow, EVENT_SYSTEM_FOREGROUND, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
 };
 
 thread_local! {
     /// Chi avvisare: la callback di sistema non porta dati, ma arriva sul thread che ha messo il
     /// gancio, quindi basta un valore di questo thread.
     static AL_CAMBIO: Cell<Option<fn()>> = const { Cell::new(None) };
+    /// L'ultima finestra in primo piano il cui eseguibile è un terminale.
+    static ULTIMO_TERMINALE: Cell<Option<isize>> = const { Cell::new(None) };
+}
+
+/// Il nome del file di un percorso di Windows (da «...\pwsh.exe» a «pwsh.exe»).
+fn nome_file(percorso: &str) -> &str {
+    percorso.rsplit(['\\', '/']).next().unwrap_or(percorso)
+}
+
+/// Il nome dell'eseguibile del processo che possiede la finestra, se si riesce a leggere.
+fn exe_della_finestra(hwnd: HWND) -> Option<String> {
+    let mut pid = 0u32;
+    // SAFETY: lettura del PID di una finestra; con un handle non valido restituisce zero.
+    if unsafe { GetWindowThreadProcessId(hwnd, &mut pid) } == 0 || pid == 0 {
+        return None;
+    }
+    // SAFETY: handle chiuso sempre; il buffer ha `n` caratteri e il sistema ne scrive al più tanti.
+    unsafe {
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if h == 0 {
+            return None;
+        }
+        let mut buf = vec![0u16; 1024];
+        let mut n = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut n) != 0;
+        CloseHandle(h);
+        if !ok {
+            return None;
+        }
+        String::from_utf16(&buf[..n as usize]).ok().map(|p| nome_file(&p).to_owned())
+    }
+}
+
+/// L'ultima finestra di un terminale che è stata in primo piano, se esiste ancora.
+pub fn ultimo_terminale() -> Option<isize> {
+    let h = ULTIMO_TERMINALE.with(Cell::get)?;
+    // SAFETY: `IsWindow` accetta qualunque valore.
+    (unsafe { IsWindow(h) } != 0).then_some(h)
 }
 
 /// Il gancio installato: toglierlo (`Drop`) spetta al thread che lo ha messo, per questo non è
@@ -47,7 +93,10 @@ pub struct GanciPrimoPiano {
     _stesso_thread: PhantomData<*const ()>,
 }
 
-unsafe extern "system" fn callback(_: HWINEVENTHOOK, _: u32, _: HWND, _: i32, _: i32, _: u32, _: u32) {
+unsafe extern "system" fn callback(_: HWINEVENTHOOK, _: u32, hwnd: HWND, _: i32, _: i32, _: u32, _: u32) {
+    if hwnd != 0 && exe_della_finestra(hwnd).is_some_and(|e| e_terminale(&e)) {
+        ULTIMO_TERMINALE.with(|c| c.set(Some(hwnd)));
+    }
     if let Some(f) = AL_CAMBIO.with(Cell::get) {
         f();
     }
@@ -84,12 +133,25 @@ impl Drop for GanciPrimoPiano {
             UnhookWinEvent(self.gancio);
         }
         AL_CAMBIO.with(|c| c.set(None));
+        ULTIMO_TERMINALE.with(|c| c.set(None));
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn il_nome_del_file_da_un_percorso() {
+        assert_eq!(nome_file(r"C:\Program Files\PowerShell\pwsh.exe"), "pwsh.exe");
+        assert_eq!(nome_file("cmd.exe"), "cmd.exe");
+        assert!(e_terminale(nome_file(r"C:\Windows\System32\conhost.exe")));
+    }
+
+    #[test]
+    fn senza_terminali_visti_nessun_ripiego() {
+        assert_eq!(ultimo_terminale(), None);
+    }
 
     #[test]
     fn il_gancio_si_installa_e_si_toglie() {

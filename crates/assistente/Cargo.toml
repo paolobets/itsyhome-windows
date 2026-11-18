@@ -43,6 +43,9 @@ windows-sys = { version = "0.52", features = [
     # Utilizzo della GPU (M2, Task 10): contatori del kernel grafico (D3DKMT, gdi32.dll), solo a
     # GPU mostrata. Non PDH: lasciava +6 MB dopo la prima apertura (decisione D7).
     "Wdk_Graphics_Direct3D",
+    # Elenco dei processi (M3, Task 10): il terminale di una sessione di Claude Code. Niente
+    # tabella TCP (IpHelper/WinSock): la catena la prende il tubo all'arrivo dell'aiutante.
+    "Win32_System_Diagnostics_ToolHelp",
 ] }
 # Registro (solo HKCU): avvio con il sistema e identificativo dei toast.
 windows-registry = "0.6"

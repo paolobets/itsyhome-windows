@@ -1440,6 +1440,7 @@ mod accessibilita {
             strumento: Default::default(),
             durata: Default::default(),
             contesto: Default::default(),
+            terminale: Default::default(),
         }
     }
 
@@ -1531,10 +1532,10 @@ mod accessibilita {
         p.set_claude_spesa_nota(nota.into());
         assert_eq!(elemento(&p, "Spesa API del mese").accessible_value().as_deref(), Some(nota));
         p.set_claude_spesa("412,80 $".into());
-        p.set_claude_spesa_nota("aggiornato alle 14:02 UTC".into());
+        p.set_claude_spesa_nota("aggiornato alle 16:02".into());
         let spesa = elemento(&p, "Spesa API del mese");
         assert_eq!(spesa.accessible_value().as_deref(), Some("412,80 $"));
-        assert_eq!(spesa.accessible_description().as_deref(), Some("aggiornato alle 14:02 UTC"));
+        assert_eq!(spesa.accessible_description().as_deref(), Some("aggiornato alle 16:02"));
     }
 
     /// Concordanza: «+1 altra» e «e un'altra sessione»; da due in su «+N altre».
