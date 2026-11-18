@@ -17,7 +17,10 @@ use crate::claude::{
 use crate::pillola;
 use crate::umore::Umore;
 use crate::{FinestraImpostazioni, LimiteClaudeUi, LivelloUi, RigaSessioneUi};
+use casa_core::config::LimiteVisto;
 use casa_core::diagnosi::{Contatore, Diagnosi};
+use chrono::TimeZone;
+use slint::Model;
 use claude_hook::evento::{EventoHook, TipoEvento};
 use claude_hook::sessioni::Cambio;
 use claude_hook::tubo::{NOME_AIUTANTE, SUFFISSO_PROVA};
@@ -350,6 +353,11 @@ impl Gestore for GestoreIsola {
     }
 }
 
+/// Adesso, in secondi dall'epoca (i limiti dell'abbonamento e il file di stato parlano così).
+fn adesso_unix() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+}
+
 /// Voci di contesto tenute al più (una per sessione, come le sessioni).
 const MASSIMO_CONTESTI: usize = 16;
 
@@ -358,6 +366,11 @@ impl Ponte {
     /// finestre presenti sostituiscono quelle note, una per una; una barra senza `rate_limits` (o
     /// senza una finestra) non cancella ciò che si sa. Il contesto è per sessione.
     pub(super) fn claude_barra(&self, d: DatiBarra) {
+        self.claude_barra_a(d, adesso_unix());
+    }
+
+    /// Come `claude_barra`, a un'ora data (secondi dall'epoca): i test ne passano una.
+    pub(super) fn claude_barra_a(&self, d: DatiBarra, ora: i64) {
         self.casa.diagnosi().conta(Contatore::claude_barre);
         {
             let mut l = self.claude_limiti.borrow_mut();
@@ -388,17 +401,32 @@ impl Ponte {
                 }
             }
         }
+        self.claude_ricorda_limiti(ora);
         // Limiti e contesto cambiati: avvisi, quadranti e vista Claude (se aperta).
-        self.claude_limiti_cambiati();
+        self.claude_limiti_a(ora);
+    }
+
+    /// RC-56: i limiti appena arrivati nel file di stato (`ConfigClaude`), per mostrarli dopo un
+    /// riavvio. Solo se il valore cambia e al più una volta al minuto: lo decide
+    /// `claude::limite_da_salvare` nel momento in cui il dato arriva, senza timer.
+    fn claude_ricorda_limiti(&self, ora: i64) {
+        let (cinque, sette) = self.limiti_a(ora);
+        let (salvato_c, salvato_s) = self.casa.con_config(|c| (c.claude.ultimo_cinque_ore, c.claude.ultimo_sette_giorni));
+        let ultima = [salvato_c, salvato_s].into_iter().flatten().map(|v| v.visto_alle).max();
+        let nuovo_c = cinque.and_then(|l| claude::limite_da_salvare(&l, salvato_c, ultima, ora));
+        let nuovo_s = sette.and_then(|l| claude::limite_da_salvare(&l, salvato_s, ultima, ora));
+        if nuovo_c.is_none() && nuovo_s.is_none() {
+            return;
+        }
+        self.casa.aggiorna_config(|c| {
+            c.claude.ultimo_cinque_ore = nuovo_c.or(c.claude.ultimo_cinque_ore);
+            c.claude.ultimo_sette_giorni = nuovo_s.or(c.claude.ultimo_sette_giorni);
+        });
     }
 
     /// I limiti dell'abbonamento sono cambiati (una barra, la soglia, la sveglia dell'azzeramento).
     pub(super) fn claude_limiti_cambiati(&self) {
-        let ora = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-        self.claude_limiti_a(ora);
+        self.claude_limiti_a(adesso_unix());
     }
 
     /// Come `claude_limiti_cambiati`, a un'ora data (i test ne passano una). Una sveglia singola
@@ -406,7 +434,7 @@ impl Ponte {
     /// finestra che si azzera); gli avvisi a soglia, una volta per finestra; poi quadranti e vista.
     pub(super) fn claude_limiti_a(&self, ora: i64) {
         let (cinque, sette) = self.limiti_a(ora);
-        self.arma_sveglia_limiti([cinque, sette].into_iter().flatten().map(|l| l.azzera_alle).min(), ora);
+        self.arma_sveglia_limiti(self.prossimo_azzeramento(ora), ora);
         let soglia = self.casa.con_config(|c| c.claude.soglia_limite).clamp(50, 100);
         for (finestra, limite) in [(claude::Finestra::CinqueOre, cinque), (claude::Finestra::SetteGiorni, sette)] {
             let Some(l) = limite else {
@@ -426,7 +454,27 @@ impl Ponte {
             self.aggiorna_soglia_claude(&p);
         }
         self.claude_quadranti_cambiati();
-        self.aggiorna_vista_claude();
+        self.aggiorna_vista_claude_a(ora);
+    }
+
+    /// Il primo azzeramento fra i limiti mostrati: quelli arrivati e, finché non ne arriva uno
+    /// nuovo, quelli ricordati dal file di stato (RC-56). Per la sveglia singola dei limiti.
+    fn prossimo_azzeramento(&self, ora: i64) -> Option<i64> {
+        let (cinque, sette) = self.limiti_a(ora);
+        let (ricordato_c, ricordato_s) = self.limiti_ricordati(ora);
+        [cinque.map(|l| l.azzera_alle), sette.map(|l| l.azzera_alle), ricordato_c.map(|v| v.azzera_alle), ricordato_s.map(|v| v.azzera_alle)]
+            .into_iter()
+            .flatten()
+            .min()
+    }
+
+    /// I limiti del file di stato che la vista mostra al posto di quelli che non sono (ancora)
+    /// arrivati in questa esecuzione: una finestra per volta, solo se in corso (RC-56).
+    fn limiti_ricordati(&self, ora: i64) -> (Option<LimiteVisto>, Option<LimiteVisto>) {
+        let (arrivato_c, arrivato_s) = self.claude_limiti.borrow().map_or((false, false), |(c, s)| (c.is_some(), s.is_some()));
+        let (salvato_c, salvato_s) = self.casa.con_config(|c| (c.claude.ultimo_cinque_ore, c.claude.ultimo_sette_giorni));
+        let ancora_buono = |v: &LimiteVisto| v.azzera_alle > ora && v.percentuale.is_finite();
+        (salvato_c.filter(|v| !arrivato_c && ancora_buono(v)), salvato_s.filter(|v| !arrivato_s && ancora_buono(v)))
     }
 
     /// La soglia d'avviso dell'utente (80 % di serie) al pannello: da lì l'arco dei limiti e della
@@ -582,11 +630,7 @@ impl Ponte {
 
     /// Come `limiti_a`, all'ora di adesso.
     pub fn limiti(&self) -> (Option<Limite>, Option<Limite>) {
-        let ora = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-        self.limiti_a(ora)
+        self.limiti_a(adesso_unix())
     }
 
     /// Un evento di Claude Code, sul thread dell'interfaccia.
@@ -971,10 +1015,19 @@ impl Ponte {
         if self.vista_claude.replace(si) == si {
             return;
         }
+        // Chiusa o appena aperta l'ordine delle righe non c'è: all'apertura si decide di nuovo
+        // (per urgenza) e il fuoco riparte dalla prima riga (RC-53).
+        self.claude_ordine.borrow_mut().clear();
         if si {
+            self.claude_righe.set_vec(Vec::new());
+            if let Some(p) = self.pannello.borrow().upgrade() {
+                p.set_claude_fuoco(0);
+            }
             // Il terminale di una sessione può essere sparito dall'ultima volta: lo si rilegge qui.
             #[cfg(any(windows, test))]
             self.claude_rileggi_ripiego();
+            // Un limite ricordato dal file di stato scade con la sveglia singola dei limiti.
+            self.arma_sveglia_limiti(self.prossimo_azzeramento(adesso_unix()), adesso_unix());
         }
         // La sveglia dei limiti non dipende dalla vista: serve anche a togliere gli avvisi.
         self.aggiorna_claude_pillola();
@@ -1003,9 +1056,16 @@ impl Ponte {
     }
 
     /// I dati della vista Claude, scritti solo se la vista è aperta e solo ciò che è cambiato: le
-    /// righe (tre al più), i limiti dell'abbonamento (un limite assente o azzerato non ha anello),
-    /// la spesa del mese e se Claude Code è collegato.
+    /// righe (una per sessione, in ordine fermo: RC-52 e RC-53), i limiti dell'abbonamento (un
+    /// limite assente o azzerato non ha anello; uno non ancora arrivato dopo il riavvio è quello
+    /// ricordato, attenuato: RC-56), la spesa del mese e se Claude Code è collegato.
     fn aggiorna_vista_claude(&self) {
+        self.aggiorna_vista_claude_a(adesso_unix());
+    }
+
+    /// Come `aggiorna_vista_claude`, a un'ora data (secondi dall'epoca): i limiti scaduti a quell'ora
+    /// non si mostrano.
+    pub(super) fn aggiorna_vista_claude_a(&self, ora: i64) {
         if !self.vista_claude.get() {
             return;
         }
@@ -1015,11 +1075,17 @@ impl Ponte {
             p.set_claude_collegato(collegato);
         }
         // Scollegato non ci sono sessioni da mostrare: lo stato vuoto parla da sé.
-        let (righe, altre) = if collegato {
-            claude::righe_sessioni(&self.claude_sessioni.borrow(), &self.claude_contesto.borrow(), Instant::now())
+        let (righe, ordine) = if collegato {
+            claude::righe_sessioni(
+                &self.claude_sessioni.borrow(),
+                &self.claude_contesto.borrow(),
+                Instant::now(),
+                &self.claude_ordine.borrow(),
+            )
         } else {
-            (Vec::new(), 0)
+            (Vec::new(), Vec::new())
         };
+        *self.claude_ordine.borrow_mut() = ordine;
         // Per impronta: la catena c'è e raggiunge il terminale / è un Windows Terminal o un VS Code.
         let (raggiungibili, a_finestre): (Vec<String>, Vec<String>) = {
             let ripiego = self.claude_ripiego.borrow();
@@ -1032,22 +1098,26 @@ impl Ponte {
                 catene.iter().filter(|(_, c)| a_finestre(c)).map(|(id, _)| claude::id_sessione(id)).collect(),
             )
         };
-        let voci = righe
+        // Il fuoco da tastiera non si perde (RC-53): resta sulla sua sessione, e se la sua riga è
+        // sparita passa a quella che ne prende il posto (la più vicina), mai oltre l'ultima.
+        let fuoco = p.get_claude_fuoco().max(0);
+        let col_fuoco = self.claude_righe.row_data(fuoco as usize).map(|r| r.id);
+        let voci: Vec<RigaSessioneUi> = righe
             .into_iter()
             .map(|r| {
                 let (ripiego, a_finestra) = (!raggiungibili.contains(&r.id), a_finestre.contains(&r.id));
                 riga_ui(r, ripiego, a_finestra)
             })
             .collect();
+        let nuovo_fuoco = col_fuoco
+            .and_then(|id| voci.iter().position(|v| v.id == id))
+            .unwrap_or_else(|| (fuoco as usize).min(voci.len().saturating_sub(1)));
         let n = super::aggiorna_modello(&self.claude_righe, voci);
         self.casa.diagnosi().conta_n(Contatore::ui_righe, n);
-        let altre = altre as i32;
-        if p.get_claude_altre() != altre {
-            p.set_claude_altre(altre);
+        if p.get_claude_fuoco() != nuovo_fuoco as i32 {
+            p.set_claude_fuoco(nuovo_fuoco as i32);
         }
-        let adesso = chrono::Local::now();
-        let (cinque, sette) = self.limiti();
-        let (cinque, sette) = (limite_ui(cinque, adesso), limite_ui(sette, adesso));
+        let (cinque, sette) = self.limiti_della_vista(ora);
         if p.get_claude_cinque_ore() != cinque {
             p.set_claude_cinque_ore(cinque);
         }
@@ -1069,6 +1139,21 @@ impl Ponte {
         if p.get_claude_spesa_nota() != nota.as_str() {
             p.set_claude_spesa_nota(nota.as_str().into());
         }
+    }
+
+    /// I due limiti come li vuole la vista: quelli arrivati, o per la finestra che non è ancora
+    /// arrivata quello ricordato dal file di stato (attenuato, «visto alle…»); assente (o azzerato)
+    /// = nessun anello.
+    fn limiti_della_vista(&self, ora: i64) -> (LimiteClaudeUi, LimiteClaudeUi) {
+        let adesso = chrono::Local.timestamp_opt(ora, 0).single().unwrap_or_else(chrono::Local::now);
+        let (cinque, sette) = self.limiti_a(ora);
+        let (ricordato_c, ricordato_s) = self.limiti_ricordati(ora);
+        let uno = |arrivato: Option<Limite>, ricordato: Option<LimiteVisto>| match (arrivato, ricordato) {
+            (Some(l), _) => limite_ui(Some(l), adesso),
+            (None, Some(v)) => limite_ricordato_ui(&v, adesso),
+            (None, None) => LimiteClaudeUi::default(),
+        };
+        (uno(cinque, ricordato_c), uno(sette, ricordato_s))
     }
 
     fn pillola_dorme(&self) -> bool {
@@ -1221,6 +1306,7 @@ fn riga_ui(r: claude::RigaSessione, ripiego: bool, finestra_non_scheda: bool) ->
         strumento: r.strumento.into(),
         durata: r.durata.into(),
         contesto: r.contesto.unwrap_or_default().into(),
+        contesto_caldo: r.contesto_caldo,
     }
 }
 
@@ -1230,9 +1316,17 @@ fn limite_ui(l: Option<Limite>, ora: chrono::DateTime<chrono::Local>) -> LimiteC
         None => LimiteClaudeUi::default(),
         Some(l) => {
             let t = claude::testo_limite(&l, ora);
-            LimiteClaudeUi { presente: true, frazione: t.frazione, testo: t.testo.into(), azzera: t.azzera.into() }
+            LimiteClaudeUi { presente: true, frazione: t.frazione, testo: t.testo.into(), azzera: t.azzera.into(), vecchio: false }
         }
     }
+}
+
+/// Un limite ricordato dal file di stato (RC-56): la percentuale di quando lo si è visto, «visto
+/// alle 20:29» al posto di «si azzera…», e `vecchio` perché la vista lo attenui.
+fn limite_ricordato_ui(v: &LimiteVisto, adesso: chrono::DateTime<chrono::Local>) -> LimiteClaudeUi {
+    let t = claude::testo_limite(&Limite { percentuale: v.percentuale, azzera_alle: v.azzera_alle }, adesso);
+    let visto = claude::testo_visto(v, adesso.with_timezone(&chrono::Utc), &chrono::Local);
+    LimiteClaudeUi { presente: true, frazione: t.frazione, testo: t.testo.into(), azzera: visto.into(), vecchio: true }
 }
 
 #[cfg(test)]
@@ -1393,6 +1487,7 @@ mod test {
                 strumento: String::new(),
                 durata: String::new(),
                 contesto: None,
+                contesto_caldo: false,
             },
             senza,
             false,
@@ -1581,6 +1676,7 @@ mod test {
             strumento: String::new(),
             durata: String::new(),
             contesto: None,
+            contesto_caldo: false,
         };
         assert_eq!(riga_ui(r(), false, false).avviso.as_str(), "");
         let con = riga_ui(r(), false, true).avviso.to_string();
@@ -2305,31 +2401,209 @@ mod test {
         let r = righe.row_data(0).unwrap();
         assert_eq!((r.cartella.as_str(), r.stato.as_str(), r.durata.as_str()), ("progetto-a", "Lavora", "0:00"));
         assert_eq!(r.id.as_str(), claude::id_sessione("a"));
-        assert_eq!(pannello.get_claude_altre(), 0);
-        // Un'altra sessione, poi chi chiede qualcosa: l'ordine è quello dell'urgenza.
+        // Un'altra sessione che chiede qualcosa: a pannello aperto va in fondo (RC-53).
         manda(&p, ev("b", TipoEvento::PermissionRequest));
         let righe = pannello.get_claude_righe();
         assert_eq!(righe.row_count(), 2);
-        assert_eq!(righe.row_data(0).unwrap().stato.as_str(), "Ti aspetta");
-        assert_eq!(righe.row_data(0).unwrap().livello, LivelloUi::Attenzione);
-        // Cinque sessioni: tre righe e «+2».
+        assert_eq!(righe.row_data(1).unwrap().stato.as_str(), "Ti aspetta");
+        assert_eq!(righe.row_data(1).unwrap().livello, LivelloUi::Attenzione);
+        // Cinque sessioni: cinque righe (la colonna scorre, RC-52).
         for id in ["c", "d", "e"] {
             manda(&p, ev(id, TipoEvento::UserPromptSubmit));
         }
-        assert_eq!((pannello.get_claude_righe().row_count(), pannello.get_claude_altre()), (3, 2));
+        assert_eq!(pannello.get_claude_righe().row_count(), 5);
         // Solo chi lavora ha una durata (le altre righe non ne hanno).
-        let prima: Vec<String> = (0..3).map(|i| pannello.get_claude_righe().row_data(i).unwrap().durata.to_string()).collect();
-        assert_eq!(prima.iter().filter(|d| !d.is_empty()).count(), 2);
+        let prima: Vec<String> = (0..5).map(|i| pannello.get_claude_righe().row_data(i).unwrap().durata.to_string()).collect();
+        assert_eq!(prima.iter().filter(|d| !d.is_empty()).count(), 4);
         // Chiusa di nuovo: gli eventi non scrivono più.
         p.vista_claude(false);
         manda(&p, ev("e", TipoEvento::SessionEnd));
-        assert_eq!(pannello.get_claude_righe().row_count(), 3);
+        assert_eq!(pannello.get_claude_righe().row_count(), 5);
         // Riaperta: la lista è quella vera.
         p.vista_claude(true);
-        assert_eq!(pannello.get_claude_altre(), 1);
+        assert_eq!(pannello.get_claude_righe().row_count(), 4);
         // Il pannello chiuso del tutto: la vista si chiude da sé.
         p.pannello_chiuso();
         assert!(!p.vista_claude.get());
+    }
+
+    /// Un evento con una cartella per sessione («progetto-a» per «a»): le righe si distinguono.
+    fn evc(id: &str, tipo: TipoEvento) -> EventoHook {
+        EventoHook { cartella: format!("progetto-{id}"), ..ev(id, tipo) }
+    }
+
+    /// Le cartelle delle righe della vista, dall'alto.
+    fn cartelle_vista(pannello: &crate::Pannello) -> Vec<String> {
+        let righe = pannello.get_claude_righe();
+        (0..righe.row_count()).map(|i| righe.row_data(i).unwrap().cartella.to_string()).collect()
+    }
+
+    /// RC-53: l'ordine si decide all'apertura (per urgenza) e poi sta fermo: chi cambia stato non
+    /// salta, chi arriva va in fondo; alla riapertura si riordina.
+    #[test]
+    fn l_ordine_e_fermo_a_pannello_aperto_e_si_rifa_alla_riapertura() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let pannello = con_pannello(&p);
+        p.casa().aggiorna_config(|c| c.claude.collegato = true);
+        manda(&p, evc("a", TipoEvento::UserPromptSubmit));
+        manda(&p, evc("b", TipoEvento::Stop));
+        p.vista_claude(true);
+        assert_eq!(cartelle_vista(&pannello), ["progetto-b", "progetto-a"], "all'apertura: per urgenza");
+        // «a» chiede un permesso: per urgenza passerebbe in cima, ma la riga resta dov'è.
+        manda(&p, evc("a", TipoEvento::PermissionRequest));
+        assert_eq!(cartelle_vista(&pannello), ["progetto-b", "progetto-a"]);
+        assert_eq!(pannello.get_claude_righe().row_data(1).unwrap().stato.as_str(), "Ti aspetta", "lo stato però si aggiorna");
+        // Una sessione nuova, anche urgente, in fondo.
+        manda(&p, evc("c", TipoEvento::PermissionRequest));
+        assert_eq!(cartelle_vista(&pannello), ["progetto-b", "progetto-a", "progetto-c"]);
+        // Chiusa e riaperta: si riordina (chi aspetta, il più recente prima; poi chi ha finito).
+        p.vista_claude(false);
+        p.vista_claude(true);
+        assert_eq!(cartelle_vista(&pannello), ["progetto-c", "progetto-a", "progetto-b"]);
+    }
+
+    /// RC-53 e Review Focus 4: il fuoco da tastiera non si perde mai. Segue la sua sessione se ne
+    /// sparisce un'altra, passa alla riga più vicina se sparisce lei, riparte dalla prima all'apertura.
+    #[test]
+    fn il_fuoco_delle_righe_segue_la_sessione_e_passa_alla_piu_vicina() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let pannello = con_pannello(&p);
+        p.casa().aggiorna_config(|c| c.claude.collegato = true);
+        for id in ["a", "b", "c", "d"] {
+            manda(&p, evc(id, TipoEvento::UserPromptSubmit));
+        }
+        p.vista_claude(true);
+        // Chi lavora: la più recente prima, quindi d, c, b, a. Il fuoco sulla terza («b»).
+        assert_eq!(cartelle_vista(&pannello), ["progetto-d", "progetto-c", "progetto-b", "progetto-a"]);
+        pannello.set_claude_fuoco(2);
+        let con_fuoco = || cartelle_vista(&pannello)[pannello.get_claude_fuoco() as usize].clone();
+        assert_eq!(con_fuoco(), "progetto-b");
+        // Ne sparisce una sopra: il fuoco resta su «b» (che sale di un posto).
+        manda(&p, ev("d", TipoEvento::SessionEnd));
+        assert_eq!((pannello.get_claude_fuoco(), con_fuoco().as_str()), (1, "progetto-b"));
+        // Sparisce la riga col fuoco: passa a quella che ora occupa il posto, cioè la più vicina.
+        manda(&p, ev("b", TipoEvento::SessionEnd));
+        assert_eq!((pannello.get_claude_fuoco(), con_fuoco().as_str()), (1, "progetto-a"));
+        // Sparisce l'ultima, che aveva il fuoco: va all'ultima rimasta.
+        manda(&p, ev("a", TipoEvento::SessionEnd));
+        assert_eq!((pannello.get_claude_fuoco(), con_fuoco().as_str()), (0, "progetto-c"));
+        // Nessuna sessione: il fuoco resta valido (0), niente indici fuori dalle righe.
+        manda(&p, ev("c", TipoEvento::SessionEnd));
+        assert_eq!(pannello.get_claude_fuoco(), 0);
+        // Alla riapertura riparte dalla prima riga.
+        manda(&p, evc("e", TipoEvento::UserPromptSubmit));
+        manda(&p, evc("f", TipoEvento::UserPromptSubmit));
+        pannello.set_claude_fuoco(1);
+        p.vista_claude(false);
+        p.vista_claude(true);
+        assert_eq!(pannello.get_claude_fuoco(), 0);
+    }
+
+    /// RC-52: tutte le sessioni arrivano alla vista, anche dieci: è lei che scorre.
+    #[test]
+    fn dieci_sessioni_sono_dieci_righe() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let pannello = con_pannello(&p);
+        p.casa().aggiorna_config(|c| c.claude.collegato = true);
+        for i in 0..10 {
+            manda(&p, ev(&format!("s{i}"), TipoEvento::UserPromptSubmit));
+        }
+        p.vista_claude(true);
+        assert_eq!(pannello.get_claude_righe().row_count(), 10);
+    }
+
+    /// RC-55: il contesto sopra l'80 % arriva alla riga come caldo.
+    #[test]
+    fn il_contesto_alto_e_caldo_nella_riga() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let pannello = con_pannello(&p);
+        p.casa().aggiorna_config(|c| c.claude.collegato = true);
+        manda(&p, ev("a", TipoEvento::Stop));
+        p.vista_claude(true);
+        p.claude_contesto.borrow_mut().insert("a".into(), 81.0);
+        p.aggiorna_vista_claude();
+        let r = pannello.get_claude_righe().row_data(0).unwrap();
+        assert_eq!((r.contesto.as_str(), r.contesto_caldo), ("81%", true));
+        p.claude_contesto.borrow_mut().insert("a".into(), 80.0);
+        p.aggiorna_vista_claude();
+        let r = pannello.get_claude_righe().row_data(0).unwrap();
+        assert_eq!((r.contesto.as_str(), r.contesto_caldo), ("80%", false));
+    }
+
+    fn visto(percentuale: f32, azzera_alle: i64, visto_alle: i64) -> casa_core::config::LimiteVisto {
+        casa_core::config::LimiteVisto { percentuale, azzera_alle, visto_alle }
+    }
+
+    /// RC-56: dopo un riavvio i limiti mostrano l'ultimo valore salvato, attenuato e con «visto
+    /// alle…», finché non arriva un dato nuovo; uno già azzerato non si mostra.
+    #[test]
+    fn dopo_il_riavvio_i_limiti_si_ricordano_attenuati() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let pannello = con_pannello(&p);
+        let ora = ora_adesso();
+        let salvato = visto(87.0, ora + 3600, ora - 300);
+        p.casa().aggiorna_config(|c| {
+            c.claude.ultimo_cinque_ore = Some(salvato);
+            // Questo si è già azzerato: non si mostra.
+            c.claude.ultimo_sette_giorni = Some(visto(50.0, ora - 10, ora - 4000));
+        });
+        p.vista_claude(true);
+        let c = pannello.get_claude_cinque_ore();
+        assert!(c.presente && c.vecchio, "il valore salvato, attenuato");
+        assert_eq!(c.testo.as_str(), "87%");
+        assert!((c.frazione - 0.87).abs() < 1e-5);
+        assert_eq!(c.azzera.as_str(), claude::testo_visto(&salvato, chrono::Utc::now(), &chrono::Local));
+        assert!(c.azzera.starts_with("visto "), "{}", c.azzera);
+        let s = pannello.get_claude_sette_giorni();
+        assert!(!s.presente && !s.vecchio, "scaduto: non si mostra");
+        // Una barra nuova per la sola finestra delle 5 ore la sostituisce: non è più attenuata.
+        p.claude_barra(barra("a", Some((40.0, ora + 7200)), None));
+        let c = pannello.get_claude_cinque_ore();
+        assert!(c.presente && !c.vecchio);
+        assert_eq!((c.testo.as_str(), c.azzera.starts_with("si azzera")), ("40%", true));
+        // Gli avvisi e i quadranti non usano mai il valore ricordato.
+        assert_eq!(p.limiti_a(ora).1, None);
+    }
+
+    /// RC-56: il valore ricordato sparisce da solo quando si azzera, con la sveglia singola dei
+    /// limiti (nessun timer nuovo).
+    #[test]
+    fn il_limite_ricordato_scade_con_la_sveglia_dei_limiti() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let pannello = con_pannello(&p);
+        let ora = ora_adesso();
+        p.casa().aggiorna_config(|c| c.claude.ultimo_cinque_ore = Some(visto(87.0, ora + 600, ora - 300)));
+        p.vista_claude(true);
+        assert!(p.sveglia_limiti.running());
+        assert_eq!(p.limiti_armati.get(), Some(ora + 600));
+        // All'ora dell'azzeramento la vista si riscrive senza il valore.
+        p.aggiorna_vista_claude_a(ora + 601);
+        assert!(!pannello.get_claude_cinque_ore().presente);
+    }
+
+    /// RC-56: si scrive nel file di stato solo se il valore cambia e al massimo una volta al
+    /// minuto, nel momento in cui il dato arriva (nessun timer).
+    #[test]
+    fn i_limiti_si_salvano_solo_se_cambiano_e_una_volta_al_minuto() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let ora = ora_adesso();
+        let (fine5, fine7) = (ora + 3600, ora + 90_000);
+        let salvato = || (p.casa().config().claude.ultimo_cinque_ore, p.casa().config().claude.ultimo_sette_giorni);
+        assert_eq!(salvato(), (None, None));
+        p.claude_barra_a(barra("a", Some((50.0, fine5)), Some((20.0, fine7))), ora);
+        assert_eq!(salvato(), (Some(visto(50.0, fine5, ora)), Some(visto(20.0, fine7, ora))));
+        // Il valore cambia dopo 10 secondi: troppo presto, resta quello di prima.
+        p.claude_barra_a(barra("a", Some((51.0, fine5)), None), ora + 10);
+        assert_eq!(salvato().0, Some(visto(50.0, fine5, ora)));
+        // Dopo un minuto, lo stesso valore nuovo si salva (col momento in cui lo si è visto).
+        p.claude_barra_a(barra("a", Some((51.0, fine5)), None), ora + 70);
+        assert_eq!(salvato().0, Some(visto(51.0, fine5, ora + 70)));
+        // Un valore uguale non riscrive nulla (il momento resta quello di quando è cambiato).
+        p.claude_barra_a(barra("a", Some((51.2, fine5 + 3)), Some((20.0, fine7))), ora + 500);
+        assert_eq!(salvato(), (Some(visto(51.0, fine5, ora + 70)), Some(visto(20.0, fine7, ora))));
+        // Un limite già azzerato non si salva.
+        p.claude_barra_a(barra("a", Some((99.0, ora + 100)), None), ora + 1000);
+        assert_eq!(salvato().0, Some(visto(51.0, fine5, ora + 70)));
     }
 
     #[test]
@@ -2430,15 +2704,20 @@ mod test {
         p.vista_claude(true);
         assert_eq!(pannello.get_claude_spesa_nota().as_str(), "nessun dato");
         // Arriva una lettura a vista aperta: la vista si aggiorna da sé.
-        let r = api_claude::Riepilogo {
-            spesa_mese: api_claude::importo_da("41280"),
-            aggiornato_a: Some(chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2026, 11, 18, 14, 2, 0).unwrap()),
-            ..Default::default()
-        };
+        let dati = chrono::Utc::now() - chrono::Duration::minutes(5);
+        let r = api_claude::Riepilogo { spesa_mese: api_claude::importo_da("41280"), aggiornato_a: Some(dati), ..Default::default() };
         p.api_arrivato(p.api_generazione.get(), "14:05".into(), Ok(r));
         assert_eq!(pannello.get_claude_spesa().as_str(), "412,80 $");
-        let locale = chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2026, 11, 18, 14, 2, 0).unwrap().with_timezone(&chrono::Local);
-        assert_eq!(pannello.get_claude_spesa_nota().as_str(), format!("aggiornato alle {}", locale.format("%H:%M")));
+        let locale = dati.with_timezone(&chrono::Local);
+        // Di oggi dice solo l'ora (a meno di una mezzanotte nel mezzo: allora dice «ieri»).
+        let nota = pannello.get_claude_spesa_nota();
+        assert!(nota.as_str() == format!("aggiornato alle {}", locale.format("%H:%M")) || nota.starts_with("aggiornato ieri alle "), "{nota}");
+        // RC-32: dati di ieri dicono il giorno, mai un'ora che sembra di stamattina.
+        let ieri = chrono::Utc::now() - chrono::Duration::hours(30);
+        let r = api_claude::Riepilogo { spesa_mese: api_claude::importo_da("41280"), aggiornato_a: Some(ieri), ..Default::default() };
+        p.api_arrivato(p.api_generazione.get(), "14:05".into(), Ok(r));
+        assert_eq!(pannello.get_claude_spesa_nota().as_str(), format!("aggiornato {}", claude::quando_alle(ieri, chrono::Utc::now(), &chrono::Local)));
+        assert!(!pannello.get_claude_spesa_nota().starts_with("aggiornato alle "));
         // La chiave tolta: torna la frase.
         p.api_togli_ui();
         p.vista_claude(false);

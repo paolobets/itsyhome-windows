@@ -144,11 +144,14 @@ export component Pannello inherits Window {
     // Statistiche del PC, aggiornate ogni 2 s solo a pannello aperto.
     in property <StatPcUi> pc;
     // La vista Claude (M3, Task 9): i dati li scrive Rust, e solo mentre la vista è aperta.
-    // `claude-collegato`: Claude Code è collegato; le righe sono al più tre sessioni, `claude-altre`
-    // quante restano fuori; i due limiti (`presente` falso = senza anello) e la spesa API del mese.
+    // `claude-collegato`: Claude Code è collegato; le righe sono tutte le sessioni (la colonna
+    // scorre), nell'ordine fermo che decide Rust; i due limiti (`presente` falso = senza anello) e
+    // la spesa API del mese.
     in property <bool> claude-collegato;
     in property <[RigaSessioneUi]> claude-righe;
-    in property <int> claude-altre;
+    // La riga col fuoco da tastiera (indice). Rust la tiene sulla stessa sessione, o sulla più
+    // vicina se la sua sparisce, quando le righe cambiano; ↑/↓ la muovono.
+    in-out property <int> claude-fuoco: 0;
     in property <LimiteClaudeUi> claude-cinque-ore;
     in property <LimiteClaudeUi> claude-sette-giorni;
     // La soglia d'avviso dell'utente come frazione (80 % di serie): sopra, l'arco dei limiti e
@@ -378,16 +381,14 @@ export component Pannello inherits Window {
     property <int> fuoco-stanza: -1;
     property <int> fuoco-stanza-valido: max(-1, min(fuoco-stanza, stanze.length - 1));
     // Vista Claude: riga col fuoco (↑/↓), sempre dentro le righe che ci sono.
-    // Il fuoco segue la sessione (l'impronta), non la posizione: se le righe si riordinano resta
-    // sulla stessa sessione. Senza una scelta (o se la sessione è sparita) è la prima riga.
-    property <string> fuoco-sessione-id;
+    // Il fuoco è un indice (`claude-fuoco`): l'ordine delle righe è fermo a pannello aperto e
+    // quando ne cambia il numero Rust lo rimette sulla stessa sessione o sulla più vicina. Sempre
+    // dentro le righe che ci sono.
     // Il fuoco da tastiera è su «Dettagli» (sotto l'ultima riga, o da solo se non c'è altro).
     property <bool> fuoco-dettagli;
     property <bool> claude-primo: !claude-collegato || claude-righe.length > 0;
     property <bool> fuoco-dettagli-valido: claude-dettagli && (fuoco-dettagli || !claude-primo);
-    property <int> fuoco-sessione-valido: claude-righe.length > 0 && claude-righe[0].id == fuoco-sessione-id ? 0
-        : claude-righe.length > 1 && claude-righe[1].id == fuoco-sessione-id ? 1
-        : claude-righe.length > 2 && claude-righe[2].id == fuoco-sessione-id ? 2 : 0;
+    property <int> fuoco-sessione-valido: max(0, min(claude-fuoco, claude-righe.length - 1));
     // Collegamenti: card col fuoco (-1 = «Modifica» nella testata), 3 colonne.
     property <int> fuoco-collegamento: 0;
     property <int> fuoco-collegamento-valido: min(fuoco-collegamento, collegamenti.length - 1);
@@ -809,13 +810,13 @@ export component Pannello inherits Window {
                 if (fuoco-dettagli-valido) {
                     fuoco-dettagli = false;
                 } else if (claude-collegato && claude-righe.length > 0) {
-                    fuoco-sessione-id = claude-righe[max(0, fuoco-sessione-valido - 1)].id;
+                    claude-fuoco = max(0, fuoco-sessione-valido - 1);
                 }
             } else if (k == Key.DownArrow && !fuoco-dettagli-valido) {
                 if (claude-dettagli && (!claude-collegato || fuoco-sessione-valido == claude-righe.length - 1)) {
                     fuoco-dettagli = true;
                 } else if (claude-collegato && claude-righe.length > 0) {
-                    fuoco-sessione-id = claude-righe[min(claude-righe.length - 1, fuoco-sessione-valido + 1)].id;
+                    claude-fuoco = min(claude-righe.length - 1, fuoco-sessione-valido + 1);
                 }
             }
         } else if (zona == Zona.contenuto && vista == "collegamenti" && collegamenti.length > 0) {
@@ -1335,7 +1336,6 @@ export component Pannello inherits Window {
                     height: parent.height;
                     collegato: root.claude-collegato;
                     righe: root.claude-righe;
-                    altre: root.claude-altre;
                     cinque-ore: root.claude-cinque-ore;
                     sette-giorni: root.claude-sette-giorni;
                     soglia: root.claude-soglia;

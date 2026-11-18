@@ -926,6 +926,9 @@ pub struct Ponte {
     /// sue righe. Chiusa, niente si calcola né si scrive.
     vista_claude: Cell<bool>,
     claude_righe: Rc<VecModel<RigaSessioneUi>>,
+    /// L'ordine fermo delle righe (RC-53), per `session_id`: si decide all'apertura della vista e
+    /// poi chi c'è tiene il suo posto, chi arriva va in fondo. Vuoto a vista chiusa.
+    claude_ordine: RefCell<Vec<String>>,
     /// I permessi che Claude Code ha chiesto e aspettano una risposta (M3, Task 5): numero del
     /// permesso → chi l'ha chiesto e dove mandare la decisione. Al più 16.
     claude_permessi: RefCell<HashMap<u64, con_claude::Pendente>>,
@@ -1072,6 +1075,7 @@ pub fn collega(
         sveglia_terminale: slint::Timer::default(),
         vista_claude: Cell::new(false),
         claude_righe: Rc::new(VecModel::default()),
+        claude_ordine: RefCell::new(Vec::new()),
         claude_permessi: RefCell::new(HashMap::new()),
         claude_armamento: RefCell::new(con_claude::Armamento::nuovo()),
         claude_preparato: RefCell::new(None),

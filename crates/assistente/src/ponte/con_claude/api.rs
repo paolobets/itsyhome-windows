@@ -111,7 +111,7 @@ fn nome_scheda(s: &Scheda) -> &'static str {
 }
 
 /// La riga sotto la chiave: com'è andata l'ultima lettura (nulla di segreto: la spesa del mese e
-/// l'ora di aggiornamento dei dati).
+/// quando sono i dati, «alle 12:02» o «ieri alle 12:02»: `claude::quando_alle`).
 pub(crate) fn riga_stato(
     ora: &str,
     esito: &Result<Riepilogo, String>,
@@ -130,7 +130,7 @@ pub(crate) fn riga_stato(
         None => "nessun dato di spesa".to_owned(),
     });
     if let Some(a) = aggiornato {
-        parti.push(format!("dati aggiornati alle {a}"));
+        parti.push(format!("dati aggiornati {a}"));
     }
     if !r.non_disponibili.is_empty() {
         let nomi: Vec<_> = r.non_disponibili.iter().map(nome_scheda).collect();
@@ -232,7 +232,7 @@ impl Ponte {
                     .as_ref()
                     .ok()
                     .and_then(|r| r.aggiornato_a)
-                    .map(|a| a.with_timezone(&Local).format("%H:%M").to_string());
+                    .map(|a| crate::claude::quando_alle(a, Utc::now(), &Local));
                 riga_stato(ora, esito, aggiornato.as_deref())
             }
         };
@@ -433,8 +433,11 @@ mod test {
             non_disponibili: vec![Scheda::Limiti, Scheda::WorkspaceMembri],
             ..Default::default()
         };
-        let t = riga_stato("14:05", &Ok(ok), Some("12:02"));
+        let t = riga_stato("14:05", &Ok(ok.clone()), Some("alle 12:02"));
         assert_eq!(t, "Lettura delle 14:05 · spesa del mese 412,80 $ · dati aggiornati alle 12:02 · non disponibili: Limiti, Workspace e membri");
+        // RC-32: dati di ieri dicono il giorno (lo stesso testo della vista).
+        let t = riga_stato("14:05", &Ok(ok), Some("ieri alle 12:02"));
+        assert!(t.contains("dati aggiornati ieri alle 12:02"), "{t}");
         let vuoto = riga_stato("14:05", &Ok(Riepilogo::default()), None);
         assert_eq!(
             vuoto, "Lettura delle 14:05 · nessun dato di spesa",

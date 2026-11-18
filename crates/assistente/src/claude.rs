@@ -6,6 +6,7 @@
 use crate::attenzione::{Fonte, Livello, Pulsante, Voce};
 use claude_hook::evento::EventoHook;
 use api_claude::{Importo, Riepilogo};
+use casa_core::config::LimiteVisto;
 use chrono::{DateTime, Datelike, Local, NaiveDate, TimeZone, Weekday};
 use claude_hook::sessioni::{Sessione, Sessioni, Stato};
 use claude_hook::Limite;
@@ -305,8 +306,9 @@ pub fn tinta_occhi(s: &Sessioni) -> Option<Livello> {
 
 // ─── La vista Claude del pannello (Task 9) ─────────────────────────────────────────────────
 
-/// Quante sessioni mostra la vista (le altre si contano in «+N altre»).
-pub const RIGHE_MASSIME: usize = 3;
+/// Il contesto è caldo oltre questa percentuale (RC-55): fissa, non è un limite dell'abbonamento
+/// e non ha una soglia dell'utente.
+pub const CONTESTO_CALDO: u32 = 80;
 /// La frase della spesa senza la chiave da amministratore.
 pub const SPESA_SENZA_CHIAVE: &str = "Aggiungi una chiave da amministratore nelle Impostazioni";
 /// La nota della spesa quando non c'è un dato da mostrare.
@@ -326,16 +328,33 @@ pub struct RigaSessione {
     pub durata: String,
     /// «42%», se la barra di stato l'ha detto.
     pub contesto: Option<String>,
+    /// Il contesto, com'è scritto, supera `CONTESTO_CALDO`.
+    pub contesto_caldo: bool,
 }
 
-/// Le righe della vista (al più `RIGHE_MASSIME`, nell'ordine di urgenza) e quante sessioni restano
-/// fuori. `contesto` è per `session_id`, in percentuale.
-pub fn righe_sessioni(s: &Sessioni, contesto: &HashMap<String, f32>, ora: Instant) -> (Vec<RigaSessione>, usize) {
+/// L'ordine delle righe a pannello aperto (RC-53): chi c'era tiene il suo posto, chi è arrivato va
+/// in fondo (per urgenza fra loro), chi se n'è andato sparisce. Con `prima` vuoto (il pannello si
+/// apre) è l'ordine di urgenza dell'elenco. Sono `session_id`.
+pub fn ordine_fermo(prima: &[String], elenco: &[&Sessione]) -> Vec<String> {
+    let mut ordine: Vec<String> = prima.iter().filter(|id| elenco.iter().any(|s| &s.id == *id)).cloned().collect();
+    ordine.extend(elenco.iter().filter(|s| !prima.contains(&s.id)).map(|s| s.id.clone()));
+    ordine
+}
+
+/// Le righe della vista, una per sessione (la colonna scorre: RC-52), nell'ordine `ordine_fermo` di
+/// `ordine`, e quell'ordine da tenere per la volta dopo. `contesto` è per `session_id`, in
+/// percentuale.
+pub fn righe_sessioni(
+    s: &Sessioni,
+    contesto: &HashMap<String, f32>,
+    ora: Instant,
+    ordine: &[String],
+) -> (Vec<RigaSessione>, Vec<String>) {
     let elenco = s.elenco();
-    let altre = elenco.len().saturating_sub(RIGHE_MASSIME);
-    let righe = elenco
-        .into_iter()
-        .take(RIGHE_MASSIME)
+    let ordine = ordine_fermo(ordine, &elenco);
+    let righe = ordine
+        .iter()
+        .filter_map(|id| elenco.iter().find(|x| &x.id == id).copied())
         .map(|x| {
             let cartella = testo_pulito(&x.cartella);
             let cartella = if cartella.is_empty() { SENZA_CARTELLA.to_owned() } else { cartella };
@@ -346,6 +365,7 @@ pub fn righe_sessioni(s: &Sessioni, contesto: &HashMap<String, f32>, ora: Instan
                 Stato::Errore => ("Errore", Some(Livello::Attenzione)),
             };
             let lavora = x.stato == Stato::Lavora;
+            let percento = contesto.get(&x.id).map(|c| c.round().clamp(0.0, 100.0) as u32);
             RigaSessione {
                 id: id_sessione(&x.id),
                 cartella,
@@ -357,23 +377,82 @@ pub fn righe_sessioni(s: &Sessioni, contesto: &HashMap<String, f32>, ora: Instan
                 } else {
                     String::new()
                 },
-                contesto: contesto.get(&x.id).map(|c| format!("{}%", c.round().clamp(0.0, 100.0) as u32)),
+                contesto: percento.map(|c| format!("{c}%")),
+                contesto_caldo: percento.is_some_and(|c| c > CONTESTO_CALDO),
             }
         })
         .collect();
-    (righe, altre)
+    (righe, ordine)
 }
+
+/// Quando, nel fuso `tz` e a `adesso`: «alle 09:02» se è di oggi, «ieri alle 09:02», «il 17/11 alle
+/// 09:02» da prima (RC-32: con dati che arrivano con ore di ritardo, un'ora senza il giorno si
+/// legge come di stamattina). Un'ora nel futuro (orologio indietro) resta «alle».
+pub fn quando_alle<Tz: TimeZone>(quando: DateTime<chrono::Utc>, adesso: DateTime<chrono::Utc>, tz: &Tz) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    let (quando, adesso) = (quando.with_timezone(tz), adesso.with_timezone(tz));
+    let alle = quando.format("%H:%M");
+    match adesso.date_naive().signed_duration_since(quando.date_naive()).num_days() {
+        ..=0 => format!("alle {alle}"),
+        1 => format!("ieri alle {alle}"),
+        _ => format!("il {} alle {alle}", quando.format("%d/%m")),
+    }
+}
+
+/// «visto alle 20:29» (o «visto ieri alle…», «visto il 17/11 alle…»): il limite ricordato da prima
+/// del riavvio, finché non arriva un dato nuovo (RC-56).
+pub fn testo_visto<Tz: TimeZone>(l: &LimiteVisto, adesso: DateTime<chrono::Utc>, tz: &Tz) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    let visto = chrono::Utc.timestamp_opt(l.visto_alle, 0).single().unwrap_or(adesso);
+    format!("visto {}", quando_alle(visto, adesso, tz))
+}
+
+/// Il limite da scrivere nel file di stato (RC-56), se serve: solo un valore valido e ancora in
+/// corso, solo se è cambiato (la percentuale come si legge, o un'altra finestra: `resets_at`
+/// oscilla di qualche secondo) e solo se l'ultima scrittura è di almeno un minuto fa. Nessun
+/// timer: si decide nel momento in cui il dato arriva.
+pub fn limite_da_salvare(
+    fresco: &Limite,
+    salvato: Option<LimiteVisto>,
+    ultima_scrittura: Option<i64>,
+    ora: i64,
+) -> Option<LimiteVisto> {
+    if !fresco.percentuale.is_finite() || fresco.azzera_alle <= ora {
+        return None;
+    }
+    let cambiato = salvato.is_none_or(|v| {
+        v.percentuale.round() != fresco.percentuale.round() || !stessa_finestra(v.azzera_alle, fresco.azzera_alle)
+    });
+    let presto = ultima_scrittura.is_some_and(|u| ora - u < SCRITTURA_LIMITI_OGNI);
+    (cambiato && !presto).then_some(LimiteVisto {
+        percentuale: fresco.percentuale,
+        azzera_alle: fresco.azzera_alle,
+        visto_alle: ora,
+    })
+}
+
+/// Ogni quanto, al più, i limiti si riscrivono nel file di stato (secondi).
+const SCRITTURA_LIMITI_OGNI: i64 = 60;
 
 /// Il valore e la nota della spesa API del mese. Senza chiave la frase della guida; con la chiave ma
 /// senza un dato (nessuna lettura, lettura fallita, dati senza data) «nessun dato», mai «0 $»; con
-/// la spesa il valore e «aggiornato alle 14:02» (l'ora dei dati dell'API, non della lettura, nel
-/// fuso del sistema come le altre ore dell'app).
+/// la spesa il valore e «aggiornato alle 14:02» («ieri alle…», «il 17/11 alle…» se non è di oggi:
+/// l'ora dei dati dell'API, non della lettura, nel fuso del sistema come le altre ore dell'app).
 pub fn testo_spesa(r: Option<&Riepilogo>, chiave: bool) -> (String, String) {
-    testo_spesa_in(r, chiave, &Local)
+    testo_spesa_in(r, chiave, &Local, chrono::Utc::now())
 }
 
-/// `testo_spesa` nel fuso `tz` (i test ne passano uno fisso).
-pub fn testo_spesa_in<Tz: TimeZone>(r: Option<&Riepilogo>, chiave: bool, tz: &Tz) -> (String, String)
+/// `testo_spesa` nel fuso `tz` e a `adesso` (i test ne passano uno fisso).
+pub fn testo_spesa_in<Tz: TimeZone>(
+    r: Option<&Riepilogo>,
+    chiave: bool,
+    tz: &Tz,
+    adesso: DateTime<chrono::Utc>,
+) -> (String, String)
 where
     Tz::Offset: std::fmt::Display,
 {
@@ -382,7 +461,7 @@ where
     }
     match r.and_then(|r| r.spesa_mese.map(|s| (s, r.aggiornato_a))) {
         Some((spesa, aggiornato)) => {
-            let nota = aggiornato.map_or_else(String::new, |a| format!("aggiornato alle {}", a.with_timezone(tz).format("%H:%M")));
+            let nota = aggiornato.map_or_else(String::new, |a| format!("aggiornato {}", quando_alle(a, adesso, tz)));
             (spesa.in_dollari(), nota)
         }
         None => (String::new(), SPESA_NESSUN_DATO.to_owned()),
@@ -1073,24 +1152,129 @@ mod test {
         s
     }
 
+    /// RC-52: tutte le sessioni hanno la loro riga (la colonna scorre), nell'ordine di urgenza.
     #[test]
-    fn al_massimo_tre_righe() {
+    fn tutte_le_sessioni_hanno_una_riga_nell_ordine_di_urgenza() {
         let t = Instant::now();
         let s = cinque_sessioni(t);
-        let (righe, altre) = righe_sessioni(&s, &HashMap::new(), t);
-        assert_eq!(righe.len(), 3);
-        assert_eq!(altre, 2);
+        let (righe, ordine) = righe_sessioni(&s, &HashMap::new(), t, &[]);
+        assert_eq!(righe.len(), 5);
         // Nell'ordine di urgenza dell'elenco: chi aspetta, chi si è fermato, chi ha finito.
-        let attesi: Vec<_> = s.elenco().iter().take(3).map(|x| id_sessione(&x.id)).collect();
+        let attesi: Vec<_> = s.elenco().iter().map(|x| id_sessione(&x.id)).collect();
         assert_eq!(righe.iter().map(|r| r.id.clone()).collect::<Vec<_>>(), attesi);
         assert_eq!(righe[0].stato_testo, "Ti aspetta");
         assert_eq!(righe[1].stato_testo, "Errore");
         assert_eq!(righe[2].stato_testo, "Fatto");
-        // Meno di tre: nessuna «altra».
-        let mut poche = Sessioni::new();
-        con(&mut poche, ev("a", TipoEvento::Stop), t);
-        assert_eq!(righe_sessioni(&poche, &HashMap::new(), t).1, 0);
-        assert_eq!(righe_sessioni(&Sessioni::new(), &HashMap::new(), t), (vec![], 0));
+        assert_eq!(ordine, s.elenco().iter().map(|x| x.id.clone()).collect::<Vec<_>>());
+        assert_eq!(righe_sessioni(&Sessioni::new(), &HashMap::new(), t, &[]), (vec![], vec![]));
+        // Con dieci sessioni (il tetto è 16) nessuna resta fuori.
+        let mut tante = Sessioni::new();
+        for i in 0..10 {
+            con(&mut tante, ev(&format!("s{i}"), TipoEvento::UserPromptSubmit), t);
+        }
+        assert_eq!(righe_sessioni(&tante, &HashMap::new(), t, &[]).0.len(), 10);
+    }
+
+    fn cartelle(righe: &[RigaSessione]) -> Vec<&str> {
+        righe.iter().map(|r| r.cartella.as_str()).collect()
+    }
+
+    /// RC-53: a pannello aperto l'ordine è fermo: chi c'è tiene il suo posto anche se l'urgenza
+    /// cambia, chi arriva va in fondo, chi se ne va sparisce; alla riapertura si riordina.
+    #[test]
+    fn ordine_fermo_a_pannello_aperto() {
+        let t = Instant::now();
+        let mut s = cinque_sessioni(t);
+        let (r0, ordine) = righe_sessioni(&s, &HashMap::new(), t, &[]);
+        assert_eq!(cartelle(&r0), ["quattro", "tre", "due", "cinque", "uno"]);
+        // «quattro» finisce: per urgenza scenderebbe sotto «tre», ma resta dov'è (cambia lo stato).
+        con(&mut s, EventoHook { cartella: "quattro".into(), ..ev("d", TipoEvento::Stop) }, t);
+        let (r1, ordine) = righe_sessioni(&s, &HashMap::new(), t, &ordine);
+        assert_eq!(cartelle(&r1), cartelle(&r0));
+        assert_eq!(r1[0].stato_testo, "Fatto");
+        // Una sessione nuova, anche la più urgente, va in fondo.
+        con(&mut s, EventoHook { cartella: "sei".into(), ..ev("f", TipoEvento::PermissionRequest) }, t);
+        let (r2, ordine) = righe_sessioni(&s, &HashMap::new(), t, &ordine);
+        assert_eq!(cartelle(&r2), ["quattro", "tre", "due", "cinque", "uno", "sei"]);
+        // Una sessione chiusa sparisce; le altre non si muovono.
+        con(&mut s, ev("c", TipoEvento::SessionEnd), t);
+        let (r3, ordine) = righe_sessioni(&s, &HashMap::new(), t, &ordine);
+        assert_eq!(cartelle(&r3), ["quattro", "due", "cinque", "uno", "sei"]);
+        assert_eq!(ordine.len(), 5);
+        // Alla riapertura (nessun ordine) torna l'urgenza: «sei» aspetta, quindi in cima.
+        let (r4, _) = righe_sessioni(&s, &HashMap::new(), t, &[]);
+        assert_eq!(r4[0].cartella, "sei");
+    }
+
+    /// RC-55: «Contesto N%» è caldo oltre l'80 % (come lo si legge: arrotondato), non a 80.
+    #[test]
+    fn contesto_caldo_oltre_l_ottanta() {
+        let t = Instant::now();
+        let mut s = Sessioni::new();
+        con(&mut s, ev("a", TipoEvento::Stop), t);
+        let caldo = |c: f32| {
+            let contesto: HashMap<String, f32> = [("a".to_owned(), c)].into();
+            righe_sessioni(&s, &contesto, t, &[]).0[0].contesto_caldo
+        };
+        assert!(!caldo(10.0) && !caldo(80.0) && !caldo(80.4), "fino a «80%» è neutro");
+        assert!(caldo(80.6) && caldo(95.0) && caldo(100.0), "da «81%» è caldo");
+        // Senza il dato non c'è nulla da scaldare.
+        assert!(!righe_sessioni(&s, &HashMap::new(), t, &[]).0[0].contesto_caldo);
+    }
+
+    fn utc(g: u32, h: u32, m: u32) -> DateTime<chrono::Utc> {
+        chrono::Utc.with_ymd_and_hms(2026, 11, g, h, m, 0).unwrap()
+    }
+
+    /// RC-32: l'ora dei dati dice anche il giorno quando non è oggi.
+    #[test]
+    fn quando_dei_dati_oggi_ieri_o_data() {
+        let adesso = utc(18, 10, 0);
+        assert_eq!(quando_alle(utc(18, 9, 2), adesso, &chrono::Utc), "alle 09:02");
+        assert_eq!(quando_alle(utc(17, 23, 59), adesso, &chrono::Utc), "ieri alle 23:59");
+        assert_eq!(quando_alle(utc(16, 9, 2), adesso, &chrono::Utc), "il 16/11 alle 09:02");
+        assert_eq!(quando_alle(utc(1, 9, 2), adesso, &chrono::Utc), "il 01/11 alle 09:02");
+        // Un orologio un po' indietro non fa «domani»: resta «alle».
+        assert_eq!(quando_alle(utc(18, 23, 0), adesso, &chrono::Utc), "alle 23:00");
+        // Il giorno è quello del fuso: le 00:30 locali del 18 sono le 23:30 UTC del 17.
+        let roma = chrono::FixedOffset::east_opt(3600).unwrap();
+        assert_eq!(quando_alle(utc(17, 23, 30), utc(18, 10, 0), &roma), "alle 00:30");
+        assert_eq!(quando_alle(utc(17, 23, 30), utc(18, 10, 0), &chrono::Utc), "ieri alle 23:30");
+    }
+
+    fn visto(percentuale: f32, azzera_alle: i64, visto_alle: i64) -> casa_core::config::LimiteVisto {
+        casa_core::config::LimiteVisto { percentuale, azzera_alle, visto_alle }
+    }
+
+    /// RC-56: si salva solo se il valore cambia (come si legge) e al massimo una volta al minuto.
+    #[test]
+    fn il_limite_si_salva_solo_se_cambia_e_una_volta_al_minuto() {
+        let ora = 1_800_000_000;
+        let fine = ora + 3600;
+        // Mai salvato: si salva, col momento in cui si è visto.
+        assert_eq!(limite_da_salvare(&lim(87.0, fine), None, None, ora), Some(visto(87.0, fine, ora)));
+        // Lo stesso valore (anche con decimali diversi) e la stessa finestra: niente.
+        let salvato = visto(87.0, fine, ora - 1000);
+        assert_eq!(limite_da_salvare(&lim(87.3, fine), Some(salvato), Some(ora - 1000), ora), None);
+        assert_eq!(limite_da_salvare(&lim(87.0, fine + 200), Some(salvato), Some(ora - 1000), ora), None, "resets_at oscilla");
+        // Il valore cambia: si salva, ma non prima di un minuto dall'ultima scrittura.
+        assert_eq!(limite_da_salvare(&lim(88.0, fine), Some(salvato), Some(ora - 61), ora), Some(visto(88.0, fine, ora)));
+        assert_eq!(limite_da_salvare(&lim(88.0, fine), Some(salvato), Some(ora - 59), ora), None);
+        // Una finestra nuova (si è azzerata) è un valore cambiato anche a percentuale uguale.
+        assert_eq!(limite_da_salvare(&lim(87.0, fine + 18_000), Some(salvato), Some(ora - 1000), ora), Some(visto(87.0, fine + 18_000, ora)));
+        // Un dato non valido non si salva mai.
+        assert_eq!(limite_da_salvare(&lim(f32::NAN, fine), None, None, ora), None);
+        assert_eq!(limite_da_salvare(&lim(50.0, ora), None, None, ora), None, "già azzerato");
+    }
+
+    /// RC-56: «visto alle 20:29», con «ieri»/la data come l'ora dei dati.
+    #[test]
+    fn testo_di_quando_si_e_visto_il_limite() {
+        let visto_alle = utc(18, 20, 29).timestamp();
+        let v = visto(87.0, utc(19, 1, 0).timestamp(), visto_alle);
+        assert_eq!(testo_visto(&v, utc(18, 21, 0), &chrono::Utc), "visto alle 20:29");
+        assert_eq!(testo_visto(&v, utc(19, 0, 10), &chrono::Utc), "visto ieri alle 20:29");
+        assert_eq!(testo_visto(&v, utc(25, 8, 0), &chrono::Utc), "visto il 18/11 alle 20:29");
     }
 
     #[test]
@@ -1101,7 +1285,7 @@ mod test {
         let pre = EventoHook { strumento: Some("Edit".into()), ..ev("a", TipoEvento::PreToolUse) };
         con(&mut s, pre, t);
         let contesto: HashMap<String, f32> = [("a".to_owned(), 41.6)].into();
-        let (righe, _) = righe_sessioni(&s, &contesto, t + Duration::from_secs(192));
+        let (righe, _) = righe_sessioni(&s, &contesto, t + Duration::from_secs(192), &[]);
         let r = &righe[0];
         assert_eq!((r.stato_testo, r.livello), ("Lavora", None));
         assert_eq!((r.cartella.as_str(), r.strumento.as_str(), r.durata.as_str()), ("progetto-a", "Modifica", "3:12"));
@@ -1109,14 +1293,14 @@ mod test {
         assert_eq!(r.id, id_sessione("a"), "l'impronta, mai il session_id");
         // Chi non lavora: niente strumento né durata (non cambierebbe a ogni secondo), e il livello.
         con(&mut s, ev("a", TipoEvento::PermissionRequest), t);
-        let (righe, _) = righe_sessioni(&s, &HashMap::new(), t + Duration::from_secs(300));
+        let (righe, _) = righe_sessioni(&s, &HashMap::new(), t + Duration::from_secs(300), &[]);
         let r = &righe[0];
         assert_eq!(
             (r.livello, r.strumento.as_str(), r.durata.as_str(), r.contesto.clone()),
             (Some(Livello::Attenzione), "", "", None)
         );
         con(&mut s, ev("a", TipoEvento::Stop), t);
-        assert_eq!(righe_sessioni(&s, &HashMap::new(), t).0[0].livello, Some(Livello::Informazione));
+        assert_eq!(righe_sessioni(&s, &HashMap::new(), t, &[]).0[0].livello, Some(Livello::Informazione));
     }
 
     #[test]
@@ -1125,11 +1309,11 @@ mod test {
         let mut s = Sessioni::new();
         con(&mut s, EventoHook { cartella: String::new(), ..ev("a", TipoEvento::Stop) }, t);
         con(&mut s, EventoHook { cartella: "\u{202e}\n".into(), ..ev("b", TipoEvento::Stop) }, t);
-        let (righe, _) = righe_sessioni(&s, &HashMap::new(), t);
+        let (righe, _) = righe_sessioni(&s, &HashMap::new(), t, &[]);
         assert!(righe.iter().all(|r| r.cartella == "Claude"), "{righe:?}");
         let mut s = Sessioni::new();
         con(&mut s, EventoHook { cartella: "pro\u{202e}getto".into(), ..ev("a", TipoEvento::Stop) }, t);
-        assert_eq!(righe_sessioni(&s, &HashMap::new(), t).0[0].cartella, "progetto");
+        assert_eq!(righe_sessioni(&s, &HashMap::new(), t, &[]).0[0].cartella, "progetto");
     }
 
     fn riepilogo_con_spesa(micro: Option<&str>, aggiornato: Option<(u32, u32)>) -> Riepilogo {
@@ -1160,8 +1344,12 @@ mod test {
         let r = riepilogo_con_spesa(Some("41280"), Some((14, 2)));
         // Nel fuso scelto (qui +1 ora), non in UTC.
         let roma = chrono::FixedOffset::east_opt(3600).unwrap();
-        assert_eq!(testo_spesa_in(Some(&r), true, &roma), ("412,80 $".to_owned(), "aggiornato alle 15:02".to_owned()));
-        assert_eq!(testo_spesa_in(Some(&r), true, &chrono::Utc).1, "aggiornato alle 14:02");
+        let adesso = utc(18, 16, 0);
+        assert_eq!(testo_spesa_in(Some(&r), true, &roma, adesso), ("412,80 $".to_owned(), "aggiornato alle 15:02".to_owned()));
+        assert_eq!(testo_spesa_in(Some(&r), true, &chrono::Utc, adesso).1, "aggiornato alle 14:02");
+        // RC-32: dati di ieri o di prima dicono il giorno, mai un «alle 14:02» che sembra di oggi.
+        assert_eq!(testo_spesa_in(Some(&r), true, &chrono::Utc, utc(19, 9, 0)).1, "aggiornato ieri alle 14:02");
+        assert_eq!(testo_spesa_in(Some(&r), true, &chrono::Utc, utc(21, 9, 0)).1, "aggiornato il 18/11 alle 14:02");
         assert!(!testo_spesa(Some(&r), true).1.contains("UTC"));
         // PF18: un mese ancora a zero ma con dati aggiornati fino a fine periodo è «0,00 $».
         let zero = riepilogo_con_spesa(Some("0"), Some((10, 0)));

@@ -1939,6 +1939,7 @@ mod accessibilita {
             strumento: Default::default(),
             durata: Default::default(),
             contesto: Default::default(),
+            contesto_caldo: false,
             terminale: Default::default(),
             avviso: Default::default(),
         }
@@ -1953,7 +1954,7 @@ mod accessibilita {
     }
 
     fn limite_claude(testo: &str, frazione: f32, azzera: &str) -> crate::LimiteClaudeUi {
-        crate::LimiteClaudeUi { presente: true, frazione, testo: testo.into(), azzera: azzera.into() }
+        crate::LimiteClaudeUi { presente: true, frazione, testo: testo.into(), azzera: azzera.into(), vecchio: false }
     }
 
     /// Un pannello sulla vista Claude; restituisce gli eventi («apri <id>», «gestisci»).
@@ -2038,17 +2039,6 @@ mod accessibilita {
         assert_eq!(spesa.accessible_description().as_deref(), Some("aggiornato alle 16:02"));
     }
 
-    /// Concordanza: «+1 altra» e «e un'altra sessione»; da due in su «+N altre».
-    #[test]
-    fn vista_claude_altre_al_singolare() {
-        let (p, _) = pannello_claude(true, tre_righe_claude());
-        p.set_claude_altre(1);
-        assert!(ElementHandle::find_by_accessible_label(&p, "e un'altra sessione").next().is_some());
-        p.set_claude_altre(2);
-        assert!(ElementHandle::find_by_accessible_label(&p, "e altre 2 sessioni").next().is_some());
-        assert!(ElementHandle::find_by_accessible_label(&p, "e un'altra sessione").next().is_none());
-    }
-
     /// Il dettaglio di «Limiti non disponibili» dice il vero: scollegato si collega, collegato si aspetta.
     #[test]
     fn limiti_non_disponibili_spiega_il_motivo() {
@@ -2060,24 +2050,26 @@ mod accessibilita {
         assert!(!ha("Si vedono dopo aver collegato Claude Code."));
     }
 
-    /// Il fuoco segue la sessione, non la posizione: se le righe si riordinano Invio apre la stessa.
+    /// Il fuoco è un indice che Rust tiene sulla sessione giusta (l'ordine è fermo): le frecce lo
+    /// muovono e Invio apre la riga che lo ha, sempre dentro le righe che ci sono.
     #[test]
-    fn il_fuoco_delle_righe_segue_la_sessione() {
+    fn il_fuoco_delle_righe_e_un_indice_sempre_valido() {
         use slint::platform::Key;
         let (p, eventi) = pannello_claude(true, tre_righe_claude());
-        tasto(&p, Key::DownArrow); // «bbbb»
-        // Riordino: «bbbb» passa in cima.
-        p.set_claude_righe(ModelRc::new(VecModel::from(vec![
-            riga_claude("bbbb", "due", "Ti aspetta", crate::LivelloUi::Attenzione),
-            riga_claude("aaaa", "uno", "Fatto", crate::LivelloUi::Informazione),
-            riga_claude("cccc", "tre", "Lavora", crate::LivelloUi::Nessuno),
-        ])));
+        tasto(&p, Key::DownArrow);
+        assert_eq!(p.get_claude_fuoco(), 1);
         tasto(&p, Key::Return);
         assert_eq!(*eventi.borrow(), ["apri bbbb"]);
-        // Se la sessione sparisce, il fuoco torna alla prima riga.
-        p.set_claude_righe(ModelRc::new(VecModel::from(vec![riga_claude("cccc", "tre", "Lavora", crate::LivelloUi::Nessuno)])));
+        // Rust sposta il fuoco (la sua sessione è scesa): Invio apre quella riga.
+        p.set_claude_fuoco(2);
         tasto(&p, Key::Return);
         assert_eq!(eventi.borrow().last().map(String::as_str), Some("apri cccc"));
+        // Restano meno righe e l'indice non è ancora stato rimesso: Invio non va fuori dalle righe.
+        p.set_claude_righe(ModelRc::new(VecModel::from(vec![riga_claude("aaaa", "uno", "Lavora", crate::LivelloUi::Nessuno)])));
+        tasto(&p, Key::Return);
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("apri aaaa"));
+        tasto(&p, Key::DownArrow);
+        assert_eq!(p.get_claude_fuoco(), 0, "dall'ultima riga ↓ resta lì");
     }
 
     /// ↓ due volte e Invio: `apri-sessione` con l'id della terza riga; ↑ risale, e i bordi tengono.
@@ -2157,8 +2149,8 @@ mod accessibilita {
         assert_eq!(eventi.borrow().last().map(String::as_str), Some("gestisci"));
     }
 
-    /// Il caso più pieno (tre righe con tutto, «+N altre», due anelli, spesa con la nota più lunga):
-    /// nulla esce dalla vista e la vista sta nel pannello.
+    /// Il caso più pieno (tre righe con tutto, due anelli, spesa con la nota più lunga): nulla esce
+    /// dalla vista e la vista sta nel pannello.
     #[test]
     fn vista_claude_entra_nel_pannello() {
         let mut righe = Vec::new();
@@ -2167,11 +2159,12 @@ mod accessibilita {
                 strumento: "Modifica".into(),
                 durata: "1:02:05".into(),
                 contesto: "100%".into(),
+                contesto_caldo: true,
+                terminale: "ultimo terminale usato".into(),
                 ..riga_claude(&format!("id{i}"), "una-cartella-dal-nome-davvero-molto-lungo", stato, crate::LivelloUi::Attenzione)
             });
         }
         let (p, _) = pannello_claude(true, ModelRc::new(VecModel::from(righe)));
-        p.set_claude_altre(12);
         p.set_claude_cinque_ore(limite_claude("100%", 1.0, "si azzera domani alle 14:30"));
         p.set_claude_sette_giorni(limite_claude("100%", 1.0, "si azzera mercoledì alle 14:30"));
         p.set_claude_spesa_nota("Aggiungi una chiave da amministratore nelle Impostazioni".into());
@@ -2193,7 +2186,88 @@ mod accessibilita {
             );
         }
         assert!(cp.x >= 0.0 && cp.y >= 0.0 && cp.x + cs.width <= 800.0 && cp.y + cs.height <= 300.0);
-        assert!(ElementHandle::find_by_accessible_label(&p, "e altre 12 sessioni").next().is_some(), "«+12 altre»");
+    }
+
+    /// Le righe di una vista con `n` sessioni che lavorano («s0», «s1»…).
+    fn righe_che_lavorano(n: usize) -> ModelRc<crate::RigaSessioneUi> {
+        ModelRc::new(VecModel::from(
+            (0..n).map(|i| riga_claude(&format!("id{i}"), &format!("s{i}"), "Lavora", crate::LivelloUi::Nessuno)).collect::<Vec<_>>(),
+        ))
+    }
+
+    /// Il rettangolo (alto, basso) di un elemento e quello della vista, in coordinate della finestra.
+    fn y_di(e: &ElementHandle) -> (f32, f32) {
+        (e.absolute_position().y, e.absolute_position().y + e.size().height)
+    }
+
+    /// RC-52: con dieci sessioni la colonna scorre: tutte raggiungibili con le frecce, la riga col
+    /// fuoco resta sempre dentro la vista (in basso e, tornando su, in alto).
+    #[test]
+    fn la_colonna_delle_sessioni_scorre_e_tiene_in_vista_il_fuoco() {
+        use slint::platform::Key;
+        let (p, eventi) = pannello_claude(true, righe_che_lavorano(10));
+        let vista = ElementHandle::find_by_element_type_name(&p, "VistaClaude").next().expect("vista Claude");
+        let (alto, basso) = y_di(&vista);
+        // Una riga fuori dalla vista non è nemmeno esposta: «dentro» è falso.
+        let dentro = |nome: &str| {
+            ElementHandle::find_by_accessible_label(&p, nome).next().is_some_and(|e| {
+                let (a, b) = y_di(&e);
+                a >= alto - 0.5 && b <= basso + 0.5
+            })
+        };
+        assert!(dentro("s0, Lavora") && !dentro("s9, Lavora"), "all'inizio l'ultima è fuori vista");
+        for _ in 0..9 {
+            tasto(&p, Key::DownArrow);
+        }
+        assert_eq!(p.get_claude_fuoco(), 9);
+        assert!(dentro("s9, Lavora"), "il fuoco ha fatto scorrere la colonna");
+        assert!(!dentro("s0, Lavora"));
+        tasto(&p, Key::Return);
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("apri id9"));
+        for _ in 0..9 {
+            tasto(&p, Key::UpArrow);
+        }
+        assert!(dentro("s0, Lavora"), "tornando su la colonna risale");
+        assert!(!dentro("s9, Lavora"));
+        // «+N altre» non c'è più: nessun testo del genere.
+        assert!(ElementHandle::find_by_accessible_label(&p, "e altre 7 sessioni").next().is_none());
+    }
+
+    /// RC-52: due sessioni stanno ferme, senza bisogno di scorrere.
+    #[test]
+    fn con_poche_sessioni_niente_scorrimento() {
+        let (p, _) = pannello_claude(true, righe_che_lavorano(3));
+        let vista = ElementHandle::find_by_element_type_name(&p, "VistaClaude").next().expect("vista Claude");
+        let (alto, basso) = y_di(&vista);
+        for i in 0..3 {
+            let (a, b) = y_di(&elemento(&p, &format!("s{i}, Lavora")));
+            assert!(a >= alto - 0.5 && b <= basso + 0.5, "s{i}");
+        }
+        assert!((y_di(&elemento(&p, "s0, Lavora")).0 - alto).abs() < 0.5, "la prima è in cima");
+    }
+
+    /// RC-57: «ultimo terminale usato» è un'icona col nome (per Narrator), non il testo su ogni
+    /// riga; senza ripiego non c'è.
+    #[test]
+    fn l_ultimo_terminale_usato_e_un_icona_con_il_nome() {
+        let con = |id: &str, cartella: &str, terminale: &str| crate::RigaSessioneUi {
+            terminale: terminale.into(),
+            ..riga_claude(id, cartella, "Fatto", crate::LivelloUi::Informazione)
+        };
+        let righe = ModelRc::new(VecModel::from(vec![
+            con("a", "uno", "ultimo terminale usato"),
+            con("b", "due", ""),
+            con("c", "tre", "ultimo terminale usato"),
+        ]));
+        let (p, eventi) = pannello_claude(true, righe);
+        let icone: Vec<_> = ElementHandle::find_by_accessible_label(&p, "ultimo terminale usato").collect();
+        assert_eq!(icone.len(), 2, "una per riga col ripiego, nessuna per le altre");
+        assert!(icone.iter().all(|i| i.accessible_role() == Some(AccessibleRole::Image)));
+        // La riga non ripete la frase nella sua descrizione (la dice l'icona).
+        assert!(!elemento(&p, "uno, Fatto").accessible_description().unwrap_or_default().contains("terminale"));
+        // La riga resta il pulsante che apre la sessione.
+        elemento(&p, "uno, Fatto").invoke_accessible_default_action();
+        assert_eq!(*eventi.borrow(), ["apri a"]);
     }
 
     /// Impostazioni › Claude (M3, Task 7 e 7B): l'anteprima si apre col fuoco su «Annulla» (Invio per

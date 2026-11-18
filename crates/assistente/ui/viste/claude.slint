@@ -1,10 +1,13 @@
 // Vista Claude (M3, Task 9): Claude Code in un colpo d'occhio, nel pannello 800 × 300. A sinistra
-// le sessioni (al più tre righe: cartella, stato col colore del suo livello, strumento, durata,
-// contesto; «+N altre» se ce ne sono di più); a destra i due limiti dell'abbonamento ad anello
-// («Limite 5 ore», «Limite 7 giorni», con quando si azzerano) e sotto la spesa delle API del
-// mese. Un limite assente o già azzerato non ha l'anello (mai «0%»); senza nessuno la card dice
-// «Limiti non disponibili». Stati vuoti: scollegato («Collega Claude Code dalle Impostazioni» con
-// «Impostazioni» sotto) e nessuna sessione («Nessuna sessione aperta»).
+// le sessioni, tutte, in una colonna che scorre (rotella e frecce; la riga col fuoco resta in
+// vista): cartella, stato col colore del suo livello, strumento, durata, contesto (caldo oltre
+// l'80 %). L'ordine lo decide Rust e sta fermo a pannello aperto. A destra i due limiti
+// dell'abbonamento ad anello («Limite 5 ore», «Limite 7 giorni», con quando si azzerano; dopo un
+// riavvio, finché non arriva un dato nuovo, l'ultimo valore ricordato, attenuato e con «visto
+// alle…») e sotto la spesa delle API del mese. Un limite assente o già azzerato non ha l'anello
+// (mai «0%»); senza nessuno la card dice «Limiti non disponibili». Stati vuoti: scollegato
+// («Collega Claude Code dalle Impostazioni» con «Impostazioni» sotto) e nessuna sessione
+// («Nessuna sessione aperta»).
 // Da tastiera (in pannello.slint): ↑/↓ fra le righe, Invio apre la sessione (`apri-sessione`); da
 // ultima riga ↓ porta su «Dettagli» (con la chiave da amministratore), Invio apre le schede.
 // La vista non ha timer: i dati li scrive Rust, e solo mentre la vista è aperta.
@@ -21,23 +24,31 @@ component RigaClaude inherits Rectangle {
 
     // Chi lavora ha la tinta del lavoro; gli altri quella del loro livello (la parola c'è sempre).
     property <color> tinta-stato: riga.livello == LivelloUi.nessuno ? Tema.petalo-5 : Tema.colore-livello(riga.livello);
+    // Il mouse è sull'icona del terminale (ha il suo suggerimento): la riga resta «sopra».
+    property <bool> sopra-icona;
 
-    border-radius: Tema.raggio-l;
+    // Un solo raggio in tutta la vista, quello delle card di destra (RC-48).
+    border-radius: Tema.raggio-xl;
     border-width: 1px;
     border-color: Tema.vetro-bordo;
-    background: area.has-hover ? Tema.card-vetro-sopra : Tema.card-vetro;
+    background: area.has-hover || sopra-icona ? Tema.card-vetro-sopra : Tema.card-vetro;
     accessible-role: button;
     accessible-label: riga.cartella + ", " + riga.stato;
     // Senza la durata: cambia ogni secondo e Narrator non deve ripeterla.
     property <string> dettagli: riga.strumento != "" && riga.contesto != "" ? riga.strumento + ", contesto " + riga.contesto
         : riga.strumento != "" ? riga.strumento : riga.contesto != "" ? "contesto " + riga.contesto : "";
-    // Dove il clic ripiega o porta davanti la finestra e non la scheda lo si dice; senza, niente.
-    property <string> note: riga.terminale != "" && riga.avviso != "" ? riga.terminale + ". " + riga.avviso
-        : riga.terminale != "" ? riga.terminale : riga.avviso;
+    // Dove il clic porta davanti la finestra e non la scheda lo si dice; senza, niente. Il
+    // terminale «ultimo usato» ha la sua icona col nome.
+    property <string> note: riga.avviso;
     accessible-description: dettagli != "" && note != "" ? dettagli + ". " + note : dettagli + note;
     accessible-action-default => { root.apri(); }
 
     Fuoco { chiede: anello; }
+
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.apri(); }
+    }
 
     HorizontalLayout {
         x: 12px;
@@ -83,51 +94,86 @@ component RigaClaude inherits Rectangle {
             accessible-role: none;
         }
 
-        Text {
-            text: riga.strumento != "" ? "· " + riga.strumento : "";
+        // Chi non lavora non ha lo strumento: niente testo vuoto, che terrebbe il suo spazio (RC-37).
+        if riga.strumento != "": Text {
+            text: "· " + riga.strumento;
             vertical-alignment: center;
             font-size: Tema.testo-piccolo;
             color: Tema.testo-tenue;
             accessible-role: none;
         }
 
-        Text {
-            horizontal-stretch: 1;
-            preferred-width: 0px;
-            text: riga.terminale != "" ? "· " + riga.terminale : "";
-            vertical-alignment: center;
-            overflow: elide;
-            font-size: Tema.testo-piccolo;
-            color: Tema.testo-tenue;
-            accessible-role: none;
+        Rectangle { horizontal-stretch: 1; }
+
+        // Il clic ripiega sull'ultimo terminale usato (RC-57): un'icona col suo suggerimento, non
+        // la frase su ogni riga; il nome lo legge Narrator.
+        if riga.terminale != "": Rectangle {
+            width: 16px;
+            accessible-role: image;
+            accessible-label: riga.terminale;
+
+            Icona {
+                x: 1px;
+                y: (parent.height - self.height) / 2;
+                width: 14px;
+                height: 14px;
+                source: Icone.terminale;
+                colorize: Tema.testo-tenue;
+            }
+
+            icona := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.apri(); }
+                changed has-hover => { root.sopra-icona = self.has-hover; }
+            }
+
+            if icona.has-hover: Rectangle {
+                x: parent.width - self.width - 20px;
+                y: -2px;
+                height: 20px;
+                width: suggerimento.preferred-width + 16px;
+                border-radius: Tema.raggio-s;
+                background: Tema.suggerimento;
+                border-width: 1px;
+                border-color: Tema.vetro-bordo;
+
+                suggerimento := Text {
+                    text: "Apre l'ultimo terminale usato";
+                    font-size: Tema.testo-piccolo;
+                    color: Tema.testo;
+                    accessible-role: none;
+                }
+            }
         }
 
-        Text {
-            text: riga.contesto != "" ? "Contesto " + riga.contesto : "";
+        if riga.contesto != "": Text {
+            text: "Contesto " + riga.contesto;
             vertical-alignment: center;
             font-size: Tema.testo-piccolo;
-            color: Tema.testo-tenue;
+            // Oltre l'80 % il contesto sta per finire (RC-55).
+            color: riga.contesto-caldo ? Tema.caldo-2 : Tema.testo-tenue;
             accessible-role: none;
         }
     }
 
-    area := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.apri(); }
+    if anello: Anello {
+        raggio: parent.border-radius;
+        // Dentro la riga: la colonna scorre in un Flickable e un anello da fuori verrebbe tagliato.
+        distanza: -2px;
     }
-
-    if anello: Anello { raggio: parent.border-radius; }
 }
 
 // Un limite: l'anello (arco di 270° aperto in basso, come nei quadranti) con la percentuale, il
-// nome e quando si azzera. Alta 56.
+// nome e quando si azzera. Alta 52; l'anello occupa tutta l'altezza (l'arco disegnato è un po' più
+// piccolo del suo riquadro) così la percentuale ha il suo respiro dentro il tratto (RC-49).
+// L'ultimo valore ricordato da prima del riavvio (`vecchio`) è attenuato.
 component CardLimite inherits Rectangle {
     in property <string> titolo;
     in property <LimiteClaudeUi> limite;
     // Sopra questa frazione l'arco è caldo: la soglia d'avviso dell'utente (RC-44).
     in property <float> soglia: 0.8;
 
-    property <length> arco: 48px;
+    property <length> arco: 52px;
     // Come nei quadranti: parte da 135° e gira in senso orario.
     property <angle> fine: 135deg + 270deg * min(limite.frazione, 1);
     property <bool> acceso: limite.frazione >= 0.01;
@@ -141,8 +187,11 @@ component CardLimite inherits Rectangle {
     accessible-value: limite.testo;
     accessible-description: limite.azzera;
 
+    // Il valore ricordato da prima del riavvio si attenua: non è un dato di adesso.
+    opacity: limite.vecchio ? 0.6 : 1;
+
     Rectangle {
-        x: 8px;
+        x: 6px;
         y: (parent.height - arco) / 2;
         width: arco;
         height: arco;
@@ -185,7 +234,7 @@ component CardLimite inherits Rectangle {
 
     Text {
         x: 66px;
-        y: 9px;
+        y: 8px;
         width: parent.width - self.x - 12px;
         height: 18px;
         text: titolo;
@@ -198,7 +247,7 @@ component CardLimite inherits Rectangle {
 
     Text {
         x: 66px;
-        y: 29px;
+        y: 28px;
         width: parent.width - self.x - 12px;
         height: 16px;
         text: limite.azzera;
@@ -247,9 +296,8 @@ component CardLimiteAssente inherits Rectangle {
 export component VistaClaude inherits Rectangle {
     // Claude Code è collegato (Impostazioni › Claude).
     in property <bool> collegato;
+    // Tutte le sessioni, nell'ordine fermo deciso da Rust: la colonna scorre.
     in property <[RigaSessioneUi]> righe;
-    // Quante sessioni non entrano nelle tre righe.
-    in property <int> altre;
     in property <LimiteClaudeUi> cinque-ore;
     in property <LimiteClaudeUi> sette-giorni;
     // La soglia d'avviso dell'utente (frazione 0..1): sopra, l'arco dei limiti è caldo.
@@ -274,32 +322,56 @@ export component VistaClaude inherits Rectangle {
     property <length> larghezza-sinistra: floor(root.width / 1px * 0.56) * 1px;
     property <length> x-destra: larghezza-sinistra + 16px;
     property <length> larghezza-destra: root.width - x-destra;
-    property <length> alto-card-limite: 56px;
-    property <length> alto-spesa: 60px;
+    // 52 + 8 + 52 + 8 + 68 = 188, l'altezza della zona centrale del pannello.
+    property <length> alto-card-limite: 52px;
+    property <length> alto-spesa: 68px;
     property <bool> con-righe: collegato && righe.length > 0;
+    property <length> alto-elenco: righe.length * (alto-riga + spazio) - spazio;
+    property <int> n-righe: righe.length;
 
-    // Sinistra: le sessioni.
-    for riga[i] in righe: RigaClaude {
+    // Porta in vista la riga `i` (la colonna scorre: la riga col fuoco non resta mai fuori).
+    function porta-in-vista(i: int) {
+        if (i < 0 || i >= righe.length) {
+            return;
+        }
+        if (i * (alto-riga + spazio) + elenco.content-y < 0px) {
+            elenco.content-y = -(i * (alto-riga + spazio));
+        } else if ((i + 1) * (alto-riga + spazio) - spazio + elenco.content-y > elenco.height) {
+            elenco.content-y = elenco.height - ((i + 1) * (alto-riga + spazio) - spazio);
+        }
+    }
+    changed fuoco => { porta-in-vista(fuoco); }
+    changed n-righe => { porta-in-vista(fuoco); }
+
+    // Sinistra: le sessioni, tutte; scorrono con la rotella e, col fuoco, con le frecce.
+    elenco := Flickable {
         visible: collegato;
         x: 0;
-        y: i * (alto-riga + spazio);
+        y: 0;
         width: larghezza-sinistra;
-        height: alto-riga;
-        riga: riga;
-        anello: i == root.fuoco;
-        apri => { root.apri-sessione(riga.id); }
+        height: root.height;
+        content-width: self.width;
+        content-height: max(self.height, alto-elenco);
+
+        for riga[i] in righe: RigaClaude {
+            x: 0;
+            y: i * (alto-riga + spazio);
+            width: larghezza-sinistra;
+            height: alto-riga;
+            riga: riga;
+            anello: i == root.fuoco;
+            apri => { root.apri-sessione(riga.id); }
+        }
     }
 
-    if con-righe && altre > 0: Text {
-        x: 4px;
-        y: righe.length * (alto-riga + spazio) + 2px;
-        width: larghezza-sinistra - 8px;
-        height: 18px;
-        text: altre == 1 ? "+1 altra" : "+" + altre + " altre";
-        vertical-alignment: center;
-        font-size: Tema.testo-piccolo;
-        color: Tema.testo-tenue;
-        accessible-label: altre == 1 ? "e un'altra sessione" : "e altre " + altre + " sessioni";
+    // Quante ce ne sono oltre la finestra: un filo sul bordo destro, solo se la colonna scorre.
+    if con-righe && alto-elenco > root.height: Rectangle {
+        x: larghezza-sinistra - 4px;
+        y: 4px + (root.height - 8px - self.height) * (-elenco.content-y / (alto-elenco - root.height));
+        width: 3px;
+        height: max(16px, (root.height - 8px) * root.height / alto-elenco);
+        border-radius: 1.5px;
+        background: Tema.testo-tenue.with-alpha(0.5);
     }
 
     // Nessuna sessione (collegato).
@@ -449,11 +521,12 @@ export component VistaClaude inherits Rectangle {
         accessible-value: spesa != "" ? spesa : spesa-nota;
         accessible-description: spesa != "" ? spesa-nota : "";
 
+        // Margini veri (RC-35): 12 ai lati, 8 sopra e sotto; il blocco è alto 52 dentro i 68.
         Etichetta {
             x: 12px;
-            y: 4px;
+            y: 8px;
             width: parent.width - 24px - (dettagli-visibili ? 84px : 0px);
-            height: 16px;
+            height: 14px;
             text: "SPESA API DEL MESE";
             accessible-role: none;
         }
@@ -475,7 +548,7 @@ export component VistaClaude inherits Rectangle {
 
         if spesa != "": Text {
             x: 12px;
-            y: 20px;
+            y: 24px;
             width: parent.width - 24px - (dettagli-visibili ? 84px : 0px);
             height: 22px;
             text: spesa;
@@ -488,9 +561,9 @@ export component VistaClaude inherits Rectangle {
 
         Text {
             x: 12px;
-            y: spesa != "" ? 42px : 22px;
+            y: spesa != "" ? 46px : 24px;
             width: parent.width - 24px - (dettagli-visibili ? 84px : 0px);
-            height: spesa != "" ? 15px : 32px;
+            height: spesa != "" ? 14px : 36px;
             text: spesa-nota;
             vertical-alignment: top;
             wrap: word-wrap;

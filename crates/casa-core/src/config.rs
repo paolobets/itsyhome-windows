@@ -92,6 +92,23 @@ pub struct ConfigClaude {
     /// L'utente ha detto «Ho capito» alla voce «il collegamento va aggiornato»: all'avvio non si
     /// ripete finché non collega o scollega di nuovo (la sezione Claude lo dice comunque).
     pub aggiornamento_ignorato: bool,
+    /// L'ultimo valore noto del limite delle 5 ore e di quello dei 7 giorni (RC-56): dopo un
+    /// riavvio la vista Claude li mostra attenuati, con «visto alle…», finché non arriva un dato
+    /// nuovo. Scritti solo quando il valore cambia e al massimo una volta al minuto.
+    pub ultimo_cinque_ore: Option<LimiteVisto>,
+    pub ultimo_sette_giorni: Option<LimiteVisto>,
+}
+
+/// Un limite dell'abbonamento com'era l'ultima volta che lo si è visto.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LimiteVisto {
+    /// Quanto era pieno (0..100).
+    pub percentuale: f32,
+    /// Quando si azzera (secondi Unix): passato, il valore non si mostra più.
+    pub azzera_alle: i64,
+    /// Quando è stato visto (secondi Unix).
+    pub visto_alle: i64,
 }
 
 impl Default for ConfigClaude {
@@ -104,6 +121,8 @@ impl Default for ConfigClaude {
             spesa_avvisata: HashMap::new(),
             insolita_avvisata: None,
             aggiornamento_ignorato: false,
+            ultimo_cinque_ore: None,
+            ultimo_sette_giorni: None,
         }
     }
 }

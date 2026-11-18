@@ -274,3 +274,19 @@ fn config_di_m2_scollegata() {
     st.salva(&c).unwrap();
     assert_eq!(st.leggi().claude, c.claude);
 }
+
+/// RC-56: l'ultimo valore dei limiti si ricorda fra un riavvio e l'altro; un file di prima, senza
+/// le chiavi, si legge senza valori.
+#[test]
+fn ultimi_limiti_visti_nel_file_di_configurazione() {
+    let d = tempfile::tempdir().unwrap();
+    let st = ConfigStore::apri(d.path());
+    assert_eq!(st.leggi().claude.ultimo_cinque_ore, None);
+    assert_eq!(st.leggi().claude.ultimo_sette_giorni, None);
+    let mut c = st.leggi();
+    c.claude.ultimo_cinque_ore = Some(LimiteVisto { percentuale: 87.0, azzera_alle: 1_700_000_000, visto_alle: 1_699_990_000 });
+    st.salva(&c).unwrap();
+    let riletto = st.leggi();
+    assert_eq!(riletto.claude.ultimo_cinque_ore, c.claude.ultimo_cinque_ore);
+    assert_eq!(riletto.claude.ultimo_sette_giorni, None);
+}
