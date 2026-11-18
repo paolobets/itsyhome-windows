@@ -109,8 +109,17 @@ component RigaTabella inherits FocusScope {
     in property <length> unita;
     in property <int> tocco;
     in property <int> richiesta;
+    // Il fuoco è stato chiesto a una riga che forse non c'era ancora (le righe fuori vista nascono
+    // solo quando ci si scorre): chi nasce adesso e è quella chiesta lo prende.
+    in property <bool> pendente;
     callback spostata(int);
     callback in-vista();
+
+    init => {
+        if (self.pendente && self.indice == self.richiesta) {
+            self.focus();
+        }
+    }
 
     changed tocco => {
         if (self.indice == self.richiesta) {
@@ -205,6 +214,7 @@ export component Schede inherits Rectangle {
     property <int> riga-richiesta: 0;
     // L'ultima riga che ha avuto il fuoco: quella che Tab raggiunge.
     property <int> riga-ultima: 0;
+    property <bool> riga-pendente: false;
     property <int> n-righe: attiva.righe.length;
 
     public function focus-linguette() {
@@ -212,10 +222,7 @@ export component Schede inherits Rectangle {
     }
 
     public function focus-tabella() {
-        if (n-righe > 0) {
-            riga-richiesta = min(riga-ultima, n-righe - 1);
-            tocco-righe += 1;
-        }
+        riga-a(min(riga-ultima, n-righe - 1));
     }
 
     function vai(i: int) {
@@ -226,21 +233,30 @@ export component Schede inherits Rectangle {
         riga-ultima = 0;
     }
 
+    // Porta il fuoco sulla riga `i`: prima la mette in vista (le righe fuori vista non esistono
+    // ancora), poi la chiede; se nasce dopo, `init` la prende.
     function riga-a(i: int) {
         if (n-righe > 0) {
             riga-richiesta = max(0, min(n-righe - 1, i));
+            riga-pendente = true;
+            scorri-a(riga-richiesta);
             tocco-righe += 1;
         }
     }
 
-    // Porta in vista la riga col fuoco.
-    function mostra(i: int) {
-        riga-ultima = i;
+    function scorri-a(i: int) {
         if (i * alto-riga < -flick.content-y) {
             flick.content-y = -i * alto-riga;
         } else if ((i + 1) * alto-riga > -flick.content-y + flick.height) {
             flick.content-y = flick.height - (i + 1) * alto-riga;
         }
+    }
+
+    // La riga `i` ha il fuoco: è l'ultima, e si porta in vista.
+    function mostra(i: int) {
+        riga-ultima = i;
+        riga-pendente = false;
+        scorri-a(i);
     }
 
     // La riga delle schede.
@@ -337,6 +353,7 @@ export component Schede inherits Rectangle {
                 unita: root.unita;
                 tocco: root.tocco-righe;
                 richiesta: root.riga-richiesta;
+                pendente: root.riga-pendente;
                 spostata(j) => { root.riga-a(j); }
                 in-vista => { root.mostra(ri); }
             }

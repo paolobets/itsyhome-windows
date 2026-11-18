@@ -25,7 +25,7 @@ mod testo;
 
 use gestione_protocollo::{messaggio_da_riga, riga_da_messaggio, schede_pulite, titolo_pulito, Messaggio, SchedaDati};
 use slint::winit_030::WinitWindowAccessor;
-use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use std::cell::{Cell, RefCell};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
@@ -50,6 +50,8 @@ struct Stato {
     in_attesa: Option<String>,
     /// Misura e posizione già decise (alla prima `apri`, sull'area di lavoro del monitor).
     misurata: bool,
+    /// I modelli delle schede, creati una volta e aggiornati sul posto (vedi `ModelloSchede`).
+    schede: ModelloSchede,
 }
 
 thread_local! {
@@ -114,6 +116,9 @@ fn avvia(dati: PathBuf, senza_web: bool) -> Result<(), slint::PlatformError> {
             }
         });
     });
+    // Il modello delle schede si dà alla cornice una volta sola.
+    let schede = ModelloSchede::nuovo();
+    cornice.set_schede(schede.modello());
     STATO.with_borrow_mut(|s| {
         *s = Some(Stato {
             cornice,
@@ -125,6 +130,7 @@ fn avvia(dati: PathBuf, senza_web: bool) -> Result<(), slint::PlatformError> {
             in_costruzione: false,
             in_attesa: None,
             misurata: false,
+            schede,
         })
     });
 
@@ -230,8 +236,9 @@ fn apri_schede(titolo: String, schede: Vec<SchedaDati>) {
     STATO.with_borrow_mut(|s| {
         let Some(stato) = s.as_mut() else { return };
         stato.cornice.set_titolo(titolo_pulito(&titolo).into());
-        let modello: Vec<SchedaUi> = schede_pulite(&schede).iter().map(a_slint).collect();
-        stato.cornice.set_schede(ModelRc::new(VecModel::from(modello)));
+        // I modelli non si sostituiscono mai: si aggiornano sul posto, così le schede e le righe
+        // che hanno il fuoco restano le stesse e il fuoco (con Esc e le frecce) sopravvive.
+        stato.schede.aggiorna(schede_pulite(&schede));
         stato.cornice.set_con_schede(true);
         stato.cornice.set_piano_b(false);
         if !stato.misurata {
@@ -247,17 +254,87 @@ fn apri_schede(titolo: String, schede: Vec<SchedaDati>) {
     });
 }
 
-/// Una scheda (già ripulita) come la vuole l'interfaccia.
-fn a_slint(s: &SchedaDati) -> SchedaUi {
-    let testi = |v: &[String]| ModelRc::new(VecModel::from(v.iter().map(|t| SharedString::from(t.as_str())).collect::<Vec<_>>()));
-    let righe: Vec<RigaUi> = s.righe.iter().map(|r| RigaUi { celle: testi(r), testo: testo_riga(&s.colonne, r).into() }).collect();
-    SchedaUi {
-        nome: s.nome.as_str().into(),
-        nota: s.nota.as_str().into(),
-        colonne: testi(&s.colonne),
-        righe: ModelRc::new(VecModel::from(righe)),
-        azione_console: s.azione_console.as_str().into(),
+/// I modelli delle schede, creati **una sola volta** (la cornice ne tiene sempre lo stesso) e
+/// aggiornati sul posto. Un repeater di Slint che riceve un `ModelRc` diverso (o un `set_vec`)
+/// ricrea tutte le sue istanze: la scheda o la riga col fuoco sparirebbe e con lei il fuoco (Esc e le
+/// frecce smetterebbero di funzionare). Qui si usano solo `set_row_data`, `push` e `remove`, e solo
+/// per ciò che è cambiato davvero; le righe di ogni scheda hanno un loro `VecModel` fisso.
+struct ModelloSchede {
+    schede: Rc<VecModel<SchedaUi>>,
+    righe: Vec<Rc<VecModel<RigaUi>>>,
+    /// Ciò che c'è adesso nei modelli, per confrontarlo con ciò che arriva.
+    dati: Vec<SchedaDati>,
+}
+
+impl ModelloSchede {
+    fn nuovo() -> Self {
+        Self { schede: Rc::new(VecModel::default()), righe: Vec::new(), dati: Vec::new() }
     }
+
+    /// Il modello da dare alla cornice (sempre lo stesso).
+    fn modello(&self) -> ModelRc<SchedaUi> {
+        ModelRc::from(self.schede.clone())
+    }
+
+    /// Porta i modelli a `nuovi` cambiando solo ciò che è diverso.
+    fn aggiorna(&mut self, nuovi: Vec<SchedaDati>) {
+        while self.righe.len() < nuovi.len() {
+            self.righe.push(Rc::new(VecModel::default()));
+        }
+        for (i, n) in nuovi.iter().enumerate() {
+            let prima = self.dati.get(i);
+            let colonne_uguali = prima.is_some_and(|p| p.colonne == n.colonne);
+            let vecchie = prima.filter(|_| colonne_uguali).map(|p| p.righe.as_slice());
+            sincronizza_righe(&self.righe[i], vecchie, n);
+            let testa_uguale = prima.is_some_and(|p| p.nome == n.nome && p.nota == n.nota && colonne_uguali && p.azione_console == n.azione_console);
+            if testa_uguale {
+                continue;
+            }
+            let ui = SchedaUi {
+                nome: n.nome.as_str().into(),
+                nota: n.nota.as_str().into(),
+                colonne: testi(&n.colonne),
+                righe: ModelRc::from(self.righe[i].clone()),
+                azione_console: n.azione_console.as_str().into(),
+            };
+            if i < self.schede.row_count() {
+                self.schede.set_row_data(i, ui);
+            } else {
+                self.schede.push(ui);
+            }
+        }
+        while self.schede.row_count() > nuovi.len() {
+            self.schede.remove(self.schede.row_count() - 1);
+        }
+        self.righe.truncate(nuovi.len());
+        self.dati = nuovi;
+    }
+}
+
+fn testi(v: &[String]) -> ModelRc<SharedString> {
+    ModelRc::new(VecModel::from(v.iter().map(|t| SharedString::from(t.as_str())).collect::<Vec<_>>()))
+}
+
+/// Porta le righe del modello a quelle di `n`: una riga uguale a prima (stesse colonne e stesse
+/// celle) non si tocca; una cambiata si riscrive sul posto; le righe in più si aggiungono o si
+/// tolgono in coda. `vecchie` è `None` se le colonne sono cambiate (allora tutte si riscrivono).
+fn sincronizza_righe(modello: &VecModel<RigaUi>, vecchie: Option<&[Vec<String>]>, n: &SchedaDati) {
+    for (j, celle) in n.righe.iter().enumerate() {
+        if j < modello.row_count() {
+            if vecchie.and_then(|v| v.get(j)) != Some(celle) {
+                modello.set_row_data(j, riga_ui(&n.colonne, celle));
+            }
+        } else {
+            modello.push(riga_ui(&n.colonne, celle));
+        }
+    }
+    while modello.row_count() > n.righe.len() {
+        modello.remove(modello.row_count() - 1);
+    }
+}
+
+fn riga_ui(colonne: &[String], celle: &[String]) -> RigaUi {
+    RigaUi { celle: testi(celle), testo: testo_riga(colonne, celle).into() }
 }
 
 /// Ciò che Narrator legge di una riga: «Nome: Chiave di prova A, Stato: Attiva…», senza le celle
@@ -648,7 +725,9 @@ mod test {
         c.show().expect("mostrata nel backend di prova");
         c.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
         let dati = [scheda_di_prova("Spesa", 3), scheda_di_prova("Token", 2), scheda_di_prova("Chiavi", 40)];
-        c.set_schede(ModelRc::new(VecModel::from(dati.iter().map(a_slint).collect::<Vec<_>>())));
+        let mut modello = ModelloSchede::nuovo();
+        c.set_schede(modello.modello());
+        modello.aggiorna(dati.to_vec());
         c.set_con_schede(true);
 
         let con_ruolo = |ruolo: AccessibleRole| -> Vec<ElementHandle> {
@@ -680,15 +759,100 @@ mod test {
         assert_eq!(scelta(&con_ruolo(AccessibleRole::Tab)), [true, false, false]);
         tasto(&c, Key::End);
         assert_eq!(scelta(&con_ruolo(AccessibleRole::Tab)), [false, false, true]);
-        // Con la scheda «Chiavi» le righe sono 40 (Slint ne crea solo quelle in vista, ma ognuna sa
-        // di essere «di 40»).
+        // Con la scheda «Chiavi» le righe sono 40; Slint crea solo quelle in vista (misurato: 18 di
+        // 40 in questa finestra), ma ognuna sa di essere «di 40».
         let viste = con_ruolo(AccessibleRole::ListItem);
-        assert!(!viste.is_empty() && viste.iter().all(|r| r.accessible_item_count() == Some(40)));
+        assert!(!viste.is_empty() && viste.len() < 40, "{}", viste.len());
+        assert!(viste.iter().all(|r| r.accessible_item_count() == Some(40)));
         assert_eq!(viste[0].accessible_label().unwrap().as_str(), "Nome: Chiavi 0, Stato: Attiva");
         // Una scheda tocca di nuovo: Narrator rilegge la scelta (cambia `selected`, non i nomi).
         tasto(&c, Key::LeftArrow);
         assert_eq!(scelta(&con_ruolo(AccessibleRole::Tab)), [false, true, false]);
         assert_eq!(con_ruolo(AccessibleRole::ListItem).len(), 2);
+    }
+
+    /// Un aggiornamento dei dati a finestra aperta non toglie il fuoco: la scheda o la riga che ce
+    /// l'ha resta la stessa istanza (i modelli si aggiornano sul posto), quindi le frecce cambiano
+    /// ancora scheda ed Esc arriva a `chiudi`.
+    #[test]
+    fn il_fuoco_sopravvive_agli_aggiornamenti() {
+        use i_slint_backend_testing::{AccessibleRole, ElementHandle};
+        use slint::platform::Key;
+        i_slint_backend_testing::init_no_event_loop();
+        let c = Cornice::new().expect("cornice");
+        c.show().expect("mostrata nel backend di prova");
+        c.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        let chiuso = Rc::new(Cell::new(0));
+        let k = chiuso.clone();
+        c.on_chiudi(move || k.set(k.get() + 1));
+        let mut modello = ModelloSchede::nuovo();
+        c.set_schede(modello.modello());
+        modello.aggiorna(vec![scheda_di_prova("Spesa", 3), scheda_di_prova("Token", 2), scheda_di_prova("Chiavi", 5)]);
+        c.set_con_schede(true);
+        let scelta = || -> Vec<bool> {
+            ElementHandle::find_by_element_type_name(&c, "Linguetta")
+                .filter(|e| e.accessible_role() == Some(AccessibleRole::Tab))
+                .map(|e| e.accessible_item_selected().unwrap())
+                .collect()
+        };
+        let righe = || -> Vec<String> {
+            ElementHandle::find_by_element_type_name(&c, "RigaTabella").map(|e| e.accessible_label().unwrap().to_string()).collect()
+        };
+        // Il fuoco è sulla scheda scelta: un aggiornamento con dati cambiati (nota, righe) e poi ←/→.
+        let mut cambiati = vec![scheda_di_prova("Spesa", 6), scheda_di_prova("Token", 1), scheda_di_prova("Chiavi", 5)];
+        cambiati[0].nota = "Letto alle 17:00".into();
+        cambiati[0].righe[0][1] = "Nuova".into();
+        modello.aggiorna(cambiati);
+        assert_eq!(righe().len(), 6, "le righe nuove ci sono");
+        assert!(righe()[0].contains("Stato: Nuova"), "{:?}", righe()[0]);
+        tasto(&c, Key::RightArrow);
+        assert_eq!(scelta(), [false, true, false], "la scheda col fuoco è sopravvissuta");
+        tasto(&c, Key::LeftArrow);
+        assert_eq!(scelta(), [true, false, false]);
+        // Il fuoco passa a una riga (↓), poi i dati cambiano ancora (la prima riga, il numero di
+        // righe): la riga col fuoco c'è ancora e Esc arriva a `chiudi`.
+        tasto(&c, Key::DownArrow);
+        let mut ancora = vec![scheda_di_prova("Spesa", 4), scheda_di_prova("Token", 1), scheda_di_prova("Chiavi", 5)];
+        ancora[0].righe[0][0] = "Spesa cambiata".into();
+        modello.aggiorna(ancora);
+        assert!(righe()[0].contains("Spesa cambiata"));
+        assert_eq!(righe().len(), 4);
+        tasto(&c, Key::Escape);
+        assert_eq!(chiuso.get(), 1, "Esc arriva a `chiudi` anche dopo l'aggiornamento");
+        // Senza l'aggiornamento sul posto (un `set_schede` con un modello nuovo) il fuoco sparirebbe.
+        c.set_schede(ModelRc::new(VecModel::from(vec![SchedaUi::default()])));
+        tasto(&c, Key::Escape);
+        assert_eq!(chiuso.get(), 1, "con un modello nuovo il fuoco è perso: è ciò che si evita");
+    }
+
+    /// Le righe fuori vista non esistono finché non ci si scorre: Fine e PagGiù le mettono in vista
+    /// e il fuoco le raggiunge lo stesso (Esc arriva a `chiudi` solo se il fuoco è su un elemento vivo).
+    #[test]
+    fn il_fuoco_raggiunge_una_riga_fuori_vista() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::Key;
+        i_slint_backend_testing::init_no_event_loop();
+        let c = Cornice::new().expect("cornice");
+        c.show().expect("mostrata nel backend di prova");
+        c.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        let chiuso = Rc::new(Cell::new(0));
+        let k = chiuso.clone();
+        c.on_chiudi(move || k.set(k.get() + 1));
+        let mut modello = ModelloSchede::nuovo();
+        c.set_schede(modello.modello());
+        modello.aggiorna(vec![scheda_di_prova("Chiavi", 120)]);
+        c.set_con_schede(true);
+        let ha = |testo: &str| ElementHandle::find_by_element_type_name(&c, "RigaTabella").any(|e| e.accessible_label().unwrap().contains(testo));
+        assert!(!ha("Chiavi 119"), "l'ultima riga non esiste ancora");
+        tasto(&c, Key::DownArrow);
+        tasto(&c, Key::End);
+        assert!(ha("Chiavi 119"), "Fine l'ha messa in vista");
+        tasto(&c, Key::Escape);
+        assert_eq!(chiuso.get(), 1, "e il fuoco c'è: Esc arriva a `chiudi`");
+        tasto(&c, Key::Home);
+        tasto(&c, Key::PageDown);
+        tasto(&c, Key::Escape);
+        assert_eq!(chiuso.get(), 2, "anche dopo Inizio e PagGiù");
     }
 
     #[test]

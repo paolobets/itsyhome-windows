@@ -7,6 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — v3 «assistente isola» (ramo `v3-assistente`, milestone M1 e M2)
 
+### Fixed (M3, Task 11: il fuoco sopravvive agli aggiornamenti)
+- Un aggiornamento dei dati a finestra aperta (la lettura arrivata dopo l'apertura, quella delle 3 ore) non toglie più il fuoco: i modelli delle schede e delle righe sono creati una volta e aggiornati sul posto (`set_row_data`, `push`, `remove`, solo per ciò che è cambiato), così la scheda o la riga col fuoco resta la stessa istanza e frecce ed Esc continuano a funzionare. Prima ogni `set_schede` ricreava tutto e il fuoco spariva.
+- Fine, PagGiù e le altre frecce raggiungono anche una riga fuori vista (Slint crea solo le righe in vista: prima la si porta in vista, poi prende il fuoco appena nasce).
+- L'avviso «Appena aggiornato» non sopravvive alla chiusura della finestra.
+
 ### Fixed (M3, Task 11: schede accessibili e rifiniture dalla revisione)
 - **Narrator e tastiera nelle schede**: le schede stanno in un `tab-list` e ognuna è un `tab` col fuoco (Tab raggiunge solo quella scelta; ←/→/Home/Fine spostano insieme fuoco e scelta, con posizione e numero); la tabella è una `list` e ogni riga un `list-item` col fuoco la cui etichetta legge le celle con i nomi delle colonne («Nome: …, Stato: …»), ↑/↓/PagSu/PagGiù/Home/Fine passano da una riga all'altra e la riga si porta in vista. Provato con un test Slint nella finestra (ruoli, nomi, scelta che segue i tasti) e con l'albero UIA del processo vero.
 - Nessuna cella con `sk-ant-` nemmeno con caratteri invisibili in mezzo (il controllo ora sta dopo `testo_pulito`, dentro `scheda_pulita`); tetti del protocollo: al più 8 schede e 500 caratteri per cella; tolta la proprietà `n` mai usata.

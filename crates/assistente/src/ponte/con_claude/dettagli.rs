@@ -104,7 +104,11 @@ impl Ponte {
         }
         match m {
             Messaggio::Azione { id } => self.dettagli_azione(&id),
-            Messaggio::Chiusa => self.dettagli_aperti.set(false),
+            Messaggio::Chiusa => {
+                self.dettagli_aperti.set(false);
+                // Un avviso non consumato non deve comparire ore dopo, in un'altra finestra.
+                *self.dettagli_avviso.borrow_mut() = None;
+            }
             _ => {}
         }
     }
@@ -328,8 +332,10 @@ mod test {
         aperte();
         p.dettagli_messaggio(1, Messaggio::Azione { id: "console:spesa".into() });
         assert!(aperte().is_empty(), "nemmeno le sue azioni");
+        *p.dettagli_avviso.borrow_mut() = Some("Appena aggiornato: riprova fra 9 s".into());
         p.dettagli_messaggio(2, Messaggio::Chiusa);
         assert!(!p.dettagli_aperti.get());
+        assert!(!p.schede_da_mostrare()[0].nota.contains("Appena aggiornato"), "l'avviso non sopravvive alla finestra");
     }
 
     #[test]
