@@ -54,6 +54,10 @@ pub struct Arrivo {
     /// Il PID del mittente, cercato solo alla prima richiesta di un `session_id` nuovo (e solo se
     /// la ricerca riesce); altrimenti `None`. Sul percorso della barra è sempre `None`.
     pub pid_mittente: Option<u32>,
+    /// Il numero d'ordine della connessione, preso all'accettazione (prima di leggere) da un
+    /// contatore dell'ascoltatore: cresce a ogni connessione accettata. Serve a chi riceve gli
+    /// eventi su thread diversi per sapere quale è arrivato prima.
+    pub sequenza: u64,
 }
 
 impl std::fmt::Debug for Arrivo {
@@ -64,6 +68,7 @@ impl std::fmt::Debug for Arrivo {
             .field("corpo_byte", &self.corpo.len())
             .field("porta_mittente", &self.porta_mittente)
             .field("pid_mittente", &self.pid_mittente)
+            .field("sequenza", &self.sequenza)
             .finish()
     }
 }
@@ -122,6 +127,8 @@ struct Contesto {
     sessioni: SessioniViste,
     fermo: AtomicBool,
     connessioni: AtomicUsize,
+    /// Il prossimo numero d'ordine di connessione (vedi `Arrivo::sequenza`).
+    sequenza: AtomicU64,
 }
 
 /// L'ascoltatore in funzione. `Drop` lo ferma e ne raccoglie il thread.
@@ -177,6 +184,7 @@ pub fn avvia(c: ConfigAscolto, g: Arc<dyn Gestore>) -> Result<Ascoltatore, Error
         sessioni: SessioniViste::default(),
         fermo: AtomicBool::new(false),
         connessioni: AtomicUsize::new(0),
+        sequenza: AtomicU64::new(1),
     });
     let c2 = Arc::clone(&contesto);
     let thread = thread::Builder::new()
@@ -213,6 +221,7 @@ fn accetta(ascolto: TcpListener, ctx: Arc<Contesto>) {
             thread::sleep(Duration::from_millis(10));
             continue;
         };
+        let sequenza = ctx.sequenza.fetch_add(1, Ordering::SeqCst);
         let prima = ctx.connessioni.fetch_add(1, Ordering::SeqCst);
         let guardiano = Guardiano(Arc::clone(&ctx));
         if prima >= CONNESSIONI_MASSIME {
@@ -223,7 +232,7 @@ fn accetta(ascolto: TcpListener, ctx: Arc<Contesto>) {
         let c2 = Arc::clone(&ctx);
         let esito = thread::Builder::new().name("claude-conn".into()).spawn(move || {
             let _guardiano = guardiano;
-            servi(flusso, &c2);
+            servi(flusso, &c2, sequenza);
         });
         if esito.is_err() {
             // Il closure è stato lasciato cadere: connessione chiusa e contatore restituito.
@@ -318,11 +327,11 @@ struct Testa {
     codifica: bool,
 }
 
-fn servi(mut flusso: TcpStream, ctx: &Contesto) {
+fn servi(mut flusso: TcpStream, ctx: &Contesto, sequenza: u64) {
     let _ = flusso.set_write_timeout(Some(TEMPO_LETTURA));
     let porta_mittente = flusso.peer_addr().map(|a| a.port()).unwrap_or(0);
     let fine = Instant::now() + TEMPO_LETTURA;
-    match istruisci(&mut flusso, ctx, porta_mittente) {
+    match istruisci(&mut flusso, ctx, porta_mittente, sequenza) {
         Ok(()) => {}
         Err(Fine::Rifiuto(codice)) => {
             ctx.conta_rifiuto();
@@ -391,7 +400,7 @@ fn tipo_json(v: &str) -> bool {
     }
 }
 
-fn istruisci(flusso: &mut TcpStream, ctx: &Contesto, porta_mittente: u16) -> Result<(), Fine> {
+fn istruisci(flusso: &mut TcpStream, ctx: &Contesto, porta_mittente: u16, sequenza: u64) -> Result<(), Fine> {
     let fine = Instant::now() + TEMPO_LETTURA;
 
     // 1. Intestazioni, in un buffer di 8 KB.
@@ -514,6 +523,7 @@ fn istruisci(flusso: &mut TcpStream, ctx: &Contesto, porta_mittente: u16) -> Res
                 corpo,
                 porta_mittente,
                 pid_mittente: None,
+                sequenza,
             });
             Ok(())
         }
@@ -525,7 +535,7 @@ fn istruisci(flusso: &mut TcpStream, ctx: &Contesto, porta_mittente: u16) -> Res
                 Some(id) if ctx.sessioni.nuova(id) => mittente::pid_mittente(porta_mittente, ctx.porta),
                 _ => None,
             };
-            let arrivo = Arrivo { percorso, corpo, porta_mittente, pid_mittente };
+            let arrivo = Arrivo { percorso, corpo, porta_mittente, pid_mittente, sequenza };
             if t.hook_event_name == "PermissionRequest" {
                 permesso(flusso, ctx, arrivo);
             } else {
@@ -1275,6 +1285,20 @@ mod test {
     }
 
     #[test]
+    fn la_sequenza_cresce_a_ogni_connessione_accettata() {
+        let g = Registro::nuovo(Modo::Subito);
+        let (_a, c, porta) = avvia_prova(&g, ATTESA_MASSIMA);
+        for _ in 0..3 {
+            let r = invia(porta, &Rich::valida(porta, &c, PERCORSO_EVENTO, EVENTO));
+            assert_eq!(stato(&r), 200);
+        }
+        assert!(aspetta(|| g.eventi.lock().unwrap().len() == 3, 3));
+        let mut seq: Vec<u64> = g.eventi.lock().unwrap().iter().map(|a| a.sequenza).collect();
+        seq.sort_unstable();
+        assert!(seq[0] >= 1 && seq.windows(2).all(|w| w[0] < w[1]), "{seq:?}");
+    }
+
+    #[test]
     fn session_id_non_testo_accettato_senza_ricerca() {
         let g = Registro::nuovo(Modo::Subito);
         let (_a, c, porta) = avvia_prova(&g, ATTESA_MASSIMA);
@@ -1298,6 +1322,7 @@ mod test {
             corpo: b"SEGRETO-DEL-CORPO".to_vec(),
             porta_mittente: 1234,
             pid_mittente: Some(7),
+            sequenza: 9,
         };
         let d = format!("{a:?}");
         assert!(!d.contains("SEGRETO"), "{d}");

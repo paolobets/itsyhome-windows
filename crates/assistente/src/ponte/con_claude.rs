@@ -60,6 +60,9 @@ impl Armamento {
 pub(super) struct Pendente {
     sessione: String,
     tx: Option<Sender<Decisione>>,
+    /// Il numero d'ordine di arrivo della richiesta (`Arrivo::sequenza`): un evento di chiusura
+    /// la chiude solo se è arrivato dopo.
+    sequenza: u64,
 }
 
 /// Il codice dell'ascoltatore: in prova il valore di `ISOLA_HOOK_TOKEN` (passato, i test non leggono
@@ -165,10 +168,10 @@ impl GestoreIsola {
 
 /// Porta un evento al thread dell'interfaccia. Se il ciclo eventi è finito non c'è più nessuno:
 /// si ignora.
-fn consegna(e: EventoHook, pid: Option<u32>) {
+fn consegna(e: EventoHook, pid: Option<u32>, sequenza: u64) {
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(p) = ponte() {
-            p.claude_evento(e, pid, Instant::now());
+            p.claude_evento(e, pid, sequenza, Instant::now());
         }
     });
 }
@@ -179,10 +182,11 @@ fn consegna_permesso(
     e: EventoHook,
     pid: Option<u32>,
     tx: Option<Sender<Decisione>>,
+    sequenza: u64,
 ) -> Result<(), slint::EventLoopError> {
     slint::invoke_from_event_loop(move || {
         if let Some(p) = ponte() {
-            p.claude_permesso(id, e, pid, tx, Instant::now());
+            p.claude_permesso(id, e, pid, tx, sequenza, Instant::now());
         }
     })
 }
@@ -190,7 +194,7 @@ fn consegna_permesso(
 impl Gestore for GestoreIsola {
     fn evento(&self, a: Arrivo) {
         if let Ok(e) = evento_da_json(&a.corpo) {
-            consegna(e, a.pid_mittente);
+            consegna(e, a.pid_mittente, a.sequenza);
         }
     }
 
@@ -200,18 +204,19 @@ impl Gestore for GestoreIsola {
     fn permesso(&self, a: Arrivo) -> Option<AttesaPermesso> {
         let e = evento_da_json(&a.corpo).ok()?;
         let pid = a.pid_mittente;
+        let sequenza = a.sequenza;
         if e.tipo != TipoEvento::PermissionRequest {
-            consegna(e, pid);
+            consegna(e, pid, sequenza);
             return None;
         }
         let id = PROSSIMO_PERMESSO.fetch_add(1, Ordering::Relaxed);
         if !PERMESSI_RISOLVIBILI {
-            let _ = consegna_permesso(id, e, pid, None);
+            let _ = consegna_permesso(id, e, pid, None, sequenza);
             return None;
         }
         let (tx, rx) = channel();
         // Senza ciclo eventi nessuno può rispondere: il canale cade e Claude ripiega.
-        consegna_permesso(id, e, pid, Some(tx)).ok()?;
+        consegna_permesso(id, e, pid, Some(tx), sequenza).ok()?;
         Some(AttesaPermesso { id, decisione: rx })
     }
 
@@ -238,7 +243,8 @@ impl Gestore for GestoreIsola {
 impl Ponte {
     /// Un evento di Claude Code, sul thread dell'interfaccia. `pid`: il processo del terminale,
     /// trovato alla prima richiesta di una sessione.
-    pub(super) fn claude_evento(&self, e: EventoHook, pid: Option<u32>, ora: Instant) {
+    /// `sequenza`: l'ordine di arrivo della connessione (`Arrivo::sequenza`).
+    pub(super) fn claude_evento(&self, e: EventoHook, pid: Option<u32>, sequenza: u64, ora: Instant) {
         self.casa.diagnosi().conta(Contatore::claude_eventi);
         // Claude Code è andato avanti (o la sessione è finita): chi aspettava una risposta non
         // serve più. Non la `Notification`: Claude ne manda una `permission_prompt` mentre il
@@ -251,7 +257,7 @@ impl Ponte {
                 | TipoEvento::StopFailure
                 | TipoEvento::SessionEnd
         ) {
-            self.claude_chiudi_permessi(&e.sessione);
+            self.claude_chiudi_permessi(&e.sessione, sequenza);
         }
         let cambi = {
             let mut s = self.claude_sessioni.borrow_mut();
@@ -274,18 +280,19 @@ impl Ponte {
         e: EventoHook,
         pid: Option<u32>,
         tx: Option<Sender<Decisione>>,
+        sequenza: u64,
         ora: Instant,
     ) {
         if self.claude_permessi.borrow().len() >= MASSIMO_PERMESSI || self.claude_permessi.borrow().contains_key(&id) {
             drop(tx);
-            self.claude_evento(e, pid, ora);
+            self.claude_evento(e, pid, sequenza, ora);
             return;
         }
-        self.claude_permessi.borrow_mut().insert(id, Pendente { sessione: e.sessione.clone(), tx });
+        self.claude_permessi.borrow_mut().insert(id, Pendente { sessione: e.sessione.clone(), tx, sequenza });
         let voce = claude::voce_permesso(id, &e, ora);
         // Prima il permesso in elenco, poi l'evento: la voce «ti aspetta» della sessione cede il
         // posto a quella del permesso.
-        self.claude_evento(e, pid, ora);
+        self.claude_evento(e, pid, sequenza, ora);
         self.metti_voce(voce, true);
     }
 
@@ -298,8 +305,11 @@ impl Ponte {
             return;
         }
         let Some(p) = self.claude_permessi.borrow_mut().remove(&id) else { return };
-        if let Some(tx) = &p.tx {
-            let _ = tx.send(decisione);
+        // L'ascoltatore può aver già rinunciato (tempo scaduto, client chiuso): senza chi
+        // riceve, la decisione non c'è stata e il terminale aspetta ancora.
+        if p.tx.as_ref().is_some_and(|tx| tx.send(decisione).is_err()) {
+            self.claude_permesso_chiuso(id, &p.sessione);
+            return;
         }
         // Risposto dall'assistente: Claude Code esegue (o rinuncia) subito, e senza un nuovo
         // evento la sessione resterebbe «ti aspetta». Va al lavoro, con lo strumento che aveva.
@@ -340,6 +350,14 @@ impl Ponte {
         }
     }
 
+    /// Una superficie che mostra i permessi compare (pannello aperto, pillola che torna): con un
+    /// permesso in attesa «Consenti» si arma fra `ARMAMENTO_CONSENTI`.
+    pub(super) fn claude_superficie_compare(&self, ora: Instant) {
+        if !self.claude_permessi.borrow().is_empty() {
+            self.claude_armamento.borrow().dal.set(ora + ARMAMENTO_CONSENTI);
+        }
+    }
+
     /// Un nuovo ascolto parte: chi aspettava sul vecchio non c'è più. `Nessuna` a tutti, voci tolte.
     pub(super) fn claude_chiudi_tutti(&self) {
         let tutti: Vec<(u64, Pendente)> = self.claude_permessi.borrow_mut().drain().collect();
@@ -364,10 +382,13 @@ impl Ponte {
 
     /// Una sessione è andata avanti: i suoi permessi in attesa si chiudono senza decisione (Claude
     /// Code risponde da sé) e le voci spariscono. Le altre sessioni non si toccano.
-    fn claude_chiudi_permessi(&self, sessione: &str) {
+    /// Solo quelli arrivati **prima** dell'evento che chiude (`sequenza` più bassa): una
+    /// `PreToolUse` e la sua stessa `PermissionRequest` arrivano a pochi istanti e su connessioni
+    /// diverse, e la richiesta può passare per prima dall'interfaccia.
+    fn claude_chiudi_permessi(&self, sessione: &str, sequenza: u64) {
         let chiusi: Vec<(u64, Pendente)> = {
             let mut m = self.claude_permessi.borrow_mut();
-            let ids: Vec<u64> = m.iter().filter(|(_, p)| p.sessione == sessione).map(|(id, _)| *id).collect();
+            let ids: Vec<u64> = m.iter().filter(|(_, p)| p.sessione == sessione && p.sequenza < sequenza).map(|(id, _)| *id).collect();
             ids.into_iter().filter_map(|id| m.remove(&id).map(|p| (id, p))).collect()
         };
         for (id, p) in chiusi {
@@ -554,7 +575,7 @@ mod test {
     }
 
     fn manda(p: &Ponte, e: EventoHook) {
-        p.claude_evento(e, None, Instant::now());
+        p.claude_evento(e, None, SEQUENZA.fetch_add(1, Ordering::Relaxed), Instant::now());
     }
 
     fn voci_claude(p: &Ponte) -> Vec<(String, Livello, String)> {
@@ -600,7 +621,7 @@ mod test {
     #[test]
     fn il_pid_del_terminale_si_tiene() {
         let (_s, p, _pillola, _d) = ponte_di_prova();
-        p.claude_evento(ev("a", TipoEvento::UserPromptSubmit), Some(4321), Instant::now());
+        p.claude_evento(ev("a", TipoEvento::UserPromptSubmit), Some(4321), SEQUENZA.fetch_add(1, Ordering::Relaxed), Instant::now());
         assert_eq!(p.claude_sessioni.borrow().elenco()[0].pid, Some(4321));
     }
 
@@ -804,7 +825,7 @@ mod test {
     /// che aspetta l'ascoltatore.
     fn permesso(p: &Ponte, id: u64, sessione: &str) -> Receiver<Decisione> {
         let (tx, rx) = channel();
-        p.claude_permesso(id, chiede(sessione, "ls -la"), None, Some(tx), Instant::now());
+        p.claude_permesso(id, chiede(sessione, "ls -la"), None, Some(tx), SEQUENZA.fetch_add(1, Ordering::Relaxed), Instant::now());
         rx
     }
 
@@ -817,6 +838,9 @@ mod test {
         armato(p);
         p.azione(&voce_di(id), PULSANTE_CONSENTI);
     }
+
+    /// Numeri d'ordine di arrivo per le prove: ogni permesso o evento di prova ne prende uno più alto.
+    static SEQUENZA: AtomicU64 = AtomicU64::new(1);
 
     fn voce_di(id: u64) -> String {
         claude::id_voce_permesso(id)
@@ -1075,6 +1099,63 @@ mod test {
         let b = PROSSIMO_PERMESSO.fetch_add(1, Ordering::Relaxed);
         assert!(b > a);
         spegni();
+    }
+
+    #[test]
+    fn il_pannello_o_la_pillola_che_compaiono_armano_di_nuovo() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let rx = permesso(&p, 1, "a");
+        armato(&p);
+        // Il pannello si apre con un permesso in attesa: Consenti subito è ignorato, dopo vale.
+        let pannello = crate::Pannello::new().unwrap();
+        p.pannello_aperto(&pannello);
+        let dal = p.claude_armamento.borrow().dal.get();
+        assert!(dal > Instant::now() - Duration::from_millis(1) && dal <= Instant::now() + ARMAMENTO_CONSENTI);
+        p.claude_decidi(1, Decisione::Consenti, dal - Duration::from_millis(1));
+        assert_eq!(rx.try_recv(), Err(TryRecvError::Empty));
+        // Il pannello si chiude e la pillola ricompare: di nuovo il ritardo.
+        armato(&p);
+        p.pannello_chiuso();
+        let dal = p.claude_armamento.borrow().dal.get();
+        assert!(dal > Instant::now(), "il ritardo è ripartito");
+        p.claude_decidi(1, Decisione::Consenti, dal - Duration::from_millis(1));
+        assert_eq!(rx.try_recv(), Err(TryRecvError::Empty));
+        p.claude_decidi(1, Decisione::Consenti, dal);
+        assert_eq!(rx.try_recv(), Ok(Decisione::Consenti));
+        // Senza permessi in attesa non si arma nulla.
+        armato(&p);
+        let prima = p.claude_armamento.borrow().dal.get();
+        p.ridisegna_pillola();
+        assert_eq!(p.claude_armamento.borrow().dal.get(), prima);
+    }
+
+    #[test]
+    fn invio_non_riuscito_non_e_una_decisione() {
+        use claude_hook::sessioni::Stato;
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let rx = permesso(&p, 1, "a");
+        drop(rx); // l'ascoltatore ha rinunciato
+        consenti(&p, 1);
+        assert!(!ha_voce(&p, &voce_di(1)), "la voce se ne va");
+        assert_eq!(p.claude_sessioni.borrow().elenco()[0].stato, Stato::TiAspetta, "il terminale aspetta ancora");
+        assert!(voci_claude(&p).iter().any(|v| v.0.ends_with(".aspetta")));
+    }
+
+    #[test]
+    fn la_chiusura_vale_solo_per_i_permessi_arrivati_prima() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        // La PreToolUse è partita prima della richiesta (sequenza più bassa) ma l'interfaccia
+        // la vede dopo: il permesso resta.
+        let prima = SEQUENZA.fetch_add(2, Ordering::Relaxed);
+        let (tx, rx) = channel();
+        p.claude_permesso(1, chiede("a", "ls"), None, Some(tx), prima + 1, Instant::now());
+        p.claude_evento(ev("a", TipoEvento::PreToolUse), None, prima, Instant::now());
+        assert!(ha_voce(&p, &voce_di(1)), "una PreToolUse più vecchia non chiude");
+        assert_eq!(rx.try_recv(), Err(TryRecvError::Empty));
+        // Una più nuova sì.
+        p.claude_evento(ev("a", TipoEvento::PreToolUse), None, prima + 2, Instant::now());
+        assert_eq!(rx.try_recv(), Ok(Decisione::Nessuna));
+        assert!(!ha_voce(&p, &voce_di(1)));
     }
 
     #[test]

@@ -1238,6 +1238,9 @@ impl Ponte {
     /// I servizi di sistema dicono se la pillola si vede (`Visibilita::Pillola`).
     pub fn pillola_visibile(&self, si: bool) {
         if self.pillola_mostrata.replace(si) != si {
+            if si {
+                self.claude_superficie_compare(Instant::now());
+            }
             self.aggiorna_lati();
             self.aggiorna_claude_pillola();
         }
@@ -2079,6 +2082,8 @@ impl Ponte {
     pub fn pannello_aperto(&self, p: &Pannello) {
         *self.pannello.borrow_mut() = p.as_weak();
         self.attese.borrow_mut().segna_viste();
+        // Il pannello compare: un permesso in attesa non si consente al primo istante.
+        self.claude_superficie_compare(Instant::now());
         *self.mostrato.borrow_mut() = None; // il pannello nuovo non ha ancora l'umore
         self.aggiorna_umore();
     }
@@ -2103,6 +2108,8 @@ impl Ponte {
     /// La pillola (di nuovo attiva) sta per ricomparire: riprende l'aspetto di adesso anche se
     /// non è cambiato da quando si era nascosta.
     pub fn ridisegna_pillola(&self) {
+        // La pillola ricompare (anche dalla ritirata): «Consenti» si arma dopo un po'.
+        self.claude_superficie_compare(Instant::now());
         *self.mostrato.borrow_mut() = None;
         self.aggiorna_umore();
     }
