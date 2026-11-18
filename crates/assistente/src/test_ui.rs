@@ -1058,6 +1058,20 @@ mod accessibilita {
         assert_eq!(eventi.borrow().last().map(String::as_str), Some("tocca light.preferita"));
     }
 
+    /// Il nome accessibile dell'elemento col fuoco, o del primo suo antenato che ne ha uno.
+    fn etichetta_col_fuoco(p: &Pannello) -> String {
+        use i_slint_core::accessibility::AccessibleStringProperty;
+        use i_slint_core::item_tree::ParentItemTraversalMode;
+        let mut corrente = i_slint_core::window::WindowInner::from_pub(p.window()).focus_item.borrow().upgrade();
+        while let Some(item) = corrente {
+            if let Some(e) = item.accessible_string_property(AccessibleStringProperty::Label).filter(|e| !e.is_empty()) {
+                return e.to_string();
+            }
+            corrente = item.parent_item(ParentItemTraversalMode::StopAtPopups);
+        }
+        String::new()
+    }
+
     /// Un elenco di luci accese per la Casa filtrata, e il pannello che lo mostra.
     fn luci_accese_di_prova(ids: &[&str]) -> std::rc::Rc<VecModel<crate::PreferitoUi>> {
         std::rc::Rc::new(VecModel::from(
@@ -1072,8 +1086,8 @@ mod accessibilita {
     #[test]
     fn il_clic_su_luci_accese_apre_la_casa_filtrata() {
         for (layout, etichetta) in [
-            (0, "Casa · 2 luci accese ›: mostra le luci accese"),
-            (1, "CASA, 2 luci accese ›: mostra le luci accese"),
+            (0, "Casa · 2 luci accese: mostra le luci accese"),
+            (1, "CASA, 2 luci accese: mostra le luci accese"),
         ] {
             let (p, _) = pannello_casa();
             p.set_vista("panoramica".into());
@@ -1110,9 +1124,10 @@ mod accessibilita {
         assert_eq!(p.get_vista(), "panoramica");
     }
 
-    /// La Casa filtrata da tastiera: Invio spegne la luce col fuoco (e l'elenco si accorcia senza
-    /// perdere il fuoco: il tasto dopo agisce sulla riga che prende il suo posto), ↑ porta a
-    /// «Spegni tutte», → a «Tutta la casa»; Esc torna all'elenco completo prima di chiudere.
+    /// La Casa filtrata da tastiera: Invio spegne la luce col fuoco e l'elenco si accorcia (come fa
+    /// il ponte, con `set_vec`) senza perdere il fuoco: passa alla riga che prende il posto, o alla
+    /// precedente se era l'ultima. ↑ porta a «Spegni tutte», → a «Tutta la casa»; Esc torna
+    /// all'elenco completo prima di chiudere.
     #[test]
     fn casa_filtrata_da_tastiera_senza_perdere_il_fuoco() {
         use slint::platform::Key;
@@ -1123,23 +1138,26 @@ mod accessibilita {
         let (e1, l1) = (eventi.clone(), luci.clone());
         p.on_tocca(move |id| {
             e1.borrow_mut().push(format!("tocca {id}"));
-            // Come il ponte: la luce spenta esce subito dall'elenco.
-            let i = (0..l1.row_count()).find(|&i| l1.row_data(i).unwrap().entity_id == id).unwrap();
-            l1.remove(i);
+            // Come il ponte: la luce spenta esce subito dall'elenco, e il modello si riscrive.
+            let resto: Vec<_> = l1.iter().filter(|l| l.entity_id != id).collect();
+            l1.set_vec(resto);
         });
         let e2 = eventi.clone();
         p.on_spegni_tutte(move || e2.borrow_mut().push("spegni tutte".into()));
         tasto(&p, Key::Return);
+        assert_eq!(etichetta_col_fuoco(&p), "Nome light.b, Acceso", "spenta la prima, il fuoco è sulla riga al suo posto");
+        // Fuoco sull'ultima riga: spenta, il fuoco va alla precedente.
+        tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Nome light.c, Acceso");
         tasto(&p, Key::Return);
-        assert_eq!(*eventi.borrow(), ["tocca light.a", "tocca light.b"], "il secondo Invio non si è perso");
-        let fuoco = i_slint_core::window::WindowInner::from_pub(p.window()).focus_item.borrow().upgrade();
-        assert!(fuoco.is_some(), "il fuoco c'è ancora (non è rimasto su una riga distrutta)");
+        assert_eq!(*eventi.borrow(), ["tocca light.a", "tocca light.c"]);
+        assert_eq!(etichetta_col_fuoco(&p), "Nome light.b, Acceso", "spenta l'ultima, il fuoco va alla più vicina");
         // ↑ dalla prima riga: «Spegni tutte».
         tasto(&p, Key::UpArrow);
         tasto(&p, Key::Return);
         assert_eq!(eventi.borrow().last().map(String::as_str), Some("spegni tutte"));
-        // Nessuno è stato spento dal finto (il ponte lo fa): → «Tutta la casa», Invio, elenco completo.
         tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Tutta la casa");
         tasto(&p, Key::Return);
         assert!(!p.get_filtro_luci(), "«Tutta la casa» torna all'elenco completo");
         // Di nuovo filtrata: Esc esce dal filtro, e solo il secondo chiude il pannello.
@@ -1148,6 +1166,57 @@ mod accessibilita {
         assert_eq!((p.get_filtro_luci(), eventi.borrow().last().map(String::as_str)), (false, Some("spegni tutte")));
         tasto(&p, Key::Escape);
         assert_eq!(eventi.borrow().last().map(String::as_str), Some("chiudi pannello"));
+    }
+
+    /// Dalla Panoramica, solo con i tasti: ↓ (o Tab) porta sulla riga «N luci accese» (nome per
+    /// Narrator, anello), Invio o Spazio la aprono; senza il fuoco su di lei Invio cambia ancora layout.
+    #[test]
+    fn dalla_panoramica_alla_casa_filtrata_solo_con_la_tastiera() {
+        use slint::platform::Key;
+        for (layout, nome) in [(0, "Casa · 2 luci accese: mostra le luci accese"), (1, "CASA, 2 luci accese: mostra le luci accese")] {
+            let (p, eventi) = pannello_casa();
+            p.set_vista("panoramica".into());
+            p.set_layout(layout);
+            p.set_stato_casa("2 luci accese".into());
+            let scorri = || eventi.borrow().iter().filter(|e| *e == "scorri").count();
+            let e = eventi.clone();
+            p.on_scorri_layout(move |_| e.borrow_mut().push("scorri".into()));
+            // Senza luci accese la riga non è un elemento: Invio cambia layout.
+            tasto(&p, Key::Return);
+            assert_eq!(scorri(), 1);
+            p.set_luci(luci_accese_di_prova(&["light.a", "light.b"]).into());
+            tasto(&p, Key::Return);
+            assert_eq!(scorri(), 2, "layout {layout}: senza fuoco su di lei Invio cambia layout");
+            tasto(&p, Key::DownArrow);
+            assert_eq!(etichetta_col_fuoco(&p), nome, "layout {layout}");
+            tasto(&p, Key::Return);
+            assert_eq!((p.get_vista().as_str(), p.get_filtro_luci()), ("casa", true), "layout {layout}");
+            assert_eq!(scorri(), 2);
+            // Con Tab: dal contenuto va a lei, e Maiusc+Tab torna indietro; Spazio la apre.
+            tasto(&p, Key::Escape);
+            tasto(&p, Key::Backspace);
+            assert_eq!(p.get_vista(), "panoramica");
+            tasto(&p, Key::Tab);
+            assert_eq!(etichetta_col_fuoco(&p), nome, "layout {layout}: Tab");
+            con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
+            assert_ne!(etichetta_col_fuoco(&p), nome, "layout {layout}: Maiusc+Tab torna al layout");
+            tasto(&p, Key::Tab);
+            tasto(&p, Key::Space);
+            assert_eq!((p.get_vista().as_str(), p.get_filtro_luci()), ("casa", true), "layout {layout}: Spazio");
+        }
+    }
+
+    /// Senza connessione la Casa filtrata non ha pulsanti che non funzionano: dice lo stato.
+    #[test]
+    fn casa_filtrata_senza_connessione_dice_lo_stato() {
+        let (p, _) = pannello_casa();
+        p.set_luci(luci_accese_di_prova(&["light.a"]).into());
+        p.set_filtro_luci(true);
+        elemento(&p, "Spegni tutte");
+        p.set_casa_pronta(false);
+        p.set_stato_casa("Casa non connessa".into());
+        assert!(ElementHandle::find_by_accessible_label(&p, "Spegni tutte").next().is_none());
+        assert!(titolo(&p, "Casa non connessa"));
     }
 
     /// Spente tutte: lo stato vuoto lo dice, con «Mostra tutta la casa» (anche da tastiera).

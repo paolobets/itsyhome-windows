@@ -5,7 +5,7 @@
 import { Tema } from "../tema.slint";
 import { Icone, Icona, Vetro } from "../icone.slint";
 import { StatPcUi, SensoreUi, QuadranteUi, FonteQuadranteUi } from "../voci.slint";
-import { Etichetta } from "../componenti.slint";
+import { Anello, Etichetta, Fuoco } from "../componenti.slint";
 
 component Quadrante inherits Vetro {
     in property <string> etichetta;
@@ -22,6 +22,8 @@ component Quadrante inherits Vetro {
     in property <bool> tenue;
     // Il quadrante si clicca (solo il quadrante CASA con luci accese): un TouchArea su tutta la card.
     in property <bool> cliccabile;
+    // Il fuoco da tastiera è sul quadrante (anello visibile).
+    in property <bool> anello;
     callback clic();
 
     // Per Narrator: un indicatore col nome (etichetta e dettaglio) e il valore (FE16).
@@ -100,14 +102,29 @@ component Quadrante inherits Vetro {
             }
         }
 
-        Text {
-            // Senza larghezza preferita: un nome lungo si accorcia invece di allargare la card.
-            preferred-width: 0px;
-            text: dettaglio;
-            horizontal-alignment: center;
-            overflow: elide;
-            font-size: Tema.testo-piccolo;
-            color: Tema.testo-tenue;
+        HorizontalLayout {
+            alignment: center;
+            spacing: 3px;
+
+            Text {
+                // Senza larghezza preferita: un nome lungo si accorcia invece di allargare la card.
+                preferred-width: 0px;
+                horizontal-stretch: 1;
+                text: dettaglio;
+                horizontal-alignment: center;
+                overflow: elide;
+                font-size: Tema.testo-piccolo;
+                color: Tema.testo-tenue;
+            }
+
+            // Il «›» che dice che il quadrante si apre: a parte, non si accorcia e Narrator non lo legge.
+            if cliccabile: Text {
+                accessible-role: none;
+                horizontal-stretch: 0;
+                text: "›";
+                font-size: Tema.testo-piccolo;
+                color: Tema.testo-tenue;
+            }
         }
     }
 
@@ -119,7 +136,11 @@ component Quadrante inherits Vetro {
         accessible-label: etichetta + ", " + dettaglio + ": mostra le luci accese";
         accessible-action-default => { root.clic(); }
         clicked => { root.clic(); }
+
+        Fuoco { chiede: anello; }
     }
+
+    if cliccabile && anello: Anello { raggio: Tema.raggio-xl; distanza: -3px; }
 }
 
 export component LayoutQuadranti inherits Rectangle {
@@ -134,6 +155,7 @@ export component LayoutQuadranti inherits Rectangle {
     // Ci sono luci accese: il quadrante CASA (quello senza sensori, che dice «N luci accese») si
     // può cliccare e porta alla Casa filtrata sulle luci accese.
     in property <bool> luci-cliccabili;
+    in property <bool> anello-luci;
     callback apri-luci();
 
     property <int> quanti: quadranti.length + max(1, sensori.length);
@@ -235,8 +257,9 @@ export component LayoutQuadranti inherits Rectangle {
             arco: root.arco;
             etichetta: "CASA";
             icona: Icone.casa;
-            dettaglio: luci-cliccabili ? stato-casa + " ›" : stato-casa;
+            dettaglio: stato-casa;
             cliccabile: luci-cliccabili;
+            anello: anello-luci;
             clic => { root.apri-luci(); }
         }
     }

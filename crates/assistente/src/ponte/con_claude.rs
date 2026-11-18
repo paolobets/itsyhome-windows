@@ -1503,9 +1503,13 @@ mod test {
         assert_eq!(p.apertura_dalla_pillola(pillola.get_attivita_visibile()), DallaPillola::Vista("claude"));
         p.togli_voce("claude.x.fatto");
         // Un permesso: espanso nella riga «In attesa», come oggi.
-        p.metti_voce(voce_di_prova("claude.x.permesso", Fonte::Claude, Livello::Bloccante, true), false);
+        p.metti_voce(voce_di_prova("claude.permesso.7", Fonte::Claude, Livello::Bloccante, true), false);
         assert_eq!(p.apertura_dalla_pillola(pillola.get_attivita_visibile()), DallaPillola::Espandi(0));
-        p.togli_voce("claude.x.permesso");
+        p.togli_voce("claude.permesso.7");
+        // Senza risposta dalla pillola il permesso ha solo «Apri il terminale»: è ancora un permesso.
+        p.metti_voce(voce_di_prova("claude.permesso.8", Fonte::Claude, Livello::Bloccante, false), false);
+        assert_eq!(p.apertura_dalla_pillola(pillola.get_attivita_visibile()), DallaPillola::Espandi(0));
+        p.togli_voce("claude.permesso.8");
         // Finita l'attività, torna la Panoramica.
         manda(&p, ev("a", TipoEvento::SessionEnd));
         assert_eq!(p.apertura_dalla_pillola(pillola.get_attivita_visibile()), DallaPillola::Panoramica);

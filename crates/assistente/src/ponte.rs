@@ -2238,7 +2238,9 @@ impl Ponte {
             let attese = self.attese.borrow();
             let ordinate = attese.ordinate();
             return match ordinate.iter().position(|v| v.id == id) {
-                Some(i) if ordinate[i].fonte == Fonte::Claude && !ordinate[i].pulsanti.iter().any(|p| p.delicato) => {
+                // Il permesso lo dice l'identità della voce, non i suoi pulsanti (senza risposta dalla
+                // pillola il permesso ha solo «Apri il terminale»).
+                Some(i) if ordinate[i].fonte == Fonte::Claude && !ordinate[i].id.starts_with(crate::claude::PREFISSO_PERMESSO) => {
                     DallaPillola::Vista("claude")
                 }
                 Some(i) => DallaPillola::Espandi(i as i32),
@@ -2284,6 +2286,12 @@ impl Ponte {
         *self.pannello.borrow_mut() = slint::Weak::default();
         self.modelli_vivi.set(false);
         self.collegamento_aperto.set(false);
+        // La Casa filtrata è del pannello aperto: da chiuso non tiene righe in memoria.
+        if self.luci.row_count() > 0 {
+            self.luci.set_vec(Vec::new());
+            // Alla prossima apertura si rifà (l'elenco da riaprire non deve restare vuoto).
+            self.modelli_vecchi.set(true);
+        }
         // L'elenco è stato guardato: i «fatto» di Claude Code sono visti.
         self.claude_pannello_chiuso();
         // Il pannello si riapre sui preferiti.
@@ -2339,17 +2347,29 @@ impl Ponte {
     /// Un tocco su un preferito: il comando se ce n'è uno (mai su entità non disponibili né con la
     /// casa non connessa: l'interfaccia già non lo permette, qui lo si garantisce).
     pub fn tocca(&self, entity_id: &str) {
-        if !self.connesso() {
-            return;
-        }
         let ora = Instant::now();
+        let Some((dominio, servizio, numero, acceso)) = self.avvia_tocco(entity_id, ora) else { return };
+        self.ricostruisci_preferiti();
+        if self.traccia_tocco && acceso {
+            eprintln!("tocco {entity_id}: icona cambiata nel modello dopo {} µs", ora.elapsed().as_micros());
+        }
+        self.casa.comando(entity_id, dominio, servizio, numero);
+    }
+
+    /// La parte di un tocco che precede i modelli e il comando: stato ottimistico e numero del
+    /// tocco (`None` se non c'è nulla da fare). Più tocchi insieme la fanno uno per uno e poi
+    /// ricostruiscono i modelli una volta sola.
+    fn avvia_tocco(&self, entity_id: &str, ora: Instant) -> Option<(&'static str, &'static str, u64, bool)> {
+        if !self.connesso() {
+            return None;
+        }
         let (comando, acceso) = {
             let menu = self.menu.borrow();
-            let Some(menu) = menu.as_ref() else { return };
+            let menu = menu.as_ref()?;
             let e = entita(menu, entity_id);
             (e.as_ref().and_then(comando_per), e.as_ref().and_then(acceso_di))
         };
-        let Some((dominio, servizio)) = comando else { return };
+        let (dominio, servizio) = comando?;
         self.errori.borrow_mut().remove(entity_id);
         // Stato ottimistico: l'icona cambia adesso, rispetto a come si vede adesso (anche se un
         // tocco precedente aspetta ancora la conferma).
@@ -2362,20 +2382,25 @@ impl Ponte {
             numero = self.ottimismo.borrow_mut().tocca(entity_id, !mostrato, &vero, ora);
             self.arma_sveglia_ottimismo();
         }
-        self.ricostruisci_preferiti();
-        if self.traccia_tocco && acceso.is_some() {
-            eprintln!("tocco {entity_id}: icona cambiata nel modello dopo {} µs", ora.elapsed().as_micros());
-        }
-        self.casa.comando(entity_id, dominio, servizio, numero);
+        Some((dominio, servizio, numero, acceso.is_some()))
     }
 
     /// «Spegni tutte» nella vista Casa filtrata: un tocco, cioè lo stesso comando e lo stesso
     /// stato ottimistico degli interruttori, per ogni luce accesa che si vede (nessuna API nuova
     /// verso Home Assistant, nessuna conferma: spegnere luci non è un'azione delicata).
     pub fn spegni_tutte(&self) {
+        let ora = Instant::now();
         let accese: Vec<String> = self.luci.iter().map(|l| l.entity_id.to_string()).collect();
-        for id in accese {
-            self.tocca(&id);
+        let partiti: Vec<_> = accese
+            .iter()
+            .filter_map(|id| self.avvia_tocco(id, ora).map(|(dominio, servizio, numero, _)| (id, dominio, servizio, numero)))
+            .collect();
+        // I modelli una volta sola (non una per luce), poi i comandi.
+        if !partiti.is_empty() {
+            self.ricostruisci_preferiti();
+        }
+        for (id, dominio, servizio, numero) in partiti {
+            self.casa.comando(id, dominio, servizio, numero);
         }
     }
 
@@ -3437,6 +3462,18 @@ pub(crate) mod test {
         p.ricevi(CasaEvento::Stato(StatoConnessione::Disconnesso));
         p.spegni_tutte();
         assert!(p.ottimismo.borrow().numero("light.d").is_none(), "casa non connessa: nessun comando");
+    }
+
+    /// La Casa filtrata è del pannello aperto: chiuso, il modello non tiene righe; riaperto, torna.
+    #[test]
+    fn le_luci_non_restano_in_memoria_a_pannello_chiuso() {
+        let (_spegni, p, _pillola, _c) = ponte_di_prova();
+        p.ricevi(CasaEvento::Dati(Arc::new(menu(vec![], vec![vec![luce("light.a", true)]]))));
+        assert_eq!(id_luci(&p), ["light.a"]);
+        p.pannello_chiuso();
+        assert!(id_luci(&p).is_empty());
+        p.apri_modelli();
+        assert_eq!(id_luci(&p), ["light.a"], "alla riapertura l'elenco si rifà");
     }
 
     /// Il numero dell'attesa armata dal tocco più recente su `id`.

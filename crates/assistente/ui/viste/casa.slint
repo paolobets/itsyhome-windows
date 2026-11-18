@@ -219,6 +219,8 @@ export component VistaCasa inherits Rectangle {
     property <length> passo-riga: alto-card + spazio;
     property <length> passo-stanza: 32px;
     property <length> bordo: 5px;
+    // Casa filtrata e connessa: la testata ha i suoi pulsanti; senza connessione dice lo stato.
+    property <bool> testata-filtro: filtro-luci && casa-pronta;
     property <bool> in-stanza: stanza-aperta >= 0 && stanza-aperta < stanze.length;
     // Senza connessione la testata dice di quando sono i dati mostrati.
     property <string> riga-testata: casa-pronta || dati-delle == "" ? stato-casa : stato-casa + " · dati delle " + dati-delle;
@@ -317,7 +319,7 @@ export component VistaCasa inherits Rectangle {
         y: 0;
         width: griglia-l * 0.55;
         height: 28px;
-        text: !filtro-luci && (voci.length > 0 || con-stanze) ? riga-testata : "";
+        text: !testata-filtro && (voci.length > 0 || con-stanze) ? riga-testata : "";
         horizontal-alignment: right;
         vertical-alignment: center;
         overflow: elide;
@@ -327,7 +329,7 @@ export component VistaCasa inherits Rectangle {
 
     // Alto 28 come la testata.
     pulsante-riprova := Pulsante {
-        visible: riprova && !filtro-luci;
+        visible: riprova && !testata-filtro;
         x: parent.width - self.width - 2px;
         y: 0;
         altezza: 28px;
@@ -340,7 +342,7 @@ export component VistaCasa inherits Rectangle {
 
     // Casa filtrata: «Spegni tutte» (neutro, senza conferma: spegnere luci non è delicato) e il
     // filtro per tornare all'elenco completo, a destra della testata, alti 28 come lei.
-    if filtro-luci && voci.length > 0: HorizontalLayout {
+    if testata-filtro && voci.length > 0: HorizontalLayout {
         x: griglia-x;
         y: 0;
         width: griglia-l;

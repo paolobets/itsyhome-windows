@@ -335,6 +335,15 @@ export component Pannello inherits Window {
     property <int> colonne-casa: 4;
     // Le card della vista Casa: i dispositivi della stanza aperta, altrimenti i preferiti.
     property <bool> in-stanza: stanza-aperta >= 0 && stanza-aperta < stanze.length;
+    // La riga «N luci accese» della Panoramica si può usare (e raggiungere da tastiera): casa
+    // connessa e almeno una luce accesa. `fuoco-luci`: il fuoco da tastiera è su di lei (↓ o Tab
+    // dal contenuto; Invio o Spazio aprono la Casa filtrata, altrove Invio cambia layout).
+    property <bool> luci-cliccabili: casa-pronta && luci.length > 0;
+    property <bool> fuoco-luci: false;
+    property <bool> fuoco-luci-valido: fuoco-luci && luci-cliccabili && vista == "panoramica" && !espansa && zona == Zona.contenuto;
+    // La testata della Casa filtrata ha i suoi pulsanti solo a casa connessa: altrimenti dice lo
+    // stato (e «Riprova») come la Casa completa.
+    property <bool> testata-filtro: filtro-luci && casa-pronta;
     property <[PreferitoUi]> griglia: filtro-luci ? luci : in-stanza ? dispositivi : preferiti;
     property <int> fuoco-casa-valido: min(fuoco-casa, griglia.length - 1);
     // Voce dell'elenco della vista Casa col fuoco: -1 = «Preferiti», poi l'indice della stanza.
@@ -452,7 +461,21 @@ export component Pannello inherits Window {
                 return;
             }
         }
+        // Panoramica con «N luci accese» cliccabile: dal contenuto Tab va prima a lei, e Maiusc+Tab
+        // da lei torna al layout.
+        if (zona == Zona.contenuto && vista == "panoramica" && !espansa && luci-cliccabili) {
+            if (avanti && !fuoco-luci-valido) {
+                fuoco-luci = true;
+                return;
+            }
+            if (!avanti && fuoco-luci-valido) {
+                tasti.focus();
+                fuoco-luci = false;
+                return;
+            }
+        }
         passa-zona(avanti);
+        fuoco-luci = zona == Zona.contenuto && vista == "panoramica" && !avanti && luci-cliccabili;
         if (zona == Zona.contenuto && vista == "pc") {
             fuoco-pc = avanti ? pc-successivo(-1) : pc-precedente(5);
         }
@@ -621,6 +644,7 @@ export component Pannello inherits Window {
             root.chiudi-stanza();
         }
         filtro-luci = false;
+        fuoco-luci = false;
         vista = v;
         fuoco-casa = 0;
         fuoco-pc = 0;
@@ -708,7 +732,12 @@ export component Pannello inherits Window {
                 fuoco-attesa = min(min(attese.length, 4) - 1, fuoco-attesa + 1);
             }
         } else if (zona == Zona.contenuto && vista == "panoramica") {
-            if (k == Key.LeftArrow) {
+            if (k == Key.DownArrow && luci-cliccabili) {
+                fuoco-luci = true;
+            } else if (k == Key.UpArrow) {
+                tasti.focus();
+                fuoco-luci = false;
+            } else if (k == Key.LeftArrow) {
                 root.scorri-layout(-1);
             } else if (k == Key.RightArrow) {
                 root.scorri-layout(1);
@@ -779,9 +808,9 @@ export component Pannello inherits Window {
             if (fuoco-casa < 0) {
                 if (k == Key.DownArrow) {
                     fuoco-casa = 0;
-                } else if (filtro-luci && k == Key.RightArrow) {
+                } else if (testata-filtro && k == Key.RightArrow) {
                     fuoco-casa = -2;
-                } else if (filtro-luci && k == Key.LeftArrow) {
+                } else if (testata-filtro && k == Key.LeftArrow) {
                     fuoco-casa = -1;
                 }
             } else if (k == Key.LeftArrow && mod(fuoco-casa-valido, colonne-casa) == 0 && ha-zona(Zona.stanze)) {
@@ -795,7 +824,7 @@ export component Pannello inherits Window {
                 fuoco-casa = min(griglia.length - 1, fuoco-casa-valido + 1);
             } else if (k == Key.UpArrow && fuoco-casa-valido >= colonne-casa) {
                 fuoco-casa = fuoco-casa-valido - colonne-casa;
-            } else if (k == Key.UpArrow && (riprova-visibile || filtro-luci)) {
+            } else if (k == Key.UpArrow && (riprova-visibile || testata-filtro)) {
                 fuoco-casa = -1;
             } else if (k == Key.DownArrow && fuoco-casa-valido + colonne-casa < griglia.length) {
                 fuoco-casa = fuoco-casa-valido + colonne-casa;
@@ -831,6 +860,8 @@ export component Pannello inherits Window {
             scegli-preferiti(true);
         } else if (zona == Zona.stanze) {
             scegli-stanza(fuoco-stanza-valido, true);
+        } else if (vista == "panoramica" && fuoco-luci-valido) {
+            mostra-luci();
         } else if (vista == "panoramica") {
             root.scorri-layout(1);
         } else if (vista == "claude") {
@@ -857,12 +888,12 @@ export component Pannello inherits Window {
             } else if (fuoco-pc-valido == 3 || fuoco-pc-valido == 4) {
                 root.apri-pagina(fuoco-pc-valido - 3);
             }
-        } else if (vista == "casa" && filtro-luci && (griglia.length == 0 || fuoco-casa == -2)) {
+        } else if (vista == "casa" && filtro-luci && (griglia.length == 0 || (testata-filtro && fuoco-casa == -2))) {
             // Nessuna luce accesa, o «Tutta la casa» nella testata: l'elenco completo.
             esci-filtro();
         } else if (vista == "casa" && griglia.length == 0) {
             root.apri-app("impostazioni");
-        } else if (vista == "casa" && filtro-luci && fuoco-casa == -1) {
+        } else if (vista == "casa" && testata-filtro && fuoco-casa == -1) {
             // Le luci si spengono tutte: il pulsante sparisce, il fuoco passa prima a `tasti`.
             tasti.focus();
             root.spegni-tutte();
@@ -1174,7 +1205,8 @@ export component Pannello inherits Window {
                     stato-casa: root.stato-casa;
                     casa-pronta: root.casa-pronta;
                     pc: root.pc;
-                    luci-cliccabili: root.casa-pronta && root.luci.length > 0;
+                    luci-cliccabili: root.luci-cliccabili;
+                    anello-luci: root.fuoco-luci-valido && root.da-tastiera;
                     apri-luci => { mostra-luci(); }
                 }
                 if vista == "panoramica" && layout == 1: LayoutQuadranti {
@@ -1186,7 +1218,8 @@ export component Pannello inherits Window {
                     ora: root.ora;
                     stato-casa: root.stato-casa;
                     casa-pronta: root.casa-pronta;
-                    luci-cliccabili: root.casa-pronta && root.luci.length > 0;
+                    luci-cliccabili: root.luci-cliccabili;
+                    anello-luci: root.fuoco-luci-valido && root.da-tastiera;
                     apri-luci => { mostra-luci(); }
                 }
 
@@ -1208,11 +1241,11 @@ export component Pannello inherits Window {
                     riprova: riprova-visibile;
                     colonne: root.colonne-casa;
                     fuoco: da-tastiera && zona == Zona.contenuto && vista == "casa" ? fuoco-casa-valido : -1;
-                    fuoco-riprova: da-tastiera && zona == Zona.contenuto && vista == "casa" && fuoco-casa < 0 && !filtro-luci;
+                    fuoco-riprova: da-tastiera && zona == Zona.contenuto && vista == "casa" && fuoco-casa < 0 && !testata-filtro;
                     fuoco-impostazioni: da-tastiera && zona == Zona.contenuto && vista == "casa";
                     filtro-luci: root.filtro-luci;
-                    fuoco-spegni: da-tastiera && zona == Zona.contenuto && vista == "casa" && filtro-luci && fuoco-casa == -1 && griglia.length > 0;
-                    fuoco-tutta: da-tastiera && zona == Zona.contenuto && vista == "casa" && filtro-luci && (fuoco-casa == -2 || griglia.length == 0);
+                    fuoco-spegni: da-tastiera && zona == Zona.contenuto && vista == "casa" && testata-filtro && fuoco-casa == -1 && griglia.length > 0;
+                    fuoco-tutta: da-tastiera && zona == Zona.contenuto && vista == "casa" && filtro-luci && ((testata-filtro && fuoco-casa == -2) || griglia.length == 0);
                     tocca(id) => {
                         da-tastiera = false;
                         root.tocca(id);
