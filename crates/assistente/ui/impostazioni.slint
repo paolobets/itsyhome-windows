@@ -18,6 +18,11 @@
 //   royalty-free 2.0, punto 2(a), chiede proprio quel widget in una schermata «Informazioni») e
 //   il dettaglio tecnico degli errori.
 //
+// Impaginazione (R1-18): layout veri (VerticalLayout / HorizontalLayout) dalla cornice fino alle
+// card, così un testo più lungo o un secondo rigo spinge giù ciò che segue invece di finirci
+// sopra. Restano coordinate calcolate solo dove un layout non c'entra: la griglia delle icone, i
+// livelli sovrapposti di un campo (suggerimento e testo) e la barretta di scorrimento.
+//
 // Tastiera: Tab / Maiusc+Tab nell'ordine naturale (sezioni, pulsanti, campi), Invio o Spazio
 // premono il pulsante col fuoco. In un campo si scrive come in ogni casella (frecce, Backspace,
 // selezione); Esc esce dal campo; fuori da un campo chiude il modulo aperto e poi la finestra;
@@ -40,6 +45,90 @@ enum ModoAmbienti { elenco, modulo }
 component Bottone inherits Pulsante {
     largo-min: 72px;
     margine-testo: 28px;
+}
+
+// La card di una riga delle Impostazioni: titolo e descrizione a sinistra, il comando (i figli:
+// interruttore o pulsante) a destra, centrato. La descrizione va a capo: la card è alta almeno 64
+// e cresce con lei.
+component CardRiga inherits Rectangle {
+    in property <string> titolo;
+    in property <string> descrizione;
+
+    height: max(64px, corpo.preferred-height);
+    border-radius: Tema.raggio-xl;
+    background: Tema.card-fondo;
+    border-width: 1px;
+    border-color: Tema.vetro-bordo;
+
+    corpo := HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 18px;
+        padding-top: 12px;
+        padding-bottom: 14px;
+        spacing: 12px;
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 6px;
+
+            Text {
+                text: titolo;
+                overflow: elide;
+                font-weight: 500;
+                font-size: Tema.testo-medio;
+                color: Tema.testo;
+            }
+
+            if descrizione != "": Text {
+                text: descrizione;
+                wrap: word-wrap;
+                font-size: Tema.testo-piccolo;
+                color: Tema.testo-tenue;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+
+            @children
+        }
+    }
+}
+
+// Una colonna che scorre (elenchi e sezioni lunghe): i figli stanno in una Flickable larga quanto
+// lei e `alto-contenuto` è l'altezza della colonna dei figli (la sua `preferred-height`). La
+// barretta di scorrimento disegnata (4 px, nel margine a destra) si vede solo se il contenuto non
+// sta tutto.
+component Scorrevole inherits Rectangle {
+    in property <length> alto-contenuto;
+
+    // Tab su un elemento fuori vista: lo porta in vista (`y` e `h` nella colonna).
+    public function porta-in-vista(y: length, h: length) {
+        if (y + lista.content-y < 0) {
+            lista.content-y = -y;
+        } else if (y + h + lista.content-y > lista.height) {
+            lista.content-y = lista.height - y - h;
+        }
+    }
+
+    lista := Flickable {
+        // Larga quanto la colonna: un riquadro che scorre da sé (l'anteprima di Claude) non la allarga.
+        content-width: self.width;
+        content-height: max(self.height, root.alto-contenuto);
+        interactive: root.alto-contenuto > self.height;
+
+        @children
+    }
+
+    if lista.content-height > lista.height + 0.5px: Rectangle {
+        x: parent.width + 8px;
+        y: (-lista.content-y / lista.content-height) * lista.height;
+        width: 4px;
+        height: lista.height * lista.height / lista.content-height;
+        border-radius: self.width / 2;
+        background: Tema.vetro-bordo;
+    }
 }
 
 // Un campo del modulo: etichetta sempre visibile a sinistra, casella a destra. Il suggerimento
@@ -68,68 +157,69 @@ component Campo inherits Rectangle {
 
     height: 34px;
 
-    Text {
-        x: 0;
-        width: larghezza-etichetta;
-        height: parent.height;
-        text: etichetta;
-        vertical-alignment: center;
-        font-size: Tema.testo-corpo;
-        color: Tema.testo-etichetta;
-    }
+    HorizontalLayout {
+        spacing: 8px;
 
-    casella := Rectangle {
-        x: larghezza-etichetta + 8px;
-        width: parent.width - self.x;
-        height: parent.height;
-        border-radius: Tema.raggio-m;
-        border-width: input.has-focus || errore != "" ? 2px : 1px;
-        border-color: errore != "" ? Tema.caldo-2 : input.has-focus ? Tema.petalo-4 : Tema.vetro-bordo;
-        background: Tema.riquadro-fondo;
-
-        // Il suggerimento è più tenue del testo vero: non sembra un valore già scritto.
         Text {
-            x: 12px;
-            width: parent.width - 24px;
-            height: parent.height;
-            text: input.text == "" ? suggerimento : "";
+            width: larghezza-etichetta;
+            text: etichetta;
             vertical-alignment: center;
-            overflow: elide;
             font-size: Tema.testo-corpo;
-            color: Tema.segnaposto;
+            color: Tema.testo-etichetta;
         }
 
-        input := TextInput {
-            x: 12px;
-            width: parent.width - 24px;
-            height: parent.height;
-            single-line: true;
-            vertical-alignment: center;
-            input-type: password ? InputType.password : InputType.text;
-            font-size: Tema.testo-medio;
-            color: Tema.testo;
-            selection-background-color: Tema.selezione;
-            selection-foreground-color: Tema.testo;
-            accessible-role: text-input;
-            accessible-label: nome-accessibile;
-            accessible-placeholder-text: suggerimento;
-            accessible-description: errore;
-            edited => { root.modificato(); }
-            changed has-focus => {
-                if (!self.has-focus) {
-                    root.lasciato();
-                }
+        casella := Rectangle {
+            horizontal-stretch: 1;
+            border-radius: Tema.raggio-m;
+            border-width: input.has-focus || errore != "" ? 2px : 1px;
+            border-color: errore != "" ? Tema.caldo-2 : input.has-focus ? Tema.petalo-4 : Tema.vetro-bordo;
+            background: Tema.riquadro-fondo;
+
+            // Suggerimento e testo stanno uno sopra l'altro, a 12 dal bordo. Il suggerimento è più
+            // tenue del testo vero: non sembra un valore già scritto.
+            Text {
+                x: 12px;
+                width: parent.width - 24px;
+                height: parent.height;
+                text: input.text == "" ? suggerimento : "";
+                vertical-alignment: center;
+                overflow: elide;
+                font-size: Tema.testo-corpo;
+                color: Tema.segnaposto;
             }
-            key-pressed(evento) => {
-                if (evento.text == Key.Escape) {
-                    root.esci();
-                    return accept;
+
+            input := TextInput {
+                x: 12px;
+                width: parent.width - 24px;
+                height: parent.height;
+                single-line: true;
+                vertical-alignment: center;
+                input-type: password ? InputType.password : InputType.text;
+                font-size: Tema.testo-medio;
+                color: Tema.testo;
+                selection-background-color: Tema.selezione;
+                selection-foreground-color: Tema.testo;
+                accessible-role: text-input;
+                accessible-label: nome-accessibile;
+                accessible-placeholder-text: suggerimento;
+                accessible-description: errore;
+                edited => { root.modificato(); }
+                changed has-focus => {
+                    if (!self.has-focus) {
+                        root.lasciato();
+                    }
                 }
-                if (evento.text == Key.Return) {
-                    root.invio();
-                    return accept;
+                key-pressed(evento) => {
+                    if (evento.text == Key.Escape) {
+                        root.esci();
+                        return accept;
+                    }
+                    if (evento.text == Key.Return) {
+                        root.invio();
+                        return accept;
+                    }
+                    return reject;
                 }
-                return reject;
             }
         }
     }
@@ -165,16 +255,18 @@ component Sezione inherits FocusScope {
         border-radius: self.height / 2;
         background: attiva ? Tema.scheda-attiva : area.has-hover ? Tema.scheda-sopra : transparent;
 
-        Text {
-            x: 16px;
-            width: parent.width - 24px;
-            text: nome;
-            vertical-alignment: center;
-            height: parent.height;
-            overflow: elide;
-            font-size: Tema.testo-medio;
-            font-weight: attiva ? 500 : 400;
-            color: attiva ? Tema.testo : Tema.testo-ora;
+        HorizontalLayout {
+            padding-left: 16px;
+            padding-right: 8px;
+
+            Text {
+                text: nome;
+                vertical-alignment: center;
+                overflow: elide;
+                font-size: Tema.testo-medio;
+                font-weight: attiva ? 500 : 400;
+                color: attiva ? Tema.testo : Tema.testo-ora;
+            }
         }
     }
 
@@ -193,25 +285,31 @@ component Stato inherits Rectangle {
     in property <TonoUi> tono;
     out property <length> naturale: 15px + parola.preferred-width;
 
-    Rectangle {
-        x: 0;
-        width: 8px;
-        height: 8px;
-        border-radius: self.height / 2;
-        background: tono == TonoUi.ok ? Tema.presa-accesa
-            : tono == TonoUi.attesa ? Tema.attenzione
-            : tono == TonoUi.errore ? Tema.bloccante
-            : Tema.icona-spenta;
-    }
+    HorizontalLayout {
+        spacing: 7px;
 
-    parola := Text {
-        x: 15px;
-        width: parent.width - 15px;
-        text: testo;
-        vertical-alignment: center;
-        overflow: elide;
-        font-size: Tema.testo-corpo;
-        color: Tema.testo-ora;
+        VerticalLayout {
+            alignment: center;
+
+            Rectangle {
+                width: 8px;
+                height: 8px;
+                border-radius: self.height / 2;
+                background: tono == TonoUi.ok ? Tema.presa-accesa
+                    : tono == TonoUi.attesa ? Tema.attenzione
+                    : tono == TonoUi.errore ? Tema.bloccante
+                    : Tema.icona-spenta;
+            }
+        }
+
+        parola := Text {
+            horizontal-stretch: 1;
+            text: testo;
+            vertical-alignment: center;
+            overflow: elide;
+            font-size: Tema.testo-corpo;
+            color: Tema.testo-ora;
+        }
     }
 }
 
@@ -240,6 +338,7 @@ component Interruttore inherits FocusScope {
         border-radius: self.height / 2;
         background: acceso ? Tema.interruttore-acceso : Tema.interruttore-spento;
 
+        // Il pomello scivola da un capo all'altro: la sua x è l'animazione.
         Rectangle {
             x: acceso ? parent.width - self.width - 3px : 3px;
             y: 3px;
@@ -350,6 +449,7 @@ component SceltaIcona inherits FocusScope {
 
     property <int> colonne: 10;
     property <length> lato: 32px;
+    height: corpo.preferred-height;
     accessible-role: groupbox;
     accessible-label: titolo;
     init => {
@@ -393,53 +493,67 @@ component SceltaIcona inherits FocusScope {
         border-color: Tema.vetro-bordo;
     }
 
-    Etichetta {
-        x: 16px;
-        y: 10px;
-        width: parent.width - 32px - annulla.width;
-        height: 30px;
-        text: titolo;
-        overflow: elide;
-    }
+    corpo := VerticalLayout {
+        padding-left: 16px;
+        padding-right: 12px;
+        padding-top: 10px;
+        padding-bottom: 12px;
+        spacing: 10px;
 
-    annulla := Pulsante {
-        x: parent.width - self.width - 12px;
-        y: 10px;
-        testo: "Annulla";
-        largo-min: 72px;
-        focalizzabile: false;
-        premuto => { root.annulla(); }
-    }
+        HorizontalLayout {
+            height: 30px;
+            spacing: 16px;
 
-    for nome[i] in nomi: Rectangle {
-        x: 16px + mod(i, colonne) * lato;
-        y: 50px + floor(i / colonne) * lato;
-        width: lato - 2px;
-        height: lato - 2px;
-        border-radius: Tema.raggio-s;
-        background: i == root.attuale ? Tema.scheda-attiva : cella.has-hover ? Tema.scheda-sopra : transparent;
-        accessible-role: button;
-        accessible-label: nome;
-        accessible-item-selected: i == root.attuale;
-        accessible-action-default => { root.scelta-fatta(i); }
+            Etichetta {
+                horizontal-stretch: 1;
+                text: titolo;
+                overflow: elide;
+            }
 
-        Fuoco { chiede: i == root.scelta; }
-
-        Image {
-            source: Icone.di-stanza(i);
-            width: 18px;
-            height: 18px;
-            colorize: i == root.attuale ? Tema.icona-attiva : Tema.icona;
-            image-rendering: smooth;
-            accessible-role: none;
+            Pulsante {
+                testo: "Annulla";
+                largo-min: 72px;
+                focalizzabile: false;
+                premuto => { root.annulla(); }
+            }
         }
 
-        cella := TouchArea {
-            mouse-cursor: pointer;
-            clicked => { root.scelta-fatta(i); }
-        }
+        // La griglia: le celle si contano per riga e colonna (un layout a griglia non si riempie
+        // da un elenco).
+        Rectangle {
+            height: ceil(nomi.length / colonne) * lato;
 
-        if i == root.scelta: Anello { raggio: Tema.raggio-s; distanza: -1px; }
+            for nome[i] in nomi: Rectangle {
+                x: mod(i, colonne) * lato;
+                y: floor(i / colonne) * lato;
+                width: lato - 2px;
+                height: lato - 2px;
+                border-radius: Tema.raggio-s;
+                background: i == root.attuale ? Tema.scheda-attiva : cella.has-hover ? Tema.scheda-sopra : transparent;
+                accessible-role: button;
+                accessible-label: nome;
+                accessible-item-selected: i == root.attuale;
+                accessible-action-default => { root.scelta-fatta(i); }
+
+                Fuoco { chiede: i == root.scelta; }
+
+                Image {
+                    source: Icone.di-stanza(i);
+                    width: 18px;
+                    height: 18px;
+                    colorize: i == root.attuale ? Tema.icona-attiva : Tema.icona;
+                    image-rendering: smooth;
+                    accessible-role: none;
+                }
+
+                cella := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.scelta-fatta(i); }
+                }
+
+                if i == root.scelta: Anello { raggio: Tema.raggio-s; distanza: -1px; }
+            }
+        }
     }
 }
 
@@ -452,6 +566,7 @@ component ConfermaElimina inherits FocusScope {
     callback annulla();
 
     property <string> domanda: "Eliminare “" + nome + "”?";
+    height: corpo.preferred-height;
     accessible-role: groupbox;
     accessible-label: domanda;
     init => {
@@ -482,48 +597,46 @@ component ConfermaElimina inherits FocusScope {
         border-color: Tema.pericolo-filo;
     }
 
-    Text {
-        x: 18px;
-        y: 16px;
-        width: parent.width - 36px;
-        height: 22px;
-        text: domanda;
-        overflow: elide;
-        font-weight: 500;
-        font-size: Tema.testo-medio;
-        color: Tema.testo;
-    }
+    corpo := VerticalLayout {
+        padding-left: 18px;
+        padding-right: 18px;
+        padding-top: 16px;
+        padding-bottom: 16px;
+        spacing: 6px;
 
-    Text {
-        x: 18px;
-        y: 44px;
-        width: parent.width - 36px;
-        text: "Sparisce dal pannello e dalle Impostazioni.";
-        wrap: word-wrap;
-        font-size: Tema.testo-corpo;
-        color: Tema.testo-tenue;
-    }
-
-    HorizontalLayout {
-        x: 18px;
-        y: parent.height - self.height - 16px;
-        width: parent.width - 36px;
-        height: 30px;
-        spacing: 10px;
-        alignment: end;
-
-        annulla := Pulsante {
-            testo: "Annulla";
-            largo-min: 84px;
-            premuto => { root.annulla(); }
+        Text {
+            text: domanda;
+            overflow: elide;
+            font-weight: 500;
+            font-size: Tema.testo-medio;
+            color: Tema.testo;
         }
 
-        elimina := Pulsante {
-            testo: "Elimina";
-            tipo: TipoPulsante.pericolo;
-            largo-min: 84px;
-            accessible-label: "Elimina “" + nome + "”";
-            premuto => { root.conferma(); }
+        Text {
+            text: "Sparisce dal pannello e dalle Impostazioni.";
+            wrap: word-wrap;
+            font-size: Tema.testo-corpo;
+            color: Tema.testo-tenue;
+        }
+
+        HorizontalLayout {
+            padding-top: 14px;
+            spacing: 10px;
+            alignment: end;
+
+            annulla := Pulsante {
+                testo: "Annulla";
+                largo-min: 84px;
+                premuto => { root.annulla(); }
+            }
+
+            elimina := Pulsante {
+                testo: "Elimina";
+                tipo: TipoPulsante.pericolo;
+                largo-min: 84px;
+                accessible-label: "Elimina “" + nome + "”";
+                premuto => { root.conferma(); }
+            }
         }
     }
 }
@@ -546,65 +659,76 @@ component RigaScelta inherits Rectangle {
     callback esci();
     property <string> errore;
 
-    height: con-massimo ? 112px : 56px;
+    height: corpo.preferred-height;
     border-radius: Tema.raggio-xl;
     background: Tema.card-fondo;
     border-width: 1px;
     border-color: Tema.vetro-bordo;
 
-    Text {
-        x: 16px;
-        y: 0;
-        width: selettore.x - self.x - 12px;
-        height: 56px;
-        text: titolo;
-        vertical-alignment: center;
-        overflow: elide;
-        font-weight: 500;
-        font-size: Tema.testo-medio;
-        color: Tema.testo;
-        accessible-role: none;
-    }
-
-    selettore := Scelta {
-        x: parent.width - self.width - 14px;
-        y: 12px;
-        width: min(240px, parent.width / 2);
-        etichetta: titolo;
-        voci: root.voci;
-        indice: root.indice;
-        scelto(i) => { root.scelto(i); }
-        fuoco-preso => { root.fuoco-preso(); }
-    }
-
     // Rifatto a ogni scelta nuova (`indice`): il testo scritto a mano scollega `testo` da
     // `massimo`, e passando da un sensore in watt a un altro il campo deve mostrare il massimo di
     // quello nuovo.
     changed indice => { root.errore = ""; }
-    for _ in con-massimo ? [root.indice] : []: Campo {
-        x: 16px;
-        y: 60px;
-        width: parent.width - 32px;
-        etichetta: "Massimo";
-        nome-accessibile: root.titolo + ", massimo";
-        suggerimento: predefinito;
-        errore: root.errore;
-        testo: root.massimo;
-        esci => { root.esci(); }
-        invio => { root.errore = root.massimo-scritto(self.testo); }
-        lasciato => { root.errore = root.massimo-scritto(self.testo); }
-    }
 
-    if con-massimo: Text {
-        x: 116px;
-        y: 94px;
-        width: parent.width - self.x - 16px;
-        height: 16px;
-        text: root.errore;
-        overflow: elide;
-        font-size: Tema.testo-piccolo;
-        color: Tema.caldo-2;
-        accessible-role: none;
+    corpo := VerticalLayout {
+        padding-left: 16px;
+        padding-right: 14px;
+        padding-top: 12px;
+        padding-bottom: 12px;
+        spacing: 12px;
+
+        HorizontalLayout {
+            spacing: 12px;
+
+            Text {
+                horizontal-stretch: 1;
+                text: titolo;
+                vertical-alignment: center;
+                overflow: elide;
+                font-weight: 500;
+                font-size: Tema.testo-medio;
+                color: Tema.testo;
+                accessible-role: none;
+            }
+
+            selettore := Scelta {
+                width: min(240px, root.width / 2);
+                etichetta: titolo;
+                voci: root.voci;
+                indice: root.indice;
+                scelto(i) => { root.scelto(i); }
+                fuoco-preso => { root.fuoco-preso(); }
+            }
+        }
+
+        // Il campo e, sotto la casella, il suo errore (lo spazio c'è sempre: niente salti).
+        for _ in con-massimo ? [root.indice] : []: VerticalLayout {
+            spacing: 4px;
+
+            Campo {
+                etichetta: "Massimo";
+                nome-accessibile: root.titolo + ", massimo";
+                suggerimento: predefinito;
+                errore: root.errore;
+                testo: root.massimo;
+                esci => { root.esci(); }
+                invio => { root.errore = root.massimo-scritto(self.testo); }
+                lasciato => { root.errore = root.massimo-scritto(self.testo); }
+            }
+
+            HorizontalLayout {
+                padding-left: 100px;
+
+                Text {
+                    height: 16px;
+                    text: root.errore;
+                    overflow: elide;
+                    font-size: Tema.testo-piccolo;
+                    color: Tema.caldo-2;
+                    accessible-role: none;
+                }
+            }
+        }
     }
 }
 
@@ -753,14 +877,14 @@ export component FinestraImpostazioni inherits Window {
     property <bool> conferma-pronta;
     property <string> errore-elenco;
 
+    // Le misure della cornice: margini della finestra, colonna delle sezioni, spazio sopra; e
+    // l'altezza delle righe degli elenchi (fissa: sono righe tutte uguali).
     property <length> margine: 28px;
     property <length> largo-sezioni: 180px;
     property <length> alto-testata: 18px;
-    property <length> contenuto-x: margine + largo-sezioni + 28px;
     property <length> alto-riga: 100px;
-    property <length> passo-riga: alto-riga + 8px;
     property <length> alto-dispositivo: 38px;
-    property <length> passo-dispositivo: alto-dispositivo + 4px;
+    property <length> alto-collegamento: 46px;
     // La scelta dell'icona aperta per una stanza ("" = chiusa): area, nome, icona attuale, icona
     // col fuoco, riga da cui è partita (il fuoco ci torna).
     property <string> scelta-area;
@@ -783,8 +907,6 @@ export component FinestraImpostazioni inherits Window {
     property <bool> toccato-c-url;
     property <string> conferma-c-id;
     property <string> conferma-c-nome;
-    property <length> alto-collegamento: 46px;
-    property <length> passo-collegamento: alto-collegamento + 4px;
 
     title: "ItsyHome — Impostazioni";
     preferred-width: 720px;
@@ -1024,1769 +1146,1536 @@ export component FinestraImpostazioni inherits Window {
 
         // Niente titolo «Impostazioni»: lo dice già la barra della finestra.
 
-        // ─── Sezioni ───
-        for nome[i] in ["Home Assistant", "Dispositivi", "Collegamenti", "Isola", "Claude", "Sistema", "Informazioni"]: Sezione {
-            x: margine - 8px;
-            y: alto-testata + i * 42px;
-            width: largo-sezioni;
-            nome: nome;
-            attiva: sezione == i;
-            indice: i;
-            quante: 7;
-            scelta => { sezione = i; }
-        }
+        // La colonna delle sezioni, il filo che le separa e il contenuto della sezione scelta.
+        HorizontalLayout {
+            padding-top: alto-testata;
+            padding-bottom: 24px;
+            padding-left: margine - 8px;
+            padding-right: margine;
+            spacing: 18px;
 
-        Rectangle {
-            x: margine + largo-sezioni + 10px;
-            y: alto-testata;
-            width: 1px;
-            height: parent.height - alto-testata - 24px;
-            background: Tema.vetro-bordo;
-        }
+            // ─── Sezioni ───
+            VerticalLayout {
+                width: largo-sezioni;
+                alignment: start;
+                spacing: 6px;
 
-        // ─── Home Assistant: elenco ───
-        if sezione == 0 && modo == ModoAmbienti.elenco: Rectangle {
-            x: contenuto-x;
-            y: alto-testata;
-            width: parent.width - self.x - margine;
-            height: parent.height - self.y - 24px;
-
-            Etichetta {
-                x: 0;
-                y: 0;
-                height: 30px;
-                text: "AMBIENTI";
-            }
-
-            Text {
-                x: 90px;
-                y: 0;
-                // 190 = «Aggiungi un ambiente» (circa 153) più 12 di respiro; senza il pulsante in alto niente riserva.
-                width: parent.width - self.x - (ambienti.length > 0 ? 190px : 0px);
-                height: 30px;
-                text: errore-elenco;
-                vertical-alignment: center;
-                overflow: elide;
-                font-size: Tema.testo-corpo;
-                color: Tema.caldo-2;
-            }
-
-            // Con degli ambienti il pulsante sta in alto a destra; a elenco vuoto, sotto il messaggio
-            // e al centro (come nel pannello).
-            if ambienti.length > 0: Bottone {
-                x: parent.width - self.width;
-                y: 0;
-                testo: "Aggiungi un ambiente";
-                premuto => { apri-modulo(-1); }
-            }
-
-            if ambienti.length == 0: VerticalLayout {
-                y: 44px;
-                height: parent.height - 44px;
-                alignment: center;
-                spacing: 8px;
-
-                Text {
-                    text: "Nessun ambiente configurato";
-                    horizontal-alignment: center;
-                    font-weight: 500;
-                    font-size: Tema.testo-sottotitolo;
-                    color: Tema.testo;
+                for nome[i] in ["Home Assistant", "Dispositivi", "Collegamenti", "Isola", "Claude", "Sistema", "Informazioni"]: Sezione {
+                    nome: nome;
+                    attiva: sezione == i;
+                    indice: i;
+                    quante: 7;
+                    scelta => { sezione = i; }
                 }
+            }
 
-                Text {
-                    text: "Aggiungi l'indirizzo e il token di accesso del tuo Home Assistant.";
-                    horizontal-alignment: center;
-                    wrap: word-wrap;
-                    font-size: Tema.testo-corpo;
-                    color: Tema.testo-tenue;
-                }
+            Rectangle {
+                width: 1px;
+                background: Tema.vetro-bordo;
+            }
 
-                HorizontalLayout {
-                    alignment: center;
-                    padding-top: 4px;
+            // Il contenuto: c'è solo la sezione scelta, e la riempie.
+            Rectangle {
+                horizontal-stretch: 1;
 
-                    Bottone {
-                        testo: "Aggiungi un ambiente";
-                        tipo: TipoPulsante.azione;
-                        premuto => { apri-modulo(-1); }
+                // ─── Home Assistant: elenco ───
+                if sezione == 0 && modo == ModoAmbienti.elenco: VerticalLayout {
+                    spacing: 14px;
+
+                    // L'etichetta, l'errore dell'ultima rimozione e, con degli ambienti, il pulsante
+                    // in alto a destra (a elenco vuoto sta sotto il messaggio e al centro, come nel
+                    // pannello).
+                    HorizontalLayout {
+                        height: 30px;
+                        spacing: 12px;
+
+                        Etichetta {
+                            text: "AMBIENTI";
+                        }
+
+                        Text {
+                            horizontal-stretch: 1;
+                            text: errore-elenco;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            font-size: Tema.testo-corpo;
+                            color: Tema.caldo-2;
+                        }
+
+                        if ambienti.length > 0: Bottone {
+                            testo: "Aggiungi un ambiente";
+                            premuto => { apri-modulo(-1); }
+                        }
+                    }
+
+                    if ambienti.length == 0: VerticalLayout {
+                        vertical-stretch: 1;
+                        alignment: center;
+                        spacing: 8px;
+
+                        Text {
+                            text: "Nessun ambiente configurato";
+                            horizontal-alignment: center;
+                            font-weight: 500;
+                            font-size: Tema.testo-sottotitolo;
+                            color: Tema.testo;
+                        }
+
+                        Text {
+                            text: "Aggiungi l'indirizzo e il token di accesso del tuo Home Assistant.";
+                            horizontal-alignment: center;
+                            wrap: word-wrap;
+                            font-size: Tema.testo-corpo;
+                            color: Tema.testo-tenue;
+                        }
+
+                        HorizontalLayout {
+                            alignment: center;
+                            padding-top: 4px;
+
+                            Bottone {
+                                testo: "Aggiungi un ambiente";
+                                tipo: TipoPulsante.azione;
+                                premuto => { apri-modulo(-1); }
+                            }
+                        }
+                    }
+
+                    if ambienti.length > 0: elenco := Scorrevole {
+                        vertical-stretch: 1;
+                        alto-contenuto: righe-ambienti.preferred-height;
+
+                        righe-ambienti := VerticalLayout {
+                            width: parent.width;
+                            alignment: start;
+                            spacing: 8px;
+
+                            for amb[i] in ambienti: riga-ambiente := Rectangle {
+                                property <bool> conferma: conferma-id == amb.id;
+                                height: alto-riga;
+                                border-radius: Tema.raggio-xl;
+                                background: conferma ? Tema.pericolo-velo : Tema.card-fondo;
+                                border-width: 1px;
+                                border-color: conferma ? Tema.pericolo-filo : Tema.vetro-bordo;
+
+                                // Riga 1: nome e stato (oppure la domanda che nomina l'ambiente);
+                                // riga 2: indirizzo (o cosa succede); riga 3: i pulsanti. Così ci
+                                // sta anche stretta.
+                                VerticalLayout {
+                                    padding-left: 16px;
+                                    padding-right: 16px;
+                                    padding-top: 10px;
+                                    padding-bottom: 12px;
+                                    spacing: 4px;
+
+                                    HorizontalLayout {
+                                        height: 20px;
+                                        spacing: 12px;
+
+                                        Text {
+                                            horizontal-stretch: 1;
+                                            text: conferma ? "Rimuovere «" + amb.nome + "»?" : amb.nome;
+                                            overflow: elide;
+                                            font-weight: 500;
+                                            font-size: Tema.testo-medio;
+                                            color: conferma ? Tema.caldo-1 : Tema.testo;
+                                        }
+
+                                        // A destra, al bordo della card (largo quanto la parola, al più 150).
+                                        if !conferma: Stato {
+                                            width: min(150px, self.naturale);
+                                            testo: amb.stato;
+                                            tono: amb.tono;
+                                        }
+                                    }
+
+                                    Text {
+                                        height: 20px;
+                                        text: conferma ? "Si cancella anche il token. Conferma entro 4 s." : amb.url;
+                                        overflow: elide;
+                                        font-size: Tema.testo-piccolo;
+                                        color: Tema.testo-tenue;
+                                    }
+
+                                    HorizontalLayout {
+                                        height: 30px;
+                                        spacing: 8px;
+                                        alignment: start;
+
+                                        if !conferma: Bottone {
+                                            testo: amb.collegato ? "Disconnetti" : "Connetti";
+                                            tipo: amb.collegato ? TipoPulsante.neutro : TipoPulsante.azione;
+                                            fuoco-preso => { elenco.porta-in-vista(riga-ambiente.y, riga-ambiente.height); }
+                                            premuto => {
+                                                if (amb.collegato) {
+                                                    root.disconnetti-casa();
+                                                } else {
+                                                    root.connetti-ambiente(amb.id);
+                                                }
+                                            }
+                                        }
+
+                                        Bottone {
+                                            testo: conferma ? "Annulla" : "Modifica";
+                                            fuoco-preso => { elenco.porta-in-vista(riga-ambiente.y, riga-ambiente.height); }
+                                            premuto => {
+                                                if (conferma) {
+                                                    conferma-id = "";
+                                                } else {
+                                                    apri-modulo(i);
+                                                }
+                                            }
+                                        }
+
+                                        Bottone {
+                                            testo: conferma ? "Conferma" : "Rimuovi";
+                                            tipo: conferma ? TipoPulsante.pericolo : TipoPulsante.neutro;
+                                            accessible-label: conferma ? "Conferma la rimozione di " + amb.nome : "Rimuovi " + amb.nome;
+                                            fuoco-preso => { elenco.porta-in-vista(riga-ambiente.y, riga-ambiente.height); }
+                                            premuto => { rimuovi(amb.id); }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
-            }
 
-            elenco := Flickable {
-                y: 44px;
-                height: parent.height - 44px;
-                content-height: max(self.height, ambienti.length * passo-riga);
+                // ─── Home Assistant: modulo aggiungi/modifica ───
+                if sezione == 0 && modo == ModoAmbienti.modulo: VerticalLayout {
+                    x: 0;
+                    width: min(560px, parent.width);
+                    alignment: start;
+                    spacing: 10px;
+                    // Il modulo nasce col fuoco nel primo campo.
+                    init => { nome.prendi(); }
 
-                // Tab su un pulsante di una riga fuori vista: la riga scorre in vista.
-                function porta-in-vista(i: int) {
-                    if (i * passo-riga + self.content-y < 0) {
-                        self.content-y = -i * passo-riga;
-                    } else if (i * passo-riga + alto-riga + self.content-y > self.height) {
-                        self.content-y = self.height - i * passo-riga - alto-riga;
-                    }
-                }
-
-                for amb[i] in ambienti: Rectangle {
-                    property <bool> conferma: conferma-id == amb.id;
-                    y: i * passo-riga;
-                    height: alto-riga;
-                    border-radius: Tema.raggio-xl;
-                    background: conferma ? Tema.pericolo-velo : Tema.card-fondo;
-                    border-width: 1px;
-                    border-color: conferma ? Tema.pericolo-filo : Tema.vetro-bordo;
-
-                    // Riga 1: nome e stato (oppure la domanda che nomina l'ambiente); riga 2:
-                    // indirizzo (o cosa succede); riga 3: i pulsanti. Così ci sta anche stretta.
-                    Text {
-                        x: 16px;
-                        y: 10px;
-                        width: parent.width - self.x - (conferma ? 16px : 176px);
-                        text: conferma ? "Rimuovere «" + amb.nome + "»?" : amb.nome;
+                    Etichetta {
+                        height: 34px;
+                        text: modulo-titolo;
                         overflow: elide;
-                        font-weight: 500;
-                        font-size: Tema.testo-medio;
-                        color: conferma ? Tema.caldo-1 : Tema.testo;
                     }
 
-                    // A destra, al bordo della card (largo quanto la parola, al più 150).
-                    if !conferma: Stato {
-                        x: parent.width - self.width - 16px;
-                        y: 10px;
-                        width: min(150px, self.naturale);
-                        height: 20px;
-                        testo: amb.stato;
-                        tono: amb.tono;
+                    nome := Campo {
+                        etichetta: "Nome";
+                        suggerimento: "es. Casa";
+                        testo <=> campo-nome;
+                        esci => { radice.focus(); }
+                        invio => { salva(); }
                     }
 
-                    Text {
-                        x: 16px;
-                        y: 34px;
-                        width: parent.width - 32px;
-                        text: conferma ? "Si cancella anche il token. Conferma entro 4 s." : amb.url;
+                    Campo {
+                        etichetta: "Indirizzo";
+                        suggerimento: "es. homeassistant.local:8123";
+                        testo <=> campo-url;
+                        esci => { radice.focus(); }
+                        invio => { salva(); }
+                    }
+
+                    Campo {
+                        etichetta: "Token";
+                        suggerimento: modulo-id == "" ? "Incolla il token di accesso a lunga durata" : "Lascia vuoto per non cambiarlo";
+                        password: true;
+                        testo <=> campo-token;
+                        esci => { radice.focus(); }
+                        invio => { salva(); }
+                    }
+
+                    // I pulsanti e il messaggio partono dove partono le caselle.
+                    HorizontalLayout {
+                        padding-left: 100px;
+                        padding-top: 8px;
+                        spacing: 10px;
+                        alignment: start;
+
+                        Bottone {
+                            testo: "Prova connessione";
+                            premuto => { prova(); }
+                        }
+
+                        Bottone {
+                            testo: "Salva";
+                            tipo: TipoPulsante.azione;
+                            premuto => { salva(); }
+                        }
+
+                        Bottone {
+                            testo: "Annulla";
+                            premuto => { chiudi-modulo(); }
+                        }
+                    }
+
+                    // Un messaggio alla volta: l'errore del modulo, altrimenti l'esito della prova.
+                    HorizontalLayout {
+                        padding-left: 100px;
+
+                        Text {
+                            text: errore-modulo != "" ? errore-modulo : esito-prova;
+                            wrap: word-wrap;
+                            font-size: Tema.testo-corpo;
+                            color: errore-modulo != "" || tono-prova == TonoUi.errore ? Tema.caldo-2
+                                : tono-prova == TonoUi.ok ? Tema.presa-accesa
+                                : Tema.testo-tenue;
+                            accessible-role: text;
+                        }
+                    }
+                }
+
+                // ─── Dispositivi ───
+                // Come la scheda «Accessories» della v2: i preferiti in cima, poi le stanze con i loro
+                // dispositivi, nascosti compresi. Frecce su/giù per l'ordine (al posto del
+                // trascinamento della v2, che con la tastiera non si poteva usare), stella, occhio,
+                // icona della stanza, stanze comprimibili. Ogni modifica è salvata subito e si vede
+                // subito nel pannello.
+                if sezione == 1: VerticalLayout {
+                    VerticalLayout {
+                        height: 52px;
+                        alignment: start;
+
+                        Etichetta {
+                            height: 26px;
+                            text: "STANZE E DISPOSITIVI";
+                        }
+
+                        // Le istruzioni servono solo se c'è qualcosa da ordinare.
+                        if righe-dispositivi.length > 0: Text {
+                            height: 18px;
+                            text: "Ordine con le frecce, preferiti con la stella, nascosti con l'occhio.";
+                            overflow: elide;
+                            font-size: Tema.testo-piccolo;
+                            color: Tema.testo-tenue;
+                        }
+                    }
+
+                    // L'elenco e, sopra, la scelta dell'icona quando è aperta.
+                    Rectangle {
+                        vertical-stretch: 1;
+
+                        if righe-dispositivi.length == 0: VerticalLayout {
+                            alignment: center;
+                            spacing: 8px;
+
+                            Text {
+                                text: "Nessun dispositivo da gestire";
+                                horizontal-alignment: center;
+                                font-weight: 500;
+                                font-size: Tema.testo-sottotitolo;
+                                color: Tema.testo;
+                            }
+
+                            Text {
+                                text: "I dispositivi compaiono qui quando la casa è collegata (sezione Home Assistant).";
+                                horizontal-alignment: center;
+                                wrap: word-wrap;
+                                font-size: Tema.testo-corpo;
+                                color: Tema.testo-tenue;
+                            }
+                        }
+
+                        if righe-dispositivi.length > 0: elenco-dispositivi := Scorrevole {
+                            alto-contenuto: righe.preferred-height;
+
+                            righe := VerticalLayout {
+                                width: parent.width;
+                                alignment: start;
+                                spacing: 4px;
+
+                                for riga[i] in righe-dispositivi: riga-dispositivo := Rectangle {
+                                    property <bool> testata: riga.tipo == TipoRigaUi.testata-preferiti || riga.tipo == TipoRigaUi.testata-stanza;
+                                    property <string> tra-virgolette: "«" + riga.nome + "»";
+                                    height: alto-dispositivo;
+                                    border-radius: Tema.raggio-m;
+                                    background: testata ? Tema.card-fondo : transparent;
+
+                                    // Una testata: comprimi, icona (28 ciascuno), nome. Un
+                                    // dispositivo: rientrato, icona del genere e nome. Poi i comandi.
+                                    HorizontalLayout {
+                                        padding-left: testata ? 4px : 50px;
+                                        padding-right: 4px;
+
+                                        // Testate: comprimi/espandi.
+                                        if testata: VerticalLayout {
+                                            alignment: center;
+
+                                            BottoneIcona {
+                                                icona: riga.compressa ? Icone.destra : Icone.giu;
+                                                nome: (riga.compressa ? "Espandi " : "Comprimi ") + tra-virgolette;
+                                                richiesta: root.richiesta-fuoco;
+                                                mio: riga.id == root.fuoco-riga && root.fuoco-azione == "comprimi";
+                                                fuoco-preso => {
+                                                    elenco-dispositivi.porta-in-vista(riga-dispositivo.y, riga-dispositivo.height);
+                                                    fuoco-arrivato(riga.id);
+                                                }
+                                                premuto => { root.azione-dispositivo("comprimi", riga.id, riga.chiave, riga.area); }
+                                            }
+                                        }
+
+                                        if testata: Rectangle { width: 2px; }
+
+                                        // L'icona di una testata: quella della stanza (si sceglie, se
+                                        // è una stanza vera) o la stella dei preferiti, nel posto di
+                                        // un pulsante.
+                                        if testata: VerticalLayout {
+                                            width: 28px;
+                                            alignment: center;
+
+                                            if riga.tipo == TipoRigaUi.testata-stanza && riga.puo-icona: BottoneIcona {
+                                                icona: Icone.di-stanza(riga.icona);
+                                                nome: "Cambia icona di " + tra-virgolette;
+                                                richiesta: root.richiesta-fuoco;
+                                                mio: riga.id == root.fuoco-riga && root.fuoco-azione == "icona";
+                                                fuoco-preso => {
+                                                    elenco-dispositivi.porta-in-vista(riga-dispositivo.y, riga-dispositivo.height);
+                                                    fuoco-arrivato(riga.id);
+                                                }
+                                                premuto => { root.apri-scelta-icona(riga.chiave, riga.nome, riga.icona, riga.id); }
+                                            }
+
+                                            if !(riga.tipo == TipoRigaUi.testata-stanza && riga.puo-icona): HorizontalLayout {
+                                                alignment: center;
+
+                                                Image {
+                                                    width: 18px;
+                                                    height: 18px;
+                                                    source: riga.tipo == TipoRigaUi.testata-preferiti ? Icone.stella-piena : Icone.di-stanza(riga.icona);
+                                                    colorize: riga.tipo == TipoRigaUi.testata-preferiti ? Tema.luce-accesa
+                                                        : riga.nascosto ? Tema.icona-spenta : Tema.icona;
+                                                    image-rendering: smooth;
+                                                    accessible-role: none;
+                                                }
+                                            }
+                                        }
+
+                                        // L'icona del genere di un dispositivo.
+                                        if !testata: VerticalLayout {
+                                            alignment: center;
+
+                                            Image {
+                                                width: 18px;
+                                                height: 18px;
+                                                source: Icone.di-genere(riga.genere);
+                                                colorize: riga.nascosto ? Tema.icona-spenta : Tema.icona;
+                                                image-rendering: smooth;
+                                                accessible-role: none;
+                                            }
+                                        }
+
+                                        Rectangle { width: testata ? 6px : 10px; }
+
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            padding-top: 3px;
+                                            alignment: start;
+
+                                            Text {
+                                                height: 17px;
+                                                text: riga.nome;
+                                                overflow: elide;
+                                                font-weight: testata ? 500 : 400;
+                                                font-size: Tema.testo-corpo;
+                                                color: riga.nascosto ? Tema.testo-tenue : Tema.testo;
+                                            }
+
+                                            Text {
+                                                height: 14px;
+                                                text: riga.sotto;
+                                                overflow: elide;
+                                                font-size: Tema.testo-piccolo;
+                                                color: Tema.testo-tenue;
+                                            }
+                                        }
+
+                                        Rectangle { width: 8px; }
+
+                                        // Al massimo quattro pulsanti da 28 (più gli spazi), allineati a destra.
+                                        VerticalLayout {
+                                            alignment: center;
+
+                                            HorizontalLayout {
+                                                width: 120px;
+                                                spacing: 2px;
+                                                alignment: end;
+
+                                                // L'ordine: stanze vere, preferiti, dispositivi.
+                                                if riga.tipo != TipoRigaUi.testata-preferiti && (riga.tipo != TipoRigaUi.testata-stanza || riga.puo-icona): BottoneIcona {
+                                                    icona: Icone.su;
+                                                    nome: "Sposta su " + tra-virgolette;
+                                                    attivo: riga.su;
+                                                    richiesta: root.richiesta-fuoco;
+                                                    mio: riga.id == root.fuoco-riga && root.fuoco-azione == "su";
+                                                    fuoco-preso => {
+                                                        elenco-dispositivi.porta-in-vista(riga-dispositivo.y, riga-dispositivo.height);
+                                                        fuoco-arrivato(riga.id);
+                                                    }
+                                                    premuto => { root.azione-dispositivo("su", riga.id, riga.chiave, riga.area); }
+                                                }
+
+                                                if riga.tipo != TipoRigaUi.testata-preferiti && (riga.tipo != TipoRigaUi.testata-stanza || riga.puo-icona): BottoneIcona {
+                                                    icona: Icone.giu;
+                                                    nome: "Sposta giù " + tra-virgolette;
+                                                    attivo: riga.giu;
+                                                    richiesta: root.richiesta-fuoco;
+                                                    mio: riga.id == root.fuoco-riga && root.fuoco-azione == "giu";
+                                                    fuoco-preso => {
+                                                        elenco-dispositivi.porta-in-vista(riga-dispositivo.y, riga-dispositivo.height);
+                                                        fuoco-arrivato(riga.id);
+                                                    }
+                                                    premuto => { root.azione-dispositivo("giu", riga.id, riga.chiave, riga.area); }
+                                                }
+
+                                                // La stella: preferito sì/no (i dispositivi e i preferiti stessi).
+                                                if !testata: BottoneIcona {
+                                                    icona: riga.preferito ? Icone.stella-piena : Icone.stella;
+                                                    tinta: riga.preferito ? Tema.luce-accesa : Tema.icona;
+                                                    nome: riga.preferito ? "Togli " + tra-virgolette + " dai preferiti" : "Aggiungi " + tra-virgolette + " ai preferiti";
+                                                    richiesta: root.richiesta-fuoco;
+                                                    mio: riga.id == root.fuoco-riga && root.fuoco-azione == "preferito";
+                                                    fuoco-preso => {
+                                                        elenco-dispositivi.porta-in-vista(riga-dispositivo.y, riga-dispositivo.height);
+                                                        fuoco-arrivato(riga.id);
+                                                    }
+                                                    premuto => { root.azione-dispositivo("preferito", riga.id, riga.chiave, riga.area); }
+                                                }
+
+                                                // L'occhio: nascosto sì/no, del dispositivo o di tutta la stanza.
+                                                if riga.tipo == TipoRigaUi.dispositivo || riga.tipo == TipoRigaUi.testata-stanza: BottoneIcona {
+                                                    icona: riga.nascosto ? Icone.occhio-chiuso : Icone.occhio;
+                                                    nome: (riga.nascosto ? "Mostra " : "Nascondi ")
+                                                        + (riga.tipo == TipoRigaUi.testata-stanza ? "la stanza " : "") + tra-virgolette;
+                                                    richiesta: root.richiesta-fuoco;
+                                                    mio: riga.id == root.fuoco-riga && root.fuoco-azione == "nascondi";
+                                                    fuoco-preso => {
+                                                        elenco-dispositivi.porta-in-vista(riga-dispositivo.y, riga-dispositivo.height);
+                                                        fuoco-arrivato(riga.id);
+                                                    }
+                                                    premuto => { root.azione-dispositivo("nascondi", riga.id, riga.chiave, riga.area); }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Finché la scelta dell'icona è aperta l'elenco sotto non risponde al mouse
+                        // (un clic fuori dal riquadro la chiude, come Esc).
+                        if scelta-area != "": TouchArea {
+                            clicked => { chiudi-scelta-icona(); }
+                        }
+
+                        // La scelta dell'icona copre l'elenco finché non si sceglie o si annulla.
+                        if scelta-area != "": SceltaIcona {
+                            x: 0;
+                            y: 0;
+                            width: min(parent.width, 352px);
+                            titolo: "ICONA DI «" + scelta-nome + "»";
+                            nomi: root.nomi-icone;
+                            attuale: scelta-attuale;
+                            scelta <=> scelta-fuoco;
+                            scelta-fatta(i) => {
+                                root.scegli-icona(scelta-area, i);
+                                chiudi-scelta-icona();
+                            }
+                            annulla => { chiudi-scelta-icona(); }
+                        }
+                    }
+                }
+
+                // ─── Collegamenti: elenco ───
+                // Le pagine delle gestioni nell'ordine del pannello. Frecce su/giù per l'ordine,
+                // matita per il modulo, cestino con la conferma. Ogni modifica è salvata subito e si
+                // vede subito nel pannello.
+                if sezione == 2 && !modulo-collegamento: Rectangle {
+                    VerticalLayout {
+                        spacing: 4px;
+
+                        // Con dei collegamenti il pulsante sta in alto a destra; a elenco vuoto, sotto
+                        // il messaggio e al centro (come nel pannello).
+                        HorizontalLayout {
+                            height: 30px;
+                            spacing: 12px;
+
+                            Etichetta {
+                                horizontal-stretch: 1;
+                                text: "COLLEGAMENTI";
+                            }
+
+                            if collegamenti.length > 0: Bottone {
+                                testo: "Aggiungi un collegamento";
+                                chiede-fuoco: fuoco-azione-collegamento == "aggiungi";
+                                fuoco-preso => {
+                                    if (fuoco-azione-collegamento == "aggiungi") {
+                                        fuoco-azione-collegamento = "";
+                                    }
+                                }
+                                premuto => { apri-modulo-collegamento(-1); }
+                            }
+                        }
+
+                        Text {
+                            height: 22px;
+                            text: "Le pagine delle tue gestioni: il pannello le apre nel browser predefinito.";
+                            overflow: elide;
+                            font-size: Tema.testo-piccolo;
+                            color: Tema.testo-tenue;
+                        }
+
+                        area-collegamenti := Rectangle {
+                            vertical-stretch: 1;
+
+                            if collegamenti.length == 0: VerticalLayout {
+                                alignment: center;
+                                spacing: 8px;
+
+                                Text {
+                                    text: "Nessun collegamento";
+                                    horizontal-alignment: center;
+                                    font-weight: 500;
+                                    font-size: Tema.testo-sottotitolo;
+                                    color: Tema.testo;
+                                }
+
+                                Text {
+                                    text: "Aggiungi le pagine che usi per le tue gestioni (router, NAS, server…): si aprono con un clic dal pannello.";
+                                    horizontal-alignment: center;
+                                    wrap: word-wrap;
+                                    font-size: Tema.testo-corpo;
+                                    color: Tema.testo-tenue;
+                                }
+
+                                HorizontalLayout {
+                                    alignment: center;
+                                    padding-top: 4px;
+
+                                    Bottone {
+                                        testo: "Aggiungi un collegamento";
+                                        tipo: TipoPulsante.azione;
+                                        chiede-fuoco: fuoco-azione-collegamento == "aggiungi";
+                                        fuoco-preso => {
+                                            if (fuoco-azione-collegamento == "aggiungi") {
+                                                fuoco-azione-collegamento = "";
+                                            }
+                                        }
+                                        premuto => { apri-modulo-collegamento(-1); }
+                                    }
+                                }
+                            }
+
+                            if collegamenti.length > 0: elenco-collegamenti := Scorrevole {
+                                alto-contenuto: righe-collegamenti.preferred-height;
+
+                                righe-collegamenti := VerticalLayout {
+                                    width: parent.width;
+                                    alignment: start;
+                                    spacing: 4px;
+
+                                    for c[i] in collegamenti: riga-collegamento := Rectangle {
+                                        property <string> tra-virgolette: "«" + c.nome + "»";
+                                        height: alto-collegamento;
+                                        border-radius: Tema.raggio-m;
+                                        background: Tema.card-fondo;
+
+                                        HorizontalLayout {
+                                            padding-left: 12px;
+                                            padding-right: 4px;
+                                            spacing: 10px;
+
+                                            VerticalLayout {
+                                                alignment: center;
+
+                                                Image {
+                                                    width: 18px;
+                                                    height: 18px;
+                                                    source: Icone.collegamento;
+                                                    colorize: Tema.icona;
+                                                    image-rendering: smooth;
+                                                    accessible-role: none;
+                                                }
+                                            }
+
+                                            VerticalLayout {
+                                                horizontal-stretch: 1;
+                                                padding-top: 5px;
+                                                alignment: start;
+                                                spacing: 1px;
+
+                                                Text {
+                                                    height: 18px;
+                                                    text: c.nome;
+                                                    overflow: elide;
+                                                    font-weight: 500;
+                                                    font-size: Tema.testo-corpo;
+                                                    color: Tema.testo;
+                                                }
+
+                                                Text {
+                                                    height: 15px;
+                                                    text: c.url;
+                                                    overflow: elide;
+                                                    font-size: Tema.testo-piccolo;
+                                                    color: Tema.testo-tenue;
+                                                }
+                                            }
+
+                                            // Quattro pulsanti da 28 (più gli spazi), allineati a destra.
+                                            VerticalLayout {
+                                                alignment: center;
+
+                                                HorizontalLayout {
+                                                    width: 120px;
+                                                    spacing: 2px;
+                                                    alignment: end;
+
+                                                    BottoneIcona {
+                                                        icona: Icone.su;
+                                                        nome: "Sposta su " + tra-virgolette;
+                                                        attivo: i > 0 && conferma-c-id == "";
+                                                        richiesta: root.richiesta-fuoco;
+                                                        mio: c.id == root.fuoco-collegamento && root.fuoco-azione-collegamento == "su";
+                                                        fuoco-preso => {
+                                                            elenco-collegamenti.porta-in-vista(riga-collegamento.y, riga-collegamento.height);
+                                                            fuoco-collegamento-arrivato(c.id);
+                                                        }
+                                                        premuto => { root.sposta-collegamento(c.id, -1); }
+                                                    }
+
+                                                    BottoneIcona {
+                                                        icona: Icone.giu;
+                                                        nome: "Sposta giù " + tra-virgolette;
+                                                        attivo: i < collegamenti.length - 1 && conferma-c-id == "";
+                                                        richiesta: root.richiesta-fuoco;
+                                                        mio: c.id == root.fuoco-collegamento && root.fuoco-azione-collegamento == "giu";
+                                                        fuoco-preso => {
+                                                            elenco-collegamenti.porta-in-vista(riga-collegamento.y, riga-collegamento.height);
+                                                            fuoco-collegamento-arrivato(c.id);
+                                                        }
+                                                        premuto => { root.sposta-collegamento(c.id, 1); }
+                                                    }
+
+                                                    BottoneIcona {
+                                                        icona: Icone.matita;
+                                                        nome: "Modifica " + tra-virgolette;
+                                                        // Con la conferma aperta le righe sotto sono spente:
+                                                        // Narrator e UIA non le invocano (il mouse lo ferma
+                                                        // già l'area sopra).
+                                                        attivo: conferma-c-id == "";
+                                                        richiesta: root.richiesta-fuoco;
+                                                        mio: c.id == root.fuoco-collegamento && root.fuoco-azione-collegamento == "modifica";
+                                                        fuoco-preso => {
+                                                            elenco-collegamenti.porta-in-vista(riga-collegamento.y, riga-collegamento.height);
+                                                            fuoco-collegamento-arrivato(c.id);
+                                                        }
+                                                        premuto => { apri-modulo-collegamento(i); }
+                                                    }
+
+                                                    BottoneIcona {
+                                                        icona: Icone.cestino;
+                                                        nome: "Elimina " + tra-virgolette;
+                                                        attivo: conferma-c-id == "";
+                                                        richiesta: root.richiesta-fuoco;
+                                                        mio: c.id == root.fuoco-collegamento && root.fuoco-azione-collegamento == "elimina";
+                                                        fuoco-preso => {
+                                                            elenco-collegamenti.porta-in-vista(riga-collegamento.y, riga-collegamento.height);
+                                                            fuoco-collegamento-arrivato(c.id);
+                                                        }
+                                                        premuto => { chiedi-elimina-collegamento(i); }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Con la conferma aperta il resto della sezione non risponde al mouse: un clic
+                    // fuori dal riquadro annulla, come Esc.
+                    if conferma-c-id != "": TouchArea {
+                        clicked => { annulla-elimina-collegamento(); }
+                    }
+
+                    // La conferma sta in cima all'elenco.
+                    if conferma-c-id != "": ConfermaElimina {
+                        x: 0;
+                        y: area-collegamenti.y;
+                        width: min(parent.width, 400px);
+                        nome: conferma-c-nome;
+                        conferma => { conferma-elimina-collegamento(); }
+                        annulla => { annulla-elimina-collegamento(); }
+                    }
+                }
+
+                // ─── Collegamenti: modulo aggiungi/modifica ───
+                if sezione == 2 && modulo-collegamento: VerticalLayout {
+                    x: 0;
+                    width: min(560px, parent.width);
+                    alignment: start;
+                    spacing: 10px;
+                    // Il modulo nasce col fuoco nel primo campo.
+                    init => { nome-collegamento.prendi(); }
+
+                    // Al salvataggio si controllano tutti e due i campi; il fuoco va sul primo sbagliato.
+                    function salva() {
+                        toccato-c-nome = true;
+                        toccato-c-url = true;
+                        errore-c-nome = root.controlla-nome-collegamento(campo-c-nome);
+                        errore-c-url = root.controlla-indirizzo-collegamento(campo-c-url);
+                        if (errore-c-nome != "") {
+                            nome-collegamento.prendi();
+                        } else if (errore-c-url != "") {
+                            indirizzo-collegamento.prendi();
+                        } else {
+                            errore-c = root.salva-collegamento(modulo-c-id, campo-c-nome, campo-c-url);
+                            if (errore-c == "") {
+                                chiudi-modulo-collegamento(false);
+                            }
+                        }
+                    }
+
+                    Etichetta {
+                        height: 34px;
+                        text: modulo-c-titolo;
                         overflow: elide;
-                        font-size: Tema.testo-piccolo;
-                        color: Tema.testo-tenue;
+                    }
+
+                    // Ogni campo con la sua riga sotto (l'errore, o cosa si accetta), allineata alla casella.
+                    VerticalLayout {
+                        spacing: 2px;
+
+                        nome-collegamento := Campo {
+                            etichetta: "Nome";
+                            suggerimento: "es. Proxmox";
+                            errore: errore-c-nome;
+                            testo <=> campo-c-nome;
+                            esci => { radice.focus(); }
+                            invio => { salva(); }
+                            modificato => {
+                                toccato-c-nome = true;
+                                // L'errore sparisce appena il nome va bene.
+                                if (errore-c-nome != "") {
+                                    errore-c-nome = root.controlla-nome-collegamento(campo-c-nome);
+                                }
+                            }
+                            lasciato => {
+                                if (toccato-c-nome) {
+                                    errore-c-nome = root.controlla-nome-collegamento(campo-c-nome);
+                                }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            padding-left: 100px;
+
+                            Text {
+                                height: 16px;
+                                text: errore-c-nome;
+                                overflow: elide;
+                                font-size: Tema.testo-piccolo;
+                                color: Tema.caldo-2;
+                            }
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 2px;
+
+                        indirizzo-collegamento := Campo {
+                            etichetta: "Indirizzo";
+                            suggerimento: "es. https://esempio.lan:8006";
+                            errore: errore-c-url;
+                            testo <=> campo-c-url;
+                            esci => { radice.focus(); }
+                            invio => { salva(); }
+                            modificato => {
+                                toccato-c-url = true;
+                                if (errore-c-url != "") {
+                                    errore-c-url = root.controlla-indirizzo-collegamento(campo-c-url);
+                                }
+                            }
+                            lasciato => {
+                                if (toccato-c-url) {
+                                    errore-c-url = root.controlla-indirizzo-collegamento(campo-c-url);
+                                }
+                            }
+                        }
+
+                        // Sotto l'indirizzo: l'errore, altrimenti cosa si accetta.
+                        HorizontalLayout {
+                            padding-left: 100px;
+
+                            Text {
+                                height: 16px;
+                                text: errore-c-url != "" ? errore-c-url : "Solo http:// o https://; senza, si aggiunge https://.";
+                                overflow: elide;
+                                font-size: Tema.testo-piccolo;
+                                color: errore-c-url != "" ? Tema.caldo-2 : Tema.testo-tenue;
+                            }
+                        }
                     }
 
                     HorizontalLayout {
-                        x: 16px;
-                        y: 58px;
-                        height: 30px;
+                        padding-left: 100px;
+                        padding-top: 2px;
+                        spacing: 10px;
+                        alignment: start;
+
+                        Bottone {
+                            testo: "Salva";
+                            tipo: TipoPulsante.azione;
+                            premuto => { salva(); }
+                        }
+
+                        Bottone {
+                            testo: "Annulla";
+                            premuto => { chiudi-modulo-collegamento(true); }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 100px;
+
+                        Text {
+                            text: errore-c;
+                            wrap: word-wrap;
+                            font-size: Tema.testo-corpo;
+                            color: Tema.caldo-2;
+                            accessible-role: text;
+                        }
+                    }
+                }
+
+                // ─── Isola ───
+                if sezione == 3: isola := Scorrevole {
+                    alto-contenuto: colonna.preferred-height + 8px;
+
+                    colonna := VerticalLayout {
+                        width: parent.width;
+                        alignment: start;
                         spacing: 8px;
 
-                        if !conferma: Bottone {
-                            testo: amb.collegato ? "Disconnetti" : "Connetti";
-                            tipo: amb.collegato ? TipoPulsante.neutro : TipoPulsante.azione;
-                            fuoco-preso => { elenco.porta-in-vista(i); }
-                            premuto => {
-                                if (amb.collegato) {
-                                    root.disconnetti-casa();
-                                } else {
-                                    root.connetti-ambiente(amb.id);
+                        Etichetta {
+                            height: 30px;
+                            text: "PILLOLA";
+                        }
+
+                        RigaScelta {
+                            titolo: "A sinistra degli occhi";
+                            voci: scelte-lati;
+                            indice: indice-lato-sinistro;
+                            scelto(i) => { root.scegli-lato(0, i); }
+                            fuoco-preso => { isola.porta-in-vista(self.y, self.height); }
+                        }
+
+                        RigaScelta {
+                            titolo: "A destra degli occhi";
+                            voci: scelte-lati;
+                            indice: indice-lato-destro;
+                            scelto(i) => { root.scegli-lato(1, i); }
+                            fuoco-preso => { isola.porta-in-vista(self.y, self.height); }
+                        }
+
+                        // Su Windows, sotto i selettori, la rassicurazione quando uno dei due vale «Rete».
+                        if !fuori-da-windows && (scelte-lati[indice-lato-sinistro] == "Rete" || scelte-lati[indice-lato-destro] == "Rete"): Text {
+                            text: "«Rete»: solo l'icona della connessione. Il nome della rete non compare mai nella pillola.";
+                            wrap: word-wrap;
+                            font-size: Tema.testo-piccolo;
+                            color: Tema.testo-tenue;
+                        }
+
+                        // Dove l'app gira (Windows) la nota «solo su Windows» non serve: la mostra solo chi non ha la fonte.
+                        if fuori-da-windows: Text {
+                            text: "«Rete»: solo su Windows, solo l'icona della connessione. Il nome della rete non compare mai nella pillola.";
+                            wrap: word-wrap;
+                            font-size: Tema.testo-piccolo;
+                            color: Tema.testo-tenue;
+                        }
+
+                        if volume-rotella-disponibile: card-volume := CardRiga {
+                            titolo: "Volume con la rotella sulla pillola";
+                            descrizione: "Due punti a scatto; al posto degli occhi compare la barra del volume.";
+
+                            Interruttore {
+                                nome: "Volume con la rotella sulla pillola";
+                                acceso: volume-rotella;
+                                commutato => {
+                                    volume-rotella = !volume-rotella;
+                                    root.cambia-volume-rotella(volume-rotella);
+                                }
+                                changed has-focus => {
+                                    if (self.has-focus) {
+                                        isola.porta-in-vista(card-volume.y, card-volume.height);
+                                    }
                                 }
                             }
                         }
 
-                        Bottone {
-                            testo: conferma ? "Annulla" : "Modifica";
-                            fuoco-preso => { elenco.porta-in-vista(i); }
-                            premuto => {
-                                if (conferma) {
-                                    conferma-id = "";
-                                } else {
-                                    apri-modulo(i);
+                        // Un avviso non è un aspetto della pillola: ha la sua sezione.
+                        if avvisi-bt-disponibile: Etichetta {
+                            height: 30px;
+                            text: "AVVISI";
+                        }
+
+                        if avvisi-bt-disponibile: card-bt := CardRiga {
+                            titolo: "Avvisa quando le cuffie Bluetooth sono scariche";
+                            descrizione: "Una volta al giorno, al 20% o meno.";
+
+                            Interruttore {
+                                nome: "Avvisa quando le cuffie Bluetooth sono scariche";
+                                acceso: avvisi-bt;
+                                commutato => {
+                                    avvisi-bt = !avvisi-bt;
+                                    root.cambia-avvisi-bt(avvisi-bt);
+                                }
+                                changed has-focus => {
+                                    if (self.has-focus) {
+                                        isola.porta-in-vista(card-bt.y, card-bt.height);
+                                    }
                                 }
                             }
                         }
 
+                        Etichetta {
+                            height: 30px;
+                            text: "METEO";
+                        }
+
+                        RigaScelta {
+                            titolo: "Meteo da";
+                            voci: scelte-meteo;
+                            indice: indice-meteo;
+                            scelto(i) => { root.scegli-meteo(i); }
+                            fuoco-preso => { isola.porta-in-vista(self.y, self.height); }
+                        }
+
+                        Etichetta {
+                            height: 30px;
+                            text: "QUADRANTI";
+                        }
+
+                        for q[i] in quadranti-scelti: RigaScelta {
+                            titolo: "Quadrante " + (i + 1);
+                            voci: scelte-quadranti;
+                            indice: q.indice;
+                            con-massimo: q.con-massimo;
+                            massimo: q.massimo;
+                            predefinito: q.predefinito;
+                            scelto(n) => { root.scegli-quadrante(i, n); }
+                            massimo-scritto(testo) => { return root.cambia-massimo(i, testo); }
+                            fuoco-preso => { isola.porta-in-vista(self.y, self.height); }
+                            esci => { radice.focus(); }
+                        }
+
+                        if fuori-da-windows: Text {
+                            text: "«GPU»: solo su Windows.";
+                            wrap: word-wrap;
+                            font-size: Tema.testo-piccolo;
+                            color: Tema.testo-tenue;
+                        }
+                    }
+                }
+
+                // ─── Claude ───
+                if sezione == 4: claude := Scorrevole {
+                    alto-contenuto: colonna-claude.preferred-height + 8px;
+
+                    colonna-claude := VerticalLayout {
+                        width: parent.width;
+                        alignment: start;
+                        spacing: 8px;
+
+                        Etichetta {
+                            height: 30px;
+                            text: "CLAUDE CODE";
+                        }
+
+                        // Lo stato e, a riposo, il pulsante per collegare (o aggiornare).
+                        card-stato := CardRiga {
+                            titolo: claude-stato;
+                            descrizione: claude-disponibile ? "Le sessioni di Claude Code compaiono nella pillola, coi permessi da consentire." : "Il collegamento con le sessioni di Claude Code è solo per Windows; la lettura dei consumi via API funziona ovunque.";
+
+                            if claude-passo == 0 && claude-disponibile && (!claude-collegato || claude-da-aggiornare): Bottone {
+                                testo: claude-da-aggiornare ? "Aggiorna il collegamento" : "Collega Claude Code";
+                                premuto => {
+                                    claude-esito = "";
+                                    root.claude-prepara();
+                                }
+                                changed has-focus => {
+                                    if (self.has-focus) {
+                                        claude.porta-in-vista(card-stato.y, card-stato.height);
+                                    }
+                                }
+                            }
+                        }
+
+                        // L'anteprima di ciò che si scrive: nulla è scritto finché non si preme «Scrivi».
+                        if claude-passo == 1: Rectangle {
+                            height: corpo-anteprima.preferred-height;
+                            border-radius: Tema.raggio-xl;
+                            background: Tema.card-fondo;
+                            border-width: 1px;
+                            border-color: Tema.vetro-bordo;
+                            // Il fuoco parte da «Annulla»: Invio per sbaglio non scrive.
+                            init => { annulla-claude.focus(); }
+                            accessible-role: groupbox;
+                            accessible-label: "Anteprima della scrittura in settings.json";
+
+                            corpo-anteprima := VerticalLayout {
+                                padding: 16px;
+                                spacing: 8px;
+
+                                Text {
+                                    text: "Così resteranno le voci di isola in settings.json";
+                                    font-weight: 500;
+                                    font-size: Tema.testo-medio;
+                                    color: Tema.testo;
+                                }
+
+                                Text {
+                                    text: claude-file;
+                                    wrap: word-wrap;
+                                    font-family: Tema.carattere-mono;
+                                    font-size: Tema.testo-piccolo;
+                                    color: Tema.testo-tenue;
+                                }
+
+                                // Il riquadro mono: scorre col mouse e, con il fuoco dentro, con le frecce.
+                                Rectangle {
+                                    height: 190px;
+                                    border-radius: Tema.raggio-m;
+                                    background: Tema.riquadro-fondo;
+                                    border-width: 1px;
+                                    border-color: Tema.vetro-bordo;
+                                    clip: true;
+
+                                    Flickable {
+                                        content-width: max(self.width, anteprima-testo.preferred-width + 24px);
+                                        content-height: max(self.height, anteprima-testo.preferred-height + 16px);
+
+                                        anteprima-testo := TextInput {
+                                            x: 12px;
+                                            y: 8px;
+                                            width: parent.content-width - 24px;
+                                            height: parent.content-height - 16px;
+                                            text: claude-anteprima;
+                                            read-only: true;
+                                            wrap: no-wrap;
+                                            font-family: Tema.carattere-mono;
+                                            font-size: Tema.testo-piccolo;
+                                            color: Tema.testo;
+                                            accessible-label: "Voci di isola come resteranno in settings.json";
+                                        }
+                                    }
+                                }
+
+                                if claude-avvisi != "": Text {
+                                    text: claude-avvisi;
+                                    wrap: word-wrap;
+                                    font-size: Tema.testo-corpo;
+                                    color: Tema.caldo-1;
+                                }
+
+                                Text {
+                                    text: "Il resto di settings.json resta com'è (la prima volta ne tengo una copia accanto). Le sessioni di Claude Code avviate dopo il collegamento lo useranno.";
+                                    wrap: word-wrap;
+                                    font-size: Tema.testo-piccolo;
+                                    color: Tema.testo-tenue;
+                                }
+
+                                HorizontalLayout {
+                                    height: 30px;
+                                    spacing: 10px;
+                                    alignment: end;
+
+                                    annulla-claude := Bottone {
+                                        testo: "Annulla";
+                                        premuto => { chiudi-claude(); }
+                                        changed has-focus => {
+                                            if (self.has-focus) {
+                                                claude.porta-in-vista(parent.y, parent.height);
+                                            }
+                                        }
+                                    }
+
+                                    Bottone {
+                                        testo: "Scrivi in settings.json";
+                                        tipo: TipoPulsante.azione;
+                                        premuto => { root.claude-conferma(); }
+                                        changed has-focus => {
+                                            if (self.has-focus) {
+                                                claude.porta-in-vista(parent.y, parent.height);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Collegato: lo scollegamento.
+                        if claude-passo == 0 && claude-disponibile && claude-collegato: card-scollega := CardRiga {
+                            titolo: "Collegamento";
+                            descrizione: "Toglie da settings.json solo le voci di isola.";
+
+                            Bottone {
+                                testo: "Scollega";
+                                premuto => {
+                                    claude-esito = "";
+                                    claude-passo = 2;
+                                }
+                                changed has-focus => {
+                                    if (self.has-focus) {
+                                        claude.porta-in-vista(card-scollega.y, card-scollega.height);
+                                    }
+                                }
+                            }
+                        }
+
+                        // La conferma dello scollegamento: nomina ciò che succede.
+                        if claude-passo == 2: Rectangle {
+                            height: corpo-scollega.preferred-height;
+                            border-radius: Tema.raggio-xl;
+                            background: Tema.riquadro-pieno;
+                            border-width: 1px;
+                            border-color: Tema.pericolo-filo;
+                            init => { annulla-scollega.focus(); }
+                            accessible-role: groupbox;
+                            accessible-label: "Conferma dello scollegamento da Claude Code";
+
+                            corpo-scollega := VerticalLayout {
+                                padding: 16px;
+                                spacing: 8px;
+
+                                Text {
+                                    text: "Togliere il collegamento con Claude Code?";
+                                    font-weight: 500;
+                                    font-size: Tema.testo-medio;
+                                    color: Tema.testo;
+                                }
+
+                                Text {
+                                    text: "Da settings.json escono solo le voci di isola (hook e barra di stato); il resto resta com'è.";
+                                    wrap: word-wrap;
+                                    font-size: Tema.testo-corpo;
+                                    color: Tema.testo-tenue;
+                                }
+
+                                HorizontalLayout {
+                                    height: 30px;
+                                    spacing: 10px;
+                                    alignment: end;
+
+                                    annulla-scollega := Bottone {
+                                        testo: "Annulla";
+                                        premuto => { chiudi-claude(); }
+                                        changed has-focus => {
+                                            if (self.has-focus) {
+                                                claude.porta-in-vista(parent.y, parent.height);
+                                            }
+                                        }
+                                    }
+
+                                    Bottone {
+                                        testo: "Scollega";
+                                        tipo: TipoPulsante.pericolo;
+                                        premuto => { root.claude-scollega(); }
+                                        changed has-focus => {
+                                            if (self.has-focus) {
+                                                claude.porta-in-vista(parent.y, parent.height);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // La nota è di Claude Code: sta con il suo blocco, non in fondo alla sezione.
+                        Text {
+                            text: "Con isola chiusa Claude Code prosegue da solo: i permessi li decidi nel terminale.";
+                            wrap: word-wrap;
+                            font-size: Tema.testo-piccolo;
+                            color: Tema.testo-tenue;
+                        }
+
+                        if claude-esito != "": Text {
+                            text: claude-esito;
+                            wrap: word-wrap;
+                            font-size: Tema.testo-corpo;
+                            color: claude-esito-errore ? Tema.caldo-1 : Tema.testo-tenue;
+                        }
+
+                        // Chiave da amministratore: consumi e dati dell'organizzazione, solo letture.
+                        Rectangle {
+                            height: colonna-api.preferred-height;
+                            border-radius: Tema.raggio-xl;
+                            background: Tema.card-fondo;
+                            border-width: 1px;
+                            border-color: Tema.vetro-bordo;
+
+                            colonna-api := VerticalLayout {
+                                padding-left: 16px;
+                                padding-right: 16px;
+                                padding-top: 12px;
+                                padding-bottom: 14px;
+                                spacing: 8px;
+
+                                Text {
+                                    text: "Chiave da amministratore";
+                                    font-weight: 500;
+                                    font-size: Tema.testo-medio;
+                                    color: Tema.testo;
+                                }
+
+                                Text {
+                                    text: "Crea una chiave da amministratore con scadenza nella Console (Impostazioni › Admin keys). Serve solo per leggere consumi e dati dell'organizzazione: non modifica nulla.";
+                                    wrap: word-wrap;
+                                    font-size: Tema.testo-piccolo;
+                                    color: Tema.testo-tenue;
+                                }
+
+                                if !api-presente: Campo {
+                                    etichetta: "Chiave";
+                                    suggerimento: "sk-ant-admin01-…";
+                                    nome-accessibile: "Chiave da amministratore";
+                                    password: true;
+                                    testo <=> api-campo;
+                                    invio => { root.api-salva(api-campo); }
+                                }
+
+                                if api-presente: Text {
+                                    text: "•••• " + api-ultime;
+                                    font-size: Tema.testo-medio;
+                                    color: Tema.testo;
+                                    accessible-role: text;
+                                    accessible-label: "Chiave salvata, finisce con " + api-ultime;
+                                }
+
+                                HorizontalLayout {
+                                    height: 30px;
+                                    spacing: 10px;
+                                    alignment: start;
+
+                                    if !api-presente: Bottone {
+                                        testo: "Salva";
+                                        tipo: TipoPulsante.azione;
+                                        premuto => { root.api-salva(api-campo); }
+                                    }
+
+                                    Bottone {
+                                        testo: api-occupato ? "Provo…" : "Prova";
+                                        premuto => {
+                                            if (!api-occupato) {
+                                                root.api-prova(api-campo);
+                                            }
+                                        }
+                                    }
+
+                                    if api-presente: Bottone {
+                                        testo: "Togli";
+                                        premuto => { root.api-togli(); }
+                                    }
+                                }
+
+                                if api-esito != "": Text {
+                                    text: api-esito;
+                                    wrap: word-wrap;
+                                    font-size: Tema.testo-corpo;
+                                    color: api-esito-errore ? Tema.caldo-1 : Tema.testo-tenue;
+                                }
+
+                                if api-stato != "": Text {
+                                    text: api-stato;
+                                    wrap: word-wrap;
+                                    font-size: Tema.testo-piccolo;
+                                    color: Tema.testo-tenue;
+                                }
+                            }
+                        }
+
+                        // Avvisi: una sola volta per finestra di limite, per gradino di spesa e per mese.
+                        Rectangle {
+                            height: colonna-avvisi.preferred-height;
+                            border-radius: Tema.raggio-xl;
+                            background: Tema.card-fondo;
+                            border-width: 1px;
+                            border-color: Tema.vetro-bordo;
+
+                            colonna-avvisi := VerticalLayout {
+                                padding-left: 16px;
+                                padding-right: 16px;
+                                padding-top: 12px;
+                                padding-bottom: 14px;
+                                spacing: 8px;
+
+                                Text {
+                                    text: "Avvisi";
+                                    font-weight: 500;
+                                    font-size: Tema.testo-medio;
+                                    color: Tema.testo;
+                                }
+
+                                Text {
+                                    text: "Isola ti avvisa una sola volta quando i limiti dell'abbonamento o la spesa delle API superano questi valori. Lascia vuota la soglia di spesa per non avere l'avviso.";
+                                    wrap: word-wrap;
+                                    font-size: Tema.testo-piccolo;
+                                    color: Tema.testo-tenue;
+                                }
+
+                                Campo {
+                                    etichetta: "Avvisa al … % del limite";
+                                    larghezza-etichetta: 190px;
+                                    suggerimento: "80";
+                                    testo: root.soglia-limite;
+                                    errore: errore-soglia-limite;
+                                    invio => { errore-soglia-limite = root.soglia-limite-scritta(self.testo); }
+                                    lasciato => { errore-soglia-limite = root.soglia-limite-scritta(self.testo); }
+                                }
+
+                                if errore-soglia-limite != "": Text {
+                                    text: errore-soglia-limite;
+                                    wrap: word-wrap;
+                                    font-size: Tema.testo-corpo;
+                                    color: Tema.caldo-1;
+                                    accessible-role: none;
+                                }
+
+                                Campo {
+                                    etichetta: "Soglia di spesa mensile ($)";
+                                    larghezza-etichetta: 190px;
+                                    suggerimento: "Per esempio 250";
+                                    testo: root.soglia-spesa;
+                                    errore: errore-soglia-spesa;
+                                    invio => { errore-soglia-spesa = root.soglia-spesa-scritta(self.testo); }
+                                    lasciato => { errore-soglia-spesa = root.soglia-spesa-scritta(self.testo); }
+                                }
+
+                                if errore-soglia-spesa != "": Text {
+                                    text: errore-soglia-spesa;
+                                    wrap: word-wrap;
+                                    font-size: Tema.testo-corpo;
+                                    color: Tema.caldo-1;
+                                    accessible-role: none;
+                                }
+                            }
+                        }
+
+                    }
+                }
+
+                // ─── Sistema ───
+                if sezione == 5: VerticalLayout {
+                    alignment: start;
+                    spacing: 12px;
+
+                    Etichetta {
+                        height: 32px;
+                        text: "SISTEMA";
+                    }
+
+                    CardRiga {
+                        titolo: "Avvia con il sistema";
+                        descrizione: "Apre l'assistente quando accedi al computer.";
+
+                        Interruttore {
+                            nome: "Avvia con il sistema";
+                            acceso: avvio-con-sistema;
+                            commutato => { cambia-avvio-ora(); }
+                        }
+                    }
+
+                    if icona-barra-disponibile: CardRiga {
+                        titolo: "Mostra icona nella barra";
+                        descrizione: "L'icona vicino all'orologio, con lo stesso menu del «…» del pannello.";
+
+                        Interruttore {
+                            nome: "Mostra icona nella barra";
+                            acceso: icona-barra;
+                            commutato => { cambia-icona-barra-ora(); }
+                        }
+                    }
+
+                    // Fuori da Windows (niente menu né icona nella barra) l'unico modo per uscire.
+                    if fuori-da-windows: CardRiga {
+                        titolo: "Esci dall'assistente";
+                        descrizione: "Chiude pillola e pannello. Per riaprirlo, avvialo di nuovo.";
+
                         Bottone {
-                            testo: conferma ? "Conferma" : "Rimuovi";
-                            tipo: conferma ? TipoPulsante.pericolo : TipoPulsante.neutro;
-                            accessible-label: conferma ? "Conferma la rimozione di " + amb.nome : "Rimuovi " + amb.nome;
-                            fuoco-preso => { elenco.porta-in-vista(i); }
-                            premuto => { rimuovi(amb.id); }
+                            testo: "Esci";
+                            premuto => { root.esci(); }
                         }
                     }
-                }
-            }
 
-            // Barretta di scorrimento disegnata (4 px), solo se l'elenco non sta tutto.
-            if elenco.content-height > elenco.height + 0.5px: Rectangle {
-                x: parent.width + 8px;
-                y: elenco.y + (-elenco.content-y / elenco.content-height) * elenco.height;
-                width: 4px;
-                height: elenco.height * elenco.height / elenco.content-height;
-                border-radius: self.width / 2;
-                background: Tema.vetro-bordo;
-            }
-        }
-
-        // ─── Home Assistant: modulo aggiungi/modifica ───
-        if sezione == 0 && modo == ModoAmbienti.modulo: Rectangle {
-            x: contenuto-x;
-            y: alto-testata;
-            width: min(560px, parent.width - self.x - margine);
-            height: parent.height - self.y - 24px;
-            // Il modulo nasce col fuoco nel primo campo.
-            init => { nome.prendi(); }
-
-            Etichetta {
-                x: 0;
-                y: 0;
-                width: parent.width;
-                height: 30px;
-                text: modulo-titolo;
-                overflow: elide;
-            }
-
-            nome := Campo {
-                y: 44px;
-                width: parent.width;
-                etichetta: "Nome";
-                suggerimento: "es. Casa";
-                testo <=> campo-nome;
-                esci => { radice.focus(); }
-                invio => { salva(); }
-            }
-
-            Campo {
-                y: 88px;
-                width: parent.width;
-                etichetta: "Indirizzo";
-                suggerimento: "es. homeassistant.local:8123";
-                testo <=> campo-url;
-                esci => { radice.focus(); }
-                invio => { salva(); }
-            }
-
-            Campo {
-                y: 132px;
-                width: parent.width;
-                etichetta: "Token";
-                suggerimento: modulo-id == "" ? "Incolla il token di accesso a lunga durata" : "Lascia vuoto per non cambiarlo";
-                password: true;
-                testo <=> campo-token;
-                esci => { radice.focus(); }
-                invio => { salva(); }
-            }
-
-            HorizontalLayout {
-                x: 100px;
-                y: 184px;
-                height: 30px;
-                spacing: 10px;
-                alignment: start;
-
-                Bottone {
-                    testo: "Prova connessione";
-                    premuto => { prova(); }
-                }
-
-                Bottone {
-                    testo: "Salva";
-                    tipo: TipoPulsante.azione;
-                    premuto => { salva(); }
-                }
-
-                Bottone {
-                    testo: "Annulla";
-                    premuto => { chiudi-modulo(); }
-                }
-            }
-
-            // Un messaggio alla volta: l'errore del modulo, altrimenti l'esito della prova.
-            Text {
-                x: 100px;
-                y: 226px;
-                width: parent.width - self.x;
-                text: errore-modulo != "" ? errore-modulo : esito-prova;
-                wrap: word-wrap;
-                font-size: Tema.testo-corpo;
-                color: errore-modulo != "" || tono-prova == TonoUi.errore ? Tema.caldo-2
-                    : tono-prova == TonoUi.ok ? Tema.presa-accesa
-                    : Tema.testo-tenue;
-                accessible-role: text;
-            }
-        }
-
-        // ─── Dispositivi ───
-        // Come la scheda «Accessories» della v2: i preferiti in cima, poi le stanze con i loro
-        // dispositivi, nascosti compresi. Frecce su/giù per l'ordine (al posto del trascinamento
-        // della v2, che con la tastiera non si poteva usare), stella, occhio, icona della stanza,
-        // stanze comprimibili. Ogni modifica è salvata subito e si vede subito nel pannello.
-        if sezione == 1: Rectangle {
-            x: contenuto-x;
-            y: alto-testata;
-            width: parent.width - self.x - margine;
-            height: parent.height - self.y - 24px;
-
-            Etichetta {
-                x: 0;
-                y: 0;
-                height: 30px;
-                text: "STANZE E DISPOSITIVI";
-            }
-
-            // Le istruzioni servono solo se c'è qualcosa da ordinare.
-            if righe-dispositivi.length > 0: Text {
-                x: 0;
-                y: 26px;
-                width: parent.width;
-                height: 18px;
-                text: "Ordine con le frecce, preferiti con la stella, nascosti con l'occhio.";
-                overflow: elide;
-                font-size: Tema.testo-piccolo;
-                color: Tema.testo-tenue;
-            }
-
-            if righe-dispositivi.length == 0: VerticalLayout {
-                y: 52px;
-                height: parent.height - 52px;
-                alignment: center;
-                spacing: 8px;
-
-                Text {
-                    text: "Nessun dispositivo da gestire";
-                    horizontal-alignment: center;
-                    font-weight: 500;
-                    font-size: Tema.testo-sottotitolo;
-                    color: Tema.testo;
-                }
-
-                Text {
-                    text: "I dispositivi compaiono qui quando la casa è collegata (sezione Home Assistant).";
-                    horizontal-alignment: center;
-                    wrap: word-wrap;
-                    font-size: Tema.testo-corpo;
-                    color: Tema.testo-tenue;
-                }
-            }
-
-            elenco-dispositivi := Flickable {
-                x: 0;
-                y: 52px;
-                width: parent.width;
-                height: parent.height - 52px;
-                content-width: self.width;
-                content-height: max(self.height, righe-dispositivi.length * passo-dispositivo);
-                interactive: righe-dispositivi.length * passo-dispositivo > self.height;
-
-                // Tab su un pulsante di una riga fuori vista: la riga scorre in vista.
-                function porta-in-vista(i: int) {
-                    if (i * passo-dispositivo + self.content-y < 0) {
-                        self.content-y = -i * passo-dispositivo;
-                    } else if ((i + 1) * passo-dispositivo + self.content-y > self.height) {
-                        self.content-y = self.height - (i + 1) * passo-dispositivo;
-                    }
-                }
-
-                for riga[i] in righe-dispositivi: Rectangle {
-                    property <bool> testata: riga.tipo == TipoRigaUi.testata-preferiti || riga.tipo == TipoRigaUi.testata-stanza;
-                    property <string> tra-virgolette: "«" + riga.nome + "»";
-                    x: 0;
-                    y: i * passo-dispositivo;
-                    width: elenco-dispositivi.width;
-                    height: alto-dispositivo;
-                    border-radius: Tema.raggio-m;
-                    background: testata ? Tema.card-fondo : transparent;
-
-                    // Testate: comprimi/espandi.
-                    if testata: BottoneIcona {
-                        x: 4px;
-                        y: (parent.height - self.height) / 2;
-                        icona: riga.compressa ? Icone.destra : Icone.giu;
-                        nome: (riga.compressa ? "Espandi " : "Comprimi ") + tra-virgolette;
-                        richiesta: root.richiesta-fuoco;
-                        mio: riga.id == root.fuoco-riga && root.fuoco-azione == "comprimi";
-                        fuoco-preso => {
-                            elenco-dispositivi.porta-in-vista(i);
-                            fuoco-arrivato(riga.id);
-                        }
-                        premuto => { root.azione-dispositivo("comprimi", riga.id, riga.chiave, riga.area); }
-                    }
-
-                    // L'icona: della stanza (si sceglie, se è una stanza vera), la stella per i
-                    // preferiti, il genere per i dispositivi.
-                    if riga.tipo == TipoRigaUi.testata-stanza && riga.puo-icona: BottoneIcona {
-                        x: 34px;
-                        y: (parent.height - self.height) / 2;
-                        icona: Icone.di-stanza(riga.icona);
-                        nome: "Cambia icona di " + tra-virgolette;
-                        richiesta: root.richiesta-fuoco;
-                        mio: riga.id == root.fuoco-riga && root.fuoco-azione == "icona";
-                        fuoco-preso => {
-                            elenco-dispositivi.porta-in-vista(i);
-                            fuoco-arrivato(riga.id);
-                        }
-                        premuto => { root.apri-scelta-icona(riga.chiave, riga.nome, riga.icona, riga.id); }
-                    }
-
-                    if !(riga.tipo == TipoRigaUi.testata-stanza && riga.puo-icona): Image {
-                        x: testata ? 39px : 50px;
-                        y: (parent.height - self.height) / 2;
-                        width: 18px;
-                        height: 18px;
-                        source: riga.tipo == TipoRigaUi.testata-preferiti ? Icone.stella-piena
-                            : riga.tipo == TipoRigaUi.testata-stanza ? Icone.di-stanza(riga.icona)
-                            : Icone.di-genere(riga.genere);
-                        colorize: riga.tipo == TipoRigaUi.testata-preferiti ? Tema.luce-accesa
-                            : riga.nascosto ? Tema.icona-spenta : Tema.icona;
-                        image-rendering: smooth;
-                        accessible-role: none;
-                    }
-
-                    Text {
-                        x: testata ? 68px : 78px;
-                        y: 3px;
-                        width: comandi.x - self.x - 8px;
-                        height: 18px;
-                        text: riga.nome;
-                        overflow: elide;
-                        font-weight: testata ? 500 : 400;
+                    if config-non-salvata: Text {
+                        text: "Le impostazioni non sono state salvate su disco: il dettaglio è in Informazioni.";
+                        wrap: word-wrap;
                         font-size: Tema.testo-corpo;
-                        color: riga.nascosto ? Tema.testo-tenue : Tema.testo;
+                        color: Tema.caldo-1;
                     }
+                }
+
+                // ─── Informazioni ───
+                if sezione == 6: VerticalLayout {
+                    alignment: start;
 
                     Text {
-                        x: testata ? 68px : 78px;
-                        y: 20px;
-                        width: comandi.x - self.x - 8px;
-                        height: 14px;
-                        text: riga.sotto;
-                        overflow: elide;
-                        font-size: Tema.testo-piccolo;
-                        color: Tema.testo-tenue;
-                    }
-
-                    // Al massimo quattro pulsanti da 28 (più gli spazi), allineati a destra.
-                    comandi := HorizontalLayout {
-                        x: parent.width - 124px;
-                        y: (parent.height - 28px) / 2;
-                        width: 120px;
-                        height: 28px;
-                        spacing: 2px;
-                        alignment: end;
-
-                        // L'ordine: stanze vere, preferiti, dispositivi.
-                        if riga.tipo != TipoRigaUi.testata-preferiti && (riga.tipo != TipoRigaUi.testata-stanza || riga.puo-icona): BottoneIcona {
-                            icona: Icone.su;
-                            nome: "Sposta su " + tra-virgolette;
-                            attivo: riga.su;
-                            richiesta: root.richiesta-fuoco;
-                            mio: riga.id == root.fuoco-riga && root.fuoco-azione == "su";
-                            fuoco-preso => {
-                            elenco-dispositivi.porta-in-vista(i);
-                            fuoco-arrivato(riga.id);
-                        }
-                            premuto => { root.azione-dispositivo("su", riga.id, riga.chiave, riga.area); }
-                        }
-
-                        if riga.tipo != TipoRigaUi.testata-preferiti && (riga.tipo != TipoRigaUi.testata-stanza || riga.puo-icona): BottoneIcona {
-                            icona: Icone.giu;
-                            nome: "Sposta giù " + tra-virgolette;
-                            attivo: riga.giu;
-                            richiesta: root.richiesta-fuoco;
-                            mio: riga.id == root.fuoco-riga && root.fuoco-azione == "giu";
-                            fuoco-preso => {
-                            elenco-dispositivi.porta-in-vista(i);
-                            fuoco-arrivato(riga.id);
-                        }
-                            premuto => { root.azione-dispositivo("giu", riga.id, riga.chiave, riga.area); }
-                        }
-
-                        // La stella: preferito sì/no (i dispositivi e i preferiti stessi).
-                        if !testata: BottoneIcona {
-                            icona: riga.preferito ? Icone.stella-piena : Icone.stella;
-                            tinta: riga.preferito ? Tema.luce-accesa : Tema.icona;
-                            nome: riga.preferito ? "Togli " + tra-virgolette + " dai preferiti" : "Aggiungi " + tra-virgolette + " ai preferiti";
-                            richiesta: root.richiesta-fuoco;
-                            mio: riga.id == root.fuoco-riga && root.fuoco-azione == "preferito";
-                            fuoco-preso => {
-                            elenco-dispositivi.porta-in-vista(i);
-                            fuoco-arrivato(riga.id);
-                        }
-                            premuto => { root.azione-dispositivo("preferito", riga.id, riga.chiave, riga.area); }
-                        }
-
-                        // L'occhio: nascosto sì/no, del dispositivo o di tutta la stanza.
-                        if riga.tipo == TipoRigaUi.dispositivo || riga.tipo == TipoRigaUi.testata-stanza: BottoneIcona {
-                            icona: riga.nascosto ? Icone.occhio-chiuso : Icone.occhio;
-                            nome: (riga.nascosto ? "Mostra " : "Nascondi ")
-                                + (riga.tipo == TipoRigaUi.testata-stanza ? "la stanza " : "") + tra-virgolette;
-                            richiesta: root.richiesta-fuoco;
-                            mio: riga.id == root.fuoco-riga && root.fuoco-azione == "nascondi";
-                            fuoco-preso => {
-                            elenco-dispositivi.porta-in-vista(i);
-                            fuoco-arrivato(riga.id);
-                        }
-                            premuto => { root.azione-dispositivo("nascondi", riga.id, riga.chiave, riga.area); }
-                        }
-                    }
-                }
-            }
-
-            // Barretta di scorrimento disegnata (4 px), solo se l'elenco non sta tutto.
-            if elenco-dispositivi.content-height > elenco-dispositivi.height + 0.5px: Rectangle {
-                x: parent.width + 8px;
-                y: elenco-dispositivi.y + (-elenco-dispositivi.content-y / elenco-dispositivi.content-height) * elenco-dispositivi.height;
-                width: 4px;
-                height: elenco-dispositivi.height * elenco-dispositivi.height / elenco-dispositivi.content-height;
-                border-radius: self.width / 2;
-                background: Tema.vetro-bordo;
-            }
-
-            // Finché la scelta dell'icona è aperta l'elenco sotto non risponde al mouse (un clic
-            // fuori dal riquadro la chiude, come Esc).
-            if scelta-area != "": TouchArea {
-                y: 52px;
-                height: parent.height - 52px;
-                clicked => { chiudi-scelta-icona(); }
-            }
-
-            // La scelta dell'icona copre l'elenco finché non si sceglie o si annulla.
-            if scelta-area != "": SceltaIcona {
-                y: 52px;
-                width: min(parent.width, 352px);
-                height: 254px;
-                titolo: "ICONA DI «" + scelta-nome + "»";
-                nomi: root.nomi-icone;
-                attuale: scelta-attuale;
-                scelta <=> scelta-fuoco;
-                scelta-fatta(i) => {
-                    root.scegli-icona(scelta-area, i);
-                    chiudi-scelta-icona();
-                }
-                annulla => { chiudi-scelta-icona(); }
-            }
-        }
-
-        // ─── Collegamenti: elenco ───
-        // Le pagine delle gestioni nell'ordine del pannello. Frecce su/giù per l'ordine, matita per
-        // il modulo, cestino con la conferma. Ogni modifica è salvata subito e si vede subito nel
-        // pannello.
-        if sezione == 2 && !modulo-collegamento: Rectangle {
-            x: contenuto-x;
-            y: alto-testata;
-            width: parent.width - self.x - margine;
-            height: parent.height - self.y - 24px;
-
-            Etichetta {
-                x: 0;
-                y: 0;
-                height: 30px;
-                text: "COLLEGAMENTI";
-            }
-
-            // Con dei collegamenti il pulsante sta in alto a destra; a elenco vuoto, sotto il
-            // messaggio e al centro (come nel pannello).
-            if collegamenti.length > 0: Bottone {
-                x: parent.width - self.width;
-                y: 0;
-                testo: "Aggiungi un collegamento";
-                chiede-fuoco: fuoco-azione-collegamento == "aggiungi";
-                fuoco-preso => {
-                    if (fuoco-azione-collegamento == "aggiungi") {
-                        fuoco-azione-collegamento = "";
-                    }
-                }
-                premuto => { apri-modulo-collegamento(-1); }
-            }
-
-            Text {
-                x: 0;
-                y: 34px;
-                width: parent.width;
-                height: 18px;
-                text: "Le pagine delle tue gestioni: il pannello le apre nel browser predefinito.";
-                overflow: elide;
-                font-size: Tema.testo-piccolo;
-                color: Tema.testo-tenue;
-            }
-
-            if collegamenti.length == 0: VerticalLayout {
-                y: 60px;
-                height: parent.height - 60px;
-                alignment: center;
-                spacing: 8px;
-
-                Text {
-                    text: "Nessun collegamento";
-                    horizontal-alignment: center;
-                    font-weight: 500;
-                    font-size: Tema.testo-sottotitolo;
-                    color: Tema.testo;
-                }
-
-                Text {
-                    text: "Aggiungi le pagine che usi per le tue gestioni (router, NAS, server…): si aprono con un clic dal pannello.";
-                    horizontal-alignment: center;
-                    wrap: word-wrap;
-                    font-size: Tema.testo-corpo;
-                    color: Tema.testo-tenue;
-                }
-
-                HorizontalLayout {
-                    alignment: center;
-                    padding-top: 4px;
-
-                    Bottone {
-                        testo: "Aggiungi un collegamento";
-                        tipo: TipoPulsante.azione;
-                        chiede-fuoco: fuoco-azione-collegamento == "aggiungi";
-                        fuoco-preso => {
-                            if (fuoco-azione-collegamento == "aggiungi") {
-                                fuoco-azione-collegamento = "";
-                            }
-                        }
-                        premuto => { apri-modulo-collegamento(-1); }
-                    }
-                }
-            }
-
-            elenco-collegamenti := Flickable {
-                x: 0;
-                y: 60px;
-                width: parent.width;
-                height: parent.height - 60px;
-                content-width: self.width;
-                content-height: max(self.height, collegamenti.length * passo-collegamento);
-                interactive: collegamenti.length * passo-collegamento > self.height;
-
-                // Tab su un pulsante di una riga fuori vista: la riga scorre in vista.
-                function porta-in-vista(i: int) {
-                    if (i * passo-collegamento + self.content-y < 0) {
-                        self.content-y = -i * passo-collegamento;
-                    } else if ((i + 1) * passo-collegamento + self.content-y > self.height) {
-                        self.content-y = self.height - (i + 1) * passo-collegamento;
-                    }
-                }
-
-                for c[i] in collegamenti: Rectangle {
-                    property <string> tra-virgolette: "«" + c.nome + "»";
-                    x: 0;
-                    y: i * passo-collegamento;
-                    width: elenco-collegamenti.width;
-                    height: alto-collegamento;
-                    border-radius: Tema.raggio-m;
-                    background: Tema.card-fondo;
-
-                    Image {
-                        x: 12px;
-                        y: (parent.height - self.height) / 2;
-                        width: 18px;
-                        height: 18px;
-                        source: Icone.collegamento;
-                        colorize: Tema.icona;
-                        image-rendering: smooth;
-                        accessible-role: none;
-                    }
-
-                    Text {
-                        x: 40px;
-                        y: 5px;
-                        width: comandi-collegamento.x - self.x - 8px;
-                        height: 18px;
-                        text: c.nome;
-                        overflow: elide;
+                        height: 30px;
+                        text: "ItsyHome assistente · versione " + versione;
+                        vertical-alignment: center;
                         font-weight: 500;
-                        font-size: Tema.testo-corpo;
+                        font-size: Tema.testo-titolo;
                         color: Tema.testo;
                     }
 
                     Text {
-                        x: 40px;
-                        y: 24px;
-                        width: comandi-collegamento.x - self.x - 8px;
-                        height: 15px;
-                        text: c.url;
-                        overflow: elide;
-                        font-size: Tema.testo-piccolo;
-                        color: Tema.testo-tenue;
-                    }
-
-                    // Quattro pulsanti da 28 (più gli spazi), allineati a destra.
-                    comandi-collegamento := HorizontalLayout {
-                        x: parent.width - 124px;
-                        y: (parent.height - 28px) / 2;
-                        width: 120px;
-                        height: 28px;
-                        spacing: 2px;
-                        alignment: end;
-
-                        BottoneIcona {
-                            icona: Icone.su;
-                            nome: "Sposta su " + tra-virgolette;
-                            attivo: i > 0 && conferma-c-id == "";
-                            richiesta: root.richiesta-fuoco;
-                            mio: c.id == root.fuoco-collegamento && root.fuoco-azione-collegamento == "su";
-                            fuoco-preso => {
-                                elenco-collegamenti.porta-in-vista(i);
-                                fuoco-collegamento-arrivato(c.id);
-                            }
-                            premuto => { root.sposta-collegamento(c.id, -1); }
-                        }
-
-                        BottoneIcona {
-                            icona: Icone.giu;
-                            nome: "Sposta giù " + tra-virgolette;
-                            attivo: i < collegamenti.length - 1 && conferma-c-id == "";
-                            richiesta: root.richiesta-fuoco;
-                            mio: c.id == root.fuoco-collegamento && root.fuoco-azione-collegamento == "giu";
-                            fuoco-preso => {
-                                elenco-collegamenti.porta-in-vista(i);
-                                fuoco-collegamento-arrivato(c.id);
-                            }
-                            premuto => { root.sposta-collegamento(c.id, 1); }
-                        }
-
-                        BottoneIcona {
-                            icona: Icone.matita;
-                            nome: "Modifica " + tra-virgolette;
-                            // Con la conferma aperta le righe sotto sono spente: Narrator e UIA non
-                            // le invocano (il mouse lo ferma già l'area sopra).
-                            attivo: conferma-c-id == "";
-                            richiesta: root.richiesta-fuoco;
-                            mio: c.id == root.fuoco-collegamento && root.fuoco-azione-collegamento == "modifica";
-                            fuoco-preso => {
-                                elenco-collegamenti.porta-in-vista(i);
-                                fuoco-collegamento-arrivato(c.id);
-                            }
-                            premuto => { apri-modulo-collegamento(i); }
-                        }
-
-                        BottoneIcona {
-                            icona: Icone.cestino;
-                            nome: "Elimina " + tra-virgolette;
-                            attivo: conferma-c-id == "";
-                            richiesta: root.richiesta-fuoco;
-                            mio: c.id == root.fuoco-collegamento && root.fuoco-azione-collegamento == "elimina";
-                            fuoco-preso => {
-                                elenco-collegamenti.porta-in-vista(i);
-                                fuoco-collegamento-arrivato(c.id);
-                            }
-                            premuto => { chiedi-elimina-collegamento(i); }
-                        }
-                    }
-                }
-            }
-
-            // Barretta di scorrimento disegnata (4 px), solo se l'elenco non sta tutto.
-            if elenco-collegamenti.content-height > elenco-collegamenti.height + 0.5px: Rectangle {
-                x: parent.width + 8px;
-                y: elenco-collegamenti.y + (-elenco-collegamenti.content-y / elenco-collegamenti.content-height) * elenco-collegamenti.height;
-                width: 4px;
-                height: elenco-collegamenti.height * elenco-collegamenti.height / elenco-collegamenti.content-height;
-                border-radius: self.width / 2;
-                background: Tema.vetro-bordo;
-            }
-
-            // Con la conferma aperta il resto della sezione non risponde al mouse: un clic fuori
-            // dal riquadro annulla, come Esc.
-            if conferma-c-id != "": TouchArea {
-                clicked => { annulla-elimina-collegamento(); }
-            }
-
-            if conferma-c-id != "": ConfermaElimina {
-                x: 0;
-                y: 60px;
-                width: min(parent.width, 400px);
-                height: 132px;
-                nome: conferma-c-nome;
-                conferma => { conferma-elimina-collegamento(); }
-                annulla => { annulla-elimina-collegamento(); }
-            }
-        }
-
-        // ─── Collegamenti: modulo aggiungi/modifica ───
-        if sezione == 2 && modulo-collegamento: Rectangle {
-            x: contenuto-x;
-            y: alto-testata;
-            width: min(560px, parent.width - self.x - margine);
-            height: parent.height - self.y - 24px;
-            // Il modulo nasce col fuoco nel primo campo.
-            init => { nome-collegamento.prendi(); }
-
-            // Al salvataggio si controllano tutti e due i campi; il fuoco va sul primo sbagliato.
-            function salva() {
-                toccato-c-nome = true;
-                toccato-c-url = true;
-                errore-c-nome = root.controlla-nome-collegamento(campo-c-nome);
-                errore-c-url = root.controlla-indirizzo-collegamento(campo-c-url);
-                if (errore-c-nome != "") {
-                    nome-collegamento.prendi();
-                } else if (errore-c-url != "") {
-                    indirizzo-collegamento.prendi();
-                } else {
-                    errore-c = root.salva-collegamento(modulo-c-id, campo-c-nome, campo-c-url);
-                    if (errore-c == "") {
-                        chiudi-modulo-collegamento(false);
-                    }
-                }
-            }
-
-            Etichetta {
-                x: 0;
-                y: 0;
-                width: parent.width;
-                height: 30px;
-                text: modulo-c-titolo;
-                overflow: elide;
-            }
-
-            nome-collegamento := Campo {
-                y: 44px;
-                width: parent.width;
-                etichetta: "Nome";
-                suggerimento: "es. Proxmox";
-                errore: errore-c-nome;
-                testo <=> campo-c-nome;
-                esci => { radice.focus(); }
-                invio => { salva(); }
-                modificato => {
-                    toccato-c-nome = true;
-                    // L'errore sparisce appena il nome va bene.
-                    if (errore-c-nome != "") {
-                        errore-c-nome = root.controlla-nome-collegamento(campo-c-nome);
-                    }
-                }
-                lasciato => {
-                    if (toccato-c-nome) {
-                        errore-c-nome = root.controlla-nome-collegamento(campo-c-nome);
-                    }
-                }
-            }
-
-            Text {
-                x: 100px;
-                y: 80px;
-                width: parent.width - self.x;
-                height: 16px;
-                text: errore-c-nome;
-                overflow: elide;
-                font-size: Tema.testo-piccolo;
-                color: Tema.caldo-2;
-            }
-
-            indirizzo-collegamento := Campo {
-                y: 100px;
-                width: parent.width;
-                etichetta: "Indirizzo";
-                suggerimento: "es. https://esempio.lan:8006";
-                errore: errore-c-url;
-                testo <=> campo-c-url;
-                esci => { radice.focus(); }
-                invio => { salva(); }
-                modificato => {
-                    toccato-c-url = true;
-                    if (errore-c-url != "") {
-                        errore-c-url = root.controlla-indirizzo-collegamento(campo-c-url);
-                    }
-                }
-                lasciato => {
-                    if (toccato-c-url) {
-                        errore-c-url = root.controlla-indirizzo-collegamento(campo-c-url);
-                    }
-                }
-            }
-
-            // Sotto l'indirizzo: l'errore, altrimenti cosa si accetta.
-            Text {
-                x: 100px;
-                y: 136px;
-                width: parent.width - self.x;
-                height: 16px;
-                text: errore-c-url != "" ? errore-c-url : "Solo http:// o https://; senza, si aggiunge https://.";
-                overflow: elide;
-                font-size: Tema.testo-piccolo;
-                color: errore-c-url != "" ? Tema.caldo-2 : Tema.testo-tenue;
-            }
-
-            HorizontalLayout {
-                x: 100px;
-                y: 166px;
-                height: 30px;
-                spacing: 10px;
-                alignment: start;
-
-                Bottone {
-                    testo: "Salva";
-                    tipo: TipoPulsante.azione;
-                    premuto => { salva(); }
-                }
-
-                Bottone {
-                    testo: "Annulla";
-                    premuto => { chiudi-modulo-collegamento(true); }
-                }
-            }
-
-            Text {
-                x: 100px;
-                y: 208px;
-                width: parent.width - self.x;
-                text: errore-c;
-                wrap: word-wrap;
-                font-size: Tema.testo-corpo;
-                color: Tema.caldo-2;
-                accessible-role: text;
-            }
-        }
-
-        // ─── Isola ───
-        if sezione == 3: Rectangle {
-            x: contenuto-x;
-            y: alto-testata;
-            width: parent.width - self.x - margine;
-            height: parent.height - self.y - 24px;
-
-            isola := Flickable {
-                content-height: max(self.height, colonna.preferred-height + 8px);
-
-                // Tab su un selettore fuori vista: la sua riga scorre in vista.
-                function porta-in-vista(y: length, h: length) {
-                    if (y + self.content-y < 0) {
-                        self.content-y = -y;
-                    } else if (y + h + self.content-y > self.height) {
-                        self.content-y = self.height - y - h;
-                    }
-                }
-
-                colonna := VerticalLayout {
-                    width: parent.width;
-                    alignment: start;
-                    spacing: 8px;
-
-                    Etichetta {
-                        height: 30px;
-                        text: "PILLOLA";
-                    }
-
-                    sinistra := RigaScelta {
-                        titolo: "A sinistra degli occhi";
-                        voci: scelte-lati;
-                        indice: indice-lato-sinistro;
-                        scelto(i) => { root.scegli-lato(0, i); }
-                        fuoco-preso => { isola.porta-in-vista(self.y, self.height); }
-                    }
-
-                    destra := RigaScelta {
-                        titolo: "A destra degli occhi";
-                        voci: scelte-lati;
-                        indice: indice-lato-destro;
-                        scelto(i) => { root.scegli-lato(1, i); }
-                        fuoco-preso => { isola.porta-in-vista(self.y, self.height); }
-                    }
-
-                    // Su Windows, sotto i selettori, la rassicurazione quando uno dei due vale «Rete».
-                    if !fuori-da-windows && (scelte-lati[indice-lato-sinistro] == "Rete" || scelte-lati[indice-lato-destro] == "Rete"): Text {
-                        text: "«Rete»: solo l'icona della connessione. Il nome della rete non compare mai nella pillola.";
-                        wrap: word-wrap;
-                        font-size: Tema.testo-piccolo;
-                        color: Tema.testo-tenue;
-                    }
-
-                    // Dove l'app gira (Windows) la nota «solo su Windows» non serve: la mostra solo chi non ha la fonte.
-                    if fuori-da-windows: Text {
-                        text: "«Rete»: solo su Windows, solo l'icona della connessione. Il nome della rete non compare mai nella pillola.";
-                        wrap: word-wrap;
-                        font-size: Tema.testo-piccolo;
-                        color: Tema.testo-tenue;
-                    }
-
-                    if volume-rotella-disponibile: Rectangle {
-                        height: 64px;
-                        border-radius: Tema.raggio-xl;
-                        background: Tema.card-fondo;
-                        border-width: 1px;
-                        border-color: Tema.vetro-bordo;
-
-                        Text {
-                            x: 16px;
-                            y: 12px;
-                            width: interruttore-volume.x - self.x - 12px;
-                            text: "Volume con la rotella sulla pillola";
-                            overflow: elide;
-                            font-weight: 500;
-                            font-size: Tema.testo-medio;
-                            color: Tema.testo;
-                        }
-
-                        Text {
-                            x: 16px;
-                            y: 35px;
-                            width: interruttore-volume.x - self.x - 12px;
-                            text: "Due punti a scatto; al posto degli occhi compare la barra del volume.";
-                            overflow: elide;
-                            font-size: Tema.testo-piccolo;
-                            color: Tema.testo-tenue;
-                        }
-
-                        interruttore-volume := Interruttore {
-                            x: parent.width - self.width - 18px;
-                            y: (parent.height - self.height) / 2;
-                            nome: "Volume con la rotella sulla pillola";
-                            acceso: volume-rotella;
-                            commutato => {
-                                volume-rotella = !volume-rotella;
-                                root.cambia-volume-rotella(volume-rotella);
-                            }
-                            changed has-focus => {
-                                if (self.has-focus) {
-                                    isola.porta-in-vista(parent.y, parent.height);
-                                }
-                            }
-                        }
-                    }
-
-                    // Un avviso non è un aspetto della pillola: ha la sua sezione.
-                    if avvisi-bt-disponibile: Etichetta {
-                        height: 30px;
-                        text: "AVVISI";
-                    }
-
-                    if avvisi-bt-disponibile: Rectangle {
-                        height: 64px;
-                        border-radius: Tema.raggio-xl;
-                        background: Tema.card-fondo;
-                        border-width: 1px;
-                        border-color: Tema.vetro-bordo;
-
-                        Text {
-                            x: 16px;
-                            y: 12px;
-                            width: interruttore-bt.x - self.x - 12px;
-                            text: "Avvisa quando le cuffie Bluetooth sono scariche";
-                            overflow: elide;
-                            font-weight: 500;
-                            font-size: Tema.testo-medio;
-                            color: Tema.testo;
-                        }
-
-                        Text {
-                            x: 16px;
-                            y: 35px;
-                            width: interruttore-bt.x - self.x - 12px;
-                            text: "Una volta al giorno, al 20% o meno.";
-                            overflow: elide;
-                            font-size: Tema.testo-piccolo;
-                            color: Tema.testo-tenue;
-                        }
-
-                        interruttore-bt := Interruttore {
-                            x: parent.width - self.width - 18px;
-                            y: (parent.height - self.height) / 2;
-                            nome: "Avvisa quando le cuffie Bluetooth sono scariche";
-                            acceso: avvisi-bt;
-                            commutato => {
-                                avvisi-bt = !avvisi-bt;
-                                root.cambia-avvisi-bt(avvisi-bt);
-                            }
-                            changed has-focus => {
-                                if (self.has-focus) {
-                                    isola.porta-in-vista(parent.y, parent.height);
-                                }
-                            }
-                        }
-                    }
-
-                    Etichetta {
-                        height: 30px;
-                        text: "METEO";
-                    }
-
-                    meteo := RigaScelta {
-                        titolo: "Meteo da";
-                        voci: scelte-meteo;
-                        indice: indice-meteo;
-                        scelto(i) => { root.scegli-meteo(i); }
-                        fuoco-preso => { isola.porta-in-vista(self.y, self.height); }
-                    }
-
-                    Etichetta {
-                        height: 30px;
-                        text: "QUADRANTI";
-                    }
-
-                    for q[i] in quadranti-scelti: RigaScelta {
-                        titolo: "Quadrante " + (i + 1);
-                        voci: scelte-quadranti;
-                        indice: q.indice;
-                        con-massimo: q.con-massimo;
-                        massimo: q.massimo;
-                        predefinito: q.predefinito;
-                        scelto(n) => { root.scegli-quadrante(i, n); }
-                        massimo-scritto(testo) => { return root.cambia-massimo(i, testo); }
-                        fuoco-preso => { isola.porta-in-vista(self.y, self.height); }
-                        esci => { radice.focus(); }
-                    }
-
-                    if fuori-da-windows: Text {
-                        text: "«GPU»: solo su Windows.";
-                        wrap: word-wrap;
-                        font-size: Tema.testo-piccolo;
-                        color: Tema.testo-tenue;
-                    }
-                }
-            }
-        }
-
-        // ─── Claude ───
-        if sezione == 4: Rectangle {
-            x: contenuto-x;
-            y: alto-testata;
-            width: parent.width - self.x - margine;
-            height: parent.height - self.y - 24px;
-
-            claude := Flickable {
-                // Larga quanto la finestra: il riquadro dell'anteprima scorre da sé, non allarga la colonna.
-                content-width: self.width;
-                content-height: max(self.height, colonna-claude.preferred-height + 8px);
-
-                // Tab su un pulsante fuori vista: la sua riga scorre in vista.
-                function porta-in-vista(y: length, h: length) {
-                    if (y + self.content-y < 0) {
-                        self.content-y = -y;
-                    } else if (y + h + self.content-y > self.height) {
-                        self.content-y = self.height - y - h;
-                    }
-                }
-
-                colonna-claude := VerticalLayout {
-                    width: parent.width;
-                    alignment: start;
-                    spacing: 8px;
-
-                    Etichetta {
-                        height: 30px;
-                        text: "CLAUDE CODE";
-                    }
-
-                    // Lo stato e, a riposo, il pulsante per collegare (o aggiornare).
-                    Rectangle {
-                        height: 64px;
-                        border-radius: Tema.raggio-xl;
-                        background: Tema.card-fondo;
-                        border-width: 1px;
-                        border-color: Tema.vetro-bordo;
-
-                        Text {
-                            x: 16px;
-                            y: 12px;
-                            width: parent.width - 32px - (claude-passo == 0 && claude-disponibile && (!claude-collegato || claude-da-aggiornare) ? 220px : 0px);
-                            text: claude-stato;
-                            overflow: elide;
-                            font-weight: 500;
-                            font-size: Tema.testo-medio;
-                            color: Tema.testo;
-                        }
-
-                        Text {
-                            x: 16px;
-                            y: 35px;
-                            width: parent.width - 32px - (claude-passo == 0 && claude-disponibile && (!claude-collegato || claude-da-aggiornare) ? 220px : 0px);
-                            text: claude-disponibile ? "Le sessioni di Claude Code compaiono nella pillola, coi permessi da consentire." : "Il collegamento con le sessioni di Claude Code è solo per Windows; la lettura dei consumi via API funziona ovunque.";
-                            overflow: elide;
-                            font-size: Tema.testo-piccolo;
-                            color: Tema.testo-tenue;
-                        }
-
-                        if claude-passo == 0 && claude-disponibile && (!claude-collegato || claude-da-aggiornare): Bottone {
-                            x: parent.width - self.width - 18px;
-                            y: (parent.height - self.height) / 2;
-                            testo: claude-da-aggiornare ? "Aggiorna il collegamento" : "Collega Claude Code";
-                            premuto => {
-                                claude-esito = "";
-                                root.claude-prepara();
-                            }
-                            changed has-focus => {
-                                if (self.has-focus) {
-                                    claude.porta-in-vista(parent.y, parent.height);
-                                }
-                            }
-                        }
-                    }
-
-                    // L'anteprima di ciò che si scrive: nulla è scritto finché non si preme «Scrivi».
-                    if claude-passo == 1: Rectangle {
-                        height: corpo-anteprima.preferred-height;
-                        border-radius: Tema.raggio-xl;
-                        background: Tema.card-fondo;
-                        border-width: 1px;
-                        border-color: Tema.vetro-bordo;
-                        // Il fuoco parte da «Annulla»: Invio per sbaglio non scrive.
-                        init => { annulla-claude.focus(); }
-                        accessible-role: groupbox;
-                        accessible-label: "Anteprima della scrittura in settings.json";
-
-                        corpo-anteprima := VerticalLayout {
-                            padding: 16px;
-                            spacing: 8px;
-
-                            Text {
-                                text: "Così resteranno le voci di isola in settings.json";
-                                font-weight: 500;
-                                font-size: Tema.testo-medio;
-                                color: Tema.testo;
-                            }
-
-                            Text {
-                                text: claude-file;
-                                wrap: word-wrap;
-                                font-family: Tema.carattere-mono;
-                                font-size: Tema.testo-piccolo;
-                                color: Tema.testo-tenue;
-                            }
-
-                            // Il riquadro mono: scorre col mouse e, con il fuoco dentro, con le frecce.
-                            Rectangle {
-                                height: 190px;
-                                border-radius: Tema.raggio-m;
-                                background: Tema.riquadro-fondo;
-                                border-width: 1px;
-                                border-color: Tema.vetro-bordo;
-                                clip: true;
-
-                                Flickable {
-                                    content-width: max(self.width, anteprima-testo.preferred-width + 24px);
-                                    content-height: max(self.height, anteprima-testo.preferred-height + 16px);
-
-                                    anteprima-testo := TextInput {
-                                        x: 12px;
-                                        y: 8px;
-                                        width: parent.content-width - 24px;
-                                        height: parent.content-height - 16px;
-                                        text: claude-anteprima;
-                                        read-only: true;
-                                        wrap: no-wrap;
-                                        font-family: Tema.carattere-mono;
-                                        font-size: Tema.testo-piccolo;
-                                        color: Tema.testo;
-                                        accessible-label: "Voci di isola come resteranno in settings.json";
-                                    }
-                                }
-                            }
-
-                            if claude-avvisi != "": Text {
-                                text: claude-avvisi;
-                                wrap: word-wrap;
-                                font-size: Tema.testo-corpo;
-                                color: Tema.caldo-1;
-                            }
-
-                            Text {
-                                text: "Il resto di settings.json resta com'è (la prima volta ne tengo una copia accanto). Le sessioni di Claude Code avviate dopo il collegamento lo useranno.";
-                                wrap: word-wrap;
-                                font-size: Tema.testo-piccolo;
-                                color: Tema.testo-tenue;
-                            }
-
-                            HorizontalLayout {
-                                height: 30px;
-                                spacing: 10px;
-                                alignment: end;
-
-                                annulla-claude := Bottone {
-                                    testo: "Annulla";
-                                    premuto => { chiudi-claude(); }
-                                    changed has-focus => {
-                                        if (self.has-focus) {
-                                            claude.porta-in-vista(parent.y, parent.height);
-                                        }
-                                    }
-                                }
-
-                                Bottone {
-                                    testo: "Scrivi in settings.json";
-                                    tipo: TipoPulsante.azione;
-                                    premuto => { root.claude-conferma(); }
-                                    changed has-focus => {
-                                        if (self.has-focus) {
-                                            claude.porta-in-vista(parent.y, parent.height);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Collegato: lo scollegamento.
-                    if claude-passo == 0 && claude-disponibile && claude-collegato: Rectangle {
-                        height: 64px;
-                        border-radius: Tema.raggio-xl;
-                        background: Tema.card-fondo;
-                        border-width: 1px;
-                        border-color: Tema.vetro-bordo;
-
-                        Text {
-                            x: 16px;
-                            y: 12px;
-                            width: parent.width - 240px;
-                            text: "Collegamento";
-                            overflow: elide;
-                            font-weight: 500;
-                            font-size: Tema.testo-medio;
-                            color: Tema.testo;
-                        }
-
-                        Text {
-                            x: 16px;
-                            y: 35px;
-                            width: parent.width - 240px;
-                            text: "Toglie da settings.json solo le voci di isola.";
-                            overflow: elide;
-                            font-size: Tema.testo-piccolo;
-                            color: Tema.testo-tenue;
-                        }
-
-                        Bottone {
-                            x: parent.width - self.width - 18px;
-                            y: (parent.height - self.height) / 2;
-                            testo: "Scollega";
-                            premuto => {
-                                claude-esito = "";
-                                claude-passo = 2;
-                            }
-                            changed has-focus => {
-                                if (self.has-focus) {
-                                    claude.porta-in-vista(parent.y, parent.height);
-                                }
-                            }
-                        }
-                    }
-
-                    // La conferma dello scollegamento: nomina ciò che succede.
-                    if claude-passo == 2: Rectangle {
-                        height: corpo-scollega.preferred-height;
-                        border-radius: Tema.raggio-xl;
-                        background: Tema.riquadro-pieno;
-                        border-width: 1px;
-                        border-color: Tema.pericolo-filo;
-                        init => { annulla-scollega.focus(); }
-                        accessible-role: groupbox;
-                        accessible-label: "Conferma dello scollegamento da Claude Code";
-
-                        corpo-scollega := VerticalLayout {
-                            padding: 16px;
-                            spacing: 8px;
-
-                            Text {
-                                text: "Togliere il collegamento con Claude Code?";
-                                font-weight: 500;
-                                font-size: Tema.testo-medio;
-                                color: Tema.testo;
-                            }
-
-                            Text {
-                                text: "Da settings.json escono solo le voci di isola (hook e barra di stato); il resto resta com'è.";
-                                wrap: word-wrap;
-                                font-size: Tema.testo-corpo;
-                                color: Tema.testo-tenue;
-                            }
-
-                            HorizontalLayout {
-                                height: 30px;
-                                spacing: 10px;
-                                alignment: end;
-
-                                annulla-scollega := Bottone {
-                                    testo: "Annulla";
-                                    premuto => { chiudi-claude(); }
-                                    changed has-focus => {
-                                        if (self.has-focus) {
-                                            claude.porta-in-vista(parent.y, parent.height);
-                                        }
-                                    }
-                                }
-
-                                Bottone {
-                                    testo: "Scollega";
-                                    tipo: TipoPulsante.pericolo;
-                                    premuto => { root.claude-scollega(); }
-                                    changed has-focus => {
-                                        if (self.has-focus) {
-                                            claude.porta-in-vista(parent.y, parent.height);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if claude-esito != "": Text {
-                        text: claude-esito;
-                        wrap: word-wrap;
+                        height: 22px;
+                        text: "© Paolo Bets";
+                        vertical-alignment: center;
                         font-size: Tema.testo-corpo;
-                        color: claude-esito-errore ? Tema.caldo-1 : Tema.testo-tenue;
+                        color: Tema.testo-ora;
                     }
 
-                    // Chiave da amministratore: consumi e dati dell'organizzazione, solo letture.
+                    // Attribuzione richiesta dalla licenza Slint royalty-free 2.0 (punto 2(a)).
+                    // Largo quanto il logo (alto 48, circa 105 di larghezza) più 12 di margine interno
+                    // per lato, e spostato indietro di quel margine: il logo parte allineato a
+                    // «© Paolo Bets».
                     Rectangle {
-                        height: colonna-api.preferred-height;
-                        border-radius: Tema.raggio-xl;
-                        background: Tema.card-fondo;
-                        border-width: 1px;
-                        border-color: Tema.vetro-bordo;
+                        height: 106px;
 
-                        colonna-api := VerticalLayout {
-                            padding-left: 16px;
-                            padding-right: 16px;
-                            padding-top: 12px;
-                            padding-bottom: 14px;
-                            spacing: 8px;
-
-                            Text {
-                                text: "Chiave da amministratore";
-                                font-weight: 500;
-                                font-size: Tema.testo-medio;
-                                color: Tema.testo;
-                            }
-
-                            Text {
-                                text: "Crea una chiave da amministratore con scadenza nella Console (Impostazioni › Admin keys). Serve solo per leggere consumi e dati dell'organizzazione: non modifica nulla.";
-                                wrap: word-wrap;
-                                font-size: Tema.testo-piccolo;
-                                color: Tema.testo-tenue;
-                            }
-
-                            if !api-presente: Campo {
-                                etichetta: "Chiave";
-                                suggerimento: "sk-ant-admin01-…";
-                                nome-accessibile: "Chiave da amministratore";
-                                password: true;
-                                testo <=> api-campo;
-                                invio => { root.api-salva(api-campo); }
-                            }
-
-                            if api-presente: Text {
-                                text: "•••• " + api-ultime;
-                                font-size: Tema.testo-medio;
-                                color: Tema.testo;
-                                accessible-role: text;
-                                accessible-label: "Chiave salvata, finisce con " + api-ultime;
-                            }
-
-                            HorizontalLayout {
-                                height: 30px;
-                                spacing: 10px;
-                                alignment: start;
-
-                                if !api-presente: Bottone {
-                                    testo: "Salva";
-                                    tipo: TipoPulsante.azione;
-                                    premuto => { root.api-salva(api-campo); }
-                                }
-
-                                Bottone {
-                                    testo: api-occupato ? "Provo…" : "Prova";
-                                    premuto => {
-                                        if (!api-occupato) {
-                                            root.api-prova(api-campo);
-                                        }
-                                    }
-                                }
-
-                                if api-presente: Bottone {
-                                    testo: "Togli";
-                                    premuto => { root.api-togli(); }
-                                }
-                            }
-
-                            if api-esito != "": Text {
-                                text: api-esito;
-                                wrap: word-wrap;
-                                font-size: Tema.testo-corpo;
-                                color: api-esito-errore ? Tema.caldo-1 : Tema.testo-tenue;
-                            }
-
-                            if api-stato != "": Text {
-                                text: api-stato;
-                                wrap: word-wrap;
-                                font-size: Tema.testo-piccolo;
-                                color: Tema.testo-tenue;
-                            }
+                        AboutSlint {
+                            x: -12px;
+                            y: 6px;
+                            width: 130px;
+                            height: 96px;
                         }
                     }
 
-                    // Avvisi: una sola volta per finestra di limite, per gradino di spesa e per mese.
-                    Rectangle {
-                        height: colonna-avvisi.preferred-height;
-                        border-radius: Tema.raggio-xl;
-                        background: Tema.card-fondo;
-                        border-width: 1px;
-                        border-color: Tema.vetro-bordo;
-
-                        colonna-avvisi := VerticalLayout {
-                            padding-left: 16px;
-                            padding-right: 16px;
-                            padding-top: 12px;
-                            padding-bottom: 14px;
-                            spacing: 8px;
-
-                            Text {
-                                text: "Avvisi";
-                                font-weight: 500;
-                                font-size: Tema.testo-medio;
-                                color: Tema.testo;
-                            }
-
-                            Text {
-                                text: "Isola ti avvisa una sola volta quando i limiti dell'abbonamento o la spesa delle API superano questi valori. Lascia vuota la soglia di spesa per non avere l'avviso.";
-                                wrap: word-wrap;
-                                font-size: Tema.testo-piccolo;
-                                color: Tema.testo-tenue;
-                            }
-
-                            Campo {
-                                etichetta: "Avvisa al … % del limite";
-                                larghezza-etichetta: 190px;
-                                suggerimento: "80";
-                                testo: root.soglia-limite;
-                                errore: errore-soglia-limite;
-                                invio => { errore-soglia-limite = root.soglia-limite-scritta(self.testo); }
-                                lasciato => { errore-soglia-limite = root.soglia-limite-scritta(self.testo); }
-                            }
-
-                            if errore-soglia-limite != "": Text {
-                                text: errore-soglia-limite;
-                                wrap: word-wrap;
-                                font-size: Tema.testo-corpo;
-                                color: Tema.caldo-1;
-                                accessible-role: none;
-                            }
-
-                            Campo {
-                                etichetta: "Soglia di spesa mensile ($)";
-                                larghezza-etichetta: 190px;
-                                suggerimento: "Per esempio 250";
-                                testo: root.soglia-spesa;
-                                errore: errore-soglia-spesa;
-                                invio => { errore-soglia-spesa = root.soglia-spesa-scritta(self.testo); }
-                                lasciato => { errore-soglia-spesa = root.soglia-spesa-scritta(self.testo); }
-                            }
-
-                            if errore-soglia-spesa != "": Text {
-                                text: errore-soglia-spesa;
-                                wrap: word-wrap;
-                                font-size: Tema.testo-corpo;
-                                color: Tema.caldo-1;
-                                accessible-role: none;
-                            }
-                        }
+                    Etichetta {
+                        height: 30px;
+                        text: "DETTAGLI TECNICI";
                     }
 
-                    Text {
-                        text: "Con isola chiusa Claude Code prosegue da solo: i permessi li decidi nel terminale.";
-                        wrap: word-wrap;
-                        font-size: Tema.testo-piccolo;
+                    // Nessun errore: una frase nel carattere normale, in alto (non a metà della finestra).
+                    if dettagli-tecnici == "": Text {
+                        text: "Nessun errore registrato.";
+                        font-size: Tema.testo-corpo;
                         color: Tema.testo-tenue;
                     }
-                }
-            }
-        }
 
-        // ─── Sistema ───
-        if sezione == 5: Rectangle {
-            x: contenuto-x;
-            y: alto-testata;
-            width: parent.width - self.x - margine;
-            height: parent.height - self.y - 24px;
+                    if dettagli-tecnici != "": Scorrevole {
+                        vertical-stretch: 1;
+                        alto-contenuto: dettagli.preferred-height;
 
-            Etichetta {
-                x: 0;
-                y: 0;
-                height: 30px;
-                text: "SISTEMA";
-            }
-
-            Rectangle {
-                y: 44px;
-                height: 64px;
-                border-radius: Tema.raggio-xl;
-                background: Tema.card-fondo;
-                border-width: 1px;
-                border-color: Tema.vetro-bordo;
-
-                Text {
-                    x: 16px;
-                    y: 12px;
-                    text: "Avvia con il sistema";
-                    font-weight: 500;
-                    font-size: Tema.testo-medio;
-                    color: Tema.testo;
-                }
-
-                Text {
-                    x: 16px;
-                    y: 35px;
-                    width: interruttore.x - self.x - 12px;
-                    text: "Apre l'assistente quando accedi al computer.";
-                    overflow: elide;
-                    font-size: Tema.testo-piccolo;
-                    color: Tema.testo-tenue;
-                }
-
-                interruttore := Interruttore {
-                    x: parent.width - self.width - 18px;
-                    y: (parent.height - self.height) / 2;
-                    nome: "Avvia con il sistema";
-                    acceso: avvio-con-sistema;
-                    commutato => { cambia-avvio-ora(); }
-                }
-            }
-
-            if icona-barra-disponibile: Rectangle {
-                y: 120px;
-                height: 64px;
-                border-radius: Tema.raggio-xl;
-                background: Tema.card-fondo;
-                border-width: 1px;
-                border-color: Tema.vetro-bordo;
-
-                Text {
-                    x: 16px;
-                    y: 12px;
-                    text: "Mostra icona nella barra";
-                    font-weight: 500;
-                    font-size: Tema.testo-medio;
-                    color: Tema.testo;
-                }
-
-                Text {
-                    x: 16px;
-                    y: 35px;
-                    width: interruttore-icona.x - self.x - 12px;
-                    text: "L'icona vicino all'orologio, con lo stesso menu del «…» del pannello.";
-                    overflow: elide;
-                    font-size: Tema.testo-piccolo;
-                    color: Tema.testo-tenue;
-                }
-
-                interruttore-icona := Interruttore {
-                    x: parent.width - self.width - 18px;
-                    y: (parent.height - self.height) / 2;
-                    nome: "Mostra icona nella barra";
-                    acceso: icona-barra;
-                    commutato => { cambia-icona-barra-ora(); }
-                }
-            }
-
-            // Fuori da Windows (niente menu né icona nella barra) l'unico modo per uscire.
-            if fuori-da-windows: Rectangle {
-                y: icona-barra-disponibile ? 196px : 120px;
-                height: 64px;
-                border-radius: Tema.raggio-xl;
-                background: Tema.card-fondo;
-                border-width: 1px;
-                border-color: Tema.vetro-bordo;
-
-                Text {
-                    x: 16px;
-                    y: 12px;
-                    text: "Esci dall'assistente";
-                    font-weight: 500;
-                    font-size: Tema.testo-medio;
-                    color: Tema.testo;
-                }
-
-                Text {
-                    x: 16px;
-                    y: 35px;
-                    width: pulsante-esci.x - self.x - 12px;
-                    text: "Chiude pillola e pannello. Per riaprirlo, avvialo di nuovo.";
-                    overflow: elide;
-                    font-size: Tema.testo-piccolo;
-                    color: Tema.testo-tenue;
-                }
-
-                pulsante-esci := Bottone {
-                    x: parent.width - self.width - 18px;
-                    y: (parent.height - self.height) / 2;
-                    testo: "Esci";
-                    premuto => { root.esci(); }
-                }
-            }
-
-            if config-non-salvata: Text {
-                y: (icona-barra-disponibile ? 196px : 120px) + (fuori-da-windows ? 76px : 0px);
-                width: parent.width;
-                text: "Le impostazioni non sono state salvate su disco: il dettaglio è in Informazioni.";
-                wrap: word-wrap;
-                font-size: Tema.testo-corpo;
-                color: Tema.caldo-1;
-            }
-        }
-
-        // ─── Informazioni ───
-        if sezione == 6: Rectangle {
-            x: contenuto-x;
-            y: alto-testata;
-            width: parent.width - self.x - margine;
-            height: parent.height - self.y - 24px;
-
-            Text {
-                x: 0;
-                y: 0;
-                height: 30px;
-                text: "ItsyHome assistente · versione " + versione;
-                vertical-alignment: center;
-                font-weight: 500;
-                font-size: Tema.testo-titolo;
-                color: Tema.testo;
-            }
-
-            Text {
-                x: 0;
-                y: 30px;
-                height: 22px;
-                text: "© Paolo Bets";
-                vertical-alignment: center;
-                font-size: Tema.testo-corpo;
-                color: Tema.testo-ora;
-            }
-
-            // Attribuzione richiesta dalla licenza Slint royalty-free 2.0 (punto 2(a)).
-            // Largo quanto il logo (alto 48, circa 105 di larghezza) più 12 di margine interno per lato
-            // e spostato di quel margine: il logo parte allineato a «© Paolo Bets».
-            AboutSlint {
-                x: -12px;
-                y: 58px;
-                width: 130px;
-                height: 96px;
-            }
-
-            Etichetta {
-                x: 0;
-                y: 164px;
-                height: 24px;
-                text: "DETTAGLI TECNICI";
-            }
-
-            // Nessun errore: una frase nel carattere normale, in alto (non a metà della finestra).
-            if dettagli-tecnici == "": Text {
-                x: 0;
-                y: 194px;
-                text: "Nessun errore registrato.";
-                font-size: Tema.testo-corpo;
-                color: Tema.testo-tenue;
-            }
-
-            if dettagli-tecnici != "": Flickable {
-                y: 194px;
-                height: parent.height - self.y;
-                content-height: max(self.height, dettagli.preferred-height);
-
-                dettagli := Text {
-                    y: 0px;
-                    width: parent.width;
-                    height: self.preferred-height;
-                    text: dettagli-tecnici;
-                    wrap: word-wrap;
-                    vertical-alignment: top;
-                    font-family: Tema.carattere-mono;
-                    font-size: Tema.testo-piccolo;
-                    color: Tema.testo-tenue;
+                        dettagli := Text {
+                            y: 0;
+                            width: parent.width;
+                            height: self.preferred-height;
+                            text: dettagli-tecnici;
+                            wrap: word-wrap;
+                            vertical-alignment: top;
+                            font-family: Tema.carattere-mono;
+                            font-size: Tema.testo-piccolo;
+                            color: Tema.testo-tenue;
+                        }
+                    }
                 }
             }
         }
