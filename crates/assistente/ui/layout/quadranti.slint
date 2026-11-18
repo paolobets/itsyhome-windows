@@ -20,6 +20,9 @@ component Quadrante inherits Vetro {
     // Valore vecchio (casa non connessa): colori tenui ma leggibili (FE18: il valore in
     // testo-tenue pieno, circa 7:1 sulla card, invece di `opacity` 0,55 che dava 2,9:1).
     in property <bool> tenue;
+    // Il quadrante si clicca (solo il quadrante CASA con luci accese): un TouchArea su tutta la card.
+    in property <bool> cliccabile;
+    callback clic();
 
     // Per Narrator: un indicatore col nome (etichetta e dettaglio) e il valore (FE16).
     accessible-role: progress-indicator;
@@ -107,6 +110,16 @@ component Quadrante inherits Vetro {
             color: Tema.testo-tenue;
         }
     }
+
+    if cliccabile: TouchArea {
+        width: parent.width;
+        height: parent.height;
+        mouse-cursor: pointer;
+        accessible-role: button;
+        accessible-label: etichetta + ", " + dettaglio + ": mostra le luci accese";
+        accessible-action-default => { root.clic(); }
+        clicked => { root.clic(); }
+    }
 }
 
 export component LayoutQuadranti inherits Rectangle {
@@ -118,6 +131,10 @@ export component LayoutQuadranti inherits Rectangle {
     in property <string> stato-casa;
     // Casa connessa coi dati: altrimenti i valori dei sensori sono vecchi e si mostrano tenui.
     in property <bool> casa-pronta;
+    // Ci sono luci accese: il quadrante CASA (quello senza sensori, che dice «N luci accese») si
+    // può cliccare e porta alla Casa filtrata sulle luci accese.
+    in property <bool> luci-cliccabili;
+    callback apri-luci();
 
     property <int> quanti: quadranti.length + max(1, sensori.length);
 
@@ -218,7 +235,9 @@ export component LayoutQuadranti inherits Rectangle {
             arco: root.arco;
             etichetta: "CASA";
             icona: Icone.casa;
-            dettaglio: stato-casa;
+            dettaglio: luci-cliccabili ? stato-casa + " ›" : stato-casa;
+            cliccabile: luci-cliccabili;
+            clic => { root.apri-luci(); }
         }
     }
 }

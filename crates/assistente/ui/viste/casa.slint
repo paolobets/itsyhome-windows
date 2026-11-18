@@ -189,6 +189,15 @@ export component VistaCasa inherits Rectangle {
     in property <bool> fuoco-preferiti;
     in property <bool> fuoco-riprova;
     in property <bool> fuoco-impostazioni;
+    // La vista filtrata sulle luci accese (`voci` sono allora le luci accese, una card ciascuna):
+    // la testata dice «Luci accese (N)» e ha «Spegni tutte» e «Tutta la casa»; senza luci accese,
+    // lo stato vuoto con «Mostra tutta la casa». Fuoco da tastiera su «Spegni tutte» e su
+    // «Tutta la casa» / «Mostra tutta la casa».
+    in property <bool> filtro-luci;
+    in property <bool> fuoco-spegni;
+    in property <bool> fuoco-tutta;
+    callback spegni-tutte();
+    callback mostra-tutta();
     callback tocca(string);
     // Clic su una stanza (pannello.slint decide: aprirla, o chiuderla se è già aperta).
     callback scegli-stanza(int);
@@ -245,7 +254,7 @@ export component VistaCasa inherits Rectangle {
                 nome: "Preferiti";
                 icona: Icone.stella;
                 con-numero: false;
-                selezionata: !root.in-stanza;
+                selezionata: !root.in-stanza && !root.filtro-luci;
                 anello: root.fuoco-preferiti;
                 tenue: !root.casa-pronta;
                 indice: 0;
@@ -298,7 +307,8 @@ export component VistaCasa inherits Rectangle {
         y: 0;
         width: griglia-l * 0.4;
         height: 28px;
-        text: in-stanza ? stanze[stanza-aperta].nome : "Preferiti";
+        text: filtro-luci ? (voci.length > 0 ? "Luci accese (" + voci.length + ")" : "Luci accese")
+            : in-stanza ? stanze[stanza-aperta].nome : "Preferiti";
         overflow: elide;
     }
 
@@ -307,7 +317,7 @@ export component VistaCasa inherits Rectangle {
         y: 0;
         width: griglia-l * 0.55;
         height: 28px;
-        text: voci.length > 0 || con-stanze ? riga-testata : "";
+        text: !filtro-luci && (voci.length > 0 || con-stanze) ? riga-testata : "";
         horizontal-alignment: right;
         vertical-alignment: center;
         overflow: elide;
@@ -317,7 +327,7 @@ export component VistaCasa inherits Rectangle {
 
     // Alto 28 come la testata.
     pulsante-riprova := Pulsante {
-        visible: riprova;
+        visible: riprova && !filtro-luci;
         x: parent.width - self.width - 2px;
         y: 0;
         altezza: 28px;
@@ -326,6 +336,35 @@ export component VistaCasa inherits Rectangle {
         chiede-fuoco: fuoco-riprova;
         tasti-propri: false;
         premuto => { root.riprova-casa(); }
+    }
+
+    // Casa filtrata: «Spegni tutte» (neutro, senza conferma: spegnere luci non è delicato) e il
+    // filtro per tornare all'elenco completo, a destra della testata, alti 28 come lei.
+    if filtro-luci && voci.length > 0: HorizontalLayout {
+        x: griglia-x;
+        y: 0;
+        width: griglia-l;
+        height: 28px;
+        alignment: end;
+        spacing: 8px;
+
+        Pulsante {
+            altezza: 28px;
+            testo: "Spegni tutte";
+            anello: fuoco-spegni;
+            chiede-fuoco: fuoco-spegni;
+            tasti-propri: false;
+            premuto => { root.spegni-tutte(); }
+        }
+
+        Pulsante {
+            altezza: 28px;
+            testo: "Tutta la casa";
+            anello: fuoco-tutta;
+            chiede-fuoco: fuoco-tutta;
+            tasti-propri: false;
+            premuto => { root.mostra-tutta(); }
+        }
     }
 
     // La griglia sporge di `bordo` su ogni lato: l'anello del fuoco, fuori dalla card, non viene
@@ -369,13 +408,58 @@ export component VistaCasa inherits Rectangle {
             }
         }
     }
-    // Una stanza nuova parte dall'alto.
+    // Una stanza nuova, o l'elenco delle luci accese, parte dall'alto.
     changed stanza-aperta => {
         griglia.content-y = 0;
     }
+    changed filtro-luci => {
+        griglia.content-y = 0;
+    }
+
+    // Nessuna luce accesa: lo si dice, con la via per tornare a tutta la casa.
+    if filtro-luci && voci.length == 0: VerticalLayout {
+        x: griglia-x;
+        y: testata;
+        width: griglia-l;
+        height: parent.height - testata;
+        alignment: center;
+        spacing: 8px;
+
+        HorizontalLayout {
+            alignment: center;
+
+            Icona {
+                source: Icone.luce;
+                width: 34px;
+                height: 34px;
+            }
+        }
+
+        Text {
+            text: "Nessuna luce accesa";
+            horizontal-alignment: center;
+            font-weight: 500;
+            font-size: Tema.testo-titolo;
+            color: Tema.testo;
+        }
+
+        HorizontalLayout {
+            alignment: center;
+            padding-top: 4px;
+
+            Pulsante {
+                testo: "Mostra tutta la casa";
+                tipo: TipoPulsante.azione;
+                anello: fuoco-tutta;
+                chiede-fuoco: fuoco-tutta;
+                tasti-propri: false;
+                premuto => { root.mostra-tutta(); }
+            }
+        }
+    }
 
     // Niente da mostrare: si dice perché (casa non connessa, in connessione o senza dispositivi).
-    if voci.length == 0 && !con-stanze: VerticalLayout {
+    if voci.length == 0 && !con-stanze && !filtro-luci: VerticalLayout {
         y: testata;
         height: parent.height - testata;
         alignment: center;

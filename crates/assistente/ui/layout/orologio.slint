@@ -10,10 +10,14 @@ export component LayoutOrologio inherits Rectangle {
     in property <string> stato-casa;
     in property <bool> casa-pronta;
     in property <StatPcUi> pc;
+    // Ci sono luci accese: la riga della casa si può cliccare e porta alla Casa filtrata sulle luci
+    // accese (il «›» in fondo lo dice).
+    in property <bool> luci-cliccabili;
+    callback apri-luci();
 
     // Con la casa connessa la riga dice solo i fatti ("2 luci accese · 21.5 °C"): le si mette
     // davanti il nome; gli altri stati ("Casa non connessa", …) lo contengono già.
-    property <string> riga-casa: casa-pronta ? "Casa · " + stato-casa : stato-casa;
+    property <string> riga-casa: (casa-pronta ? "Casa · " + stato-casa : stato-casa) + (luci-cliccabili ? " ›" : "");
     property <string> riga-pc: "PC · CPU " + (pc.pronta ? pc.cpu-testo : "—")
         + " · RAM " + (pc.ram-testo != "" ? pc.ram-testo : "—");
     // La colonna di stato è larga quanto la sua riga più lunga (fra 160 e 340): con un minimo
@@ -63,7 +67,7 @@ export component LayoutOrologio inherits Rectangle {
             alignment: center;
             spacing: 8px;
 
-            Text {
+            casa-testo := Text {
                 // Larghezza fissa della colonna: una riga lunga si accorcia invece di spingere l'ora.
                 min-width: largo-stato;
                 max-width: largo-stato;
@@ -82,5 +86,19 @@ export component LayoutOrologio inherits Rectangle {
                 color: Tema.testo-ora;
             }
         }
+    }
+
+    // Il clic sulla riga della casa, sopra il testo (che sta in un layout: se ne prende il posto
+    // in coordinate assolute). Un bersaglio di 24 px almeno in altezza (WCAG 2.2).
+    if luci-cliccabili: TouchArea {
+        x: casa-testo.absolute-position.x - root.absolute-position.x;
+        y: casa-testo.absolute-position.y - root.absolute-position.y + (casa-testo.height - self.height) / 2;
+        width: casa-testo.width;
+        height: max(24px, casa-testo.height);
+        mouse-cursor: pointer;
+        accessible-role: button;
+        accessible-label: riga-casa + ": mostra le luci accese";
+        accessible-action-default => { root.apri-luci(); }
+        clicked => { root.apri-luci(); }
     }
 }

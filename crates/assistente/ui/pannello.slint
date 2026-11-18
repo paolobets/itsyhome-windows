@@ -204,6 +204,12 @@ export component Pannello inherits Window {
     // Le stanze della vista Casa e i dispositivi della stanza aperta (li dà Rust a `apri-stanza`).
     in property <[StanzaUi]> stanze;
     in property <[PreferitoUi]> dispositivi;
+    // Le luci accese adesso (le scrive Rust) e se la vista Casa le mostra al posto dei preferiti:
+    // il clic su «N luci accese» della Panoramica. Una luce spenta esce dall'elenco subito.
+    in property <[PreferitoUi]> luci;
+    in-out property <bool> filtro-luci: false;
+    // «Spegni tutte» nella testata della vista Casa filtrata: un comando per ogni luce accesa.
+    callback spegni-tutte();
     // La stanza aperta (indice in `stanze`, -1 = nessuna). Rust la riallinea se le stanze cambiano.
     in-out property <int> stanza-aperta: -1;
     in property <string> stato-casa;
@@ -329,7 +335,7 @@ export component Pannello inherits Window {
     property <int> colonne-casa: 4;
     // Le card della vista Casa: i dispositivi della stanza aperta, altrimenti i preferiti.
     property <bool> in-stanza: stanza-aperta >= 0 && stanza-aperta < stanze.length;
-    property <[PreferitoUi]> griglia: in-stanza ? dispositivi : preferiti;
+    property <[PreferitoUi]> griglia: filtro-luci ? luci : in-stanza ? dispositivi : preferiti;
     property <int> fuoco-casa-valido: min(fuoco-casa, griglia.length - 1);
     // Voce dell'elenco della vista Casa col fuoco: -1 = «Preferiti», poi l'indice della stanza.
     property <int> fuoco-stanza: -1;
@@ -420,7 +426,7 @@ export component Pannello inherits Window {
             // o «Aggiungi un collegamento» se non ce ne sono.
             // PC: il cursore del volume, i riquadri e le righe delle connessioni, se ci sono.
             // Claude: «Impostazioni» se non è collegato, altrimenti le righe (se ce ne sono).
-            return vista == "panoramica" || vista == "collegamenti" || (vista == "casa" && (griglia.length > 0 || !casa-pronta))
+            return vista == "panoramica" || vista == "collegamenti" || (vista == "casa" && (griglia.length > 0 || filtro-luci || !casa-pronta))
                 || (vista == "claude" && (!claude-collegato || claude-righe.length > 0 || claude-dettagli))
                 || (vista == "pc" && pc-successivo(-1) >= 0);
         }
@@ -532,6 +538,7 @@ export component Pannello inherits Window {
             if (zona == Zona.contenuto) {
                 tasti.focus();
             }
+            filtro-luci = false;
             stanza-aperta = i;
             fuoco-stanza = i;
             fuoco-casa = 0;
@@ -558,6 +565,26 @@ export component Pannello inherits Window {
         }
     }
 
+    // La Casa filtrata sulle luci accese (clic su «N luci accese» della Panoramica): la vista Casa
+    // con l'elenco delle luci accese, il fuoco sulla prima.
+    function mostra-luci() {
+        vai("casa");
+        filtro-luci = true;
+        fuoco-casa = 0;
+    }
+
+    // Torna all'elenco completo (Preferiti). Il fuoco da tastiera sta sulle card o nella testata,
+    // che cambiano tutte: passa prima a `tasti`, e poi alla prima card.
+    function esci-filtro() {
+        if (filtro-luci) {
+            if (zona == Zona.contenuto) {
+                tasti.focus();
+            }
+            filtro-luci = false;
+            fuoco-casa = 0;
+        }
+    }
+
     // Clic o Invio su una stanza: la apre. Sulla stanza già aperta (la scheda selezionata) non
     // cambia nulla, come su «Preferiti»: da tastiera il fuoco torna alle card. Ai preferiti si
     // torna con «Preferiti», Esc o Backspace.
@@ -574,6 +601,7 @@ export component Pannello inherits Window {
     // card, come scegliendo una stanza.
     function scegli-preferiti(alle-card: bool) {
         chiudi-stanza-ora();
+        esci-filtro();
         fuoco-stanza = -1;
         if (alle-card && griglia.length > 0 && ha-zona(Zona.contenuto)) {
             zona = Zona.contenuto;
@@ -592,6 +620,7 @@ export component Pannello inherits Window {
             stanza-aperta = -1;
             root.chiudi-stanza();
         }
+        filtro-luci = false;
         vista = v;
         fuoco-casa = 0;
         fuoco-pc = 0;
@@ -604,7 +633,9 @@ export component Pannello inherits Window {
 
     // Backspace o Alt+←, un livello alla volta: prima la stanza aperta, poi la Panoramica.
     function indietro() {
-        if (stanza-aperta >= 0) {
+        if (filtro-luci) {
+            esci-filtro();
+        } else if (stanza-aperta >= 0) {
             chiudi-stanza-ora();
         } else if (vista != "panoramica") {
             fuoco-dock = 0;
@@ -744,9 +775,14 @@ export component Pannello inherits Window {
             }
         } else if (zona == Zona.contenuto && vista == "casa" && griglia.length > 0) {
             // -1 = «Riprova» nella testata (solo se c'è): ↑ dalla prima riga, ↓ torna alle card.
+            // Nella Casa filtrata la testata ha «Spegni tutte» (-1) e «Tutta la casa» (-2).
             if (fuoco-casa < 0) {
                 if (k == Key.DownArrow) {
                     fuoco-casa = 0;
+                } else if (filtro-luci && k == Key.RightArrow) {
+                    fuoco-casa = -2;
+                } else if (filtro-luci && k == Key.LeftArrow) {
+                    fuoco-casa = -1;
                 }
             } else if (k == Key.LeftArrow && mod(fuoco-casa-valido, colonne-casa) == 0 && ha-zona(Zona.stanze)) {
                 // Dalla prima colonna all'elenco, sulla voce selezionata (la stanza aperta o
@@ -759,7 +795,7 @@ export component Pannello inherits Window {
                 fuoco-casa = min(griglia.length - 1, fuoco-casa-valido + 1);
             } else if (k == Key.UpArrow && fuoco-casa-valido >= colonne-casa) {
                 fuoco-casa = fuoco-casa-valido - colonne-casa;
-            } else if (k == Key.UpArrow && riprova-visibile) {
+            } else if (k == Key.UpArrow && (riprova-visibile || filtro-luci)) {
                 fuoco-casa = -1;
             } else if (k == Key.DownArrow && fuoco-casa-valido + colonne-casa < griglia.length) {
                 fuoco-casa = fuoco-casa-valido + colonne-casa;
@@ -821,13 +857,25 @@ export component Pannello inherits Window {
             } else if (fuoco-pc-valido == 3 || fuoco-pc-valido == 4) {
                 root.apri-pagina(fuoco-pc-valido - 3);
             }
+        } else if (vista == "casa" && filtro-luci && (griglia.length == 0 || fuoco-casa == -2)) {
+            // Nessuna luce accesa, o «Tutta la casa» nella testata: l'elenco completo.
+            esci-filtro();
         } else if (vista == "casa" && griglia.length == 0) {
             root.apri-app("impostazioni");
+        } else if (vista == "casa" && filtro-luci && fuoco-casa == -1) {
+            // Le luci si spengono tutte: il pulsante sparisce, il fuoco passa prima a `tasti`.
+            tasti.focus();
+            root.spegni-tutte();
         } else if (vista == "casa" && fuoco-casa < 0) {
             if (riprova-visibile) {
                 root.riprova-casa();
             }
         } else if (vista == "casa" && fuoco-casa-valido >= 0 && griglia[fuoco-casa-valido].toccabile) {
+            if (filtro-luci) {
+                // La luce spenta esce dall'elenco: il fuoco passa prima a `tasti`, poi alla riga
+                // che prende il suo posto (o alla più vicina).
+                tasti.focus();
+            }
             root.tocca(griglia[fuoco-casa-valido].entity-id);
         }
     }
@@ -845,6 +893,8 @@ export component Pannello inherits Window {
             if (evento.text == Key.Escape) {
                 if (espansa) {
                     riduci-voce();
+                } else if (filtro-luci && vista == "casa") {
+                    esci-filtro();
                 } else if (stanza-aperta >= 0) {
                     chiudi-stanza-ora();
                 } else {
@@ -1095,27 +1145,8 @@ export component Pannello inherits Window {
                 visible: !espansa;
                 opacity: opacita-contenuto;
 
-                if vista == "panoramica" && layout == 0: LayoutOrologio {
-                    width: parent.width;
-                    height: parent.height;
-                    ora: root.ora;
-                    data: root.data;
-                    stato-casa: root.stato-casa;
-                    casa-pronta: root.casa-pronta;
-                    pc: root.pc;
-                }
-                if vista == "panoramica" && layout == 1: LayoutQuadranti {
-                    width: parent.width;
-                    height: parent.height;
-                    stat: root.pc;
-                    sensori: root.sensori;
-                    quadranti: root.quadranti;
-                    ora: root.ora;
-                    stato-casa: root.stato-casa;
-                    casa-pronta: root.casa-pronta;
-                }
-
-                // La rotella sulla Panoramica cambia layout (in giù il successivo).
+                // La rotella sulla Panoramica cambia layout (in giù il successivo). Sta sotto i layout,
+                // che hanno il loro clic («N luci accese»).
                 if vista == "panoramica": TouchArea {
                     width: parent.width;
                     height: parent.height;
@@ -1133,6 +1164,30 @@ export component Pannello inherits Window {
                         }
                         return accept;
                     }
+                }
+
+                if vista == "panoramica" && layout == 0: LayoutOrologio {
+                    width: parent.width;
+                    height: parent.height;
+                    ora: root.ora;
+                    data: root.data;
+                    stato-casa: root.stato-casa;
+                    casa-pronta: root.casa-pronta;
+                    pc: root.pc;
+                    luci-cliccabili: root.casa-pronta && root.luci.length > 0;
+                    apri-luci => { mostra-luci(); }
+                }
+                if vista == "panoramica" && layout == 1: LayoutQuadranti {
+                    width: parent.width;
+                    height: parent.height;
+                    stat: root.pc;
+                    sensori: root.sensori;
+                    quadranti: root.quadranti;
+                    ora: root.ora;
+                    stato-casa: root.stato-casa;
+                    casa-pronta: root.casa-pronta;
+                    luci-cliccabili: root.casa-pronta && root.luci.length > 0;
+                    apri-luci => { mostra-luci(); }
                 }
 
                 if vista == "casa": VistaCasa {
@@ -1153,8 +1208,11 @@ export component Pannello inherits Window {
                     riprova: riprova-visibile;
                     colonne: root.colonne-casa;
                     fuoco: da-tastiera && zona == Zona.contenuto && vista == "casa" ? fuoco-casa-valido : -1;
-                    fuoco-riprova: da-tastiera && zona == Zona.contenuto && vista == "casa" && fuoco-casa < 0;
+                    fuoco-riprova: da-tastiera && zona == Zona.contenuto && vista == "casa" && fuoco-casa < 0 && !filtro-luci;
                     fuoco-impostazioni: da-tastiera && zona == Zona.contenuto && vista == "casa";
+                    filtro-luci: root.filtro-luci;
+                    fuoco-spegni: da-tastiera && zona == Zona.contenuto && vista == "casa" && filtro-luci && fuoco-casa == -1 && griglia.length > 0;
+                    fuoco-tutta: da-tastiera && zona == Zona.contenuto && vista == "casa" && filtro-luci && (fuoco-casa == -2 || griglia.length == 0);
                     tocca(id) => {
                         da-tastiera = false;
                         root.tocca(id);
@@ -1170,6 +1228,14 @@ export component Pannello inherits Window {
                     riprova-casa => {
                         da-tastiera = false;
                         root.riprova-casa();
+                    }
+                    spegni-tutte => {
+                        da-tastiera = false;
+                        root.spegni-tutte();
+                    }
+                    mostra-tutta => {
+                        da-tastiera = false;
+                        esci-filtro();
                     }
                     apri-impostazioni => {
                         da-tastiera = false;

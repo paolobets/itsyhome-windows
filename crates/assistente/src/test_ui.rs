@@ -1058,6 +1058,119 @@ mod accessibilita {
         assert_eq!(eventi.borrow().last().map(String::as_str), Some("tocca light.preferita"));
     }
 
+    /// Un elenco di luci accese per la Casa filtrata, e il pannello che lo mostra.
+    fn luci_accese_di_prova(ids: &[&str]) -> std::rc::Rc<VecModel<crate::PreferitoUi>> {
+        std::rc::Rc::new(VecModel::from(
+            ids.iter()
+                .map(|id| crate::PreferitoUi { acceso: true, stato: "Acceso".into(), ..voce_casa(id, &format!("Nome {id}")) })
+                .collect::<Vec<_>>(),
+        ))
+    }
+
+    /// 18/11 (Paolo): il clic su «N luci accese» della Panoramica apre la Casa filtrata sulle luci
+    /// accese, in entrambi i layout; senza luci accese la riga resta solo una riga.
+    #[test]
+    fn il_clic_su_luci_accese_apre_la_casa_filtrata() {
+        for (layout, etichetta) in [
+            (0, "Casa · 2 luci accese ›: mostra le luci accese"),
+            (1, "CASA, 2 luci accese ›: mostra le luci accese"),
+        ] {
+            let (p, _) = pannello_casa();
+            p.set_vista("panoramica".into());
+            p.set_layout(layout);
+            p.set_stato_casa("2 luci accese".into());
+            assert!(
+                ElementHandle::find_by_accessible_label(&p, etichetta).next().is_none(),
+                "layout {layout}: senza luci accese la riga non si clicca"
+            );
+            p.set_luci(luci_accese_di_prova(&["light.a", "light.b"]).into());
+            let riga = elemento(&p, etichetta);
+            assert_eq!(riga.accessible_role(), Some(AccessibleRole::Button));
+            riga.invoke_accessible_default_action();
+            assert_eq!((p.get_vista().as_str(), p.get_filtro_luci()), ("casa", true), "layout {layout}");
+            assert!(titolo(&p, "Luci accese (2)"), "layout {layout}: l'intestazione dice quante");
+            assert!(ElementHandle::find_by_accessible_label(&p, "Nome light.a, Acceso").next().is_some());
+            elemento(&p, "Spegni tutte");
+            elemento(&p, "Tutta la casa");
+            // Lasciata la vista, la prossima volta la Casa torna completa.
+            p.set_vista("panoramica".into());
+        }
+    }
+
+    /// Backspace nella Casa filtrata torna all'elenco completo; il secondo, alla Panoramica.
+    #[test]
+    fn backspace_esce_dal_filtro_poi_dalla_casa() {
+        use slint::platform::Key;
+        let (p, _) = pannello_casa();
+        p.set_luci(luci_accese_di_prova(&["light.a"]).into());
+        p.set_filtro_luci(true);
+        tasto(&p, Key::Backspace);
+        assert_eq!((p.get_vista().as_str(), p.get_filtro_luci()), ("casa", false), "Backspace esce dal filtro");
+        tasto(&p, Key::Backspace);
+        assert_eq!(p.get_vista(), "panoramica");
+    }
+
+    /// La Casa filtrata da tastiera: Invio spegne la luce col fuoco (e l'elenco si accorcia senza
+    /// perdere il fuoco: il tasto dopo agisce sulla riga che prende il suo posto), ↑ porta a
+    /// «Spegni tutte», → a «Tutta la casa»; Esc torna all'elenco completo prima di chiudere.
+    #[test]
+    fn casa_filtrata_da_tastiera_senza_perdere_il_fuoco() {
+        use slint::platform::Key;
+        let (p, eventi) = pannello_casa();
+        let luci = luci_accese_di_prova(&["light.a", "light.b", "light.c"]);
+        p.set_luci(luci.clone().into());
+        p.set_filtro_luci(true);
+        let (e1, l1) = (eventi.clone(), luci.clone());
+        p.on_tocca(move |id| {
+            e1.borrow_mut().push(format!("tocca {id}"));
+            // Come il ponte: la luce spenta esce subito dall'elenco.
+            let i = (0..l1.row_count()).find(|&i| l1.row_data(i).unwrap().entity_id == id).unwrap();
+            l1.remove(i);
+        });
+        let e2 = eventi.clone();
+        p.on_spegni_tutte(move || e2.borrow_mut().push("spegni tutte".into()));
+        tasto(&p, Key::Return);
+        tasto(&p, Key::Return);
+        assert_eq!(*eventi.borrow(), ["tocca light.a", "tocca light.b"], "il secondo Invio non si è perso");
+        let fuoco = i_slint_core::window::WindowInner::from_pub(p.window()).focus_item.borrow().upgrade();
+        assert!(fuoco.is_some(), "il fuoco c'è ancora (non è rimasto su una riga distrutta)");
+        // ↑ dalla prima riga: «Spegni tutte».
+        tasto(&p, Key::UpArrow);
+        tasto(&p, Key::Return);
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("spegni tutte"));
+        // Nessuno è stato spento dal finto (il ponte lo fa): → «Tutta la casa», Invio, elenco completo.
+        tasto(&p, Key::RightArrow);
+        tasto(&p, Key::Return);
+        assert!(!p.get_filtro_luci(), "«Tutta la casa» torna all'elenco completo");
+        // Di nuovo filtrata: Esc esce dal filtro, e solo il secondo chiude il pannello.
+        p.set_filtro_luci(true);
+        tasto(&p, Key::Escape);
+        assert_eq!((p.get_filtro_luci(), eventi.borrow().last().map(String::as_str)), (false, Some("spegni tutte")));
+        tasto(&p, Key::Escape);
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("chiudi pannello"));
+    }
+
+    /// Spente tutte: lo stato vuoto lo dice, con «Mostra tutta la casa» (anche da tastiera).
+    #[test]
+    fn casa_filtrata_senza_luci_accese_ha_lo_stato_vuoto() {
+        use slint::platform::Key;
+        let (p, _) = pannello_casa();
+        p.set_luci(luci_accese_di_prova(&["light.a"]).into());
+        p.set_filtro_luci(true);
+        assert!(!titolo(&p, "Nessuna luce accesa"));
+        p.set_luci(luci_accese_di_prova(&[]).into());
+        assert!(titolo(&p, "Nessuna luce accesa"));
+        assert!(ElementHandle::find_by_accessible_label(&p, "Spegni tutte").next().is_none(), "senza luci niente «Spegni tutte»");
+        let pulsante = elemento(&p, "Mostra tutta la casa");
+        assert_eq!(pulsante.accessible_role(), Some(AccessibleRole::Button));
+        tasto(&p, Key::Return);
+        assert!(!p.get_filtro_luci(), "Invio mostra tutta la casa");
+        // Anche il clic.
+        p.set_filtro_luci(true);
+        elemento(&p, "Mostra tutta la casa").invoke_accessible_default_action();
+        assert!(!p.get_filtro_luci());
+    }
+
     fn con_modificatori_pannello(p: &Pannello, modificatori: &[slint::platform::Key], t: slint::platform::Key) {
         use slint::platform::WindowEvent;
         for m in modificatori {

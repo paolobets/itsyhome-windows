@@ -12,7 +12,7 @@ use crate::registro::app_disponibili;
 use crate::pc_stats::{formatta_usato_totale, formatta_velocita, tinta_batteria, Campionatore, Fonti, StatPc, TintaBatteria};
 #[cfg(test)]
 use crate::pc_stats::{LetturaBatteria, StatoBatteria};
-use crate::ponte::Ponte;
+use crate::ponte::{DallaPillola, Ponte};
 use crate::sistema::servizi;
 use crate::{
     finestra_impostazioni, finestre, orologio, scelte, Movimento, Pannello, Pillola, StatPcUi, TintaBatteriaUi,
@@ -502,9 +502,13 @@ impl Apertura {
             // A riposo con un lato solo gli occhi non stanno al centro (M2, Task 4): partono da lì.
             pannello.set_partenza_occhi(pillola.get_scarto_occhi_riposo());
         }
-        if let Some(indice) = self.ponte.voce_della_pillola() {
+        match self.ponte.apertura_dalla_pillola(pillola.get_attivita_visibile()) {
             // Espande la voce e porta lì il fuoco da tastiera (frecce e Invio agiscono su di lei).
-            pannello.invoke_espandi(indice);
+            DallaPillola::Espandi(indice) => pannello.invoke_espandi(indice),
+            // L'attività o una voce di Claude: il pannello nasce sulla vista Claude
+            // (`pannello_aperto` la mette).
+            DallaPillola::Vista(vista) => self.ponte.chiedi_vista(vista),
+            DallaPillola::Panoramica => {}
         }
         // Parte con l'umore della pillola; il ponte glielo aggiorna appena la pillola è sparita.
         pannello.set_umore(pillola.get_umore());

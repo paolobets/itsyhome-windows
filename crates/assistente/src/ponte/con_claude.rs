@@ -1466,6 +1466,66 @@ mod test {
         assert_eq!(p.vista_richiesta.get(), None, "una volta sola");
     }
 
+    /// Una voce di prova: `fonte`, `livello` e, se `permesso`, i pulsanti di un permesso (Nega e
+    /// il delicato Consenti).
+    fn voce_di_prova(id: &str, fonte: Fonte, livello: Livello, permesso: bool) -> Voce {
+        Voce {
+            id: id.into(),
+            livello,
+            fonte,
+            titolo: "Titolo".into(),
+            dettaglio: String::new(),
+            pulsanti: if permesso { vec![Pulsante::new("nega", "Nega"), Pulsante::delicato("consenti", "Consenti")] } else { vec![] },
+            creata: Instant::now(),
+        }
+    }
+
+    /// 18/11 (Paolo): il clic sulla pillola porta al dettaglio giusto. L'attività di Claude, o una
+    /// sua voce che non è un permesso, aprono la vista Claude; un permesso resta espanso in «In
+    /// attesa»; ogni altro caso (anche una voce di un'altra fonte) è come prima.
+    #[test]
+    fn il_clic_sulla_pillola_porta_al_dettaglio_giusto() {
+        use crate::ponte::DallaPillola;
+        let (_s, p, pillola, _d) = ponte_di_prova();
+        // Niente: la Panoramica.
+        assert_eq!(p.apertura_dalla_pillola(pillola.get_attivita_visibile()), DallaPillola::Panoramica);
+        // Claude lavora e la pillola lo dice: la vista Claude.
+        manda(&p, ev("a", TipoEvento::UserPromptSubmit));
+        assert!(pillola.get_attivita_visibile());
+        assert_eq!(p.apertura_dalla_pillola(pillola.get_attivita_visibile()), DallaPillola::Vista("claude"));
+        // Una voce allargata di un'altra fonte: si espande, come sempre (l'attività non si vede).
+        p.metti_voce(voce_di_prova("casa.x", Fonte::Casa, Livello::Attenzione, false), false);
+        assert!(!pillola.get_attivita_visibile(), "allargata: niente attività");
+        assert_eq!(p.apertura_dalla_pillola(pillola.get_attivita_visibile()), DallaPillola::Espandi(0));
+        p.togli_voce("casa.x");
+        // Una voce di Claude che non è un permesso: la vista Claude, non la voce espansa.
+        p.metti_voce(voce_di_prova("claude.x.fatto", Fonte::Claude, Livello::Attenzione, false), false);
+        assert_eq!(p.apertura_dalla_pillola(pillola.get_attivita_visibile()), DallaPillola::Vista("claude"));
+        p.togli_voce("claude.x.fatto");
+        // Un permesso: espanso nella riga «In attesa», come oggi.
+        p.metti_voce(voce_di_prova("claude.x.permesso", Fonte::Claude, Livello::Bloccante, true), false);
+        assert_eq!(p.apertura_dalla_pillola(pillola.get_attivita_visibile()), DallaPillola::Espandi(0));
+        p.togli_voce("claude.x.permesso");
+        // Finita l'attività, torna la Panoramica.
+        manda(&p, ev("a", TipoEvento::SessionEnd));
+        assert_eq!(p.apertura_dalla_pillola(pillola.get_attivita_visibile()), DallaPillola::Panoramica);
+    }
+
+    /// La vista chiesta dalla pillola vale per il pannello che si apre, una volta sola, su ogni
+    /// sistema; se quel pannello non si apre non resta per il prossimo.
+    #[test]
+    fn la_vista_chiesta_vale_per_un_pannello_solo() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        p.chiedi_vista("claude");
+        p.pannello_chiuso();
+        assert_eq!(p.vista_richiesta.get(), None, "un pannello non aperto non la lascia in sospeso");
+        assert_eq!(con_pannello(&p).get_vista().as_str(), "panoramica");
+        p.chiedi_vista("claude");
+        let pannello = con_pannello(&p);
+        assert_eq!(pannello.get_vista().as_str(), "claude");
+        assert_eq!(p.vista_richiesta.get(), None);
+    }
+
     #[test]
     fn senza_finestra_una_voce_lo_dice_e_sparisce() {
         let (_s, p, _pillola, _d) = ponte_di_prova();
