@@ -7,6 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — v3 «assistente isola» (ramo `v3-assistente`, milestone M1 e M2)
 
+### Added (M3, Task 5: permessi di Claude Code dalla pillola)
+- Un permesso chiesto da Claude Code diventa una voce *bloccante* «Claude chiede: <strumento> <riassunto>» (riassunto ripulito da caratteri invisibili e di direzione, titolo al più 60 caratteri, dettaglio intero con la sessione) con «Nega» e «Consenti». «Consenti» è un pulsante delicato: nel pannello solo Ctrl+Invio o clic, dalla pillola solo se il testo si legge tutto (altrimenti «Apri»). Nessun «Consenti sempre», nessun `updatedPermissions` né `updatedInput`.
+- La decisione parte solo da un gesto sulla voce e va solo alla sessione che ha chiesto; un clic tardivo non fa nulla. Il permesso si chiude da sé (senza decisione, voce tolta) quando la stessa sessione manda `PreToolUse`, `UserPromptSubmit`, `Stop`, `StopFailure` o `SessionEnd` (risposta data nel terminale), o quando l'ascoltatore lo abbandona; non con la `Notification` `permission_prompt`, che Claude manda a permesso aperto. Al più 16 permessi in attesa: il 17° ripiega sul terminale. Con un permesso aperto la sessione non mostra anche «Claude ti aspetta».
+- Fra più bloccanti la pillola chiama per il più vecchio e aggiunge « +N» (fuori dal testo tagliato, letto anche da Narrator); il pannello resta nell'ordine solito. `PERMESSI_RISOLVIBILI` (esito dello spike) seleziona il ramo B, solo «Apri il terminale».
+
 ### Added (M3, Task 4: sessioni di Claude Code nella pillola)
 - Se Claude Code è collegato (`claude.collegato` nella configurazione, con porta e codice) l'assistente ascolta gli hook all'avvio; il codice sta nel portachiavi (`isola:claude-hook`), in prova nella variabile `ISOLA_HOOK_TOKEN` del processo. Porta occupata: voce *attenzione* «Collegamento con Claude Code non disponibile» con «Impostazioni».
 - Voci «In attesa» per sessione, con id che non contengono il `session_id` (impronta FNV-1a): «Claude ti aspetta · <cartella>» e «Claude si è fermato · <cartella>» (*attenzione*, errore dell'API in italiano), «Claude ha finito · <cartella>» (*informazione*, sparisce chiudendo il pannello). Una sessione sparisce con `SessionEnd`, dopo 30 minuti di silenzio (2 ore se aspetta) o quando se ne superano 16.

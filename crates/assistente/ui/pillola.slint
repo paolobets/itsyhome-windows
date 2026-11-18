@@ -75,6 +75,9 @@ component ValoreLato inherits Rectangle {
 export component Pillola inherits Window {
     in property <UmoreUi> umore: UmoreUi.tranquillo;
     in property <string> messaggio;
+    // « +N»: quanti altri bloccanti aspettano oltre a quello mostrato (vuoto se nessuno). Sta dopo
+    // il messaggio, fuori dal testo che si taglia.
+    in property <string> altri;
     // Falso mentre la pillola è nascosta (pannello aperto): fermi anche i timer.
     in property <bool> attiva: true;
     // Come mostra le voci «In attesa» (vedi `attenzione::aspetto_pillola`): a riposo, col
@@ -261,7 +264,9 @@ export component Pillola inherits Window {
     // (`larghezza-pillola`, pulsanti di adesso), non su quelle animate: Rust lo legge appena
     // impostati messaggio e pulsanti e, se è vero, mette «Apri» al posto di un consenso.
     property <length> x-riga: occhi-allerta-dal-bordo + 2 * mezzo-ingombro-allerta + 10px;
-    out property <bool> testo-tagliato: riga.preferred-width > larghezza-pillola - 8px - bottoni.preferred-width - 8px - x-riga;
+    // Lo spazio che prende « +N» (fuori dal testo tagliato).
+    out property <length> larghezza-altri: altri == "" ? 0px : altri-testo.preferred-width;
+    out property <bool> testo-tagliato: riga.preferred-width > larghezza-pillola - 8px - bottoni.preferred-width - 8px - x-riga - larghezza-altri;
 
     no-frame: true;
     always-on-top: true;
@@ -373,7 +378,7 @@ export component Pillola inherits Window {
             // pulsanti della pillola allargata gli stanno accanto, non dentro).
             accessible-role: button;
             // Durante la barra del volume: «Volume 40%» (con «, muto» se muto).
-            accessible-label: allargata ? messaggio
+            accessible-label: allargata ? messaggio + altri
                 : con-barra ? nome-volume
                 : "ItsyHome" + (attivita-visibile ? ", " + (nome-attivita != "" ? nome-attivita : attivita) : nome-lati) + (aspetto == AspettoPillolaUi.puntino ? ", una voce in attesa" : "");
             accessible-action-default => { root.cliccata(); }
@@ -519,7 +524,7 @@ export component Pillola inherits Window {
         riga := Text {
             visible: allargata;
             x: x-riga;
-            width: max(0px, bottoni.x - self.x - 8px);
+            width: max(0px, bottoni.x - self.x - 8px - larghezza-altri);
             height: parent.height;
             text: messaggio;
             overflow: elide;
@@ -528,6 +533,21 @@ export component Pillola inherits Window {
             font-weight: 500;
             font-size: Tema.testo-piccolo;
             color: Tema.testo;
+        }
+
+        // « +N» subito prima dei pulsanti; il testo del permesso si taglia, questo no.
+        altri-testo := Text {
+            visible: allargata && altri != "";
+            width: self.preferred-width;
+            x: bottoni.x - 8px - self.width;
+            height: parent.height;
+            text: altri;
+            vertical-alignment: center;
+            font-family: Tema.carattere;
+            font-weight: 600;
+            font-size: Tema.testo-piccolo;
+            color: Tema.testo;
+            accessible-role: none;
         }
 
         // Fino a 2 pulsanti a destra (dentro la fascia ritagliata, quindi cliccabili).

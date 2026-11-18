@@ -3,14 +3,27 @@
 //! arriva sempre dal chiamante e nessun testo di prompt, risposta o file passa di qui (le sessioni
 //! portano solo cartella, stato e nome dello strumento).
 
-use crate::attenzione::{Fonte, Livello, Voce};
+use crate::attenzione::{Fonte, Livello, Pulsante, Voce};
+use claude_hook::evento::EventoHook;
 use claude_hook::sessioni::{Sessione, Sessioni, Stato};
+use gestione_protocollo::testo_pulito;
 use std::time::{Duration, Instant};
 
 /// Il prefisso degli id di tutte le voci di Claude Code.
 pub const PREFISSO_CLAUDE: &str = "claude.";
 /// La voce «porta occupata»: l'ascoltatore non è partito.
 pub const ID_COLLEGAMENTO: &str = "claude.collegamento";
+
+/// Il prefisso delle voci dei permessi (`claude.permesso.<id>`).
+pub const PREFISSO_PERMESSO: &str = "claude.permesso.";
+/// Esito dello spike del 18/11/2026 (spec §6.3): la risposta dell'hook `PermissionRequest` decide
+/// davvero. `true`: la pillola offre «Nega» e «Consenti»; `false` (ramo B): solo «Apri il terminale».
+pub const PERMESSI_RISOLVIBILI: bool = true;
+pub const PULSANTE_NEGA: &str = "nega";
+pub const PULSANTE_CONSENTI: &str = "consenti";
+pub const PULSANTE_TERMINALE: &str = "terminale";
+/// Quanti caratteri del riassunto stanno nel titolo della voce di un permesso.
+const MASSIMO_RIASSUNTO_TITOLO: usize = 60;
 
 /// Lunghezza massima del nome di uno strumento sconosciuto nella pillola.
 const MASSIMO_STRUMENTO: usize = 12;
@@ -32,6 +45,42 @@ pub fn id_sessione(id: &str) -> String {
 pub fn id_voci(id: &str) -> [String; 3] {
     let i = id_sessione(id);
     [format!("{PREFISSO_CLAUDE}{i}.aspetta"), format!("{PREFISSO_CLAUDE}{i}.errore"), format!("{PREFISSO_CLAUDE}{i}.fatto")]
+}
+
+/// L'id della voce del permesso `id`.
+pub fn id_voce_permesso(id: u64) -> String {
+    format!("{PREFISSO_PERMESSO}{id}")
+}
+
+/// Il numero di permesso dentro l'id di una voce; `None` se la voce non è un permesso.
+pub fn id_permesso_da_voce(voce: &str) -> Option<u64> {
+    voce.strip_prefix(PREFISSO_PERMESSO)?.parse().ok()
+}
+
+/// La voce del permesso `id` chiesto da una sessione: *bloccante*, col riassunto di cosa Claude sta
+/// per fare (testo non fidato: ripulito da caratteri invisibili, di direzione e a capo) e i
+/// pulsanti per decidere. Il titolo ne porta al più 60 caratteri, il dettaglio tutto.
+pub fn voce_permesso(id: u64, e: &EventoHook, ora: Instant) -> Voce {
+    let strumento = e.strumento.as_deref().map_or_else(|| "Strumento".to_owned(), |s| strumento_italiano(Some(s)));
+    let riassunto = testo_pulito(e.riassunto.as_deref().unwrap_or(""));
+    let cartella = testo_pulito(&e.cartella);
+    let cartella = if cartella.is_empty() { SENZA_CARTELLA } else { cartella.as_str() };
+    let titolo = if riassunto.is_empty() {
+        format!("Claude chiede: {strumento}")
+    } else if riassunto.chars().count() > MASSIMO_RIASSUNTO_TITOLO {
+        let corto: String = riassunto.chars().take(MASSIMO_RIASSUNTO_TITOLO - 1).collect();
+        format!("Claude chiede: {strumento} {corto}…")
+    } else {
+        format!("Claude chiede: {strumento} {riassunto}")
+    };
+    let dettaglio =
+        if riassunto.is_empty() { format!("Sessione: {cartella}") } else { format!("{riassunto}\nSessione: {cartella}") };
+    let pulsanti = if PERMESSI_RISOLVIBILI {
+        vec![Pulsante::new(PULSANTE_NEGA, "Nega"), Pulsante::delicato(PULSANTE_CONSENTI, "Consenti")]
+    } else {
+        vec![Pulsante::new(PULSANTE_TERMINALE, "Apri il terminale")]
+    };
+    Voce { id: id_voce_permesso(id), livello: Livello::Bloccante, fonte: Fonte::Claude, titolo, dettaglio, pulsanti, creata: ora }
 }
 
 /// La frase per un errore dell'API di Claude (`StopFailure.error`).
@@ -320,6 +369,56 @@ mod test {
         // Il nome ripulito: niente caratteri strani o di controllo.
         assert_eq!(strumento_italiano(Some("mcp\u{202e}__x\n y")), "mcp__xy");
         assert_eq!(strumento_italiano(Some("\u{202e}\n")), "Strumento");
+    }
+
+    fn permesso(command: &str) -> EventoHook {
+        EventoHook {
+            strumento: Some("PowerShell".into()),
+            riassunto: Some(command.into()),
+            ..ev("a", TipoEvento::PermissionRequest)
+        }
+    }
+
+    #[test]
+    fn riassunto_pulito() {
+        let v = voce_permesso(7, &permesso("rm \u{202E}-rf\n/tmp\u{200B}/x"), Instant::now());
+        assert_eq!(v.titolo, "Claude chiede: Comando rm -rf /tmp/x");
+        assert_eq!(v.dettaglio, "rm -rf /tmp/x\nSessione: progetto-a");
+        for t in [&v.titolo, &v.dettaglio] {
+            assert!(!t.contains('\u{202E}') && !t.contains('\u{200B}'), "{t:?}");
+        }
+        assert!(!v.titolo.contains('\n'), "a capo diventati spazi");
+        assert_eq!((v.livello, v.fonte, v.id.as_str()), (Livello::Bloccante, Fonte::Claude, "claude.permesso.7"));
+        assert_eq!(id_permesso_da_voce(&v.id), Some(7));
+        assert_eq!(id_permesso_da_voce("claude.permesso.x"), None);
+        assert_eq!(id_permesso_da_voce("claude.0123.aspetta"), None);
+        // Anche la cartella non fidata viene ripulita.
+        let e = EventoHook { cartella: "pro\u{202E}getto".into(), ..permesso("ls") };
+        assert_eq!(voce_permesso(1, &e, Instant::now()).dettaglio, "ls\nSessione: progetto");
+    }
+
+    #[test]
+    fn titolo_permesso_tagliato_a_sessanta() {
+        let lungo = "x".repeat(300);
+        let v = voce_permesso(1, &permesso(&lungo), Instant::now());
+        assert!(v.titolo.chars().count() <= "Claude chiede: Comando ".chars().count() + 60, "{}", v.titolo.chars().count());
+        assert!(v.titolo.ends_with('…'));
+        assert_eq!(v.dettaglio, format!("{lungo}\nSessione: progetto-a"), "il dettaglio ha il riassunto intero");
+        // Esattamente 60: nessun taglio.
+        let v = voce_permesso(1, &permesso(&"y".repeat(60)), Instant::now());
+        assert!(!v.titolo.ends_with('…'));
+        // Senza riassunto né strumento né cartella.
+        let nudo = EventoHook { cartella: String::new(), ..ev("a", TipoEvento::PermissionRequest) };
+        let v = voce_permesso(1, &nudo, Instant::now());
+        assert_eq!(v.titolo, "Claude chiede: Strumento");
+        assert_eq!(v.dettaglio, "Sessione: Claude");
+    }
+
+    #[test]
+    fn pulsanti_del_permesso() {
+        let v = voce_permesso(1, &permesso("ls"), Instant::now());
+        assert_eq!(v.pulsanti, vec![Pulsante::new("nega", "Nega"), Pulsante::delicato("consenti", "Consenti")]);
+        assert_eq!(PULSANTE_TERMINALE, "terminale");
     }
 
     #[test]

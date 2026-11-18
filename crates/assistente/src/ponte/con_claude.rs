@@ -6,15 +6,19 @@
 
 use super::{ponte, Ponte, MARGINE_SVEGLIA};
 use crate::attenzione::{Fonte, Livello, Pulsante, Voce, PULSANTE_IMPOSTAZIONI};
-use crate::claude::{self, ID_COLLEGAMENTO};
+use crate::claude::{self, ID_COLLEGAMENTO, PERMESSI_RISOLVIBILI, PULSANTE_CONSENTI, PULSANTE_NEGA};
 use crate::pillola;
 use crate::umore::Umore;
 use crate::LivelloUi;
 use casa_core::diagnosi::{Contatore, Diagnosi};
 use casa_core::segreti::Segreti;
-use claude_hook::evento::{evento_da_json, EventoHook};
+use claude_hook::evento::{evento_da_json, EventoHook, TipoEvento};
 use claude_hook::sessioni::Cambio;
-use claude_hook::{avvia, Arrivo, AttesaPermesso, CodiceHook, ConfigAscolto, ErroreAvvio, Gestore, ATTESA_MASSIMA};
+use claude_hook::{
+    avvia, Arrivo, AttesaPermesso, CodiceHook, ConfigAscolto, Decisione, ErroreAvvio, Gestore, ATTESA_MASSIMA,
+};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{channel, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -23,6 +27,17 @@ pub const SEGRETO_HOOK: &str = "isola:claude-hook";
 /// In prova (`ITSYHOME_ASSISTENTE_DIR`) il codice viene da questa variabile del processo: mai il
 /// portachiavi vero.
 pub const VARIABILE_PROVA: &str = "ISOLA_HOOK_TOKEN";
+
+/// Quanti permessi possono aspettare insieme (quante connessioni accetta l'ascoltatore). Uno in
+/// più non ha voce né canale: Claude Code ripiega sul terminale.
+const MASSIMO_PERMESSI: usize = 16;
+
+/// Un permesso che aspetta: la sessione che l'ha chiesto e dove mandare la decisione (nessun canale
+/// nel ramo B, dove la decisione si dà solo nel terminale). Solo chi ha chiesto riceve la risposta.
+pub(super) struct Pendente {
+    sessione: String,
+    tx: Option<Sender<Decisione>>,
+}
 
 /// Il codice dell'ascoltatore: in prova il valore di `ISOLA_HOOK_TOKEN` (passato, i test non leggono
 /// l'ambiente), altrimenti il portachiavi. `None` se manca o non è un codice valido. Non lo scrive mai.
@@ -57,7 +72,7 @@ pub fn avvia_con(p: &Ponte, codice: CodiceHook) {
     let vecchio = p.claude_ascolto.borrow_mut().take();
     drop(vecchio); // libera la porta prima di riprenderla
     let config = ConfigAscolto { porta, codice, attesa_massima: ATTESA_MASSIMA };
-    match avvia(config, Arc::new(GestoreIsola { diagnosi: p.casa.diagnosi_condivisa() })) {
+    match avvia(config, Arc::new(GestoreIsola::new(p.casa.diagnosi_condivisa()))) {
         Ok(ascolto) => {
             *p.claude_ascolto.borrow_mut() = Some(ascolto);
             p.togli_voce(ID_COLLEGAMENTO);
@@ -94,10 +109,18 @@ pub fn spegni() {
     }
 }
 
-/// Un pulsante di una voce di Claude Code (i task 5, 10 e 12 ci aggiungono i loro).
+/// Un pulsante di una voce di Claude Code (i task 10 e 12 ci aggiungono i loro).
 pub fn azione(p: &Ponte, voce: &str, pulsante: &str) {
     if voce == ID_COLLEGAMENTO && pulsante == PULSANTE_IMPOSTAZIONI {
         p.chiedi_impostazioni();
+    } else if let Some(id) = claude::id_permesso_da_voce(voce) {
+        let decisione = match pulsante {
+            PULSANTE_CONSENTI => Decisione::Consenti,
+            PULSANTE_NEGA => Decisione::Nega,
+            // «Apri il terminale» (ramo B) arriva col Task 10.
+            _ => return,
+        };
+        p.claude_decidi(id, decisione);
     }
 }
 
@@ -106,6 +129,14 @@ pub fn azione(p: &Ponte, voce: &str, pulsante: &str) {
 struct GestoreIsola {
     /// Il registro condiviso (contatori atomici): i rifiuti si contano sul thread della connessione.
     diagnosi: Arc<Diagnosi>,
+    /// Il numero del prossimo permesso.
+    prossimo: AtomicU64,
+}
+
+impl GestoreIsola {
+    fn new(diagnosi: Arc<Diagnosi>) -> GestoreIsola {
+        GestoreIsola { diagnosi, prossimo: AtomicU64::new(1) }
+    }
 }
 
 /// Porta un evento al thread dell'interfaccia. Se il ciclo eventi è finito non c'è più nessuno:
@@ -118,6 +149,20 @@ fn consegna(e: EventoHook, pid: Option<u32>) {
     });
 }
 
+/// Porta un permesso al thread dell'interfaccia.
+fn consegna_permesso(
+    id: u64,
+    e: EventoHook,
+    pid: Option<u32>,
+    tx: Option<Sender<Decisione>>,
+) -> Result<(), slint::EventLoopError> {
+    slint::invoke_from_event_loop(move || {
+        if let Some(p) = ponte() {
+            p.claude_permesso(id, e, pid, tx, Instant::now());
+        }
+    })
+}
+
 impl Gestore for GestoreIsola {
     fn evento(&self, a: Arrivo) {
         if let Ok(e) = evento_da_json(&a.corpo) {
@@ -125,14 +170,36 @@ impl Gestore for GestoreIsola {
         }
     }
 
-    /// Fino al Task 5 un permesso è un evento come gli altri (nessuna risposta: Claude Code
-    /// prosegue col suo flusso).
+    /// Un permesso: l'interfaccia ne fa una voce bloccante e questo thread aspetta la decisione
+    /// sul canale. Un corpo non valido, o che non è una richiesta di permesso, non apre nessuna
+    /// attesa (Claude Code prosegue col suo flusso); col ramo B la voce c'è ma la risposta no.
     fn permesso(&self, a: Arrivo) -> Option<AttesaPermesso> {
-        self.evento(a);
-        None
+        let e = evento_da_json(&a.corpo).ok()?;
+        let pid = a.pid_mittente;
+        if e.tipo != TipoEvento::PermissionRequest {
+            consegna(e, pid);
+            return None;
+        }
+        let id = self.prossimo.fetch_add(1, Ordering::Relaxed);
+        if !PERMESSI_RISOLVIBILI {
+            let _ = consegna_permesso(id, e, pid, None);
+            return None;
+        }
+        let (tx, rx) = channel();
+        // Senza ciclo eventi nessuno può rispondere: il canale cade e Claude ripiega.
+        consegna_permesso(id, e, pid, Some(tx)).ok()?;
+        Some(AttesaPermesso { id, decisione: rx })
     }
 
-    fn abbandonato(&self, _id: u64) {}
+    /// Nessuna risposta è arrivata (tempo scaduto, mittente sparito, ascolto fermo): la voce non
+    /// serve più.
+    fn abbandonato(&self, id: u64) {
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(p) = ponte() {
+                p.claude_permesso_finito(id);
+            }
+        });
+    }
 
     /// Anche con nessun evento valido (un codice sbagliato dà solo 401) i rifiuti arrivano al
     /// registro diagnostico, senza dati della richiesta.
@@ -149,6 +216,19 @@ impl Ponte {
     /// trovato alla prima richiesta di una sessione.
     pub(super) fn claude_evento(&self, e: EventoHook, pid: Option<u32>, ora: Instant) {
         self.casa.diagnosi().conta(Contatore::claude_eventi);
+        // Claude Code è andato avanti (o la sessione è finita): chi aspettava una risposta non
+        // serve più. Non la `Notification`: Claude ne manda una `permission_prompt` mentre il
+        // permesso è ancora aperto.
+        if matches!(
+            e.tipo,
+            TipoEvento::PreToolUse
+                | TipoEvento::UserPromptSubmit
+                | TipoEvento::Stop
+                | TipoEvento::StopFailure
+                | TipoEvento::SessionEnd
+        ) {
+            self.claude_chiudi_permessi(&e.sessione);
+        }
         let cambi = {
             let mut s = self.claude_sessioni.borrow_mut();
             let cambi = s.ricevi(&e, ora);
@@ -158,6 +238,70 @@ impl Ponte {
             cambi
         };
         self.claude_cambiate(&cambi, ora);
+    }
+
+    /// Un permesso chiesto da Claude Code, sul thread dell'interfaccia: una voce bloccante e il
+    /// canale della risposta. Oltre i 16 in attesa il canale cade (Claude ripiega sul terminale) e
+    /// la voce non c'è: resta quella normale «Claude ti aspetta».
+    pub(super) fn claude_permesso(
+        &self,
+        id: u64,
+        e: EventoHook,
+        pid: Option<u32>,
+        tx: Option<Sender<Decisione>>,
+        ora: Instant,
+    ) {
+        if self.claude_permessi.borrow().len() >= MASSIMO_PERMESSI {
+            drop(tx);
+            self.claude_evento(e, pid, ora);
+            return;
+        }
+        self.claude_permessi.borrow_mut().insert(id, Pendente { sessione: e.sessione.clone(), tx });
+        let voce = claude::voce_permesso(id, &e, ora);
+        // Prima il permesso in elenco, poi l'evento: la voce «ti aspetta» della sessione cede il
+        // posto a quella del permesso.
+        self.claude_evento(e, pid, ora);
+        self.metti_voce(voce, true);
+    }
+
+    /// Il gesto dell'utente su una voce di permesso: la decisione va **solo** a chi ha chiesto e la
+    /// voce sparisce. Un clic tardivo (voce già tolta) non fa nulla.
+    fn claude_decidi(&self, id: u64, decisione: Decisione) {
+        let Some(p) = self.claude_permessi.borrow_mut().remove(&id) else { return };
+        if let Some(tx) = &p.tx {
+            let _ = tx.send(decisione);
+        }
+        self.claude_permesso_chiuso(id, &p.sessione);
+    }
+
+    /// L'ascoltatore ha lasciato il permesso `id` senza risposta: via la voce.
+    pub(super) fn claude_permesso_finito(&self, id: u64) {
+        let Some(p) = self.claude_permessi.borrow_mut().remove(&id) else { return };
+        self.claude_permesso_chiuso(id, &p.sessione);
+    }
+
+    /// Una sessione è andata avanti: i suoi permessi in attesa si chiudono senza decisione (Claude
+    /// Code risponde da sé) e le voci spariscono. Le altre sessioni non si toccano.
+    fn claude_chiudi_permessi(&self, sessione: &str) {
+        let chiusi: Vec<(u64, Pendente)> = {
+            let mut m = self.claude_permessi.borrow_mut();
+            let ids: Vec<u64> = m.iter().filter(|(_, p)| p.sessione == sessione).map(|(id, _)| *id).collect();
+            ids.into_iter().filter_map(|id| m.remove(&id).map(|p| (id, p))).collect()
+        };
+        for (id, p) in chiusi {
+            if let Some(tx) = &p.tx {
+                let _ = tx.send(Decisione::Nessuna);
+            }
+            self.togli_voce(&claude::id_voce_permesso(id));
+        }
+    }
+
+    /// Tolto il permesso dall'elenco: via la sua voce e la sessione riprende la voce normale
+    /// (quella «ti aspetta» era nascosta dal permesso).
+    fn claude_permesso_chiuso(&self, id: u64, sessione: &str) {
+        self.togli_voce(&claude::id_voce_permesso(id));
+        self.voci_sessione(sessione, Instant::now());
+        self.aggiorna_claude_pillola();
     }
 
     /// Le voci, la sveglia e la pillola dopo un cambio delle sessioni.
@@ -185,6 +329,10 @@ impl Ponte {
             let s = self.claude_sessioni.borrow();
             s.elenco().into_iter().find(|x| x.id == id).and_then(|x| claude::voce_sessione(x, ora))
         };
+        // Con un permesso in attesa parla solo quello (bloccante): «Claude ti aspetta» no.
+        let [aspetta, _, _] = claude::id_voci(id);
+        let col_permesso = self.claude_permessi.borrow().values().any(|p| p.sessione == id);
+        let voce = voce.filter(|v| !(col_permesso && v.id == aspetta));
         let tenuta = voce.as_ref().map(|v| v.id.clone());
         for altra in claude::id_voci(id) {
             if tenuta.as_deref() != Some(altra.as_str()) {
@@ -486,7 +634,7 @@ mod test {
     #[test]
     fn i_rifiuti_dell_ascoltatore_arrivano_alla_diagnosi() {
         let diagnosi = Arc::new(Diagnosi::new(true));
-        let g = GestoreIsola { diagnosi: diagnosi.clone() };
+        let g = GestoreIsola::new(diagnosi.clone());
         g.rifiutata();
         g.rifiutata();
         assert_eq!(diagnosi.valore(Contatore::claude_rifiutate), 2);
@@ -556,6 +704,203 @@ mod test {
         assert_eq!(pillola.get_tinta_occhi(), LivelloUi::Informazione);
         p.pannello_chiuso();
         assert_eq!(pillola.get_tinta_occhi(), LivelloUi::Nessuno, "il fatto visto non colora più");
+    }
+
+    // ─── Permessi (Task 5) ───────────────────────────────────────────────────
+
+    use std::sync::mpsc::{Receiver, TryRecvError};
+
+    fn chiede(sessione: &str, comando: &str) -> EventoHook {
+        EventoHook {
+            strumento: Some("PowerShell".into()),
+            riassunto: Some(comando.into()),
+            ..ev(sessione, TipoEvento::PermissionRequest)
+        }
+    }
+
+    /// Un permesso della sessione `sessione`, come lo consegna il gestore: il ricevitore è quello
+    /// che aspetta l'ascoltatore.
+    fn permesso(p: &Ponte, id: u64, sessione: &str) -> Receiver<Decisione> {
+        let (tx, rx) = channel();
+        p.claude_permesso(id, chiede(sessione, "ls -la"), None, Some(tx), Instant::now());
+        rx
+    }
+
+    fn voce_di(id: u64) -> String {
+        claude::id_voce_permesso(id)
+    }
+
+    fn ha_voce(p: &Ponte, id: &str) -> bool {
+        p.attese.borrow().contiene(id)
+    }
+
+    fn ids_voci(p: &Ponte) -> Vec<String> {
+        voci_claude(p).into_iter().map(|v| v.0).collect()
+    }
+
+    #[test]
+    fn consenti_va_solo_a_chi_ha_chiesto() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let rx1 = permesso(&p, 1, "a");
+        let rx2 = permesso(&p, 2, "b");
+        assert!(ha_voce(&p, &voce_di(1)) && ha_voce(&p, &voce_di(2)));
+        p.azione(&voce_di(1), PULSANTE_CONSENTI);
+        assert_eq!(rx1.try_recv(), Ok(Decisione::Consenti));
+        assert_eq!(rx2.try_recv(), Err(TryRecvError::Empty), "l'altra sessione non riceve nulla");
+        assert!(!ha_voce(&p, &voce_di(1)), "la voce decisa sparisce");
+        assert!(ha_voce(&p, &voce_di(2)));
+        // Nega sul secondo: solo il secondo.
+        p.azione(&voce_di(2), PULSANTE_NEGA);
+        assert_eq!(rx2.try_recv(), Ok(Decisione::Nega));
+        assert_eq!(rx1.try_recv(), Err(TryRecvError::Disconnected), "il primo non riceve altro");
+        assert!(p.claude_permessi.borrow().is_empty());
+    }
+
+    #[test]
+    fn clic_tardivo_o_estraneo_non_fa_nulla() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let rx = permesso(&p, 1, "a");
+        // Un pulsante che non decide, un id che non c'è, una voce che non è un permesso.
+        p.azione(&voce_di(1), "altro");
+        p.azione(&voce_di(99), PULSANTE_CONSENTI);
+        p.azione("claude.permesso.x", PULSANTE_CONSENTI);
+        p.azione("claude.0123.aspetta", PULSANTE_CONSENTI);
+        assert_eq!(rx.try_recv(), Err(TryRecvError::Empty));
+        assert!(ha_voce(&p, &voce_di(1)));
+        // Decisa una volta, un secondo clic (voce già tolta, mittente caduto) è un no-op.
+        p.azione(&voce_di(1), PULSANTE_NEGA);
+        assert_eq!(rx.try_recv(), Ok(Decisione::Nega));
+        drop(rx); // ora il ricevitore non c'è più: l'invio fallirebbe
+        p.azione(&voce_di(1), PULSANTE_CONSENTI);
+        // Ricevitore caduto con la voce ancora lì (l'ascoltatore ha chiuso): l'invio che fallisce si ignora.
+        let rx = permesso(&p, 2, "a");
+        drop(rx);
+        p.azione(&voce_di(2), PULSANTE_CONSENTI);
+        assert!(!ha_voce(&p, &voce_di(2)));
+    }
+
+    #[test]
+    fn nessun_consenso_senza_gesto() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let rx = permesso(&p, 1, "a");
+        p.claude_permesso_finito(1); // abbandonato(id)
+        assert!(!ha_voce(&p, &voce_di(1)), "voce tolta");
+        match rx.try_recv() {
+            Ok(d) => panic!("nessun gesto, ma è arrivato {d:?}"),
+            Err(e) => assert_eq!(e, TryRecvError::Disconnected),
+        }
+        // Un permesso aperto che vede tanti altri eventi non decide mai da solo.
+        let rx = permesso(&p, 2, "a");
+        manda(&p, ev("a", TipoEvento::Notification));
+        manda(&p, EventoHook { notifica: Some("permission_prompt".into()), ..ev("a", TipoEvento::Notification) });
+        assert_eq!(rx.try_recv(), Err(TryRecvError::Empty));
+    }
+
+    #[test]
+    fn permesso_sparisce_se_la_sessione_va_avanti() {
+        for chiude in [
+            TipoEvento::Stop,
+            TipoEvento::UserPromptSubmit,
+            TipoEvento::PreToolUse,
+            TipoEvento::StopFailure,
+            TipoEvento::SessionEnd,
+        ] {
+            let (_s, p, _pillola, _d) = ponte_di_prova();
+            let rx = permesso(&p, 1, "a");
+            let altro = permesso(&p, 2, "b");
+            // Un evento di un'altra sessione non tocca il permesso.
+            manda(&p, ev("b", chiude));
+            assert!(ha_voce(&p, &voce_di(1)), "{chiude:?} di un'altra sessione");
+            assert_eq!(rx.try_recv(), Err(TryRecvError::Empty));
+            assert_eq!(altro.try_recv(), Ok(Decisione::Nessuna), "{chiude:?} chiude il suo");
+            assert!(!ha_voce(&p, &voce_di(2)));
+            // Un evento della stessa sessione: Nessuna e voce tolta.
+            manda(&p, ev("a", chiude));
+            assert_eq!(rx.try_recv(), Ok(Decisione::Nessuna), "{chiude:?}");
+            assert!(!ha_voce(&p, &voce_di(1)), "{chiude:?}");
+            assert!(p.claude_permessi.borrow().is_empty());
+        }
+    }
+
+    #[test]
+    fn la_notifica_non_chiude_il_permesso() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let rx = permesso(&p, 1, "a");
+        // Claude manda una `permission_prompt` ~6 s dopo, col permesso ancora aperto.
+        manda(&p, EventoHook { notifica: Some("permission_prompt".into()), ..ev("a", TipoEvento::Notification) });
+        assert!(ha_voce(&p, &voce_di(1)), "la voce resta");
+        assert_eq!(rx.try_recv(), Err(TryRecvError::Empty));
+        assert!(p.claude_permessi.borrow().contains_key(&1));
+    }
+
+    #[test]
+    fn con_un_permesso_la_sessione_non_dice_ti_aspetta() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let _rx = permesso(&p, 1, "a");
+        assert_eq!(ids_voci(&p), [voce_di(1)], "solo la voce del permesso");
+        // Chiuso il permesso dalla decisione, la sessione riprende la sua voce normale.
+        p.azione(&voce_di(1), PULSANTE_NEGA);
+        assert_eq!(voci_claude(&p).iter().map(|v| v.2.as_str()).collect::<Vec<_>>(), ["Claude ti aspetta · progetto-a"]);
+        // Chiuso da un evento che porta a «fatto»: la voce del permesso va, resta il «fatto».
+        let _rx = permesso(&p, 2, "a");
+        assert_eq!(ids_voci(&p), [voce_di(2)]);
+        manda(&p, ev("a", TipoEvento::Stop));
+        assert_eq!(voci_claude(&p).iter().map(|v| v.2.as_str()).collect::<Vec<_>>(), ["Claude ha finito · progetto-a"]);
+        // Abbandonato: torna «ti aspetta».
+        let _rx = permesso(&p, 3, "b");
+        p.claude_permesso_finito(3);
+        assert!(voci_claude(&p).iter().any(|v| v.2 == "Claude ti aspetta · progetto-a" && v.0.ends_with(".aspetta")));
+        assert!(!ha_voce(&p, &voce_di(3)));
+    }
+
+    #[test]
+    fn permesso_di_sessione_chiusa() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        manda(&p, ev("a", TipoEvento::UserPromptSubmit));
+        manda(&p, ev("a", TipoEvento::SessionEnd));
+        assert!(p.claude_sessioni.borrow().elenco().is_empty());
+        let rx = permesso(&p, 1, "a");
+        let s = p.claude_sessioni.borrow();
+        assert_eq!(s.elenco().len(), 1, "la sessione rinasce");
+        assert_eq!(s.elenco()[0].stato, claude_hook::sessioni::Stato::TiAspetta);
+        drop(s);
+        assert!(ha_voce(&p, &voce_di(1)), "voce presente");
+        assert_eq!(rx.try_recv(), Err(TryRecvError::Empty));
+        p.azione(&voce_di(1), PULSANTE_CONSENTI);
+        assert_eq!(rx.try_recv(), Ok(Decisione::Consenti));
+    }
+
+    #[test]
+    fn al_massimo_sedici_permessi_in_attesa() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let ricevitori: Vec<_> = (1..=16).map(|i| permesso(&p, i, &format!("s{i}"))).collect();
+        assert_eq!(p.claude_permessi.borrow().len(), 16);
+        // Il diciassettesimo: nessun canale (cade subito), nessuna voce di permesso, resta «ti aspetta».
+        let rx = permesso(&p, 17, "s17");
+        assert_eq!(rx.try_recv(), Err(TryRecvError::Disconnected));
+        assert!(!ha_voce(&p, &voce_di(17)));
+        assert_eq!(p.claude_permessi.borrow().len(), 16);
+        assert!(voci_claude(&p).iter().any(|v| v.0.ends_with(".aspetta") && v.2 == "Claude ti aspetta · progetto-a"));
+        // Liberato un posto, il successivo entra.
+        p.azione(&voce_di(1), PULSANTE_NEGA);
+        let _rx = permesso(&p, 18, "s18");
+        assert!(ha_voce(&p, &voce_di(18)));
+        assert!(ricevitori[1].try_recv().is_err());
+    }
+
+    #[test]
+    fn la_pillola_chiama_per_il_piu_vecchio_e_dice_piu_n() {
+        let (_s, p, pillola, _d) = ponte_di_prova();
+        let _a = permesso(&p, 1, "a");
+        assert_eq!(pillola.get_altri(), "");
+        let _b = permesso(&p, 2, "b");
+        let _c = permesso(&p, 3, "c");
+        assert_eq!(pillola.get_altri(), " +2");
+        assert_eq!(pillola.get_messaggio(), "Claude chiede: Comando ls -la");
+        p.azione(&voce_di(1), PULSANTE_NEGA);
+        assert_eq!(pillola.get_altri(), " +1");
+        p.azione(&voce_di(2), PULSANTE_NEGA);
+        assert_eq!(pillola.get_altri(), "");
     }
 
     #[test]

@@ -1099,6 +1099,66 @@ mod accessibilita {
     }
 
     #[test]
+    fn invio_da_solo_non_consente() {
+        // La voce vera di un permesso nel pannello: il fuoco parte da «Nega» (Invio = nega), il
+        // consenso solo con Ctrl+Invio.
+        use slint::platform::Key;
+        piattaforma_di_prova();
+        let p = pannello();
+        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        p.global::<crate::Fuochi>().set_pronti(true);
+        let e = claude_hook::evento::EventoHook {
+            sessione: "a".into(),
+            tipo: claude_hook::evento::TipoEvento::PermissionRequest,
+            cartella: "progetto".into(),
+            strumento: Some("PowerShell".into()),
+            notifica: None,
+            errore: None,
+            riassunto: Some("ls".into()),
+        };
+        let voce = crate::claude::voce_permesso(1, &e, std::time::Instant::now());
+        p.set_attese(ModelRc::new(VecModel::from(vec![VoceAttesaUi {
+            id: voce.id.as_str().into(),
+            livello: LivelloUi::Bloccante,
+            titolo: voce.titolo.as_str().into(),
+            sotto: "Aspetta te · claude".into(),
+            dettaglio: voce.dettaglio.as_str().into(),
+            icona: Default::default(),
+            pulsanti: crate::pillola::pulsanti_ui(&voce.pulsanti),
+        }])));
+        let azioni = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let a = azioni.clone();
+        p.on_azione(move |_, id| a.borrow_mut().push(id.to_string()));
+        p.invoke_espandi(0);
+        tasto(&p, Key::Return);
+        assert_eq!(*azioni.borrow(), ["nega"], "Invio da solo nega, non consente");
+        azioni.borrow_mut().clear();
+        tasto(&p, Key::RightArrow);
+        tasto(&p, Key::Return);
+        assert!(azioni.borrow().is_empty(), "Invio su «Consenti» non concede: {:?}", azioni.borrow());
+        con_modificatori(&p, &[Key::Control], Key::Return);
+        assert_eq!(*azioni.borrow(), ["consenti"], "Ctrl+Invio concede");
+    }
+
+    #[test]
+    fn pillola_mostra_piu_due() {
+        piattaforma_di_prova();
+        let p = Pillola::new().expect("pillola");
+        p.show().expect("pillola mostrata nel backend di prova");
+        p.set_aspetto(AspettoPillolaUi::Allargata);
+        p.set_messaggio("Claude chiede: Comando ls".into());
+        assert_eq!(p.get_larghezza_altri(), 0.0);
+        assert!(elemento(&p, "Claude chiede: Comando ls").accessible_role().is_some());
+        p.set_altri(" +2".into());
+        assert!(p.get_larghezza_altri() > 0.0, "« +2» ha il suo spazio");
+        assert!(elemento(&p, "Claude chiede: Comando ls +2").accessible_role().is_some(), "Narrator lo legge");
+        // Il testo tagliato non lo copre: un titolo lunghissimo si taglia, « +2» resta.
+        p.set_messaggio("x".repeat(400).into());
+        assert!(p.get_testo_tagliato());
+        assert!(p.get_larghezza_altri() > 0.0);
+    }
+
+    #[test]
     fn la_pillola_non_concede_da_tastiera() {
         // Giro di correzioni 1, rilievo 2: anche con la finestra della pillola a fuoco, Invio o
         // Spazio non premono nulla (il permesso nella pillola si dà col clic o, col testo intero,

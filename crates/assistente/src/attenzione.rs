@@ -191,7 +191,9 @@ fn allarga_ancora(a: &Attese, v: &Voce, ora: Instant) -> bool {
 
 pub fn aspetto_pillola(attese: &Attese, ora: Instant) -> AspettoPillola {
     let ordinate = attese.ordinate();
-    if let Some(b) = ordinate.iter().find(|v| v.livello == Livello::Bloccante) {
+    // Fra più bloccanti la pillola chiama per **il più vecchio** (da quanto aspetta); il pannello
+    // resta nell'ordine di `ordinate`.
+    if let Some(b) = ordinate.iter().filter(|v| v.livello == Livello::Bloccante).min_by_key(|v| v.creata) {
         return AspettoPillola::Allargata { voce_id: b.id.clone(), ferma: true };
     }
     if let Some(a) = ordinate.iter().find(|v| allarga_ancora(attese, v, ora)) {
@@ -202,6 +204,11 @@ pub fn aspetto_pillola(attese: &Attese, ora: Instant) -> AspettoPillola {
     } else {
         AspettoPillola::Puntino
     }
+}
+
+/// Quanti bloccanti ci sono oltre a quello che la pillola mostra: la pillola aggiunge « +N».
+pub fn altri_bloccanti(a: &Attese) -> usize {
+    a.voci.iter().filter(|v| v.livello == Livello::Bloccante).count().saturating_sub(1)
 }
 
 /// Fra quanto l'aspetto della pillola cambierà da solo (fine dei 20 s di un'attenzione); `None`
@@ -656,6 +663,26 @@ pub(crate) mod test {
         assert_eq!(aspetto_pillola(&a, t + S(10 * 60)), attesa);
         a.togli("b");
         assert_eq!(aspetto_pillola(&a, t + S(10 * 60)), AspettoPillola::Puntino);
+    }
+
+    #[test]
+    fn pillola_col_bloccante_piu_vecchio_e_piu_n() {
+        let t = Instant::now();
+        let mut a = Attese::default();
+        assert_eq!(altri_bloccanti(&a), 0);
+        a.metti(voce("media", Livello::Bloccante, t + S(5)));
+        a.metti(voce("vecchia", Livello::Bloccante, t));
+        a.metti(voce("nuova", Livello::Bloccante, t + S(9)));
+        a.metti(voce("att", Livello::Attenzione, t));
+        assert_eq!(aspetto_pillola(&a, t + S(10)), AspettoPillola::Allargata { voce_id: "vecchia".into(), ferma: true });
+        assert_eq!(altri_bloccanti(&a), 2, "gli altri due bloccanti, non l'attenzione");
+        // Il pannello resta nell'ordine di `ordinate`: la più recente prima.
+        assert_eq!(ids(&a), ["nuova", "media", "vecchia", "att"]);
+        a.togli("vecchia");
+        assert_eq!(aspetto_pillola(&a, t + S(10)), AspettoPillola::Allargata { voce_id: "media".into(), ferma: true });
+        assert_eq!(altri_bloccanti(&a), 1);
+        a.togli("media");
+        assert_eq!(altri_bloccanti(&a), 0);
     }
 
     #[test]

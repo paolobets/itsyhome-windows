@@ -5,7 +5,7 @@
 //! rubare clic, la finestra è ritagliata alla pillola con la sua aura (pulsanti compresi): il
 //! ritaglio cresce subito quando la pillola cresce e cala solo a fine animazione.
 
-use crate::attenzione::{aspetto_pillola, pixel_riempiti, Attese, AspettoPillola, Fonte, Livello, Pulsante, PULSANTE_APRI};
+use crate::attenzione::{altri_bloccanti, aspetto_pillola, pixel_riempiti, Attese, AspettoPillola, Fonte, Livello, Pulsante, PULSANTE_APRI};
 use crate::umore::Umore;
 use crate::{finestre, pannello, AspettoPillolaUi, LivelloUi, Pillola, PulsanteUi, UmoreUi};
 use slint::{ComponentHandle, Image, ModelRc, VecModel};
@@ -35,6 +35,8 @@ pub struct VistaPillola {
     pub livello: Livello,
     pub fonte: Fonte,
     pub testo: String,
+    /// « +N» quando ci sono altri bloccanti oltre a quello mostrato (fuori dal testo tagliato).
+    pub altri: String,
     pub pulsanti: Vec<Pulsante>,
 }
 
@@ -46,6 +48,7 @@ impl VistaPillola {
             livello: Livello::Informazione,
             fonte: Fonte::Prova,
             testo: String::new(),
+            altri: String::new(),
             pulsanti: vec![],
         }
     }
@@ -69,12 +72,17 @@ pub fn vista(umore: Umore, attese: &Attese, ora: Instant) -> VistaPillola {
     };
     let Some(v) = voce else { return VistaPillola::riposo(umore) };
     let allargata = matches!(aspetto, AspettoPillola::Allargata { .. });
+    let altri = match altri_bloccanti(attese) {
+        n if allargata && v.livello == Livello::Bloccante && n > 0 => format!(" +{n}"),
+        _ => String::new(),
+    };
     VistaPillola {
         umore,
         livello: v.livello,
         fonte: v.fonte,
         // Testo e pulsanti contano solo da allargata (il puntino non li mostra).
         testo: if allargata { v.titolo.clone() } else { String::new() },
+        altri,
         pulsanti: if allargata { v.pulsanti.clone() } else { vec![] },
         aspetto,
     }
@@ -194,6 +202,9 @@ pub fn imposta(ui: &Pillola, v: &VistaPillola) {
     ui.set_ferma(ferma);
     ui.set_livello(livello_ui(v.livello));
     ui.set_messaggio(v.testo.as_str().into());
+    if ui.get_altri() != v.altri.as_str() {
+        ui.set_altri(v.altri.as_str().into());
+    }
     if allargata {
         ui.set_icona_fonte(icona_fonte(v.fonte));
     }

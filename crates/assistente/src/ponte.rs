@@ -846,6 +846,9 @@ pub struct Ponte {
     /// attività (acceso solo mentre serve: `attivita_serve`).
     claude_sessioni: RefCell<Sessioni>,
     claude_ascolto: RefCell<Option<claude_hook::Ascoltatore>>,
+    /// I permessi che Claude Code ha chiesto e aspettano una risposta (M3, Task 5): numero del
+    /// permesso → chi l'ha chiesto e dove mandare la decisione. Al più 16.
+    claude_permessi: RefCell<HashMap<u64, con_claude::Pendente>>,
     sveglia_claude: slint::Timer,
     timer_attivita: slint::Timer,
     /// Impostazioni › Isola: i modelli dei selettori e i cataloghi da cui vengono (un indice
@@ -952,6 +955,7 @@ pub fn collega(
         pillola_mostrata: Cell::new(true),
         claude_sessioni: RefCell::new(Sessioni::new()),
         claude_ascolto: RefCell::new(None),
+        claude_permessi: RefCell::new(HashMap::new()),
         sveglia_claude: slint::Timer::default(),
         timer_attivita: slint::Timer::default(),
         isola: RefCell::new(Isola::default()),
