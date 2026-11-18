@@ -35,7 +35,7 @@ impl CodiceHook {
             return None;
         }
         let mut b = [0u8; 32];
-        for (i, coppia) in t.chunks_exact(2).enumerate() {
+        for (i, coppia) in t.as_chunks::<2>().0.iter().enumerate() {
             b[i] = (cifra(coppia[0])? << 4) | cifra(coppia[1])?;
         }
         Some(CodiceHook(b))
