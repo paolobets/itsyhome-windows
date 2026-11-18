@@ -1745,7 +1745,7 @@ mod accessibilita {
         assert!(ce("Scrivi in settings.json") && ce("Annulla"));
         assert!(ce("Voci di isola come resteranno in settings.json"));
         assert!(ce("La barra di stato è già usata: i limiti dell'abbonamento non saranno disponibili."));
-        assert!(ce("Il resto di settings.json resta com'è (la prima volta ne tengo una copia accanto). Claude Code rilegge le modifiche da solo."));
+        assert!(ce("Il resto di settings.json resta com'è (la prima volta ne tengo una copia accanto). Le sessioni di Claude Code avviate dopo il collegamento lo useranno."));
         assert!(!ce("I terminali aperti prima vanno chiusi e riaperti."));
         assert!(!ce("Collega Claude Code"), "durante l'anteprima il pulsante non c'è");
 
@@ -1773,6 +1773,11 @@ mod accessibilita {
         elemento(&f, "Scollega").invoke_accessible_default_action();
         assert_eq!(f.get_claude_passo(), 2);
         assert!(ce("Togliere il collegamento con Claude Code?"));
+        assert!(
+            ce("Da settings.json escono solo le voci di isola (hook e barra di stato); il resto resta com'è."),
+            "la conferma dice ciò che succede davvero"
+        );
+        assert!(!ce("Da settings.json escono solo le voci di isola, il resto resta com'è; il codice segreto viene cancellato."));
         tasto(Key::Return);
         assert_eq!(eventi.borrow().last(), Some(&"annulla"));
         assert_eq!(f.get_claude_passo(), 0);

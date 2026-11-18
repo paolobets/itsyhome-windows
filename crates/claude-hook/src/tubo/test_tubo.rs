@@ -384,7 +384,7 @@ fn sequenza_cresce_per_connessione() {
 }
 
 #[test]
-fn mittente_solo_alla_prima_richiesta_di_una_sessione() {
+fn catena_solo_alla_prima_richiesta_di_una_sessione() {
     let g = Registro::nuovo(Modo::Subito);
     let (_s, nome) = avvia_prova(&g, ATTESA_MASSIMA);
     for id in ["uno", "uno", "due"] {
@@ -396,11 +396,8 @@ fn mittente_solo_alla_prima_richiesta_di_una_sessione() {
     assert!(aspetta(|| g.eventi.lock().unwrap().len() == 3, 3));
     let mut eventi = g.eventi.lock().unwrap().clone();
     eventi.sort_by_key(|e| e.sequenza);
-    let pid: Vec<Option<u32>> = eventi.iter().map(|e| e.pid_mittente).collect();
-    let io = Some(std::process::id());
-    assert_eq!(pid, vec![io, None, io]);
-    // Con il PID, la catena dell'aiutante presa mentre era collegato (qui: questo processo e i
-    // suoi genitori); senza PID, nessuna catena.
+    // Solo alla prima richiesta di una sessione: la catena dell'aiutante presa mentre era
+    // collegato (qui: questo processo e i suoi genitori); alle altre, nessuna catena.
     let catene: Vec<&Vec<(u32, String)>> = eventi.iter().map(|e| &e.catena_mittente).collect();
     assert!(catene[1].is_empty());
     for c in [catene[0], catene[2]] {
@@ -430,7 +427,7 @@ fn barra_ricevuta_e_passata_al_gestore() {
     assert!(aspetta(|| g.barre.lock().unwrap().len() == 1, 3));
     let b = &g.barre.lock().unwrap()[0];
     assert!(matches!(&b.contenuto, Contenuto::Barra(x) if *x == d));
-    assert_eq!(b.pid_mittente, None);
+    assert!(b.catena_mittente.is_empty());
     assert!(g.eventi.lock().unwrap().is_empty());
 }
 

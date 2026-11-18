@@ -11,10 +11,11 @@
 //! nome di Windows PowerShell, l'identificativo predefinito di notify-rust. Il clic sul toast non
 //! apre nulla (servirebbe un attivatore COM).
 
-#![cfg_attr(test, allow(dead_code, unused_imports))]
-
 use std::path::Path;
+// La coda e il thread dei toast non esistono nei test (`mostra` conta e basta).
+#[cfg(not(test))]
 use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
+#[cfg(any(windows, not(test)))]
 use std::sync::OnceLock;
 
 /// Identificativo dei toast dell'assistente.
@@ -22,11 +23,13 @@ use std::sync::OnceLock;
 #[cfg_attr(not(windows), allow(dead_code))]
 pub const AUMID: &str = "ItsyHome.Assistente";
 /// Quanti toast possono aspettare il loro turno.
+#[cfg(not(test))]
 const CODA: usize = 8;
 
 /// L'AUMID registrato con successo (altrimenti i toast usano quello di PowerShell).
 #[cfg(windows)]
 static REGISTRATO: OnceLock<String> = OnceLock::new();
+#[cfg(not(test))]
 static INVIO: OnceLock<Option<SyncSender<(String, String)>>> = OnceLock::new();
 
 /// Registra l'identificativo dei toast in HKCU con nome e icona (scritta in `cartella`).
@@ -56,6 +59,7 @@ pub fn registra(_cartella: &Path) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(test))]
 fn coda() -> Option<&'static SyncSender<(String, String)>> {
     INVIO
         .get_or_init(|| {
@@ -88,13 +92,16 @@ fn coda() -> Option<&'static SyncSender<(String, String)>> {
 #[cfg(test)]
 pub fn mostra(titolo: &str, messaggio: &str) {
     // Nei test mai una notifica vera (finirebbe nel centro notifiche dell'utente): si conta soltanto.
-    CHIAMATE_PROVA.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    CHIAMATE_PROVA.with(|c| c.set(c.get() + 1));
     let _ = (titolo, messaggio);
 }
 
-/// Quante volte i test hanno chiesto una notifica (nessuna è partita).
 #[cfg(test)]
-pub static CHIAMATE_PROVA: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+thread_local! {
+    /// Quante volte questo test (questo thread) ha chiesto una notifica: nessuna è partita. Per
+    /// thread, così un altro test in parallelo non altera il conto.
+    pub static CHIAMATE_PROVA: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 #[cfg(not(test))]
 pub fn mostra(titolo: &str, messaggio: &str) {

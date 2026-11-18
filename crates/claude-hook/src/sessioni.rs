@@ -34,8 +34,6 @@ pub struct Sessione {
     pub errore: Option<String>,
     /// Il `Fatto` è già stato visto dall'utente.
     pub vista: bool,
-    /// PID del terminale di Claude Code, se trovato.
-    pub pid: Option<u32>,
 }
 
 /// Cosa è cambiato. Un evento che non cambia nulla non produce alcun `Cambio`: `ricevi` restituisce
@@ -127,7 +125,6 @@ impl Sessioni {
                 ultimo: ora,
                 errore: None,
                 vista: false,
-                pid: None,
             },
         };
         s.ultimo = ora;
@@ -245,12 +242,6 @@ impl Sessioni {
 
     pub fn togli(&mut self, id: &str) {
         self.v.retain(|s| s.id != id);
-    }
-
-    pub fn imposta_pid(&mut self, id: &str, pid: u32) {
-        if let Some(s) = self.v.iter_mut().find(|s| s.id == id) {
-            s.pid = Some(pid);
-        }
     }
 
     pub fn lavorano(&self) -> usize {
@@ -475,15 +466,12 @@ mod test {
     }
 
     #[test]
-    fn pid_togli_e_lavorano() {
+    fn togli_e_lavorano() {
         let t = Instant::now();
         let mut s = Sessioni::new();
         s.ricevi(&ev("a", TipoEvento::UserPromptSubmit), t);
         s.ricevi(&ev("b", TipoEvento::Stop), t);
         assert_eq!(s.lavorano(), 1);
-        s.imposta_pid("a", 4242);
-        s.imposta_pid("ignota", 1);
-        assert_eq!(s.elenco().iter().find(|x| x.id == "a").unwrap().pid, Some(4242));
         s.togli("a");
         assert_eq!(s.lavorano(), 0);
         assert_eq!(s.elenco().len(), 1);

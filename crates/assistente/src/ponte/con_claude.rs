@@ -12,7 +12,7 @@ pub use collegamento::Contesto;
 use super::{ponte, Ponte, MARGINE_SVEGLIA};
 use crate::attenzione::{Fonte, Livello, Pulsante, Voce, PULSANTE_IMPOSTAZIONI};
 use crate::claude::{
-    self, ID_AGGIORNA, ID_COLLEGAMENTO, ID_TERMINALE_MANCANTE, PERMESSI_RISOLVIBILI, PULSANTE_CONSENTI, PULSANTE_NEGA, PULSANTE_TERMINALE,
+    self, ID_AGGIORNA, ID_COLLEGAMENTO, ID_DECISIONE_TARDIVA, ID_TERMINALE_MANCANTE, PERMESSI_RISOLVIBILI, PULSANTE_CONSENTI, PULSANTE_NEGA, PULSANTE_TERMINALE,
 };
 use crate::pillola;
 use crate::umore::Umore;
@@ -37,9 +37,13 @@ use std::time::{Duration, Instant};
 /// invece di `isola-hook.exe` accanto all'assistente: serve alle prove con `sessioni_finte`.
 pub const VARIABILE_AIUTANTE: &str = "ITSYHOME_AIUTANTE_ATTESO";
 
-/// Quanti permessi possono aspettare insieme (quante connessioni accetta l'ascoltatore). Uno in
+/// Quanti permessi possono aspettare insieme (quante connessioni serve il tubo). Uno in
 /// più non ha voce né canale: Claude Code ripiega sul terminale.
 const MASSIMO_PERMESSI: usize = 16;
+/// Quanto il tubo aspetta una decisione: due secondi meno dell'aiutante (`ATTESA_MASSIMA`), così
+/// quando il tubo risponde o rinuncia l'aiutante c'è ancora e un clic a ridosso del limite non
+/// finisce nel vuoto.
+const ATTESA_TUBO: Duration = Duration::from_secs(ATTESA_MASSIMA.as_secs() - 2);
 /// Dopo che la voce mostrata cambia, «Consenti» non risponde per questo tempo: chi stava per
 /// cliccare (o ha cliccato due volte) su una richiesta non deve consentirne un'altra mai letta.
 pub(super) const ARMAMENTO_CONSENTI: Duration = Duration::from_millis(600);
@@ -95,7 +99,7 @@ fn config_tubo_da(nome: &str, exe: &Path, in_prova: bool, variabile: Option<OsSt
     ConfigTubo {
         nome: if in_prova { format!("{nome}{SUFFISSO_PROVA}") } else { nome.to_owned() },
         cliente_atteso: cliente_atteso(exe, in_prova, variabile),
-        attesa_massima: ATTESA_MASSIMA,
+        attesa_massima: ATTESA_TUBO,
     }
 }
 
@@ -127,6 +131,8 @@ pub fn avvia_con(p: &Ponte, config: ConfigTubo) {
     match avvia(config, Arc::new(GestoreIsola::new(p.casa.diagnosi_condivisa(), generazione))) {
         Ok(servitore) => {
             *p.claude_ascolto.borrow_mut() = Some(servitore);
+            #[cfg(windows)]
+            crate::sistema::primo_piano::ricorda_terminali(true);
             p.togli_voce(ID_COLLEGAMENTO);
         }
         Err(e) => voce_non_disponibile(p, e),
@@ -179,6 +185,12 @@ pub fn azione(p: &Ponte, voce: &str, pulsante: &str) {
         p.togli_voce(voce);
     } else if voce == ID_COLLEGAMENTO && pulsante == PULSANTE_IMPOSTAZIONI {
         p.chiedi_impostazioni();
+    } else if voce == ID_DECISIONE_TARDIVA {
+        p.togli_voce(voce);
+    } else if voce == ID_AGGIORNA && pulsante == crate::attenzione::PULSANTE_HO_CAPITO {
+        // Non si ripropone a ogni avvio (fino al prossimo collega/scollega).
+        p.casa.aggiorna_config(|c| c.claude.aggiornamento_ignorato = true);
+        p.togli_voce(voce);
     } else if voce == ID_AGGIORNA && pulsante == PULSANTE_IMPOSTAZIONI {
         // Si apre direttamente la sezione Claude, dove il collegamento si aggiorna (con anteprima e conferma).
         crate::finestra_impostazioni::apri_alla_sezione(crate::finestra_impostazioni::SEZIONE_CLAUDE, || {
@@ -222,6 +234,8 @@ impl Ponte {
         self.claude_generazione.set(g);
         let servitore = self.claude_ascolto.borrow_mut().take();
         drop(servitore);
+        #[cfg(windows)]
+        crate::sistema::primo_piano::ricorda_terminali(false);
         self.claude_chiudi_tutti();
         g
     }
@@ -239,11 +253,11 @@ impl Ponte {
 
 /// Porta un evento al thread dell'interfaccia. Se il ciclo eventi è finito non c'è più nessuno:
 /// si ignora.
-fn consegna(e: EventoHook, pid: Option<u32>, catena: Vec<(u32, String)>, sequenza: u64) {
+fn consegna(e: EventoHook, catena: Vec<(u32, String)>, sequenza: u64) {
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(p) = ponte() {
             let sessione = e.sessione.clone();
-            p.claude_evento(e, pid, sequenza, Instant::now());
+            p.claude_evento(e, sequenza, Instant::now());
             p.claude_imposta_catena(&sessione, catena);
         }
     });
@@ -253,7 +267,6 @@ fn consegna(e: EventoHook, pid: Option<u32>, catena: Vec<(u32, String)>, sequenz
 fn consegna_permesso(
     id: u64,
     e: EventoHook,
-    pid: Option<u32>,
     catena: Vec<(u32, String)>,
     tx: Option<Sender<Decisione>>,
     sequenza: u64,
@@ -261,7 +274,7 @@ fn consegna_permesso(
     slint::invoke_from_event_loop(move || {
         if let Some(p) = ponte() {
             let sessione = e.sessione.clone();
-            p.claude_permesso(id, e, pid, tx, sequenza, Instant::now());
+            p.claude_permesso(id, e, tx, sequenza, Instant::now());
             p.claude_imposta_catena(&sessione, catena);
         }
     })
@@ -270,7 +283,7 @@ fn consegna_permesso(
 impl Gestore for GestoreIsola {
     fn evento(&self, a: Arrivo) {
         if let Contenuto::Evento(e) = a.contenuto {
-            consegna(e, a.pid_mittente, a.catena_mittente, a.sequenza);
+            consegna(e, a.catena_mittente, a.sequenza);
         }
     }
 
@@ -279,21 +292,21 @@ impl Gestore for GestoreIsola {
     /// prosegue col suo flusso); col ramo B la voce c'è ma la risposta no.
     fn permesso(&self, a: Arrivo) -> Option<AttesaPermesso> {
         let Contenuto::Evento(e) = a.contenuto else { return None };
-        let pid = a.pid_mittente;
         let catena = a.catena_mittente;
         let sequenza = a.sequenza;
         if e.tipo != TipoEvento::PermissionRequest {
-            consegna(e, pid, catena, sequenza);
+            consegna(e, catena, sequenza);
             return None;
         }
+        self.diagnosi.conta(Contatore::claude_permessi);
         let id = PROSSIMO_PERMESSO.fetch_add(1, Ordering::Relaxed);
         if !PERMESSI_RISOLVIBILI {
-            let _ = consegna_permesso(id, e, pid, catena, None, sequenza);
+            let _ = consegna_permesso(id, e, catena, None, sequenza);
             return None;
         }
         let (tx, rx) = channel();
         // Senza ciclo eventi nessuno può rispondere: il canale cade e Claude ripiega.
-        consegna_permesso(id, e, pid, catena, Some(tx), sequenza).ok()?;
+        consegna_permesso(id, e, catena, Some(tx), sequenza).ok()?;
         Some(AttesaPermesso { id, decisione: rx })
     }
 
@@ -417,8 +430,8 @@ impl Ponte {
     /// limite scaduto né un numero inventato) e la spesa dell'ultima lettura riuscita.
     pub(super) fn dati_claude_quadranti(&self) -> crate::lati::DatiClaude {
         let (cinque, sette) = self.limiti();
-        let spesa = // Solo dati di questo mese (UTC): dopo il cambio di mese il quadrante dice «—» fino alla lettura nuova.
-        self.riepilogo_fresco(chrono::Utc::now()).and_then(|r| r.spesa_mese);
+        // Solo dati di questo mese (UTC): dopo il cambio di mese il quadrante dice «—» fino alla lettura nuova.
+        let spesa = self.riepilogo_fresco(chrono::Utc::now()).and_then(|r| r.spesa_mese);
         crate::lati::DatiClaude { cinque, sette, spesa, soglia_spesa: self.casa.con_config(|c| c.claude.soglia_spesa) }
     }
 
@@ -487,11 +500,15 @@ impl Ponte {
 
     /// Il riepilogo dell'ultima lettura se è riuscito, ha la spesa del mese e i suoi dati sono di
     /// questo mese (UTC): mai un avviso da dati assenti, falliti o fermi al mese scorso.
-    fn riepilogo_fresco(&self, adesso: chrono::DateTime<chrono::Utc>) -> Option<api_claude::Riepilogo> {
-        let ultimo = self.api_ultimo.borrow();
-        let Some((_, Ok(r))) = ultimo.as_ref() else { return None };
-        let aggiornato = r.aggiornato_a?;
-        (r.errore.is_none() && aggiornato.format("%Y-%m").to_string() == adesso.format("%Y-%m").to_string()).then(|| r.clone())
+    /// Si presta in lettura (nessuna copia del `Riepilogo`): chi lo tiene non deve chiamare nulla
+    /// che riscriva `api_ultimo`.
+    fn riepilogo_fresco(&self, adesso: chrono::DateTime<chrono::Utc>) -> Option<std::cell::Ref<'_, api_claude::Riepilogo>> {
+        let mese = adesso.format("%Y-%m").to_string();
+        std::cell::Ref::filter_map(self.api_ultimo.borrow(), |u| match u {
+            Some((_, Ok(r))) if r.errore.is_none() && r.aggiornato_a.is_some_and(|a| a.format("%Y-%m").to_string() == mese) => Some(r),
+            _ => None,
+        })
+        .ok()
     }
 
     /// L'avviso di spesa a soglia (80 % e 100 %), una volta per gradino e per mese UTC.
@@ -513,13 +530,17 @@ impl Ponte {
     /// L'avviso di spesa insolita: ieri è costato più di 3 volte la media dei 7 giorni prima
     /// (`api_claude::spesa_insolita`, solo con dati completi), una volta al giorno.
     fn claude_avviso_insolita(&self, adesso: chrono::DateTime<chrono::Utc>) {
-        let Some(r) = self.riepilogo_fresco(adesso) else { return };
         let oggi = adesso.date_naive();
-        if !api_claude::spesa_insolita(&r, oggi) {
-            return;
-        }
         let ieri = oggi - chrono::Days::new(1);
-        let Some(importo) = r.giorni.iter().find(|(d, _)| *d == ieri).map(|(_, i)| *i) else { return };
+        // Il prestito finisce qui: sotto non si tocca più `api_ultimo`.
+        let importo = {
+            let Some(r) = self.riepilogo_fresco(adesso) else { return };
+            if !api_claude::spesa_insolita(&r, oggi) {
+                return;
+            }
+            let Some(importo) = r.giorni.iter().find(|(d, _)| *d == ieri).map(|(_, i)| *i) else { return };
+            importo
+        };
         let giorno = ieri.format("%Y-%m-%d").to_string();
         if self.casa.con_config(|c| c.claude.insolita_avvisata.as_deref() == Some(giorno.as_str())) {
             return;
@@ -545,10 +566,9 @@ impl Ponte {
         self.limiti_a(ora)
     }
 
-    /// Un evento di Claude Code, sul thread dell'interfaccia. `pid`: il processo del terminale,
-    /// trovato alla prima richiesta di una sessione.
+    /// Un evento di Claude Code, sul thread dell'interfaccia.
     /// `sequenza`: l'ordine di arrivo della connessione (`Arrivo::sequenza`).
-    pub(super) fn claude_evento(&self, e: EventoHook, pid: Option<u32>, sequenza: u64, ora: Instant) {
+    pub(super) fn claude_evento(&self, e: EventoHook, sequenza: u64, ora: Instant) {
         self.casa.diagnosi().conta(Contatore::claude_eventi);
         // Claude Code è andato avanti (o la sessione è finita): chi aspettava una risposta non
         // serve più. Non la `Notification`: Claude ne manda una `permission_prompt` mentre il
@@ -565,11 +585,7 @@ impl Ponte {
         }
         let cambi = {
             let mut s = self.claude_sessioni.borrow_mut();
-            let cambi = s.ricevi(&e, ora);
-            if let Some(pid) = pid {
-                s.imposta_pid(&e.sessione, pid);
-            }
-            cambi
+            s.ricevi(&e, ora)
         };
         self.claude_cambiate(&cambi, ora);
     }
@@ -696,28 +712,27 @@ impl Ponte {
     }
 
     /// Un permesso chiesto da Claude Code, sul thread dell'interfaccia: una voce bloccante e il
-    /// canale della risposta. Oltre i 16 in attesa il canale cade: l'ascoltatore risponde `{}` e
+    /// canale della risposta. Oltre i 16 in attesa il canale cade: il tubo risponde `Nessuna` e
     /// decide il terminale (stesso esito di nessuna attesa). La voce non c'è: resta quella normale
     /// «Claude ti aspetta».
     pub(super) fn claude_permesso(
         &self,
         id: u64,
         e: EventoHook,
-        pid: Option<u32>,
         tx: Option<Sender<Decisione>>,
         sequenza: u64,
         ora: Instant,
     ) {
         if self.claude_permessi.borrow().len() >= MASSIMO_PERMESSI || self.claude_permessi.borrow().contains_key(&id) {
             drop(tx);
-            self.claude_evento(e, pid, sequenza, ora);
+            self.claude_evento(e, sequenza, ora);
             return;
         }
         self.claude_permessi.borrow_mut().insert(id, Pendente { sessione: e.sessione.clone(), tx, sequenza });
         let voce = claude::voce_permesso(id, &e, ora);
         // Prima il permesso in elenco, poi l'evento: la voce «ti aspetta» della sessione cede il
         // posto a quella del permesso.
-        self.claude_evento(e, pid, sequenza, ora);
+        self.claude_evento(e, sequenza, ora);
         self.metti_voce(voce, true);
     }
 
@@ -730,10 +745,13 @@ impl Ponte {
             return;
         }
         let Some(p) = self.claude_permessi.borrow_mut().remove(&id) else { return };
-        // L'ascoltatore può aver già rinunciato (tempo scaduto, client chiuso): senza chi
+        // Il tubo può aver già rinunciato (tempo scaduto, client chiuso): senza chi
         // riceve, la decisione non c'è stata e il terminale aspetta ancora.
         if p.tx.as_ref().is_some_and(|tx| tx.send(decisione).is_err()) {
             self.claude_permesso_chiuso(id, &p.sessione);
+            // Il clic è arrivato dopo che Claude Code aveva smesso di aspettare: non ha avuto
+            // effetto, e l'utente lo deve sapere (decide il terminale).
+            self.metti_voce(claude::voce_decisione_tardiva(Instant::now()), false);
             return;
         }
         // Risposto dall'assistente: Claude Code esegue (o rinuncia) subito, e senza un nuovo
@@ -799,7 +817,7 @@ impl Ponte {
         }
     }
 
-    /// L'ascoltatore ha lasciato il permesso `id` senza risposta: via la voce.
+    /// Il tubo ha lasciato il permesso `id` senza risposta: via la voce.
     pub(super) fn claude_permesso_finito(&self, id: u64) {
         let Some(p) = self.claude_permessi.borrow_mut().remove(&id) else { return };
         self.claude_permesso_chiuso(id, &p.sessione);
@@ -1217,7 +1235,7 @@ mod test {
     }
 
     fn manda(p: &Ponte, e: EventoHook) {
-        p.claude_evento(e, None, SEQUENZA.fetch_add(1, Ordering::Relaxed), Instant::now());
+        p.claude_evento(e, SEQUENZA.fetch_add(1, Ordering::Relaxed), Instant::now());
     }
 
     fn voci_claude(p: &Ponte) -> Vec<(String, Livello, String)> {
@@ -1258,13 +1276,6 @@ mod test {
         assert_eq!(voci.len(), 1);
         assert_eq!(voci[0].2, "Claude si è fermato · progetto-a");
         assert_eq!(p.attese.borrow().voce(&voci[0].0).unwrap().dettaglio, "Limite raggiunto");
-    }
-
-    #[test]
-    fn il_pid_del_terminale_si_tiene() {
-        let (_s, p, _pillola, _d) = ponte_di_prova();
-        p.claude_evento(ev("a", TipoEvento::UserPromptSubmit), Some(4321), SEQUENZA.fetch_add(1, Ordering::Relaxed), Instant::now());
-        assert_eq!(p.claude_sessioni.borrow().elenco()[0].pid, Some(4321));
     }
 
     fn catena_prova() -> Vec<(u32, String)> {
@@ -1549,7 +1560,7 @@ mod test {
         if cfg!(windows) {
             let c = config_tubo().expect("configurazione vera");
             assert!(c.nome.starts_with(r"\\.\pipe\isola-claude-S-1-"), "{}", c.nome);
-            assert_eq!(c.attesa_massima, ATTESA_MASSIMA);
+            assert_eq!(c.attesa_massima, ATTESA_TUBO);
         }
     }
 
@@ -1736,10 +1747,10 @@ mod test {
     }
 
     /// Un permesso della sessione `sessione`, come lo consegna il gestore: il ricevitore è quello
-    /// che aspetta l'ascoltatore.
+    /// che aspetta il tubo.
     fn permesso(p: &Ponte, id: u64, sessione: &str) -> Receiver<Decisione> {
         let (tx, rx) = channel();
-        p.claude_permesso(id, chiede(sessione, "ls -la"), None, Some(tx), SEQUENZA.fetch_add(1, Ordering::Relaxed), Instant::now());
+        p.claude_permesso(id, chiede(sessione, "ls -la"), Some(tx), SEQUENZA.fetch_add(1, Ordering::Relaxed), Instant::now());
         rx
     }
 
@@ -1802,7 +1813,7 @@ mod test {
         assert_eq!(rx.try_recv(), Ok(Decisione::Nega));
         drop(rx); // ora il ricevitore non c'è più: l'invio fallirebbe
         consenti(&p, 1);
-        // Ricevitore caduto con la voce ancora lì (l'ascoltatore ha chiuso): l'invio che fallisce si ignora.
+        // Ricevitore caduto con la voce ancora lì (il tubo ha chiuso): l'invio che fallisce si ignora.
         let rx = permesso(&p, 2, "a");
         drop(rx);
         consenti(&p, 2);
@@ -2045,7 +2056,7 @@ mod test {
         use claude_hook::sessioni::Stato;
         let (_s, p, _pillola, _d) = ponte_di_prova();
         let rx = permesso(&p, 1, "a");
-        drop(rx); // l'ascoltatore ha rinunciato
+        drop(rx); // il tubo ha rinunciato
         consenti(&p, 1);
         assert!(!ha_voce(&p, &voce_di(1)), "la voce se ne va");
         assert_eq!(p.claude_sessioni.borrow().elenco()[0].stato, Stato::TiAspetta, "il terminale aspetta ancora");
@@ -2059,12 +2070,12 @@ mod test {
         // la vede dopo: il permesso resta.
         let prima = SEQUENZA.fetch_add(2, Ordering::Relaxed);
         let (tx, rx) = channel();
-        p.claude_permesso(1, chiede("a", "ls"), None, Some(tx), prima + 1, Instant::now());
-        p.claude_evento(ev("a", TipoEvento::PreToolUse), None, prima, Instant::now());
+        p.claude_permesso(1, chiede("a", "ls"), Some(tx), prima + 1, Instant::now());
+        p.claude_evento(ev("a", TipoEvento::PreToolUse), prima, Instant::now());
         assert!(ha_voce(&p, &voce_di(1)), "una PreToolUse più vecchia non chiude");
         assert_eq!(rx.try_recv(), Err(TryRecvError::Empty));
         // Una più nuova sì.
-        p.claude_evento(ev("a", TipoEvento::PreToolUse), None, prima + 2, Instant::now());
+        p.claude_evento(ev("a", TipoEvento::PreToolUse), prima + 2, Instant::now());
         assert_eq!(rx.try_recv(), Ok(Decisione::Nessuna));
         assert!(!ha_voce(&p, &voce_di(1)));
     }
@@ -2653,12 +2664,11 @@ mod test {
 
     #[test]
     fn nei_test_nessuna_notifica_vera() {
-        use std::sync::atomic::Ordering;
         let (_s, p, _pillola, _d) = ponte_di_prova();
-        let prima = crate::sistema::notifiche::CHIAMATE_PROVA.load(Ordering::Relaxed);
+        let prima = crate::sistema::notifiche::CHIAMATE_PROVA.with(std::cell::Cell::get);
         p.claude_barra(barra("a", Some((95.0, ora_adesso() + 600)), None));
         // La voce di attenzione ha chiesto il toast: è stato solo contato, non mostrato.
-        assert!(crate::sistema::notifiche::CHIAMATE_PROVA.load(Ordering::Relaxed) > prima);
+        assert!(crate::sistema::notifiche::CHIAMATE_PROVA.with(std::cell::Cell::get) > prima);
     }
 
     #[test]

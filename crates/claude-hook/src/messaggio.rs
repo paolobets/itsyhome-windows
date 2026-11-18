@@ -15,7 +15,7 @@ use crate::tubo::Decisione;
 pub const MESSAGGIO_MASSIMO: usize = 64 * 1024;
 
 /// Il motivo che accompagna un «Nega».
-const MESSAGGIO_NEGATO: &str = "Negato dall'utente dall'assistente ItsyHome.";
+const MESSAGGIO_NEGATO: &str = "Negato da isola.";
 
 /// Il record di un evento: i soli campi di `EventoHook` (§6.3, §6.4), niente prompt, risposte,
 /// percorsi completi o contenuti di file.
@@ -113,7 +113,7 @@ mod test {
         assert_eq!(
             decisione_json(Decisione::Nega).as_deref(),
             Some(
-                r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Negato dall'utente dall'assistente ItsyHome."}}}"#
+                r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Negato da isola."}}}"#
             )
         );
         assert_eq!(decisione_json(Decisione::Nessuna), None);

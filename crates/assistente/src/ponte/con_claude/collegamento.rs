@@ -209,7 +209,10 @@ impl Ponte {
                 return Ok(Esito::Cambiato(self.preparazione(cx, nuova, true)));
             }
         }
-        self.casa.aggiorna_config(|c| c.claude.collegato = true);
+        self.casa.aggiorna_config(|c| {
+            c.claude.collegato = true;
+            c.claude.aggiornamento_ignorato = false;
+        });
         self.togli_voce(ID_AGGIORNA);
         if let Some(tubo) = cx.tubo.clone() {
             super::avvia_con(self, tubo);
@@ -218,10 +221,19 @@ impl Ponte {
     }
 
     /// Toglie il collegamento: via le nostre voci da `settings.json` (solo se ce ne sono; il resto
-    /// resta) e il tubo. Un file illeggibile non si riscrive e ferma tutto.
+    /// resta) e il tubo. Un file illeggibile non si riscrive, ma il lato di isola si spegne lo
+    /// stesso (tubo fermo, «collegato» tolto) e l'errore dice come rimediare.
     pub fn scollega(&self, cx: &Contesto) -> Result<(), String> {
         cx.controlla()?;
-        let v = installa::leggi(&cx.file).map_err(|e| e.to_string())?;
+        let v = match installa::leggi(&cx.file) {
+            Ok(v) => v,
+            Err(e) => {
+                self.spegni_collegamento();
+                return Err(format!(
+                    "{e}. Ho fermato l'ascolto di isola ma non ho toccato settings.json: correggilo (o togli a mano le voci di isola) e, se serve, ricollega."
+                ));
+            }
+        };
         let senza = installa::togli(v.clone());
         if senza != v {
             let esito =
@@ -233,12 +245,21 @@ impl Ponte {
                 );
             }
         }
+        self.spegni_collegamento();
+        Ok(())
+    }
+
+    /// Il lato di isola dello scollegamento: tubo fermo, «collegato» e avviso ignorato tolti, via
+    /// le voci del collegamento.
+    fn spegni_collegamento(&self) {
         *self.claude_preparato.borrow_mut() = None;
         self.claude_ferma_tubo();
-        self.casa.aggiorna_config(|c| c.claude.collegato = false);
+        self.casa.aggiorna_config(|c| {
+            c.claude.collegato = false;
+            c.claude.aggiornamento_ignorato = false;
+        });
         self.togli_voce(ID_AGGIORNA);
         self.togli_voce(crate::claude::ID_COLLEGAMENTO);
-        Ok(())
     }
 
     /// Collegato, ma `settings.json` non dice più ciò che questo programma si aspetta: voci
@@ -258,7 +279,11 @@ impl Ponte {
     /// All'avvio: se il collegamento va aggiornato lo si dice con una voce informativa. Non scrive
     /// mai nulla.
     pub fn controlla_all_avvio(&self, cx: &Contesto) {
-        if self.collegamento_da_aggiornare(cx) {
+        // «Ho capito» detto una volta: non si ripete a ogni avvio (chi vuole solo una parte
+        // dell'integrazione ha tolto le voci di proposito); tornerà dopo un nuovo collega/scollega.
+        if self.casa.con_config(|c| c.claude.aggiornamento_ignorato) {
+            self.togli_voce(ID_AGGIORNA);
+        } else if self.collegamento_da_aggiornare(cx) {
             self.metti_voce(
                 Voce {
                     id: ID_AGGIORNA.into(),
@@ -267,7 +292,10 @@ impl Ponte {
                     titolo: "Il collegamento con Claude Code va aggiornato".into(),
                     dettaglio: "Le voci in settings.json non corrispondono più a questo programma. Apri Impostazioni › Claude per aggiornarle: non cambio nulla senza il tuo ok."
                         .into(),
-                    pulsanti: vec![Pulsante::new(PULSANTE_IMPOSTAZIONI, "Impostazioni")],
+                    pulsanti: vec![
+                        Pulsante::new(PULSANTE_IMPOSTAZIONI, "Impostazioni"),
+                        Pulsante::new(crate::attenzione::PULSANTE_HO_CAPITO, "Ho capito"),
+                    ],
                     creata: Instant::now(),
                 },
                 true,
@@ -767,11 +795,12 @@ mod test {
                 .unwrap_or_else(|| panic!("{perche}: voce di aggiornamento"));
             assert_eq!(voce.livello, Livello::Informazione, "{perche}");
             assert_eq!(voce.titolo, "Il collegamento con Claude Code va aggiornato");
-            assert_eq!(voce.pulsanti.len(), 1);
+            assert_eq!(voce.pulsanti.len(), 2);
             assert_eq!(
                 voce.pulsanti[0].id,
                 crate::attenzione::PULSANTE_IMPOSTAZIONI
             );
+            assert_eq!(voce.pulsanti[1].id, crate::attenzione::PULSANTE_HO_CAPITO);
         };
         let buono = letto(&cx);
         // Un altro percorso.
@@ -843,6 +872,42 @@ mod test {
             "anche scollegare non riscrive un file rotto"
         );
         assert_eq!(std::fs::read_to_string(&cx.file).unwrap(), rotto);
+    }
+
+    #[test]
+    fn scollega_con_file_illeggibile_spegne_il_lato_di_isola() {
+        let (_s, p, _pillola, d) = ponte_di_prova();
+        let cx = contesto(&d);
+        scrivi_file(&cx, "{}");
+        collega(&p, &cx);
+        let rotto = "{ // commento
+ \"model\": \"opus\" }
+";
+        scrivi_file(&cx, rotto);
+        let e = p.scollega(&cx).unwrap_err();
+        assert!(e.contains("non ho toccato settings.json"), "{e}");
+        assert_eq!(std::fs::read_to_string(&cx.file).unwrap(), rotto, "il file non si tocca");
+        assert!(!p.casa.con_config(|c| c.claude.collegato), "il lato di isola si spegne comunque");
+    }
+
+    #[test]
+    fn ho_capito_all_avviso_di_aggiornamento_non_lo_ripropone() {
+        let (_s, p, _pillola, d) = ponte_di_prova();
+        let cx = contesto(&d);
+        scrivi_file(&cx, "{}");
+        collega(&p, &cx);
+        // Voci tolte di proposito: l'avviso compare all'avvio.
+        scrivi_file(&cx, "{}");
+        p.controlla_all_avvio(&cx);
+        assert!(p.attese.borrow().contiene(ID_AGGIORNA));
+        // «Ho capito»: sparisce e non torna al prossimo avvio.
+        crate::ponte::con_claude::azione(&p, ID_AGGIORNA, crate::attenzione::PULSANTE_HO_CAPITO);
+        assert!(!p.attese.borrow().contiene(ID_AGGIORNA));
+        p.controlla_all_avvio(&cx);
+        assert!(!p.attese.borrow().contiene(ID_AGGIORNA), "non si ripete");
+        // Un nuovo collega (o scollega) riarma l'avviso.
+        collega(&p, &cx);
+        assert!(!p.casa.con_config(|c| c.claude.aggiornamento_ignorato));
     }
 
     #[test]

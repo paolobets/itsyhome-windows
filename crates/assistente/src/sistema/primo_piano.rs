@@ -48,6 +48,18 @@ thread_local! {
     static AL_CAMBIO: Cell<Option<fn()>> = const { Cell::new(None) };
     /// L'ultima finestra in primo piano il cui eseguibile è un terminale.
     static ULTIMO_TERMINALE: Cell<Option<isize>> = const { Cell::new(None) };
+    /// Claude Code è collegato: solo allora si cerca il terminale a ogni cambio di finestra (chi
+    /// non lo usa non paga `OpenProcess` a ogni cambio).
+    static RICORDA_TERMINALI: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Accende o spegne la memoria dell'ultimo terminale (sul thread del gancio): si accende quando
+/// Claude Code si collega, si spegne e dimentica quando si scollega.
+pub fn ricorda_terminali(si: bool) {
+    RICORDA_TERMINALI.with(|c| c.set(si));
+    if !si {
+        ULTIMO_TERMINALE.with(|c| c.set(None));
+    }
 }
 
 /// Il nome del file di un percorso di Windows (da «...\pwsh.exe» a «pwsh.exe»).
@@ -84,7 +96,11 @@ fn exe_della_finestra(hwnd: HWND) -> Option<String> {
 pub fn ultimo_terminale() -> Option<isize> {
     let h = ULTIMO_TERMINALE.with(Cell::get)?;
     // SAFETY: `IsWindow` accetta qualunque valore.
-    (unsafe { IsWindow(h) } != 0).then_some(h)
+    if unsafe { IsWindow(h) } == 0 {
+        return None;
+    }
+    // Un numero di finestra può essere stato riusato da un'altra: si controlla che sia ancora un terminale.
+    exe_della_finestra(h).is_some_and(|e| e_terminale(&e)).then_some(h)
 }
 
 /// Il gancio installato: toglierlo (`Drop`) spetta al thread che lo ha messo, per questo non è
@@ -95,7 +111,7 @@ pub struct GanciPrimoPiano {
 }
 
 unsafe extern "system" fn callback(_: HWINEVENTHOOK, _: u32, hwnd: HWND, _: i32, _: i32, _: u32, _: u32) {
-    if hwnd != 0 && exe_della_finestra(hwnd).is_some_and(|e| e_terminale(&e)) {
+    if hwnd != 0 && RICORDA_TERMINALI.with(Cell::get) && exe_della_finestra(hwnd).is_some_and(|e| e_terminale(&e)) {
         ULTIMO_TERMINALE.with(|c| c.set(Some(hwnd)));
     }
     if let Some(f) = AL_CAMBIO.with(Cell::get) {

@@ -89,6 +89,9 @@ pub struct ConfigClaude {
     pub spesa_avvisata: HashMap<String, u8>,
     /// Il giorno («2026-11-17») dell'ultimo avviso di spesa insolita.
     pub insolita_avvisata: Option<String>,
+    /// L'utente ha detto «Ho capito» alla voce «il collegamento va aggiornato»: all'avvio non si
+    /// ripete finché non collega o scollega di nuovo (la sezione Claude lo dice comunque).
+    pub aggiornamento_ignorato: bool,
 }
 
 impl Default for ConfigClaude {
@@ -100,6 +103,7 @@ impl Default for ConfigClaude {
             limiti_avvisati: HashMap::new(),
             spesa_avvisata: HashMap::new(),
             insolita_avvisata: None,
+            aggiornamento_ignorato: false,
         }
     }
 }

@@ -93,13 +93,10 @@ pub enum Contenuto {
 #[derive(Clone)]
 pub struct Arrivo {
     pub contenuto: Contenuto,
-    /// Il PID dell'aiutante che ha mandato il messaggio, solo al primo evento di un `session_id`
-    /// nuovo; altrimenti `None`. Per la barra sempre `None`.
-    pub pid_mittente: Option<u32>,
     /// Il numero d'ordine della connessione, preso all'accettazione (prima di leggere): cresce a
     /// ogni connessione accettata. Dice a chi riceve su thread diversi quale è arrivato prima.
     pub sequenza: u64,
-    /// Con `pid_mittente`: l'aiutante e i suoi genitori (PID e nome dell'eseguibile, al più 6:
+    /// Solo al primo evento di un `session_id` nuovo: l'aiutante e i suoi genitori (PID e nome dell'eseguibile, al più 6:
     /// aiutante → `claude.exe` → terminale…), presi mentre l'aiutante è ancora collegato. Per
     /// portare davanti il terminale (Task 10). Vuota altrimenti.
     pub catena_mittente: Vec<(u32, String)>,
@@ -114,7 +111,6 @@ impl std::fmt::Debug for Arrivo {
         };
         f.debug_struct("Arrivo")
             .field("tipo", &tipo)
-            .field("pid_mittente", &self.pid_mittente)
             .field("sequenza", &self.sequenza)
             .field("catena_mittente", &self.catena_mittente.len())
             .finish()
@@ -941,21 +937,20 @@ mod server {
                 rispondi(h, ctx, Risposta::Ricevuto);
                 ctx.gestore.barra(Arrivo {
                     contenuto: Contenuto::Barra(d),
-                    pid_mittente: None,
                     sequenza,
                     catena_mittente: Vec::new(),
                 });
             }
             Richiesta::Evento(e) => {
-                let pid_mittente = ctx.sessioni.nuova(&e.sessione).then_some(pid);
                 // La catena si prende ora, prima della risposta: l'aiutante è ancora collegato.
-                let catena_mittente = pid_mittente
-                    .map(verifica::catena_processi)
-                    .unwrap_or_default();
+                let catena_mittente = if ctx.sessioni.nuova(&e.sessione) {
+                    verifica::catena_processi(pid)
+                } else {
+                    Vec::new()
+                };
                 let permesso = e.tipo == TipoEvento::PermissionRequest;
                 let arrivo = Arrivo {
                     contenuto: Contenuto::Evento(e),
-                    pid_mittente,
                     sequenza,
                     catena_mittente,
                 };
@@ -1071,14 +1066,13 @@ mod test {
         };
         let a = Arrivo {
             contenuto: Contenuto::Evento(e),
-            pid_mittente: Some(7),
             sequenza: 9,
             catena_mittente: vec![(7, "isola-hook.exe".into()), (5, "claude.exe".into())],
         };
         let d = format!("{a:?}");
         assert!(!d.contains("SEGRET"), "{d}");
         assert!(
-            d.contains("PermissionRequest") && d.contains("Some(7)") && d.contains('9'),
+            d.contains("PermissionRequest") && d.contains('9'),
             "{d}"
         );
     }

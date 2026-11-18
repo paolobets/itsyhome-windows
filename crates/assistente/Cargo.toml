@@ -7,7 +7,7 @@ edition = "2021"
 casa-core = { path = "../casa-core" }
 # Protocollo con la finestra di gestione (processo `itsyhome-gestione`).
 gestione-protocollo = { path = "../gestione-protocollo" }
-# Hook di Claude Code (M3): ascoltatore locale blindato e stato delle sessioni.
+# Hook di Claude Code (M3): aiutante `isola-hook`, canale protetto (named pipe) e stato delle sessioni.
 claude-hook = { path = "../claude-hook" }
 # Consumi e dati dell'organizzazione Anthropic in sola lettura (M3, Task 8): chiave da amministratore nel portachiavi.
 api-claude = { path = "../api-claude" }

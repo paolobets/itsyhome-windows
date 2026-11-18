@@ -2186,7 +2186,7 @@ export component FinestraImpostazioni inherits Window {
                             x: 16px;
                             y: 35px;
                             width: parent.width - 32px - (claude-passo == 0 && claude-disponibile && (!claude-collegato || claude-da-aggiornare) ? 220px : 0px);
-                            text: "Le sessioni di Claude Code compaiono nella pillola, coi permessi da consentire.";
+                            text: claude-disponibile ? "Le sessioni di Claude Code compaiono nella pillola, coi permessi da consentire." : "Il collegamento con le sessioni di Claude Code è solo per Windows; la lettura dei consumi via API funziona ovunque.";
                             overflow: elide;
                             font-size: Tema.testo-piccolo;
                             color: Tema.testo-tenue;
@@ -2276,7 +2276,7 @@ export component FinestraImpostazioni inherits Window {
                             }
 
                             Text {
-                                text: "Il resto di settings.json resta com'è (la prima volta ne tengo una copia accanto). Claude Code rilegge le modifiche da solo.";
+                                text: "Il resto di settings.json resta com'è (la prima volta ne tengo una copia accanto). Le sessioni di Claude Code avviate dopo il collegamento lo useranno.";
                                 wrap: word-wrap;
                                 font-size: Tema.testo-piccolo;
                                 color: Tema.testo-tenue;
@@ -2312,7 +2312,7 @@ export component FinestraImpostazioni inherits Window {
                     }
 
                     // Collegato: lo scollegamento.
-                    if claude-passo == 0 && claude-collegato: Rectangle {
+                    if claude-passo == 0 && claude-disponibile && claude-collegato: Rectangle {
                         height: 64px;
                         border-radius: Tema.raggio-xl;
                         background: Tema.card-fondo;
@@ -2379,7 +2379,7 @@ export component FinestraImpostazioni inherits Window {
                             }
 
                             Text {
-                                text: "Da settings.json escono solo le voci di isola, il resto resta com'è; il codice segreto viene cancellato.";
+                                text: "Da settings.json escono solo le voci di isola (hook e barra di stato); il resto resta com'è.";
                                 wrap: word-wrap;
                                 font-size: Tema.testo-corpo;
                                 color: Tema.testo-tenue;

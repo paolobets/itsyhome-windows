@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 /// Il prefisso degli id di tutte le voci di Claude Code.
 pub const PREFISSO_CLAUDE: &str = "claude.";
-/// La voce «porta occupata»: l'ascoltatore non è partito.
+/// La voce «collegamento non disponibile»: il canale protetto (il tubo) non è partito.
 pub const ID_COLLEGAMENTO: &str = "claude.collegamento";
 /// La voce informativa «il collegamento va aggiornato» (le voci di `settings.json` non corrispondono più).
 pub const ID_AGGIORNA: &str = "claude.aggiorna";
@@ -31,6 +31,8 @@ pub const PULSANTE_TERMINALE: &str = "terminale";
 /// La voce informativa «non trovo il terminale»: un clic su «Apri il terminale» non ha trovato
 /// nessuna finestra (o Windows non l'ha portata davanti). Sparisce da sola.
 pub const ID_TERMINALE_MANCANTE: &str = "claude.terminale.mancante";
+/// La voce informativa «la decisione è arrivata tardi»: Claude Code aveva già smesso di aspettare.
+pub const ID_DECISIONE_TARDIVA: &str = "claude.decisione.tardiva";
 /// Quanti caratteri del riassunto stanno nel titolo della voce di un permesso.
 const MASSIMO_RIASSUNTO_TITOLO: usize = 60;
 
@@ -99,6 +101,20 @@ pub fn voce_permesso(id: u64, e: &EventoHook, ora: Instant) -> Voce {
         vec![Pulsante::new(PULSANTE_TERMINALE, "Apri il terminale")]
     };
     Voce { id: id_voce_permesso(id), livello: Livello::Bloccante, fonte: Fonte::Claude, titolo, dettaglio, pulsanti, creata: ora }
+}
+
+/// La voce «Claude ha già smesso di aspettare»: il gesto dell'utente è arrivato dopo che il tubo
+/// aveva rinunciato (tempo scaduto), quindi non ha avuto effetto e decide il terminale.
+pub fn voce_decisione_tardiva(ora: Instant) -> Voce {
+    Voce {
+        id: ID_DECISIONE_TARDIVA.into(),
+        livello: Livello::Informazione,
+        fonte: Fonte::Claude,
+        titolo: "La risposta è arrivata troppo tardi".into(),
+        dettaglio: "Claude ha già smesso di aspettare: rispondi nel terminale.".into(),
+        pulsanti: vec![Pulsante::new(crate::attenzione::PULSANTE_HO_CAPITO, "Ho capito")],
+        creata: ora,
+    }
 }
 
 /// La voce «Windows non ha permesso…»: la finestra del terminale c'è, ma il sistema non l'ha
