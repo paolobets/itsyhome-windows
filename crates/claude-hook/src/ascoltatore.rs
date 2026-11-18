@@ -93,6 +93,9 @@ pub trait Gestore: Send + Sync + 'static {
     fn abbandonato(&self, id: u64);
     /// Dati della barra di stato: già risposto `200 {}`.
     fn barra(&self, a: Arrivo);
+    /// Una richiesta è stata rifiutata (stesso conteggio di `Ascoltatore::rifiutate`). Nessun dato
+    /// della richiesta; può arrivare da qualunque thread di connessione.
+    fn rifiutata(&self) {}
 }
 
 /// Come ascoltare.
@@ -186,6 +189,14 @@ pub fn avvia(c: ConfigAscolto, g: Arc<dyn Gestore>) -> Result<Ascoltatore, Error
 /// Conta una connessione aperta finché vive.
 struct Guardiano(Arc<Contesto>);
 
+impl Contesto {
+    /// Conta un rifiuto e lo dice al gestore.
+    fn conta_rifiuto(&self) {
+        self.rifiutate.fetch_add(1, Ordering::Relaxed);
+        self.gestore.rifiutata();
+    }
+}
+
 impl Drop for Guardiano {
     fn drop(&mut self) {
         self.0.connessioni.fetch_sub(1, Ordering::SeqCst);
@@ -205,7 +216,7 @@ fn accetta(ascolto: TcpListener, ctx: Arc<Contesto>) {
         let prima = ctx.connessioni.fetch_add(1, Ordering::SeqCst);
         let guardiano = Guardiano(Arc::clone(&ctx));
         if prima >= CONNESSIONI_MASSIME {
-            ctx.rifiutate.fetch_add(1, Ordering::Relaxed);
+            ctx.conta_rifiuto();
             rifiuto_senza_lettura(flusso);
             continue;
         }
@@ -216,7 +227,7 @@ fn accetta(ascolto: TcpListener, ctx: Arc<Contesto>) {
         });
         if esito.is_err() {
             // Il closure è stato lasciato cadere: connessione chiusa e contatore restituito.
-            ctx.rifiutate.fetch_add(1, Ordering::Relaxed);
+            ctx.conta_rifiuto();
         }
     }
 }
@@ -314,12 +325,12 @@ fn servi(mut flusso: TcpStream, ctx: &Contesto) {
     match istruisci(&mut flusso, ctx, porta_mittente) {
         Ok(()) => {}
         Err(Fine::Rifiuto(codice)) => {
-            ctx.rifiutate.fetch_add(1, Ordering::Relaxed);
+            ctx.conta_rifiuto();
             scrivi(&mut flusso, codice, "");
             svuota_residuo(&mut flusso, fine);
         }
         Err(Fine::Chiudi) => {
-            ctx.rifiutate.fetch_add(1, Ordering::Relaxed);
+            ctx.conta_rifiuto();
         }
     }
 }
@@ -674,6 +685,7 @@ mod test {
         mittenti: Mutex<Vec<Sender<Decisione>>>,
         prossimo_id: AtomicUsize,
         evento_dorme: Duration,
+        rifiuti: AtomicUsize,
     }
 
     impl Registro {
@@ -687,6 +699,7 @@ mod test {
                 mittenti: Mutex::new(Vec::new()),
                 prossimo_id: AtomicUsize::new(1),
                 evento_dorme: Duration::ZERO,
+                rifiuti: AtomicUsize::new(0),
             })
         }
         fn chiamate(&self) -> usize {
@@ -721,6 +734,9 @@ mod test {
         }
         fn barra(&self, a: Arrivo) {
             self.barre.lock().unwrap().push(a);
+        }
+        fn rifiutata(&self) {
+            self.rifiuti.fetch_add(1, Ordering::SeqCst);
         }
     }
 
@@ -932,9 +948,14 @@ mod test {
         let (_a, c, porta) = avvia_prova(&g, ATTESA_MASSIMA);
         let base = || Rich::valida(porta, &c, PERCORSO_EVENTO, EVENTO);
         assert_eq!(stato(&invia(porta, &base().senza("Authorization"))), 401);
+        // Il gestore sa del rifiuto (una volta) ma non vede mai la richiesta.
+        assert_eq!(g.rifiuti.load(Ordering::SeqCst), 1);
+        nessuna_chiamata(&g);
         let altro = CodiceHook::nuovo().unwrap().come_testo();
         assert_eq!(stato(&invia(porta, &base().con("Authorization", &format!("Bearer {altro}")))), 401);
         assert_eq!(stato(&invia(porta, &base().con("Authorization", "Bearer"))), 401);
+        assert_eq!(g.rifiuti.load(Ordering::SeqCst), 3, "uno per ogni 401");
+        assert_eq!(g.rifiuti.load(Ordering::SeqCst) as u64, _a.rifiutate(), "stesso conteggio dell'ascoltatore");
         nessuna_chiamata(&g);
     }
 

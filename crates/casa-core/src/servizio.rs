@@ -135,6 +135,11 @@ impl CasaService {
         &self.diagnosi
     }
 
+    /// Il registro condiviso (i contatori sono atomici): per chi conta da altri thread.
+    pub fn diagnosi_condivisa(&self) -> Arc<Diagnosi> {
+        self.diagnosi.clone()
+    }
+
     pub fn connetti_attivo(&self) {
         self.manda(Comando::ConnettiAttivo);
     }

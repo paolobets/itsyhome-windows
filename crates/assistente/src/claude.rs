@@ -137,12 +137,6 @@ pub fn parti_attivita(s: &Sessioni, ora: Instant) -> Option<(String, String)> {
     }
 }
 
-/// Il testo intero: «Claude · Modifica · 3:12», «Claude ×2 · 3:12».
-#[cfg_attr(not(test), allow(dead_code))] // la pillola usa le due parti
-pub fn testo_attivita(s: &Sessioni, ora: Instant) -> Option<String> {
-    parti_attivita(s, ora).map(|(a, d)| format!("{a} · {d}"))
-}
-
 /// Quanto dura, a parole, per Narrator: «meno di un minuto», «3 minuti», «1 ora e 2 minuti».
 fn durata_parlata(d: Duration) -> String {
     let minuti = d.as_secs() / 60;
@@ -279,21 +273,21 @@ mod test {
     fn testo_attivita_una_e_piu_sessioni() {
         let t = Instant::now();
         let mut s = Sessioni::new();
-        assert_eq!(testo_attivita(&s, t), None);
+        assert_eq!(parti_attivita(&s, t), None);
         con(&mut s, ev("a", TipoEvento::UserPromptSubmit), t);
         let pre = EventoHook { strumento: Some("Edit".into()), ..ev("a", TipoEvento::PreToolUse) };
         con(&mut s, pre, t + Duration::from_secs(1));
         let ora = t + Duration::from_secs(192);
-        assert_eq!(testo_attivita(&s, ora).as_deref(), Some("Claude · Modifica · 3:12"));
+        assert_eq!(parti_attivita(&s, ora), Some(("Claude · Modifica".into(), "3:12".into())));
         assert_eq!(nome_attivita(&s, ora).as_deref(), Some("Claude, Modifica, 3 minuti"));
         // Una seconda sessione, partita dopo: il numero e la durata della più lunga.
         con(&mut s, ev("b", TipoEvento::UserPromptSubmit), t + Duration::from_secs(100));
-        assert_eq!(testo_attivita(&s, ora).as_deref(), Some("Claude ×2 · 3:12"));
+        assert_eq!(parti_attivita(&s, ora), Some(("Claude ×2".into(), "3:12".into())));
         assert_eq!(nome_attivita(&s, ora).as_deref(), Some("Claude, 2 sessioni, 3 minuti"));
         // Chi ha finito non conta.
         con(&mut s, ev("a", TipoEvento::Stop), ora);
         con(&mut s, ev("b", TipoEvento::Stop), ora);
-        assert_eq!(testo_attivita(&s, ora), None);
+        assert_eq!(parti_attivita(&s, ora), None);
         assert_eq!(nome_attivita(&s, ora), None);
     }
 

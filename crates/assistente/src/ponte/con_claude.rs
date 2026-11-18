@@ -10,7 +10,7 @@ use crate::claude::{self, ID_COLLEGAMENTO};
 use crate::pillola;
 use crate::umore::Umore;
 use crate::LivelloUi;
-use casa_core::diagnosi::Contatore;
+use casa_core::diagnosi::{Contatore, Diagnosi};
 use casa_core::segreti::Segreti;
 use claude_hook::evento::{evento_da_json, EventoHook};
 use claude_hook::sessioni::Cambio;
@@ -24,14 +24,8 @@ pub const SEGRETO_HOOK: &str = "isola:claude-hook";
 /// portachiavi vero.
 pub const VARIABILE_PROVA: &str = "ISOLA_HOOK_TOKEN";
 
-/// Il codice dell'ascoltatore: in prova dalla variabile `ISOLA_HOOK_TOKEN` del processo, altrimenti
-/// dal portachiavi. `None` se manca o non è un codice valido. Non lo scrive mai da nessuna parte.
-#[cfg_attr(not(test), allow(dead_code))] // main passa per `avvia_se_collegato_con`
-pub fn codice_attivo(segreti: &dyn Segreti, in_prova: bool) -> Option<CodiceHook> {
-    codice_da(segreti, in_prova, std::env::var(VARIABILE_PROVA).ok())
-}
-
-/// Come `codice_attivo`, con il valore della variabile passato (i test non leggono l'ambiente).
+/// Il codice dell'ascoltatore: in prova il valore di `ISOLA_HOOK_TOKEN` (passato, i test non leggono
+/// l'ambiente), altrimenti il portachiavi. `None` se manca o non è un codice valido. Non lo scrive mai.
 fn codice_da(segreti: &dyn Segreti, in_prova: bool, variabile: Option<String>) -> Option<CodiceHook> {
     let testo = if in_prova { variabile } else { segreti.leggi(SEGRETO_HOOK).ok().flatten() };
     testo.as_deref().and_then(CodiceHook::da_testo)
@@ -60,12 +54,10 @@ fn avvia_se_collegato_con(p: &Ponte, in_prova: bool, variabile: Option<String>) 
 /// collegamento, lo chiamano col codice appena creato). Un ascolto già attivo si ferma prima.
 pub fn avvia_con(p: &Ponte, codice: CodiceHook) {
     let Some(porta) = p.casa.con_config(|c| c.claude.porta) else { return };
-    p.conta_rifiutate();
     let vecchio = p.claude_ascolto.borrow_mut().take();
     drop(vecchio); // libera la porta prima di riprenderla
-    p.claude_rifiutate_viste.set(0);
     let config = ConfigAscolto { porta, codice, attesa_massima: ATTESA_MASSIMA };
-    match avvia(config, Arc::new(GestoreIsola)) {
+    match avvia(config, Arc::new(GestoreIsola { diagnosi: p.casa.diagnosi_condivisa() })) {
         Ok(ascolto) => {
             *p.claude_ascolto.borrow_mut() = Some(ascolto);
             p.togli_voce(ID_COLLEGAMENTO);
@@ -95,7 +87,6 @@ pub fn avvia_con(p: &Ponte, codice: CodiceHook) {
 /// sveglie si fermano.
 pub fn spegni() {
     if let Some(p) = ponte() {
-        p.conta_rifiutate();
         let ascolto = p.claude_ascolto.borrow_mut().take();
         drop(ascolto);
         p.sveglia_claude.stop();
@@ -112,7 +103,10 @@ pub fn azione(p: &Ponte, voce: &str, pulsante: &str) {
 
 /// Chi riceve ciò che l'ascoltatore ha accettato. Gira sui thread delle connessioni: legge il
 /// corpo e passa al thread dell'interfaccia solo l'evento ridotto (mai il corpo).
-struct GestoreIsola;
+struct GestoreIsola {
+    /// Il registro condiviso (contatori atomici): i rifiuti si contano sul thread della connessione.
+    diagnosi: Arc<Diagnosi>,
+}
 
 /// Porta un evento al thread dell'interfaccia. Se il ciclo eventi è finito non c'è più nessuno:
 /// si ignora.
@@ -140,6 +134,12 @@ impl Gestore for GestoreIsola {
 
     fn abbandonato(&self, _id: u64) {}
 
+    /// Anche con nessun evento valido (un codice sbagliato dà solo 401) i rifiuti arrivano al
+    /// registro diagnostico, senza dati della richiesta.
+    fn rifiutata(&self) {
+        self.diagnosi.conta(Contatore::claude_rifiutate);
+    }
+
     /// I dati della barra di stato arrivano col Task 6.
     fn barra(&self, _a: Arrivo) {}
 }
@@ -149,7 +149,6 @@ impl Ponte {
     /// trovato alla prima richiesta di una sessione.
     pub(super) fn claude_evento(&self, e: EventoHook, pid: Option<u32>, ora: Instant) {
         self.casa.diagnosi().conta(Contatore::claude_eventi);
-        self.conta_rifiutate();
         let cambi = {
             let mut s = self.claude_sessioni.borrow_mut();
             let cambi = s.ricevi(&e, ora);
@@ -238,19 +237,6 @@ impl Ponte {
         self.aggiorna_claude_pillola();
     }
 
-    /// Le richieste che l'ascoltatore ha rifiutato (per il registro diagnostico): si contano le
-    /// nuove dall'ultima volta. Il gestore non le vede mai.
-    pub(super) fn conta_rifiutate(&self) {
-        let totale = match self.claude_ascolto.borrow().as_ref() {
-            Some(a) => a.rifiutate(),
-            None => return,
-        };
-        let viste = self.claude_rifiutate_viste.replace(totale);
-        if totale > viste {
-            self.casa.diagnosi().conta_n(Contatore::claude_rifiutate, totale - viste);
-        }
-    }
-
     /// Il timer da un secondo del testo di attività serve solo se almeno una sessione lavora, la
     /// pillola si vede e non dorme. Una condizione sola, per estenderla (Task 9: «o la vista
     /// Claude è aperta»).
@@ -300,9 +286,10 @@ impl Ponte {
         let testo = if sinistra.is_empty() { String::new() } else { format!("{sinistra} · {destra}") };
         let mut cambiato = false;
         if ui.get_attivita() != testo.as_str() {
+            let destra = if destra.is_empty() { String::new() } else { format!(" · {destra}") };
             ui.set_attivita(testo.as_str().into());
             ui.set_attivita_sinistra(sinistra.as_str().into());
-            ui.set_attivita_destra(format!(" · {destra}").as_str().into());
+            ui.set_attivita_destra(destra.as_str().into());
             cambiato = true;
         }
         if ui.get_nome_attivita() != nome.as_str() {
@@ -486,14 +473,35 @@ mod test {
     fn il_codice_dal_portachiavi() {
         use casa_core::segreti::MemoriaSegreti;
         let m = MemoriaSegreti::new();
-        assert!(codice_attivo(&m, false).is_none());
+        assert!(codice_da(&m, false, None).is_none());
         let codice = CodiceHook::nuovo().unwrap();
         m.salva(SEGRETO_HOOK, &codice.come_testo()).unwrap();
-        let letto = codice_attivo(&m, false).expect("codice nel portachiavi");
+        let letto = codice_da(&m, false, None).expect("codice nel portachiavi");
         assert_eq!(letto.come_testo(), codice.come_testo());
         // Un valore che non è un codice non vale.
         m.salva(SEGRETO_HOOK, "troppo corto").unwrap();
-        assert!(codice_attivo(&m, false).is_none());
+        assert!(codice_da(&m, false, None).is_none());
+    }
+
+    #[test]
+    fn i_rifiuti_dell_ascoltatore_arrivano_alla_diagnosi() {
+        let diagnosi = Arc::new(Diagnosi::new(true));
+        let g = GestoreIsola { diagnosi: diagnosi.clone() };
+        g.rifiutata();
+        g.rifiutata();
+        assert_eq!(diagnosi.valore(Contatore::claude_rifiutate), 2);
+        assert_eq!(diagnosi.valore(Contatore::claude_eventi), 0, "un rifiuto non è un evento");
+    }
+
+    #[test]
+    fn senza_eventi_attivita_destra_e_vuota() {
+        let (_s, p, pillola, _d) = ponte_di_prova();
+        manda(&p, ev("a", TipoEvento::UserPromptSubmit));
+        assert_eq!(pillola.get_attivita_destra(), " · 0:00");
+        manda(&p, ev("a", TipoEvento::Stop));
+        assert_eq!(pillola.get_attivita(), "");
+        assert_eq!(pillola.get_attivita_destra(), "");
+        assert_eq!(pillola.get_attivita_sinistra(), "");
     }
 
     #[test]
