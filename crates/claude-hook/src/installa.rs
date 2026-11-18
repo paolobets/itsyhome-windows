@@ -529,13 +529,18 @@ pub fn scrivi_se_invariato(
                 .to_os_string();
             riserva_nome.push(".isola-bak");
             let riserva = destinazione.with_file_name(riserva_nome);
-            let copia = nome_temporaneo(&destinazione, "bak");
-            let fatta = std::fs::copy(&destinazione, &copia)
-                .and_then(|_| std::fs::rename(&copia, &riserva));
-            if let Err(e) = fatta {
-                let _ = std::fs::remove_file(&copia);
-                if !riserva.exists() {
-                    return Err(io("Non riesco a fare la copia di riserva", e));
+            // Una riserva in sola lettura la ha voluta qualcuno: si tiene e non si rifà, uguale su
+            // ogni sistema (`rename` su un file in sola lettura fallisce su Windows ma riesce altrove).
+            let protetta = std::fs::metadata(&riserva).is_ok_and(|m| m.permissions().readonly());
+            if !protetta {
+                let copia = nome_temporaneo(&destinazione, "bak");
+                let fatta = std::fs::copy(&destinazione, &copia)
+                    .and_then(|_| std::fs::rename(&copia, &riserva));
+                if let Err(e) = fatta {
+                    let _ = std::fs::remove_file(&copia);
+                    if !riserva.exists() {
+                        return Err(io("Non riesco a fare la copia di riserva", e));
+                    }
                 }
             }
         }

@@ -224,7 +224,14 @@ impl Ponte {
         let v = installa::leggi(&cx.file).map_err(|e| e.to_string())?;
         let senza = installa::togli(v.clone());
         if senza != v {
-            installa::scrivi_sicuro(&cx.file, &senza).map_err(|e| e.to_string())?;
+            let esito =
+                installa::scrivi_se_invariato(&cx.file, &v, &senza).map_err(|e| e.to_string())?;
+            if esito == Scrittura::Cambiato {
+                return Err(
+                    "settings.json è cambiato mentre lo leggevo: non ho scritto nulla, riprova."
+                        .into(),
+                );
+            }
         }
         *self.claude_preparato.borrow_mut() = None;
         self.claude_ferma_tubo();
@@ -660,6 +667,59 @@ mod test {
         assert!(p.claude_ascolto.borrow().is_none());
         // La riserva resta quella di prima di isola.
         assert_eq!(std::fs::read_to_string(bak(&cx)).unwrap(), ALTRO);
+    }
+
+    #[test]
+    fn una_barra_altrui_comparsa_dopo_l_anteprima_non_si_scrive() {
+        let (_s, p, _pillola, d) = ponte_di_prova();
+        let cx = contesto(&d);
+        scrivi_file(&cx, ALTRO);
+        let prima = p.prepara_collegamento(&cx).unwrap();
+        assert!(!prima.anteprima.barra_occupata);
+        let con_barra = ALTRO.replace(
+            "\"model\"",
+            "\"statusLine\": { \"type\": \"command\", \"command\": \"ccstatusline\" },
+  \"model\"",
+        );
+        scrivi_file(&cx, &con_barra);
+        let Ok(Esito::Cambiato(nuova)) = p.conferma_collegamento(&cx) else {
+            panic!("doveva non scrivere")
+        };
+        assert_eq!(
+            std::fs::read_to_string(&cx.file).unwrap(),
+            con_barra,
+            "nulla scritto"
+        );
+        assert!(!bak(&cx).exists());
+        assert!(nuova.anteprima.barra_occupata && nuova.cambiato);
+        assert!(!nuova.anteprima.testo.contains("statusLine"));
+    }
+
+    #[test]
+    fn scollega_non_sovrascrive_un_file_cambiato_nel_frattempo() {
+        // Scrittura condizionata: se fra la lettura e la scrittura il file cambia, nulla è scritto.
+        let d = TempDir::new().unwrap();
+        let f = d.path().join("settings.json");
+        std::fs::write(
+            &f,
+            "{\"model\":\"opus\"}
+",
+        )
+        .unwrap();
+        let letto = installa::leggi(&f).unwrap();
+        std::fs::write(
+            &f,
+            "{\"model\":\"sonnet\"}
+",
+        )
+        .unwrap();
+        let r = installa::scrivi_se_invariato(&f, &letto, &installa::togli(letto.clone())).unwrap();
+        assert_eq!(r, Scrittura::Cambiato);
+        assert_eq!(
+            std::fs::read_to_string(&f).unwrap(),
+            "{\"model\":\"sonnet\"}
+"
+        );
     }
 
     #[test]
