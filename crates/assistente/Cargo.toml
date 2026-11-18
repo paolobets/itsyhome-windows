@@ -7,6 +7,8 @@ edition = "2021"
 casa-core = { path = "../casa-core" }
 # Protocollo con la finestra di gestione (processo `itsyhome-gestione`).
 gestione-protocollo = { path = "../gestione-protocollo" }
+# Hook di Claude Code (M3): ascoltatore locale blindato e stato delle sessioni.
+claude-hook = { path = "../claude-hook" }
 slint = { version = "=1.18.1", features = ["renderer-skia", "unstable-winit-030", "raw-window-handle-06"] }
 # Solo l'ora locale per l'orologio del pannello.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

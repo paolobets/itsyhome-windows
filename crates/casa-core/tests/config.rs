@@ -249,3 +249,30 @@ fn avvisi_bt_accesi_di_serie_e_impronte_salvate() {
     assert!(!riletta.avvisi_bt, "spento resta spento");
     assert_eq!(riletta.bt_avvisati.get("0123456789abcdef").map(String::as_str), Some("2026-11-15"));
 }
+
+/// M3 Task 4: un file di M2, senza la chiave `claude`, si legge scollegato con la soglia di serie;
+/// le scelte si salvano e si rileggono.
+#[test]
+fn config_di_m2_scollegata() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("assistente.json"), r#"{ "favorites": ["light.a"], "avvisiBt": false }"#).unwrap();
+    let st = ConfigStore::apri(d.path());
+    let mut c = st.leggi();
+    assert!(!c.claude.collegato);
+    assert_eq!(c.claude.soglia_limite, 80);
+    assert_eq!(c.claude.porta, None);
+    assert_eq!(c, Config { claude: ConfigClaude::default(), ..c.clone() });
+    assert_eq!(Config::default().claude, ConfigClaude::default());
+    // Una chiave `claude` con solo qualche campo si completa con i valori di serie.
+    std::fs::write(d.path().join("assistente.json"), r#"{ "claude": { "collegato": true, "porta": 51234 } }"#).unwrap();
+    let parziale = st.leggi();
+    assert!(parziale.claude.collegato);
+    assert_eq!(parziale.claude.porta, Some(51234));
+    assert_eq!(parziale.claude.soglia_limite, 80);
+    c.claude.collegato = true;
+    c.claude.porta = Some(4711);
+    c.claude.soglia_spesa = Some(50.0);
+    c.claude.limiti_avvisati.insert("cinque_ore".into(), 1_700_000_000);
+    st.salva(&c).unwrap();
+    assert_eq!(st.leggi().claude, c.claude);
+}

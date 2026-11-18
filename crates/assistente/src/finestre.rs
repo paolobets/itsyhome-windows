@@ -45,6 +45,10 @@ pub const ALTEZZA_PILLOLA: f32 = 32.0;
 pub const LARGHEZZA_ATTENZIONE: f32 = 400.0;
 #[cfg_attr(not(test), allow(dead_code))] // confrontata con Slint in `test_ui`
 pub const ALTEZZA_ATTENZIONE: f32 = 36.0;
+/// Pillola media «attività dal vivo» di Claude Code (`larghezza-attivita` in pillola.slint):
+/// occhi a sinistra, «Claude · Modifica · 3:12» a destra; i lati si nascondono.
+#[cfg_attr(not(test), allow(dead_code))] // confrontata con Slint in `test_ui`
+pub const LARGHEZZA_ATTIVITA: f32 = 210.0;
 /// Pillola *bloccante*: più larga e più alta di quella che chiama, ferma, bordo più spesso.
 pub const LARGHEZZA_BLOCCANTE: f32 = 440.0;
 #[cfg_attr(not(test), allow(dead_code))] // confrontata con Slint in `test_ui`

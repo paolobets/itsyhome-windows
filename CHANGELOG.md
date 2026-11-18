@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — v3 «assistente isola» (ramo `v3-assistente`, milestone M1 e M2)
 
+### Added (M3, Task 4: sessioni di Claude Code nella pillola)
+- Se Claude Code è collegato (`claude.collegato` nella configurazione, con porta e codice) l'assistente ascolta gli hook all'avvio; il codice sta nel portachiavi (`isola:claude-hook`), in prova nella variabile `ISOLA_HOOK_TOKEN` del processo. Porta occupata: voce *attenzione* «Collegamento con Claude Code non disponibile» con «Impostazioni».
+- Voci «In attesa» per sessione, con id che non contengono il `session_id` (impronta FNV-1a): «Claude ti aspetta · <cartella>» e «Claude si è fermato · <cartella>» (*attenzione*, errore dell'API in italiano), «Claude ha finito · <cartella>» (*informazione*, sparisce chiudendo il pannello). Una sessione sparisce con `SessionEnd`, dopo 30 minuti di silenzio (2 ore se aspetta) o quando se ne superano 16.
+- Occhi della pillola del colore dello stato più urgente (attenzione o informazione). Pillola media «attività dal vivo» «Claude · Modifica · 3:12» (o «Claude ×2 · 3:12»), larga 210 px, a riposo e col puntino; i lati si nascondono. Per Narrator: «ItsyHome, Claude, Modifica, 3 minuti».
+- Nessun timer a riposo: una sveglia singola alla prossima scadenza di una sessione; il timer da un secondo del testo di attività gira solo con almeno una sessione che lavora, la pillola visibile e l'umore diverso da «dorme».
+- `casa-core`: `Config::claude` (`ConfigClaude`: collegamento, porta, soglie, avvisi già dati); un file di M2 si legge scollegato. Esempio `sessioni_finte` di `claude-hook` per prove e misure.
+
 ### Added (M3, Task 3: eventi e stato delle sessioni)
 - `claude-hook`: lettura pura degli eventi degli hook (`evento_da_json`) con i soli campi `session_id` (1..=128 caratteri `[A-Za-z0-9_-]`, stesso controllo dell'ascoltatore), `hook_event_name`, `cwd` (ridotto all'ultimo nome, 60 caratteri), `tool_name` (40), `notification_type`, `error`; mai prompt, trascrizione o risposta. `tool_input` si legge solo per `PermissionRequest` e solo per riassumere (`command` per `Bash` e `PowerShell`; `file_path` per `Edit`, `MultiEdit`, `Write`, `Read`, `NotebookEdit`; `url`; `query`), al più 2000 caratteri.
 - `Sessioni`: macchina a stati per sessione (Lavora, TiAspetta, Fatto, Errore) con ora passata dal chiamante; elenco per urgenza, scadenza dopo 30 minuti di silenzio (non per chi aspetta), al più 16 sessioni (si toglie la meno recente fra quelle che non aspettano; `ricevi` restituisce anche il `Tolta` relativo). Una `Notification` `permission_prompt` dopo una `PermissionRequest` lascia la sessione in TiAspetta.

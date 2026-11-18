@@ -34,6 +34,8 @@ export component Occhio inherits Rectangle {
     in property <length> larghezza-occhio: Faccia.larghezza-occhio;
     in property <length> altezza-occhio: Faccia.altezza-occhio;
     in property <color> bagliore: Tema.bagliore-occhio;
+    // Il colore della luce (la tinta dell'attenzione di Claude Code la cambia, M3).
+    in property <color> colore: Tema.occhio;
 
     width: forma == FormaOcchio.arco ? Faccia.larghezza-arco : larghezza-occhio;
     height: forma == FormaOcchio.arco ? Faccia.altezza-arco : forma == FormaOcchio.trattino ? 2px : (chiuso ? 1px : altezza-occhio);
@@ -43,7 +45,7 @@ export component Occhio inherits Rectangle {
         visible: forma != FormaOcchio.arco;
         border-radius: Faccia.raggio-occhio;
         // Trasparenza nel colore, non `opacity` (che disegnerebbe un livello a parte).
-        background: forma == FormaOcchio.trattino ? Tema.occhio-dorme : Tema.occhio;
+        background: forma == FormaOcchio.trattino ? colore.with-alpha(0.6) : colore;
         drop-shadow-blur: forma == FormaOcchio.aperto ? 5px : 0px;
         drop-shadow-color: bagliore;
     }
@@ -54,7 +56,7 @@ export component Occhio inherits Rectangle {
         viewbox-height: 10;
         // Arco a "∩" come nella bozza: lati dritti e cima tonda.
         commands: "M 1.5 10 L 1.5 6.5 A 5 5 0 0 1 11.5 6.5 L 11.5 10";
-        stroke: Tema.occhio;
+        stroke: colore;
         stroke-width: 2px;
         stroke-line-cap: round;
     }
@@ -70,6 +72,7 @@ export component Occhi inherits Rectangle {
     in property <length> altezza-occhio: Faccia.altezza-occhio;
     in property <length> spazio: Faccia.spazio-occhi;
     in property <color> bagliore: Tema.bagliore-occhio;
+    in property <color> colore: Tema.occhio;
     property <bool> contento: umore == UmoreUi.contento;
     property <bool> dorme: umore == UmoreUi.dorme;
     out property <length> ingombro: 2 * (contento ? Faccia.larghezza-arco : larghezza-occhio) + spazio;
@@ -102,6 +105,7 @@ export component Occhi inherits Rectangle {
         larghezza-occhio: root.larghezza-occhio;
         altezza-occhio: root.altezza-occhio;
         bagliore: root.bagliore;
+        colore: root.colore;
     }
 
     Occhio {
@@ -112,5 +116,6 @@ export component Occhi inherits Rectangle {
         larghezza-occhio: root.larghezza-occhio;
         altezza-occhio: root.altezza-occhio;
         bagliore: root.bagliore;
+        colore: root.colore;
     }
 }

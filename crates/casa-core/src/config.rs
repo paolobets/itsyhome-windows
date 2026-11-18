@@ -66,6 +66,45 @@ pub struct Config {
     /// riscrivere la configurazione per questo). Un file di prima, senza la chiave, si legge vuoto.
     #[serde(default)]
     pub bt_avvisati: HashMap<String, String>,
+    /// Claude Code (M3): collegamento, porta e soglie. Un file di M2, senza la chiave, si legge
+    /// scollegato.
+    #[serde(default)]
+    pub claude: ConfigClaude,
+}
+
+/// Le scelte su Claude Code (M3). Il codice segreto dell'ascoltatore non sta qui: sta nel
+/// portachiavi.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ConfigClaude {
+    /// Gli hook sono collegati: l'assistente ascolta su `porta`.
+    pub collegato: bool,
+    /// La porta dell'ascoltatore (scelta al collegamento); `None` finché non si è collegato.
+    pub porta: Option<u16>,
+    /// Percentuale dei limiti dell'abbonamento oltre la quale si avvisa (predefinita 80).
+    pub soglia_limite: u8,
+    /// Spesa del mese (dollari) oltre la quale si avvisa; `None` = nessuna soglia.
+    pub soglia_spesa: Option<f64>,
+    /// Finestra di limite (chiave) → fine della finestra già avvisata (secondi Unix).
+    pub limiti_avvisati: HashMap<String, i64>,
+    /// Mese («2026-11») → ultima soglia di spesa già avvisata (percentuale).
+    pub spesa_avvisata: HashMap<String, u8>,
+    /// Il giorno («2026-11-17») dell'ultimo avviso di spesa insolita.
+    pub insolita_avvisata: Option<String>,
+}
+
+impl Default for ConfigClaude {
+    fn default() -> ConfigClaude {
+        ConfigClaude {
+            collegato: false,
+            porta: None,
+            soglia_limite: 80,
+            soglia_spesa: None,
+            limiti_avvisati: HashMap::new(),
+            spesa_avvisata: HashMap::new(),
+            insolita_avvisata: None,
+        }
+    }
 }
 
 fn vero() -> bool {
@@ -99,6 +138,7 @@ impl Default for Config {
             volume_rotella: vero(),
             avvisi_bt: vero(),
             bt_avvisati: HashMap::new(),
+            claude: ConfigClaude::default(),
         }
     }
 }
@@ -276,5 +316,7 @@ pub fn importa_v2(v2: &Path, segreti: &dyn Segreti) -> Result<Option<Config>, St
         // Né i Bluetooth: l'avviso acceso, come di serie, e nessun dispositivo già avvisato.
         avvisi_bt: vero(),
         bt_avvisati: HashMap::new(),
+        // La v2 non aveva Claude Code: scollegato.
+        claude: ConfigClaude::default(),
     }))
 }

@@ -1551,6 +1551,49 @@ mod accessibilita {
         assert!(p.get_larghezza_riposo() <= crate::finestre::LARGHEZZA_BLOCCANTE);
     }
 
+    /// M3, Task 4: la pillola media dell'attività di Claude Code. Larga `LARGHEZZA_ATTIVITA`, i lati
+    /// si nascondono, il nome per Narrator è quello a parole; da allargata l'attività non si vede.
+    #[test]
+    fn pillola_media_misure() {
+        piattaforma_di_prova();
+        let p = Pillola::new().expect("pillola");
+        p.show().expect("pillola mostrata nel backend di prova");
+        assert_eq!(p.get_larghezza_attivita(), crate::finestre::LARGHEZZA_ATTIVITA);
+        p.set_lato_destro(testo_lato("CPU 23%"));
+        assert!(p.get_lati_visibili() && !p.get_attivita_visibile());
+        assert_ne!(p.get_larghezza_pillola(), crate::finestre::LARGHEZZA_ATTIVITA);
+
+        p.set_attivita("Claude · Modifica · 3:12".into());
+        p.set_nome_attivita("Claude, Modifica, 3 minuti".into());
+        assert!(p.get_attivita_visibile());
+        assert_eq!(p.get_larghezza_pillola(), crate::finestre::LARGHEZZA_ATTIVITA);
+        assert!(!p.get_lati_visibili(), "i lati si nascondono");
+        assert!(p.get_larghezza_visibile() <= p.get_larghezza_finestra());
+        assert_eq!(elemento(&p, "ItsyHome, Claude, Modifica, 3 minuti").accessible_role(), Some(AccessibleRole::Button));
+        // Col puntino resta; il testo sta dentro la pillola (occhi + testo + margine).
+        p.set_aspetto(AspettoPillolaUi::Puntino);
+        assert_eq!(p.get_larghezza_pillola(), crate::finestre::LARGHEZZA_ATTIVITA);
+        assert!(elemento(&p, "ItsyHome, Claude, Modifica, 3 minuti, una voce in attesa").accessible_role().is_some());
+        // Il testo più lungo che Rust può scrivere ci sta senza tagliarsi troppo: lo misura la prova
+        // viva; qui basta che la pillola non cresca.
+        p.set_attivita("Claude · UnNomeLungh · 1:02:05".into());
+        assert_eq!(p.get_larghezza_pillola(), crate::finestre::LARGHEZZA_ATTIVITA);
+
+        // Allargata (una voce che chiama): l'attività non si vede e la larghezza è quella dell'attenzione.
+        p.set_aspetto(AspettoPillolaUi::Allargata);
+        assert!(!p.get_attivita_visibile());
+        assert_eq!(p.get_larghezza_pillola(), crate::finestre::LARGHEZZA_ATTENZIONE);
+        // Ritirata: nemmeno.
+        p.set_aspetto(AspettoPillolaUi::Riposo);
+        p.set_ritirata(true);
+        assert!(!p.get_attivita_visibile());
+        // Senza testo la pillola torna quella di prima, coi lati.
+        p.set_ritirata(false);
+        p.set_attivita("".into());
+        assert!(!p.get_attivita_visibile() && p.get_lati_visibili());
+        assert_ne!(p.get_larghezza_pillola(), crate::finestre::LARGHEZZA_ATTIVITA);
+    }
+
     /// La sezione «Isola» sta fra Collegamenti e Sistema; «Informazioni» passa alla 5.
     #[test]
     fn sezione_isola_e_informazioni_spostata() {

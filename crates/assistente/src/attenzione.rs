@@ -57,6 +57,8 @@ impl Livello {
 pub enum Fonte {
     Casa,
     Pc,
+    /// Claude Code (M3).
+    Claude,
     Prova,
 }
 
@@ -66,6 +68,7 @@ impl Fonte {
         match self {
             Fonte::Casa => "casa",
             Fonte::Pc => "pc",
+            Fonte::Claude => "claude",
             Fonte::Prova => "prova",
         }
     }

@@ -85,6 +85,7 @@ pub fn icona_fonte(f: Fonte) -> Image {
     pannello::icona(match f {
         Fonte::Casa => "casa",
         Fonte::Pc => "pc",
+        Fonte::Claude => "claude",
         Fonte::Prova => "avviso",
     })
 }

@@ -283,6 +283,7 @@ dependencies = [
  "auto-launch",
  "casa-core",
  "chrono",
+ "claude-hook",
  "gestione-protocollo",
  "global-hotkey",
  "i-slint-backend-testing",

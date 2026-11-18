@@ -108,6 +108,14 @@ export component Pillola inherits Window {
     in property <bool> rotella-attiva: false;
     in property <float> volume-mostrato: -1;
     in property <bool> volume-muto: false;
+    // Claude Code (M3, Task 4). `attivita`: «Claude · Modifica · 3:12» (vuota = nessuna), la
+    // pillola media: a riposo e col puntino, non da allargata né da ritirata; i lati si nascondono.
+    // `nome-attivita` è lo stesso detto a parole, per Narrator. `tinta-occhi`: il livello più
+    // urgente fra le sessioni colora gli occhi (`nessuno` = come sempre). Rust li riscrive solo
+    // quando cambiano.
+    in property <string> attivita;
+    in property <string> nome-attivita;
+    in property <LivelloUi> tinta-occhi: LivelloUi.nessuno;
     property <bool> con-barra: volume-mostrato >= 0 && !allargata && !ritirata;
     property <string> nome-volume: "Volume " + round(volume-mostrato * 100) + "%" + (volume-muto ? ", muto" : "");
     callback cliccata();
@@ -167,7 +175,13 @@ export component Pillola inherits Window {
     out property <length> altezza-bloccante: 40px;
     property <length> larghezza-allerta: ferma ? larghezza-bloccante : larghezza-attenzione;
     property <length> altezza-allerta: ferma ? altezza-bloccante : altezza-attenzione;
-    out property <length> larghezza-pillola: allargata ? larghezza-allerta : larghezza-riposo;
+    // La pillola media dell'attività di Claude Code: occhi a sinistra, il testo a destra. Fissa
+    // (il testo cambia ogni secondo, la pillola non deve ballare); le stesse misure stanno in
+    // finestre.rs.
+    out property <length> larghezza-attivita: 210px;
+    out property <bool> attivita-visibile: attivita != "" && !allargata && !ritirata;
+    out property <bool> lati-visibili: !allargata && !attivita-visibile;
+    out property <length> larghezza-pillola: allargata ? larghezza-allerta : attivita-visibile ? larghezza-attivita : larghezza-riposo;
     out property <length> altezza-pillola: allargata ? altezza-allerta : altezza-riposo;
     out property <length> larghezza-visibile: larghezza-pillola + 2 * margine-aura;
     out property <length> altezza-visibile: altezza-pillola + 2 * margine-aura;
@@ -186,6 +200,11 @@ export component Pillola inherits Window {
     property <length> altezza-occhio-allerta: 12px;
     property <length> spazio-allerta: 7px;
     property <length> mezzo-ingombro-allerta: (2 * occhio-allerta + spazio-allerta) / 2;
+    // Pillola media: il centro degli occhi sta a 12 + 15 px dal bordo (15 = metà degli occhi
+    // ad arco, i più larghi: il testo non si sposta col variare dell'umore) e il testo parte
+    // 8 px dopo di loro.
+    property <length> centro-occhi-attivita: 27px;
+    property <length> x-attivita: centro-occhi-attivita + 15px + 8px;
     out property <length> scarto-occhi-attenzione: -larghezza-attenzione / 2 + occhi-allerta-dal-bordo + mezzo-ingombro-allerta;
     out property <length> scarto-occhi-attenzione-y: (altezza-attenzione - altezza-riposo) / 2;
     out property <length> scarto-occhi-bloccante: -larghezza-bloccante / 2 + occhi-allerta-dal-bordo + mezzo-ingombro-allerta;
@@ -230,7 +249,7 @@ export component Pillola inherits Window {
     // Bloccante: anello da 4 px contro 2, distinto per forma anche col movimento ridotto.
     // Sul pixel fisico (FE27): a 1,25 e 1,75 i lati non hanno spessori diversi.
     property <length> spessore-anello: Tema.sul-pixel(blocca ? 4px : 2px);
-    property <color> bagliore-occhi: blocca ? Tema.bloccante : allerta ? Tema.caldo-2 : Tema.bagliore-occhio;
+    property <color> bagliore-occhi: blocca ? Tema.bloccante : allerta ? Tema.caldo-2 : tinta-occhi != LivelloUi.nessuno ? Tema.colore-livello(tinta-occhi) : Tema.bagliore-occhio;
 
     // La riga del messaggio e se il testo non ci sta tutto. Calcolato sulle larghezze finali
     // (`larghezza-pillola`, pulsanti di adesso), non su quelle animate: Rust lo legge appena
@@ -350,7 +369,7 @@ export component Pillola inherits Window {
             // Durante la barra del volume: «Volume 40%» (con «, muto» se muto).
             accessible-label: allargata ? messaggio
                 : con-barra ? nome-volume
-                : "ItsyHome" + nome-lati + (aspetto == AspettoPillolaUi.puntino ? ", una voce in attesa" : "");
+                : "ItsyHome" + (attivita-visibile ? ", " + (nome-attivita != "" ? nome-attivita : attivita) : nome-lati) + (aspetto == AspettoPillolaUi.puntino ? ", una voce in attesa" : "");
             accessible-action-default => { root.cliccata(); }
             // Il clic destro non fa nulla (16/11, Paolo): il menu sta nel «⋯» del pannello.
             clicked => {
@@ -388,6 +407,7 @@ export component Pillola inherits Window {
             larghezza-occhio: allerta ? occhio-allerta : Faccia.larghezza-occhio;
             altezza-occhio: allerta ? altezza-occhio-allerta : Faccia.altezza-occhio;
             bagliore: bagliore-occhi;
+            colore: tinta-occhi == LivelloUi.nessuno ? Tema.occhio : Tema.colore-livello(tinta-occhi);
             // Distanza dal bordo sinistro della pillola a fine animazione, animata anch'essa:
             // allargandosi gli occhi scivolano a sinistra insieme al bordo, senza salti.
             // Allargata: il centro degli occhi è fisso (occhi-allerta-dal-bordo +
@@ -396,7 +416,9 @@ export component Pillola inherits Window {
             // A riposo con un lato solo il centro si sposta di `scarto-occhi-riposo`.
             property <length> dal-bordo: allargata
                 ? occhi-allerta-dal-bordo + mezzo-ingombro-allerta - self.ingombro / 2
-                : (larghezza-pillola - self.ingombro) / 2 + scarto-occhi-riposo;
+                : attivita-visibile
+                    ? centro-occhi-attivita - self.ingombro / 2
+                    : (larghezza-pillola - self.ingombro) / 2 + scarto-occhi-riposo;
             animate dal-bordo { duration: Movimento.ridotto ? 0ms : 220ms; easing: ease-out; }
             x: dal-bordo + sguardo-x;
             y: sguardo-y;
@@ -444,17 +466,33 @@ export component Pillola inherits Window {
         // si muove quando pensa); nascosti da allargata (e da ritirata, con tutta la pillola).
         // Sempre presenti perché la larghezza ne legge l'ingombro.
         valore-sinistro := ValoreLato {
-            visible: !allargata;
+            visible: lati-visibili;
             contenuto: lato-sinistro;
             verso-destra: true;
             x: occhi.dal-bordo + occhi.ingombro / 2 - (con-destro ? mezzi-occhi : ingombro-occhi-riposo / 2) - distanza-lato - self.width;
             height: parent.height;
         }
         valore-destro := ValoreLato {
-            visible: !allargata;
+            visible: lati-visibili;
             contenuto: lato-destro;
             x: occhi.dal-bordo + occhi.ingombro / 2 + (con-sinistro ? mezzi-occhi : ingombro-occhi-riposo / 2) + distanza-lato;
             height: parent.height;
+        }
+
+        // La pillola media: il testo dell'attività, dopo gli occhi. Il nome per Narrator sta
+        // sulla pillola (`nome-attivita`), non qui.
+        if attivita-visibile: attivita-testo := Text {
+            x: x-attivita;
+            width: max(0px, parent.width - self.x - 10px);
+            height: parent.height;
+            text: attivita;
+            overflow: elide;
+            vertical-alignment: center;
+            font-family: Tema.carattere;
+            font-weight: 500;
+            font-size: Tema.testo-corpo;
+            color: Tema.testo;
+            accessible-role: none;
         }
 
         // La riga: sempre presente (nascosta da piccola) perché Rust ne legge `testo-tagliato`.

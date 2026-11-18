@@ -73,7 +73,7 @@ thread_local! {
 }
 
 /// Le icone che Rust passa all'interfaccia: un solo elenco, nome e SVG insieme.
-const ICONE_SVG: [(&str, &[u8]); 5] = [
+const ICONE_SVG: [(&str, &[u8]); 6] = [
     ("panoramica", include_bytes!("../assets/icone/panoramica.svg")),
     ("casa", include_bytes!("../assets/icone/casa.svg")),
     ("pc", include_bytes!("../assets/icone/pc.svg")),
@@ -81,6 +81,8 @@ const ICONE_SVG: [(&str, &[u8]); 5] = [
     ("collegamenti", include_bytes!("../assets/icone/lucide/link.svg")),
     // Fonte «prova» delle voci in attesa (un campanello).
     ("avviso", include_bytes!("../assets/icone/avviso.svg")),
+    // Fonte «Claude» delle voci in attesa (M3): una stella a otto raggi, disegnata qui.
+    ("claude", include_bytes!("../assets/icone/claude.svg")),
 ];
 
 /// L'icona SVG di un'app del registro (bianca: il colore lo dà l'interfaccia), dalla cache;

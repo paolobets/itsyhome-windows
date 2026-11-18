@@ -7,6 +7,7 @@ use crate::attenzione::{
     SorveglianzaBatteria, Voce, ID_BATTERIA, ID_CASA_OFFLINE, ID_CASA_TOKEN, PREFISSO_BT, PREFISSO_NOTIFICA, PREFISSO_SISTEMA,
     PULSANTE_ARCHIVIA, PULSANTE_APRI, PULSANTE_HO_CAPITO, PULSANTE_IMPOSTAZIONI, PULSANTE_RIPROVA,
 };
+use crate::claude::PREFISSO_CLAUDE;
 use crate::lati::{self, Lato};
 use crate::layout::Layout;
 use crate::orologio;
@@ -29,6 +30,7 @@ use crate::{
 };
 use casa_core::config::Config;
 use casa_core::diagnosi::Contatore;
+use claude_hook::sessioni::Sessioni;
 use casa_core::eventi::{Ascoltatore, CasaEvento, StatoConnessione};
 use casa_core::segreti::Segreti;
 use casa_core::servizio::CasaService;
@@ -39,6 +41,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+pub(crate) mod con_claude;
 
 /// La sveglia dell'umore suona appena dopo la scadenza, mai un attimo prima.
 const MARGINE_SVEGLIA: Duration = Duration::from_millis(20);
@@ -837,6 +841,16 @@ pub struct Ponte {
     /// La pillola si vede (`Visibilita::Pillola`, la dicono i servizi di sistema): i lati
     /// campionano solo allora.
     pillola_mostrata: Cell<bool>,
+    /// Claude Code (M3, Task 4): le sessioni, l'ascolto degli hook (solo se collegato), la
+    /// sveglia singola alla prossima scadenza di una sessione, il timer da un secondo del testo di
+    /// attività (acceso solo mentre serve: `attivita_serve`), le richieste rifiutate già contate
+    /// e il giro di conteggio della diagnosi (solo se acceso).
+    claude_sessioni: RefCell<Sessioni>,
+    claude_ascolto: RefCell<Option<claude_hook::Ascoltatore>>,
+    sveglia_claude: slint::Timer,
+    timer_attivita: slint::Timer,
+    claude_rifiutate_viste: Cell<u64>,
+    sveglia_diagnosi_claude: slint::Timer,
     /// Impostazioni › Isola: i modelli dei selettori e i cataloghi da cui vengono (un indice
     /// scelto nell'interfaccia diventa la fonte da salvare).
     isola: RefCell<Isola>,
@@ -939,6 +953,12 @@ pub fn collega(
         traccia_tocco: std::env::var_os("ITSYHOME_TRACCIA_TOCCO").is_some_and(|v| v == "1"),
         quadranti: Rc::new(VecModel::default()),
         pillola_mostrata: Cell::new(true),
+        claude_sessioni: RefCell::new(Sessioni::new()),
+        claude_ascolto: RefCell::new(None),
+        sveglia_claude: slint::Timer::default(),
+        timer_attivita: slint::Timer::default(),
+        claude_rifiutate_viste: Cell::new(0),
+        sveglia_diagnosi_claude: slint::Timer::default(),
         isola: RefCell::new(Isola::default()),
         voci_lati: Rc::new(VecModel::default()),
         voci_meteo: Rc::new(VecModel::default()),
@@ -1189,6 +1209,7 @@ impl Ponte {
             *self.mostrato.borrow_mut() = Some(nuova);
         }
         self.aggiorna_lati();
+        self.aggiorna_claude_pillola();
         match scadenza {
             Some(tra) => self.sveglia.start(slint::TimerMode::SingleShot, tra + MARGINE_SVEGLIA, || {
                 if let Some(p) = ponte() {
@@ -1217,6 +1238,7 @@ impl Ponte {
     pub fn pillola_visibile(&self, si: bool) {
         if self.pillola_mostrata.replace(si) != si {
             self.aggiorna_lati();
+            self.aggiorna_claude_pillola();
         }
     }
 
@@ -2068,6 +2090,8 @@ impl Ponte {
         *self.pannello.borrow_mut() = slint::Weak::default();
         self.modelli_vivi.set(false);
         self.collegamento_aperto.set(false);
+        // L'elenco è stato guardato: i «fatto» di Claude Code sono visti.
+        self.claude_pannello_chiuso();
         // Il pannello si riapre sui preferiti.
         if self.stanza_aperta.borrow_mut().take().is_some() {
             self.dispositivi.set_vec(Vec::new());
@@ -2270,6 +2294,8 @@ impl Ponte {
         } else if voce.starts_with(PREFISSO_BT) && pulsante == PULSANTE_HO_CAPITO {
             // Il dispositivo è già segnato come avvisato oggi: non torna fino a domani.
             self.togli_voce(voce);
+        } else if voce.starts_with(PREFISSO_CLAUDE) {
+            con_claude::azione(self, voce, pulsante);
         } else if voce.starts_with(PREFISSO_SISTEMA) {
             self.togli_voce(voce);
         } else if self.attese.borrow().voce(voce).is_some_and(|v| v.fonte == Fonte::Prova) {
@@ -2946,14 +2972,14 @@ pub(crate) mod test {
     /// luce spenta fra i preferiti.
     /// Lascia il ponte del thread anche se il test fallisce: distrutto dal thread_local a fine
     /// thread, il `CasaService` resterebbe appeso nella sua `join`.
-    struct Spegni;
+    pub(crate) struct Spegni;
     impl Drop for Spegni {
         fn drop(&mut self) {
             spegni();
         }
     }
 
-    fn ponte_di_prova() -> (Spegni, Rc<Ponte>, crate::Pillola, tempfile::TempDir) {
+    pub(crate) fn ponte_di_prova() -> (Spegni, Rc<Ponte>, crate::Pillola, tempfile::TempDir) {
         use casa_core::config::ConfigStore;
         use casa_core::segreti::MemoriaSegreti;
         crate::test_ui::piattaforma_di_prova();

@@ -3,6 +3,7 @@
 
 mod attenzione;
 mod avvio;
+mod claude;
 mod collegamenti;
 #[cfg(any(windows, test))]
 mod connessioni;
@@ -139,6 +140,8 @@ fn main() -> Result<(), slint::PlatformError> {
     let cervello = Rc::new(RefCell::new(Cervello::new(Instant::now())));
     let ponte = ponte::collega(casa.clone(), segreti, &pillola, cervello, forzato, errore_import);
     let ponte_servizi = ponte.clone();
+    // Claude Code (M3): se è collegato, l'ascolto degli hook parte ora.
+    ponte::con_claude::avvia_se_collegato(&ponte);
     let ponte_prova = ponte.clone();
     // `--prova-avviso <bloccante|attenzione|informazione> [--dopo <s>] [--lungo]`: una voce finta
     // con 2 pulsanti finti, subito o dopo `s` secondi (per provarla mentre la pillola è ritirata);
@@ -210,6 +213,7 @@ fn main() -> Result<(), slint::PlatformError> {
     // thread ancora vivo, quando `casa` esce di scena.
     sistema::servizi::spegni();
     gestione::spegni();
+    ponte::con_claude::spegni();
     ponte::spegni();
     sorgenti_lati::spegni();
     drop(apertura);
