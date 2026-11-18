@@ -418,6 +418,8 @@ pub struct DatiClaude {
     /// C'è la chiave da amministratore (la lettura è in programma) ma non è ancora arrivata una
     /// spesa: il quadrante lo dice invece di restare vuoto.
     pub lettura_attesa: bool,
+    /// La soglia d'avviso dei limiti dell'utente (frazione 0..1): sopra, l'arco dei limiti è caldo.
+    pub soglia_limite: f32,
 }
 
 /// Valore, arco e riga piccola di un quadrante di Claude.
@@ -429,7 +431,16 @@ pub struct QuadranteClaude {
     pub frazione: f32,
     /// «si azzera alle 14:30», «soglia 250,00 $»; vuota senza dato.
     pub dettaglio: String,
+    /// Da questa frazione l'arco è caldo: la soglia dei limiti dell'utente; per la spesa quella
+    /// della voce d'avviso (`SOGLIA_AVVISO_SPESA` della soglia di spesa), e senza soglia di spesa
+    /// mai (nessuna voce avvisa, l'arco non deve dire altro). Voce e arco usano `>=`.
+    pub caldo_da: f32,
 }
+
+/// Da quale frazione della soglia di spesa scatta il primo avviso (e l'arco si fa caldo).
+pub const SOGLIA_AVVISO_SPESA: f32 = 0.8;
+/// «Mai caldo»: una frazione che l'arco non raggiunge.
+const MAI_CALDO: f32 = 2.0;
 
 /// Il quadrante di una fonte di Claude; `None` per ogni altra fonte. `massimo_utente`: il massimo
 /// scritto per la spesa quando non c'è una soglia. `ora`: quando si legge «si azzera alle…».
@@ -439,11 +450,11 @@ pub fn quadrante_claude(
     massimo_utente: Option<f64>,
     ora: DateTime<Local>,
 ) -> Option<QuadranteClaude> {
-    let senza_dato = || QuadranteClaude { valore: "—".into(), frazione: -1.0, dettaglio: String::new() };
+    let senza_dato = || QuadranteClaude { valore: "—".into(), frazione: -1.0, dettaglio: String::new(), caldo_da: MAI_CALDO };
     let limite = |l: &Option<Limite>| match l.filter(|l| l.percentuale.is_finite()) {
         Some(l) => {
             let t = claude::testo_limite(&l, ora);
-            QuadranteClaude { valore: t.testo, frazione: t.frazione, dettaglio: t.azzera }
+            QuadranteClaude { valore: t.testo, frazione: t.frazione, dettaglio: t.azzera, caldo_da: d.soglia_limite }
         }
         None => senza_dato(),
     };
@@ -466,6 +477,7 @@ pub fn quadrante_claude(
                         .soglia_spesa
                         .filter(|t| t.is_finite() && *t > 0.0)
                         .map_or_else(String::new, |t| format!("soglia {}", dollari_interi(t))),
+                    caldo_da: if d.soglia_spesa.is_some_and(|t| t.is_finite() && t > 0.0) { SOGLIA_AVVISO_SPESA } else { MAI_CALDO },
                 }
             }
         },
@@ -857,6 +869,25 @@ mod test {
         assert_eq!(quadrante_claude(&Lato::SpesaApi, &arrivata, None, ora).unwrap().dettaglio, "");
         // Solo la spesa ha una prima lettura: i limiti restano vuoti.
         assert_eq!(quadrante_claude(&Lato::Limite5h, &attesa, None, ora).unwrap().dettaglio, "");
+    }
+
+    /// Fix round 1 (I2): l'arco diventa caldo dove la voce d'avviso scatta: i limiti alla soglia
+    /// dell'utente, la spesa all'80 % della soglia di spesa, e senza soglia di spesa mai.
+    #[test]
+    fn caldo_da_segue_le_voci_d_avviso() {
+        let ora = chrono::Local::now();
+        let spesa = api_claude::importo_da("41280").unwrap();
+        let dati = DatiClaude {
+            cinque: Some(limite(50.0, ora.timestamp() + 600)),
+            spesa: Some(spesa),
+            soglia_spesa: Some(500.0),
+            soglia_limite: 0.7,
+            ..Default::default()
+        };
+        assert_eq!(quadrante_claude(&Lato::Limite5h, &dati, None, ora).unwrap().caldo_da, 0.7, "limiti: soglia dell'utente");
+        assert_eq!(quadrante_claude(&Lato::SpesaApi, &dati, None, ora).unwrap().caldo_da, 0.8, "spesa: come la voce");
+        let senza_soglia = DatiClaude { soglia_spesa: None, ..dati };
+        assert!(quadrante_claude(&Lato::SpesaApi, &senza_soglia, Some(500.0), ora).unwrap().caldo_da > 1.0, "senza soglia di spesa mai caldo");
     }
 
     /// PF9: senza dato il quadrante dice «—», mai «0%» né «0 $», e non ha arco.

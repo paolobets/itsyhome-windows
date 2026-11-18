@@ -444,8 +444,18 @@ impl Ponte {
         let (cinque, sette) = self.limiti();
         // Solo dati di questo mese (UTC): dopo il cambio di mese il quadrante dice «—» fino alla lettura nuova.
         let spesa = self.riepilogo_fresco(chrono::Utc::now()).and_then(|r| r.spesa_mese);
-        let lettura_attesa = spesa.is_none() && self.sveglia_api.running();
-        crate::lati::DatiClaude { cinque, sette, spesa, soglia_spesa: self.casa.con_config(|c| c.claude.soglia_spesa), lettura_attesa }
+        // «Prima lettura fra poco» solo finché nessuna lettura è mai arrivata: dopo un errore (chiave
+        // sbagliata, rete giù) sarebbe una promessa falsa fino alla lettura di 3 ore dopo.
+        let lettura_attesa = spesa.is_none() && self.sveglia_api.running() && self.api_ultimo.borrow().is_none();
+        let soglia_limite = claude::frazione_soglia(self.casa.con_config(|c| c.claude.soglia_limite));
+        crate::lati::DatiClaude {
+            cinque,
+            sette,
+            spesa,
+            soglia_spesa: self.casa.con_config(|c| c.claude.soglia_spesa),
+            lettura_attesa,
+            soglia_limite,
+        }
     }
 
     /// Un dato di Claude è cambiato: i quadranti che lo mostrano si riscrivono (solo a modelli
@@ -2591,6 +2601,19 @@ mod test {
         // Una lettura fallita: nessun dato, «—».
         p.api_arrivato(p.api_generazione.get(), "17:05".into(), Err("rete".into()));
         assert_eq!(quadrante(&p, 0).valore.as_str(), "—");
+    }
+
+    /// Fix round 1 (I1): «prima lettura fra poco» solo finché nessuna lettura è arrivata; dopo una
+    /// lettura fallita (chiave sbagliata, rete giù) il timer gira ancora ma la promessa sarebbe falsa.
+    #[test]
+    fn prima_lettura_non_dopo_una_lettura_fallita() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        p.api_salva_ui("sk-ant-admin01-di-prova-1a2b");
+        con_quadranti(&p, &["spesa_api"]);
+        assert_eq!(quadrante(&p, 0).dettaglio.as_str(), "prima lettura fra poco");
+        p.api_arrivato(p.api_generazione.get(), "17:05".into(), Err("401".into()));
+        p.ricostruisci_quadranti();
+        assert_eq!(quadrante(&p, 0).dettaglio.as_str(), "", "dopo l'errore niente promessa");
     }
 
     fn voce_spesa(p: &Ponte) -> Option<String> {

@@ -97,7 +97,8 @@ export component RigaAttesa inherits Rectangle {
         border-radius: Tema.raggio-l;
         background: area-altre.has-hover ? Tema.scheda-sopra : Tema.card-fondo;
         accessible-role: button;
-        accessible-label: altre == 1 ? "Un'altra voce in attesa" : "Altre " + altre + " voci in attesa";
+        // Dice quale voce nasconde: la prima delle nascoste (il suo titolo).
+        accessible-label: (altre == 1 ? "Un'altra voce in attesa" : "Altre " + altre + " voci in attesa") + ": " + root.voci[visibili].titolo;
         accessible-action-default => { root.scelta(Attesa.visibili); }
 
         Fuoco { chiede: root.fuoco == Attesa.visibili; }

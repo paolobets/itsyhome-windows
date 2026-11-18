@@ -338,14 +338,14 @@ mod accessibilita {
         for (n, chiuse, piu_n) in [
             (1, 1, None),
             (2, 2, None),
-            (3, 2, Some("Un'altra voce in attesa")),
-            (4, 2, Some("Altre 2 voci in attesa")),
-            (5, 2, Some("Altre 3 voci in attesa")),
+            (3, 2, Some("Un'altra voce in attesa: Titolo 2")),
+            (4, 2, Some("Altre 2 voci in attesa: Titolo 2")),
+            (5, 2, Some("Altre 3 voci in attesa: Titolo 2")),
         ] {
             p.set_attese(voci_attesa(n));
             let viste = (0..n).filter(|i| voce_chiusa(&p, *i).is_some()).count();
             assert_eq!(viste, chiuse, "{n} voci: card chiuse");
-            let ci_sono_altre = ["Un'altra voce in attesa", "Altre 2 voci in attesa", "Altre 3 voci in attesa"]
+            let ci_sono_altre = ["Un'altra voce in attesa: Titolo 2", "Altre 2 voci in attesa: Titolo 2", "Altre 3 voci in attesa: Titolo 2"]
                 .iter()
                 .any(|nome| ElementHandle::find_by_accessible_label(&p, nome).count() > 0);
             assert_eq!(ci_sono_altre, piu_n.is_some(), "{n} voci: «+N»");
@@ -376,7 +376,7 @@ mod accessibilita {
             tasto(&p, Key::RightArrow);
             assert_eq!(etichetta_col_fuoco(&p), "Titolo 1, Quando vuoi · prova", "{n} voci");
             tasto(&p, Key::RightArrow);
-            let piu_n = if n == 3 { "Un'altra voce in attesa".to_owned() } else { format!("Altre {} voci in attesa", n - 2) };
+            let piu_n = if n == 3 { "Un'altra voce in attesa: Titolo 2".to_owned() } else { format!("Altre {} voci in attesa: Titolo 2", n - 2) };
             assert_eq!(etichetta_col_fuoco(&p), piu_n, "{n} voci: il fuoco arriva su «+N»");
             tasto(&p, Key::RightArrow);
             assert_eq!(etichetta_col_fuoco(&p), piu_n, "{n} voci: «+N» è l'ultimo");
@@ -470,7 +470,7 @@ mod accessibilita {
         p.set_layout(1);
         p.set_stato_casa("Casa non connessa".into());
         p.set_attese(voci_attesa(3));
-        let (v0, piu_n) = (voce_chiusa(&p, 0).expect("prima voce"), elemento(&p, "Un'altra voce in attesa"));
+        let (v0, piu_n) = (voce_chiusa(&p, 0).expect("prima voce"), elemento(&p, "Un'altra voce in attesa: Titolo 2"));
         let (a, b, c, d) = (
             elemento(&p, "CPU"),
             elemento(&p, "RAM"),
@@ -487,6 +487,39 @@ mod accessibilita {
         }
     }
 
+    /// Fix round 1: con il fuoco su «+N», se le voci scendono da 3 a 2 il fuoco va alla card più
+    /// vicina (la seconda), non si perde.
+    #[test]
+    fn il_fuoco_su_piu_n_non_si_perde_se_le_voci_calano() {
+        use slint::platform::Key;
+        piattaforma_di_prova();
+        let p = pannello();
+        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        p.global::<crate::Fuochi>().set_pronti(true);
+        p.set_attese(voci_attesa(3));
+        con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
+        tasto(&p, Key::RightArrow);
+        tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Un'altra voce in attesa: Titolo 2");
+        p.set_attese(voci_attesa(2));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&p), "Titolo 1, Quando vuoi · prova", "il fuoco passa alla card più vicina");
+    }
+
+    /// Fix round 1: il quadrante CASA con l'invito non è un indicatore vuoto (niente «—» come
+    /// valore): c'è l'invito e la casa al posto dell'arco.
+    #[test]
+    fn il_quadrante_casa_invito_non_ha_il_trattino() {
+        piattaforma_di_prova();
+        let p = pannello();
+        p.set_layout(1);
+        p.set_stato_casa("Casa non configurata".into());
+        assert_eq!(elemento(&p, "CASA, Casa non configurata").accessible_value().as_deref(), Some("—"), "normale: il trattino");
+        p.set_casa_da_configurare(true);
+        let q = elemento(&p, "CASA, Collega la casa");
+        assert_eq!(q.accessible_value().as_deref().unwrap_or(""), "", "invito: niente valore vuoto");
+    }
+
     /// RC-44: il colore caldo dell'arco parte SOPRA la soglia d'avviso dell'utente (70 → caldo a
     /// 71, non a 85), nella vista Claude e nei quadranti; il PC resta all'85 %.
     #[test]
@@ -495,13 +528,14 @@ mod accessibilita {
         let p = pannello();
         let tema = p.global::<crate::Tema>();
         assert!(tema.invoke_oltre_soglia(0.71, 0.70), "71 con soglia 70: caldo");
-        assert!(!tema.invoke_oltre_soglia(0.70, 0.70), "alla soglia esatta non ancora");
+        assert!(tema.invoke_oltre_soglia(0.70, 0.70), "alla soglia esatta come la voce d'avviso (>=)");
+        assert!(!tema.invoke_oltre_soglia(0.69, 0.70));
         assert!(!tema.invoke_oltre_soglia(0.50, 0.70));
         assert!(tema.invoke_oltre_soglia(0.80, 0.70), "a 80 con soglia 70 l'arco è caldo (prima no)");
         let (claude, quadranti) = (include_str!("../ui/viste/claude.slint"), include_str!("../ui/layout/quadranti.slint"));
         assert!(!claude.contains("0.85"), "la vista Claude non ha più un 85 % fisso");
         assert!(
-            quadranti.contains("soglia-caldo: q.fonte == FonteQuadranteUi.limite-5h"),
+            quadranti.contains("? q.caldo-da : 0.85"),
             "i quadranti di Claude usano la soglia dell'utente"
         );
         assert!((p.get_claude_soglia() - 0.80).abs() < 1e-6, "di serie 80");
@@ -2813,6 +2847,7 @@ mod accessibilita {
                 frazione: 0.63,
                 dettaglio: "Sala".into(),
                 genere: crate::GenereUi::Termo,
+                ..Default::default()
             },
         ])));
         assert_eq!(elemento(&p, "ORA").accessible_value().as_deref(), Some("14:05"));

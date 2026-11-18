@@ -27,7 +27,7 @@ component Quadrante inherits Vetro {
     in property <bool> invito;
     // L'arco diventa caldo sopra questa frazione: 85 % per il PC, la soglia d'avviso dell'utente
     // per i limiti e la spesa di Claude (RC-44).
-    in property <float> soglia-caldo: 0.85;
+    in property <float> caldo-da: 0.85;
     // Il fuoco da tastiera è sul quadrante (anello visibile).
     in property <bool> anello;
     callback clic();
@@ -35,7 +35,7 @@ component Quadrante inherits Vetro {
     // Per Narrator: un indicatore col nome (etichetta e dettaglio) e il valore (FE16).
     accessible-role: progress-indicator;
     accessible-label: dettaglio == "" ? etichetta : etichetta + ", " + dettaglio;
-    accessible-value: valore;
+    accessible-value: invito ? "" : valore;
     accessible-description: tenue ? "non aggiornato" : "";
 
     // Arco di 270° aperto in basso (raggio 44, centro 55,55 nel riquadro 110 × 110, disegnato a
@@ -52,7 +52,17 @@ component Quadrante inherits Vetro {
         Rectangle {
             height: arco;
 
-            Path {
+            // L'invito non è un indicatore vuoto: la casa in verde acqua al posto dell'arco.
+            if invito: Icona {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: 40px;
+                height: 40px;
+                source: icona;
+                colorize: Tema.petalo-5;
+            }
+
+            if !invito: Path {
                 x: (parent.width - arco) / 2;
                 width: arco;
                 height: arco;
@@ -64,21 +74,21 @@ component Quadrante inherits Vetro {
                 stroke-line-cap: round;
             }
 
-            if acceso: Path {
+            if acceso && !invito: Path {
                 x: (parent.width - arco) / 2;
                 width: arco;
                 height: arco;
                 viewbox-width: 110;
                 viewbox-height: 110;
                 commands: "M 23.89 86.11 A 44 44 0 " + (frazione > 0.6667 ? 1 : 0) + " 1 " + (55 + 44 * cos(fine)) + " " + (55 + 44 * sin(fine));
-                stroke: tenue ? Tema.icona-spenta : Tema.oltre-soglia(frazione, soglia-caldo) ? Tema.caldo-2 : Tema.petalo-2;
+                stroke: tenue ? Tema.icona-spenta : Tema.oltre-soglia(frazione, caldo-da) ? Tema.caldo-2 : Tema.petalo-2;
                 stroke-width: arco < 90px ? 7px : 8px;
                 stroke-line-cap: round;
             }
 
             // Dentro l'arco: largo quanto lui, più piccolo se il valore è lungo («1013,2 hPa»,
             // «Non disponibile»), accorciato se non ci sta comunque.
-            Text {
+            if !invito: Text {
                 x: (parent.width - self.width) / 2;
                 width: arco - 16px;
                 text: valore;
@@ -161,8 +171,6 @@ export component LayoutQuadranti inherits Rectangle {
     in property <bool> luci-cliccabili;
     // Casa non configurata: il quadrante CASA invita a collegarla e porta alle Impostazioni.
     in property <bool> casa-invito;
-    // La soglia d'avviso dell'utente per i quadranti di Claude (frazione 0..1).
-    in property <float> soglia-claude: 0.8;
     in property <bool> anello-luci;
     callback apri-luci();
 
@@ -244,7 +252,7 @@ export component LayoutQuadranti inherits Rectangle {
             arco: root.arco;
             // I valori della casa (meteo, sensori) senza connessione sono vecchi: tenui.
             tenue: (q.fonte == FonteQuadranteUi.meteo || q.fonte == FonteQuadranteUi.sensore) && !casa-pronta;
-            soglia-caldo: q.fonte == FonteQuadranteUi.limite-5h || q.fonte == FonteQuadranteUi.limite-7g || q.fonte == FonteQuadranteUi.spesa-api ? soglia-claude : 0.85;
+            caldo-da: q.fonte == FonteQuadranteUi.limite-5h || q.fonte == FonteQuadranteUi.limite-7g || q.fonte == FonteQuadranteUi.spesa-api ? q.caldo-da : 0.85;
             etichetta: q.etichetta;
             icona: icona-di(q);
             valore: valore-di(q);

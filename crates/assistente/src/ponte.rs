@@ -585,6 +585,7 @@ pub fn quadranti_ui(q: &[Lato], menu: Option<&MenuData>, massimi: &HashMap<Strin
                         frazione: t.map_or(-1.0, |t| lati::frazione(l, meteo.map(|m| m.unita.as_str()), None, t)),
                         dettaglio: meteo.map(|m| orologio::condizione_italiana(&m.condizione)).unwrap_or_default().into(),
                         genere: GenereUi::Casa,
+                        ..Default::default()
                     }
                 }
                 Lato::Limite5h | Lato::Limite7g | Lato::SpesaApi => {
@@ -602,6 +603,7 @@ pub fn quadranti_ui(q: &[Lato], menu: Option<&MenuData>, massimi: &HashMap<Strin
                         frazione: q.frazione,
                         dettaglio: q.dettaglio.into(),
                         genere: GenereUi::Sensore,
+                        caldo_da: q.caldo_da,
                     }
                 }
                 Lato::Sensore(id) => {
@@ -627,6 +629,7 @@ pub fn quadranti_ui(q: &[Lato], menu: Option<&MenuData>, massimi: &HashMap<Strin
                         frazione,
                         dettaglio: nome.into(),
                         genere,
+                        ..Default::default()
                     }
                 }
             })
@@ -2119,7 +2122,10 @@ impl Ponte {
             p.set_stato_casa(riga.into());
         }
         p.set_casa_pronta(*stato == StatoConnessione::Connesso && menu.is_some());
-        p.set_casa_da_configurare(*stato == StatoConnessione::NonConfigurato);
+        let da_configurare = *stato == StatoConnessione::NonConfigurato;
+        if p.get_casa_da_configurare() != da_configurare {
+            p.set_casa_da_configurare(da_configurare);
+        }
         self.aggiorna_soglia_claude(p);
         let dati = self.dati_delle.borrow().clone().unwrap_or_default();
         if p.get_dati_delle() != dati.as_str() {

@@ -139,10 +139,10 @@ export global Tema {
         return testo-tenue;
     }
 
-    // L'arco (di un limite, della spesa) diventa caldo SOPRA la soglia (frazione 0..1): quella
-    // d'avviso dell'utente per Claude (80 % di serie), 85 % per il PC. Alla soglia esatta no.
+    // L'arco (di un limite, della spesa) diventa caldo ALLA soglia o sopra (frazione 0..1, come le voci
+    // d'avviso): quella dell'utente per i limiti, l'80 % della soglia di spesa, l'85 % per il PC.
     public pure function oltre-soglia(frazione: float, soglia: float) -> bool {
-        return frazione > soglia;
+        return frazione >= soglia;
     }
 
     // ─── Scale (FE11): raggi e corpi del testo, pochi valori e sempre gli stessi ───

@@ -290,6 +290,12 @@ export component Pannello inherits Window {
     property <bool> con-attese: vista == "panoramica" && attese.length > 0;
     property <length> altezza-attese: 42px;
     property <length> sotto-attese: con-attese ? altezza-attese + 6px : 0px;
+    // Le voci «In attesa» diminuiscono (3 → 2): il fuoco su «+N», che non c'è più, va alla card più
+    // vicina invece di perdersi.
+    property <int> n-attese: attese.length;
+    changed n-attese => {
+        fuoco-attesa = max(0, min(fuoco-attesa, min(attese.length, Attesa.visibili + 1) - 1));
+    }
     property <bool> espansa: con-attese && indice-aperta >= 0 && indice-aperta < attese.length;
 
     // ─── Scorrimento fra le viste (280 ms) ───
@@ -1267,7 +1273,6 @@ export component Pannello inherits Window {
                     casa-pronta: root.casa-pronta;
                     luci-cliccabili: root.luci-cliccabili;
                     casa-invito: root.casa-da-configurare;
-                    soglia-claude: root.claude-soglia;
                     anello-luci: root.fuoco-luci-valido && root.da-tastiera;
                     apri-luci => { mostra-luci(); }
                 }
