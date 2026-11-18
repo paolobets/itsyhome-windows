@@ -179,6 +179,23 @@ impl Sessioni {
         cambi
     }
 
+    /// L'utente ha risposto a un permesso dall'assistente: Claude Code esegue (o rinuncia) subito,
+    /// ma senza un nuovo evento la sessione resterebbe «ti aspetta». Passa a `Lavora` tenendo lo
+    /// strumento; `lavora_da` parte solo se non lavorava già. Sessione sconosciuta o che lavora
+    /// già: nessun cambio.
+    pub fn segna_al_lavoro(&mut self, id: &str, ora: Instant) -> Vec<Cambio> {
+        let Some(p) = self.v.iter().position(|s| s.sessione_è(id)) else { return Vec::new() };
+        if self.v[p].stato == Stato::Lavora {
+            return Vec::new();
+        }
+        self.tocca(p, ora);
+        let s = self.v.last_mut().expect("appena rimessa in fondo");
+        s.stato = Stato::Lavora;
+        s.errore = None;
+        s.lavora_da = Some(ora);
+        vec![Cambio::Cambiata(id.to_owned())]
+    }
+
     /// Un evento che aggiorna solo `ultimo`: la sessione passa in fondo, così la posizione resta
     /// coerente con `ultimo` (limite e parità di `elenco`).
     fn tocca(&mut self, p: usize, ora: Instant) {
@@ -269,6 +286,23 @@ mod test {
 
     fn notifica(id: &str, tipo: &str) -> EventoHook {
         EventoHook { notifica: Some(tipo.into()), ..ev(id, TipoEvento::Notification) }
+    }
+
+    #[test]
+    fn al_lavoro_dopo_la_risposta_a_un_permesso() {
+        let t = Instant::now();
+        let mut s = Sessioni::new();
+        assert!(s.segna_al_lavoro("a", t).is_empty(), "sconosciuta: nessun cambio");
+        let chiede = EventoHook { strumento: Some("Bash".into()), ..ev("a", TipoEvento::PermissionRequest) };
+        s.ricevi(&chiede, t);
+        assert_eq!(s.elenco()[0].stato, Stato::TiAspetta);
+        let dopo = t + Duration::from_secs(9);
+        assert_eq!(s.segna_al_lavoro("a", dopo), vec![Cambio::Cambiata("a".into())]);
+        let x = s.elenco()[0];
+        assert_eq!((x.stato, x.strumento.as_deref(), x.lavora_da, x.ultimo), (Stato::Lavora, Some("Bash"), Some(dopo), dopo));
+        // Già al lavoro: niente, e `lavora_da` non riparte.
+        assert!(s.segna_al_lavoro("a", dopo + Duration::from_secs(5)).is_empty());
+        assert_eq!(s.elenco()[0].lavora_da, Some(dopo));
     }
 
     #[test]

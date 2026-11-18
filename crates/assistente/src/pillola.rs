@@ -37,6 +37,8 @@ pub struct VistaPillola {
     pub testo: String,
     /// « +N» quando ci sono altri bloccanti oltre a quello mostrato (fuori dal testo tagliato).
     pub altri: String,
+    /// La voce che la pillola allargata chiama (vuota altrimenti).
+    pub voce_id: String,
     pub pulsanti: Vec<Pulsante>,
 }
 
@@ -49,6 +51,7 @@ impl VistaPillola {
             fonte: Fonte::Prova,
             testo: String::new(),
             altri: String::new(),
+            voce_id: String::new(),
             pulsanti: vec![],
         }
     }
@@ -83,6 +86,7 @@ pub fn vista(umore: Umore, attese: &Attese, ora: Instant) -> VistaPillola {
         // Testo e pulsanti contano solo da allargata (il puntino non li mostra).
         testo: if allargata { v.titolo.clone() } else { String::new() },
         altri,
+        voce_id: if allargata { v.id.clone() } else { String::new() },
         pulsanti: if allargata { v.pulsanti.clone() } else { vec![] },
         aspetto,
     }
@@ -207,6 +211,9 @@ pub fn imposta(ui: &Pillola, v: &VistaPillola) {
     }
     if allargata {
         ui.set_icona_fonte(icona_fonte(v.fonte));
+    }
+    if ui.get_voce_id() != v.voce_id.as_str() {
+        ui.set_voce_id(v.voce_id.as_str().into());
     }
     ui.set_pulsanti(pulsanti_ui(&v.pulsanti));
     // Con i pulsanti della voce la riga sa se il testo ci sta (misura sulle larghezze finali, non

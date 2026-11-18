@@ -1176,7 +1176,7 @@ mod accessibilita {
         p.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
         let azioni = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
         let a = azioni.clone();
-        p.on_azione(move |id| a.borrow_mut().push(id.to_string()));
+        p.on_azione(move |_, id| a.borrow_mut().push(id.to_string()));
         for _ in 0..3 {
             for t in [Key::Tab, Key::Return, Key::Space] {
                 p.window().dispatch_event(WindowEvent::KeyPressed { text: t.into() });

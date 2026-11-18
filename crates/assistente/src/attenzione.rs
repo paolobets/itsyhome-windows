@@ -522,7 +522,18 @@ pub fn secondi_dopo(mut argomenti: impl Iterator<Item = String>) -> Option<u64> 
 /// La notifica di sistema (toast, `notify-rust`): per bloccante, attenzione e notifiche di Home
 /// Assistant, una volta per voce nuova e solo a pannello chiuso (vedi `toast`).
 pub fn notifica_sistema(v: &Voce) {
-    crate::sistema::notifiche::mostra(&v.titolo, &v.dettaglio);
+    let (titolo, dettaglio) = testo_notifica(v);
+    crate::sistema::notifiche::mostra(&titolo, &dettaglio);
+}
+
+/// Il testo della notifica di sistema. Windows può conservarla nel centro notifiche: per un
+/// permesso di Claude Code non porta mai il comando o il percorso, solo la sessione.
+pub fn testo_notifica(v: &Voce) -> (String, String) {
+    if v.id.starts_with(crate::claude::PREFISSO_PERMESSO) {
+        let cartella = v.dettaglio.rsplit_once("Sessione: ").map_or("Claude", |(_, c)| c);
+        return (format!("Claude chiede un permesso · {cartella}"), String::new());
+    }
+    (v.titolo.clone(), v.dettaglio.clone())
 }
 
 /// La notifica di sistema spetta a bloccante e attenzione, e alle notifiche di Home Assistant
@@ -663,6 +674,30 @@ pub(crate) mod test {
         assert_eq!(aspetto_pillola(&a, t + S(10 * 60)), attesa);
         a.togli("b");
         assert_eq!(aspetto_pillola(&a, t + S(10 * 60)), AspettoPillola::Puntino);
+    }
+
+    #[test]
+    fn la_notifica_di_un_permesso_non_ha_il_comando() {
+        let mut e = claude_hook::evento::EventoHook {
+            sessione: "a".into(),
+            tipo: claude_hook::evento::TipoEvento::PermissionRequest,
+            cartella: "progetto".into(),
+            strumento: Some("PowerShell".into()),
+            notifica: None,
+            errore: None,
+            riassunto: Some("rm -rf segreto".into()),
+        };
+        let v = crate::claude::voce_permesso(3, &e, Instant::now());
+        assert!(v.titolo.contains("segreto") && v.dettaglio.contains("segreto"), "la voce in pillola resta completa");
+        let (titolo, dettaglio) = testo_notifica(&v);
+        assert_eq!(titolo, "Claude chiede un permesso · progetto");
+        assert!(!titolo.contains("segreto") && !dettaglio.contains("segreto"));
+        e.cartella.clear();
+        let v = crate::claude::voce_permesso(3, &e, Instant::now());
+        assert_eq!(testo_notifica(&v).0, "Claude chiede un permesso · Claude");
+        // Le altre voci non cambiano.
+        let altra = voce("x", Livello::Attenzione, Instant::now());
+        assert_eq!(testo_notifica(&altra), (altra.titolo.clone(), altra.dettaglio.clone()));
     }
 
     #[test]

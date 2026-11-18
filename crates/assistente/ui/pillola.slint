@@ -78,6 +78,8 @@ export component Pillola inherits Window {
     // « +N»: quanti altri bloccanti aspettano oltre a quello mostrato (vuoto se nessuno). Sta dopo
     // il messaggio, fuori dal testo che si taglia.
     in property <string> altri;
+    // La voce che la pillola sta chiamando (la rendono i pulsanti).
+    in property <string> voce-id;
     // Falso mentre la pillola è nascosta (pannello aperto): fermi anche i timer.
     in property <bool> attiva: true;
     // Come mostra le voci «In attesa» (vedi `attenzione::aspetto_pillola`): a riposo, col
@@ -131,7 +133,9 @@ export component Pillola inherits Window {
     // La rotella sopra la pillola: lo spostamento in pixel logici (in su = positivo).
     callback rotella(length);
     // Clic su un pulsante della pillola allargata: l'id del pulsante.
-    callback azione(string);
+    // (voce, pulsante): la voce è quella resa con i pulsanti (`voce-id`); Rust ignora il clic
+    // se la pillola nel frattempo mostra altro.
+    callback azione(string, string);
 
     // Geometria: la finestra è grande quanto la pillola più grande (la bloccante) più il margine
     // dell'aura tutt'intorno, e la pillola sta al centro, attaccata in alto: cambiando aspetto la
@@ -579,7 +583,7 @@ export component Pillola inherits Window {
                 focalizzabile: false;
                 anello: false;
                 delicato: p.delicato;
-                premuto => { root.azione(p.id); }
+                premuto => { root.azione(voce-id, p.id); }
             }
         }
     }

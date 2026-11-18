@@ -849,6 +849,8 @@ pub struct Ponte {
     /// I permessi che Claude Code ha chiesto e aspettano una risposta (M3, Task 5): numero del
     /// permesso → chi l'ha chiesto e dove mandare la decisione. Al più 16.
     claude_permessi: RefCell<HashMap<u64, con_claude::Pendente>>,
+    /// Da quando «Consenti» risponde dopo un cambio della voce mostrata.
+    claude_armamento: RefCell<con_claude::Armamento>,
     sveglia_claude: slint::Timer,
     timer_attivita: slint::Timer,
     /// Impostazioni › Isola: i modelli dei selettori e i cataloghi da cui vengono (un indice
@@ -956,6 +958,7 @@ pub fn collega(
         claude_sessioni: RefCell::new(Sessioni::new()),
         claude_ascolto: RefCell::new(None),
         claude_permessi: RefCell::new(HashMap::new()),
+        claude_armamento: RefCell::new(con_claude::Armamento::nuovo()),
         sveglia_claude: slint::Timer::default(),
         timer_attivita: slint::Timer::default(),
         isola: RefCell::new(Isola::default()),
@@ -989,18 +992,17 @@ pub fn collega(
     PONTE.with(|p| *p.borrow_mut() = Some(ponte.clone()));
     // I pulsanti della pillola allargata agiscono sulla voce che sta chiamando; «Apri» (un
     // consenso col testo tagliato) apre il pannello su quella voce, come un clic sulla pillola.
-    pillola.on_azione(|pulsante| {
+    pillola.on_azione(|voce, pulsante| {
         if pulsante == PULSANTE_APRI {
             if let Some(pl) = self::ponte().and_then(|p| p.pillola.upgrade()) {
                 pl.invoke_cliccata();
             }
             return;
         }
+        // `voce`: quella che la pillola aveva resa insieme ai pulsanti; se nel frattempo è
+        // cambiata il clic non vale (e non finisce su un'altra richiesta).
         if let Some(p) = self::ponte() {
-            let voce = p.mostrato.borrow().as_ref().and_then(|v| v.voce_allargata().map(str::to_owned));
-            if let Some(voce) = voce {
-                p.azione(&voce, &pulsante);
-            }
+            p.azione_pillola(&voce, &pulsante);
         }
     });
     ponte.aggiorna_casa_offline();
@@ -2255,6 +2257,7 @@ impl Ponte {
                 .collect()
         };
         aggiorna_modello(&self.modello_attese, voci);
+        self.claude_riarma(Instant::now());
         servizi::colora_linea();
         if let Some(p) = self.pannello.borrow().upgrade() {
             // La voce espansa può aver cambiato posto o essere sparita.
