@@ -239,3 +239,69 @@ sessione silenziosa sparisce dopo 30 min; lettura API ogni 3 ore; soglie spesa 8
 testo della riga nella barra di stato; nessun `PostToolUse`; permessi multipli in coda nella pillola (uno alla
 volta, «+N»), tutti nel pannello; limite 16 connessioni; codice degli hook in variabile d'ambiente come
 compromesso dichiarato (§5).
+
+## 10. Revisione del 18/11/2026: canale protetto (sostituisce il trasporto HTTP)
+
+**Perché.** Una revisione di sicurezza sul Task 7, verificata sulla doc ufficiale degli hook, ha trovato un buco
+di progetto. La risposta di un hook `http` è letta con lo stesso schema dei `command`: chi risponde può dire
+`permissionDecision: "allow"` a un `PreToolUse`, `allow` a un `PermissionRequest`, `decision: "block"` con un
+motivo a uno `Stop` o `additionalContext` a un `UserPromptSubmit` (istruzioni nascoste a Claude). Gli hook HTTP non
+hanno TLS né verifica del server. Se isola è chiusa o bloccata, **qualunque processo locale** (anche di un altro
+utente) può mettersi in ascolto su `127.0.0.1:<porta>`, ricevere il codice in chiaro e rispondere al posto di
+isola; con isola accesa, su Windows una porta senza `SO_EXCLUSIVEADDRUSE` si può perfino rubare. Il §5 copriva
+«un programma che occupa la porta» solo dal lato di isola, non dal lato di Claude Code. **Paolo ha scelto il
+canale protetto** (18/11).
+
+**Come funziona ora.**
+- **Aiutante `isola-hook.exe`**: un piccolo eseguibile (binario del crate `claude-hook`, senza Slint, ~1 MB)
+  accanto a `assistente.exe`. Claude Code lo lancia come hook `command` in **forma exec**
+  (`"command": "<percorso>\isola-hook.exe", "args": ["evento"]`): nessuna shell, nessun problema di virgolette o
+  spazi nel percorso.
+- **Tubo con nome di Windows** `\.\pipe\isola-claude-<SID dell'utente>`, creato da isola con:
+  descrittore di sicurezza che ammette **solo l'utente corrente**; `FILE_FLAG_FIRST_PIPE_INSTANCE` (se il nome è
+  già preso da altri, isola **non** si collega e mostra *attenzione* «Collegamento con Claude Code non
+  disponibile: il canale è occupato da un altro programma»); `PIPE_REJECT_REMOTE_CLIENTS`; al più 16 istanze.
+- **L'aiutante verifica il server prima di mandare qualsiasi cosa**: `GetNamedPipeServerProcessId` →
+  percorso dell'immagine del processo (`QueryFullProcessImageNameW`) che deve essere **esattamente**
+  `assistente.exe` nella stessa cartella dell'aiutante (confronto su percorsi canonici, senza distinzione di
+  maiuscole). Se il tubo manca o il server non è isola, l'aiutante **esce in silenzio** (codice 0, nessun output):
+  Claude Code prosegue come se l'hook non ci fosse e i permessi li decide il terminale.
+- **Isola verifica il cliente** allo stesso modo (`GetNamedPipeClientProcessId` → deve essere l'aiutante della
+  stessa cartella): non è una difesa contro malware dell'utente (fuori portata, §5), ma toglie di mezzo
+  i falsi eventi di programmi qualunque.
+- **Minimizzazione nell'aiutante**: legge al più 256 KB da stdin, estrae solo i campi di §6.4/§6.3
+  (`session_id` validato, `hook_event_name`, ultimo nome della cartella, `tool_name`, `notification_type`,
+  `error`, riassunto del permesso ≤ 2000 caratteri) e manda **solo quelli** (≤ 64 KB). Isola li riconvalida.
+- **Uscita dell'aiutante**: **solo** per `PermissionRequest`, e solo con una risposta di isola, stampa esattamente
+  `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"|"deny",…}}}`. Per
+  ogni altro evento non stampa nulla: nel codice dell'aiutante non esiste un modo di emettere
+  `permissionDecision`, `additionalContext` o `decision: "block"`.
+- **Eventi**: `PreToolUse` e `PermissionRequest` **sincroni** (il `PreToolUse` deve arrivare prima del suo
+  permesso, per la regola di chiusura di §6.3; l'aiutante non stampa nulla ed esce entro 300 ms);
+  `PermissionRequest` con `timeout: 120` e attesa dell'aiutante ≤ 115 s; `UserPromptSubmit`, `Notification`,
+  `Stop`, `StopFailure`, `SessionEnd` con **`"async": true`** (Claude Code non aspetta e non legge l'output).
+- **Barra di stato**: `statusLine` = `<percorso corto>/isola-hook.exe barra` (forma shell: serve il percorso 8.3
+  se ci sono spazi, D5); l'aiutante stampa la riga e manda `DatiBarra` per il tubo. Il ramo
+  `assistente --barra-stato` del Task 6 si toglie.
+- **Si tolgono**: il codice degli hook, la voce `isola:claude-hook` del portachiavi, la variabile
+  `ISOLA_HOOK_TOKEN` in `HKCU\Environment` (e il «compromesso dichiarato» di §5), «Rigenera il codice», la porta
+  in configurazione, l'ascoltatore TCP. Restano: tratto `Gestore`, limiti (16 istanze, 2 s di lettura), numero di
+  sequenza all'accettazione, sessioni, permessi nella pillola con tutte le loro protezioni.
+- **«Porta davanti» (§6.6)**: il PID del cliente è l'aiutante; il terminale si trova risalendo i genitori
+  (aiutante → `claude.exe` → terminale), senza tabella TCP.
+- **Fuori da Windows**: niente tubo; la sezione Claude dice «Disponibile solo su Windows». La CI compila gli stub.
+
+**Minacce aggiornate (sostituiscono le righe HTTP di §5).**
+
+| Minaccia | Difesa |
+|---|---|
+| Altre macchine in rete | `PIPE_REJECT_REMOTE_CLIENTS`; nessuna porta di rete aperta |
+| Pagina web nel browser | Un browser non può aprire un tubo con nome: superficie eliminata |
+| Programma che si finge isola (isola chiusa, o tubo creato prima) | L'aiutante verifica il percorso dell'eseguibile del server; se non è `assistente.exe` accanto a lui non manda nulla e non stampa nulla |
+| Programma che si finge Claude Code (falsi eventi) | Tubo riservato all'utente; isola verifica che il cliente sia l'aiutante della sua cartella; dati riconvalidati |
+| Risposta che comanda Claude | L'aiutante sa emettere solo la decisione di un `PermissionRequest`, solo su risposta di isola verificata; gli eventi asincroni non hanno output letto |
+| Malware che gira come Paolo | Fuori portata (invariato) |
+
+**Da verificare dal vivo con Paolo** (come lo spike del 18/11): forma exec e `async` su Windows; cosa succede al
+processo dell'aiutante se Paolo risponde nel terminale (ucciso? → isola vede la chiusura del tubo); tempi
+dell'aiutante (obiettivo: mediana < 30 ms per `PreToolUse`, < 50 ms per la barra).
