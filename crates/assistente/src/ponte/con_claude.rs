@@ -16,7 +16,7 @@ use crate::LivelloUi;
 use casa_core::diagnosi::{Contatore, Diagnosi};
 use claude_hook::evento::{EventoHook, TipoEvento};
 use claude_hook::sessioni::Cambio;
-use claude_hook::tubo::NOME_AIUTANTE;
+use claude_hook::tubo::{NOME_AIUTANTE, SUFFISSO_PROVA};
 use claude_hook::{DatiBarra, Limite};
 use claude_hook::{
     avvia, nome_tubo, Arrivo, AttesaPermesso, ConfigTubo, Contenuto, Decisione, ErroreAvvio, Gestore, ATTESA_MASSIMA,
@@ -81,16 +81,21 @@ fn cliente_atteso(exe: &Path, in_prova: bool, variabile: Option<OsString>) -> Pa
     }
 }
 
-/// La configurazione vera del tubo: il nome dell'utente e l'aiutante accanto a questo programma.
-/// `None` se il nome non si può calcolare (SID dell'utente illeggibile).
+/// La configurazione vera del tubo: il nome dell'utente (in prova con `-prova`) e l'aiutante
+/// accanto a questo programma. `None` se il nome non si può calcolare (SID dell'utente illeggibile).
 pub fn config_tubo() -> Option<ConfigTubo> {
     let in_prova = std::env::var_os(crate::avvio::VAR_CARTELLA).is_some_and(|v| !v.is_empty());
     let exe = std::env::current_exe().ok()?;
-    Some(ConfigTubo {
-        nome: nome_tubo().ok()?,
-        cliente_atteso: cliente_atteso(&exe, in_prova, std::env::var_os(VARIABILE_AIUTANTE)),
+    Some(config_tubo_da(&nome_tubo().ok()?, &exe, in_prova, std::env::var_os(VARIABILE_AIUTANTE)))
+}
+
+/// `config_tubo` con nome, eseguibile, «in prova» e variabile passati.
+fn config_tubo_da(nome: &str, exe: &Path, in_prova: bool, variabile: Option<OsString>) -> ConfigTubo {
+    ConfigTubo {
+        nome: if in_prova { format!("{nome}{SUFFISSO_PROVA}") } else { nome.to_owned() },
+        cliente_atteso: cliente_atteso(exe, in_prova, variabile),
         attesa_massima: ATTESA_MASSIMA,
-    })
+    }
 }
 
 /// Chiamata da `main` dopo `ponte::collega`: se Claude Code è collegato, si apre il tubo.
@@ -262,6 +267,20 @@ impl Gestore for GestoreIsola {
     /// rifiuti arrivano al registro diagnostico, senza dati della richiesta.
     fn rifiutata(&self) {
         self.diagnosi.conta(Contatore::claude_rifiutate);
+    }
+
+    /// Il tubo non riesce più a creare istanze (nome preso da altri, risorse finite): il servitore
+    /// ha smesso. Lo si chiude davvero, i permessi in attesa si chiudono e compare la voce
+    /// «Collegamento con Claude Code non disponibile».
+    fn canale_perso(&self) {
+        let _ = slint::invoke_from_event_loop(|| {
+            if let Some(p) = ponte() {
+                let servitore = p.claude_ascolto.borrow_mut().take();
+                drop(servitore);
+                p.claude_chiudi_tutti();
+                voce_non_disponibile(&p, ErroreAvvio::CanaleOccupato);
+            }
+        });
     }
 
     /// La barra di stato (già riconvalidata dal tubo): al thread dell'interfaccia va solo
@@ -745,7 +764,8 @@ mod test {
     }
 
     /// Una configurazione con un nome di tubo unico (mai quello vero) che accetta questo processo.
-    pub(crate) fn config_di_prova() -> ConfigTubo {
+    #[cfg(windows)]
+    fn config_di_prova() -> ConfigTubo {
         use std::sync::atomic::AtomicU64;
         static N: AtomicU64 = AtomicU64::new(0);
         let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
@@ -766,6 +786,12 @@ mod test {
         assert_eq!(cliente_atteso(exe, false, v.clone()), accanto);
         assert_eq!(cliente_atteso(exe, true, v), Path::new("/prova/sessioni_finte.exe"));
         assert_eq!(cliente_atteso(exe, true, Some(OsString::new())), accanto);
+        // In prova il tubo ha un nome suo; fuori, quello dell'utente.
+        let vero = config_tubo_da(r"\\.\pipe\isola-claude-S-1-5-21-1", exe, false, None);
+        assert_eq!(vero.nome, r"\\.\pipe\isola-claude-S-1-5-21-1");
+        let prova = config_tubo_da(r"\\.\pipe\isola-claude-S-1-5-21-1", exe, true, None);
+        assert_eq!(prova.nome, r"\\.\pipe\isola-claude-S-1-5-21-1-prova");
+        assert_eq!(prova.cliente_atteso, accanto);
         if cfg!(windows) {
             let c = config_tubo().expect("configurazione vera");
             assert!(c.nome.starts_with(r"\\.\pipe\isola-claude-S-1-"), "{}", c.nome);

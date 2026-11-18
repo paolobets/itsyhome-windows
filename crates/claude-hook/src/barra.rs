@@ -444,7 +444,10 @@ mod test {
         .unwrap();
         let durata = t.elapsed();
         assert!(String::from_utf8(uscita).unwrap().starts_with("Opus 5.5"));
-        assert!(durata < Duration::from_millis(50), "{durata:?}");
+        // Su Windows (dove gira davvero) il limite della barra; altrove senza tubo conta solo che
+        // finisca presto (le macchine della CI hanno tempi variabili).
+        let limite = if cfg!(windows) { 50 } else { 500 };
+        assert!(durata < Duration::from_millis(limite), "{durata:?}");
     }
 
     /// Un gestore che tiene le barre ricevute.

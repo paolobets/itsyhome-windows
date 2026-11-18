@@ -9,14 +9,13 @@
 //! ancora il codice e la variabile lasciati dal Task 7, se ci sono. Le voci scritte in
 //! `settings.json` le rifà il Task 7B (aiutante `isola-hook.exe` al posto degli hook HTTP).
 
-use super::{avvia_con, SEGRETO_HOOK};
+use super::SEGRETO_HOOK;
 use crate::attenzione::{Fonte, Livello, Pulsante, Voce, PULSANTE_IMPOSTAZIONI};
 use crate::claude::ID_AGGIORNA;
 use crate::ponte::Ponte;
 use crate::sistema::ambiente_utente::{AmbienteUtente, VARIABILE};
 use crate::FinestraImpostazioni;
 use claude_hook::installa::{self, Anteprima, Piano, StatoInstallazione, VERSIONE_VOCI};
-use claude_hook::ConfigTubo;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -31,9 +30,6 @@ pub struct Contesto {
     pub in_prova: bool,
     /// Il percorso corto 8.3 di un file (sui percorsi con spazi); `None` se non c'è.
     pub corto: fn(&Path) -> Option<PathBuf>,
-    /// Il tubo da aprire dopo la conferma (`None`: nessun tubo, es. SID illeggibile). I test ne
-    /// usano uno con un nome unico.
-    pub tubo: Option<ConfigTubo>,
 }
 
 impl Contesto {
@@ -58,7 +54,6 @@ impl Contesto {
             exe: std::env::current_exe().unwrap_or_default(),
             in_prova,
             corto: crate::sistema::ambiente_utente::percorso_corto,
-            tubo: super::config_tubo(),
         }
     }
 
@@ -69,6 +64,9 @@ impl Contesto {
         Ok(())
     }
 }
+
+/// Il messaggio di «Scrivi in settings.json» finché il Task 7B non rifà le voci.
+pub const COLLEGAMENTO_IN_AGGIORNAMENTO: &str = "Collegamento in aggiornamento: disponibile nella prossima versione";
 
 /// Che cosa l'utente vede prima di confermare.
 pub struct Preparazione {
@@ -137,27 +135,14 @@ impl Ponte {
         Ok(Preparazione { anteprima, file: cx.file.clone(), barra_non_scrivibile })
     }
 
-    /// L'utente ha letto l'anteprima e ha confermato: ora si scrive. Prima il file, poi la
-    /// configurazione, poi il tubo. Nessun segreto: né portachiavi né variabili.
+    /// «Scrivi in settings.json». **Fino al Task 7B non scrive nulla**: le voci che `installa`
+    /// sa ancora scrivere sono gli hook HTTP del Task 7 (porta senza nessuno in ascolto, cioè il
+    /// buco che il canale protetto chiude) e la barra `assistente --barra-stato`, che non esiste più.
+    /// Si risponde con un errore e l'anteprima preparata si scarta.
     pub fn conferma_collegamento(&self, cx: &Contesto) -> Result<(), String> {
         cx.controlla()?;
-        let piano = self
-            .claude_preparato
-            .borrow_mut()
-            .take()
-            .ok_or_else(|| "Prima premi «Collega Claude Code» e leggi che cosa verrà scritto.".to_owned())?;
-        // Il file si rilegge ora: se nel frattempo è diventato illeggibile, non si scrive niente.
-        let v = installa::leggi(&cx.file).map_err(|e| e.to_string())?;
-        installa::scrivi_sicuro(&cx.file, &installa::unisci(v, &piano)).map_err(|e| e.to_string())?;
-        self.casa.aggiorna_config(|c| {
-            c.claude.porta = Some(piano.porta);
-            c.claude.collegato = true;
-        });
-        self.togli_voce(ID_AGGIORNA);
-        if let Some(tubo) = cx.tubo.clone() {
-            avvia_con(self, tubo);
-        }
-        Ok(())
+        *self.claude_preparato.borrow_mut() = None;
+        Err(COLLEGAMENTO_IN_AGGIORNAMENTO.to_owned())
     }
 
     /// Toglie il collegamento: via le nostre voci da `settings.json` (solo se ce ne sono; il resto
@@ -351,7 +336,6 @@ mod test {
             exe: "C:/x/assistente.exe".into(),
             in_prova,
             corto: |_| None,
-            tubo: Some(super::super::test::config_di_prova()),
         }
     }
 
@@ -362,50 +346,64 @@ mod test {
 
     const ALTRO: &str = "{\n  \"model\": \"opus\",\n  \"permissions\": { \"allow\": [\"Bash(ls)\"] }\n}\n";
 
-    fn ferma_ascolto(p: &Ponte) {
-        let a = p.claude_ascolto.borrow_mut().take();
-        drop(a);
+    /// Le voci come le avrebbe scritte «Collega» (per provare scollega e il controllo all'avvio
+    /// senza la conferma, ferma fino al Task 7B).
+    fn collegato_a_mano(p: &Ponte, cx: &Contesto) -> u16 {
+        let porta = 4321;
+        let v = installa::leggi(&cx.file).unwrap();
+        installa::scrivi_sicuro(&cx.file, &installa::unisci(v, &p.piano_per(cx, porta))).unwrap();
+        p.casa.aggiorna_config(|c| {
+            c.claude.collegato = true;
+            c.claude.porta = Some(porta);
+        });
+        porta
     }
 
     #[test]
-    fn collega_e_scollega() {
+    fn conferma_non_scrive_nulla_fino_al_7b() {
+        for in_prova in [false, true] {
+            let (_s, p, _pillola, d) = ponte_di_prova();
+            let cx = contesto(&d, in_prova);
+            let amb = AmbienteFinto::default();
+            scrivi_file(&cx, ALTRO);
+            // L'anteprima si legge ancora (sola lettura).
+            let prep = p.prepara_collegamento(&cx).unwrap();
+            assert!(prep.anteprima.testo.contains("PermissionRequest"));
+            let esito = p.conferma_collegamento(&cx);
+            assert_eq!(esito, Err(COLLEGAMENTO_IN_AGGIORNAMENTO.to_owned()));
+            assert_eq!(std::fs::read_to_string(&cx.file).unwrap(), ALTRO, "file intatto");
+            assert!(!cx.file.with_extension("json.isola-bak").exists(), "nessuna copia di riserva");
+            assert!(!p.casa.con_config(|c| c.claude.collegato));
+            assert_eq!(p.casa.con_config(|c| c.claude.porta), None);
+            assert!(p.claude_ascolto.borrow().is_none(), "nessun tubo");
+            assert!(p.claude_preparato.borrow().is_none(), "l'anteprima è scartata");
+            assert_eq!(amb.scritture.get(), 0);
+            assert_eq!(p.segreti.leggi(SEGRETO_HOOK).unwrap(), None);
+            // Senza file: nemmeno lo si crea.
+            let (_s2, p2, _pillola2, d2) = ponte_di_prova();
+            let cx2 = contesto(&d2, in_prova);
+            p2.prepara_collegamento(&cx2).unwrap();
+            assert!(p2.conferma_collegamento(&cx2).is_err());
+            assert!(!cx2.file.exists());
+        }
+    }
+
+    #[test]
+    fn scollega_toglie_le_voci_e_lascia_il_resto() {
         let (_s, p, _pillola, d) = ponte_di_prova();
         let cx = contesto(&d, false);
         let amb = AmbienteFinto::default();
         scrivi_file(&cx, ALTRO);
-
-        // L'anteprima non scrive niente: né il file, né la variabile, né il portachiavi.
-        let prep = p.prepara_collegamento(&cx).unwrap();
-        assert!(prep.anteprima.testo.contains("PermissionRequest"));
-        assert_eq!(std::fs::read_to_string(&cx.file).unwrap(), ALTRO);
-        assert_eq!(amb.leggi(VARIABILE), None);
-        assert_eq!(amb.scritture.get(), 0);
-        assert_eq!(p.segreti.leggi(SEGRETO_HOOK).unwrap(), None);
-        assert!(!p.casa.con_config(|c| c.claude.collegato));
-
-        p.conferma_collegamento(&cx).unwrap();
-        let scritto = std::fs::read_to_string(&cx.file).unwrap();
-        // Nessun segreto: né variabile né portachiavi.
-        assert_eq!(amb.leggi(VARIABILE), None);
-        assert_eq!(amb.scritture.get(), 0);
-        assert_eq!(p.segreti.leggi(SEGRETO_HOOK).unwrap(), None);
-        assert!(scritto.contains("\"model\": \"opus\"") && scritto.contains("Bash(ls)"), "il resto resta");
-        let (collegato, porta) = p.casa.con_config(|c| (c.claude.collegato, c.claude.porta));
-        assert!(collegato);
-        let porta = porta.expect("porta salvata");
+        let porta = collegato_a_mano(&p, &cx);
         assert!(matches!(installa::nostre(&installa::leggi(&cx.file).unwrap()), StatoInstallazione::Presente { porta: q, .. } if q == porta));
-        assert_eq!(p.claude_ascolto.borrow().is_some(), cfg!(windows), "il tubo è aperto");
         assert!(!p.collegamento_da_aggiornare(&cx));
-
         p.scollega(&cx, &amb).unwrap();
         let dopo = std::fs::read_to_string(&cx.file).unwrap();
         assert_eq!(installa::nostre(&installa::leggi(&cx.file).unwrap()), StatoInstallazione::Assente);
         assert!(dopo.contains("\"model\": \"opus\"") && dopo.contains("Bash(ls)"), "il resto resta: {dopo}");
         assert!(!dopo.contains("127.0.0.1") && !dopo.contains("hooks"), "le voci di isola sono via: {dopo}");
-        assert_eq!(amb.leggi(VARIABILE), None);
-        assert_eq!(p.segreti.leggi(SEGRETO_HOOK).unwrap(), None);
         assert!(!p.casa.con_config(|c| c.claude.collegato));
-        assert!(p.claude_ascolto.borrow().is_none(), "non ascolta più");
+        assert!(p.claude_ascolto.borrow().is_none());
     }
 
     #[test]
@@ -413,12 +411,10 @@ mod test {
         let (_s, p, _pillola, d) = ponte_di_prova();
         let cx = contesto(&d, false);
         let amb = AmbienteFinto::default();
-        p.prepara_collegamento(&cx).unwrap();
-        p.conferma_collegamento(&cx).unwrap();
-        ferma_ascolto(&p);
+        scrivi_file(&cx, "{}");
+        collegato_a_mano(&p, &cx);
         p.controlla_all_avvio(&cx);
         assert!(!p.attese.borrow().contiene(ID_AGGIORNA), "tutto a posto: nessuna voce");
-
         // Il file ora dice un'altra porta: voce informativa, file e variabile intatti.
         let altra = Piano { porta: 1234, comando_barra: None };
         let v = installa::unisci(installa::togli(installa::leggi(&cx.file).unwrap()), &altra);
@@ -482,22 +478,6 @@ mod test {
         p.scollega(&cx, &amb).unwrap();
         assert_eq!(p.segreti.leggi(SEGRETO_HOOK).unwrap(), None);
         assert_eq!(amb.leggi(VARIABILE), None);
-    }
-
-    #[test]
-    fn in_prova_il_portachiavi_vero_non_si_tocca() {
-        let (_s, p, _pillola, d) = ponte_di_prova();
-        let cx = contesto(&d, true);
-        let amb = AmbienteFinto::default();
-        p.prepara_collegamento(&cx).unwrap();
-        p.conferma_collegamento(&cx).unwrap();
-        assert_eq!(amb.leggi(VARIABILE), None);
-        assert_eq!(p.segreti.leggi(SEGRETO_HOOK).unwrap(), None, "il portachiavi no");
-        assert_eq!(p.claude_ascolto.borrow().is_some(), cfg!(windows));
-        ferma_ascolto(&p);
-        p.scollega(&cx, &amb).unwrap();
-        assert_eq!(amb.leggi(VARIABILE), None);
-        ferma_ascolto(&p);
     }
 
     #[test]

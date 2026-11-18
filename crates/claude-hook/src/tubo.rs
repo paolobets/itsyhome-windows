@@ -39,14 +39,18 @@
 //!   auto-relativo e si libera con `LocalFree`.
 //!
 //! ## Il descrittore e le istanze
-//! - SDDL `D:P(A;;GA;;;<SID dell'utente>)`: DACL protetta (nessuna ereditarietà) con un solo ACE
-//!   che dà tutto all'utente corrente; nessun altro utente, né SYSTEM né Administrators né
-//!   Everyone. Senza etichetta d'integrità esplicita il tubo vale «media, no write up»: un
-//!   processo a bassa integrità (sandbox di un browser) non lo apre.
+//! - SDDL `O:<SID>D:P(A;;GA;;;<SID>)` (SID dell'utente): proprietario esplicito, che l'aiutante
+//!   rilegge sulla sua maniglia prima di scrivere (vedi `verifica`); DACL protetta (nessuna
+//!   ereditarietà) con un solo ACE che dà tutto all'utente corrente; nessun altro utente, né SYSTEM
+//!   né Administrators né Everyone. Senza etichetta d'integrità esplicita il tubo vale «media, no
+//!   write up»: un processo a bassa integrità (sandbox di un browser) non lo apre.
 //! - Prima istanza con `FILE_FLAG_FIRST_PIPE_INSTANCE`: se il nome è già preso, `CanaleOccupato`.
 //! - 16 connessioni servite insieme (come il Task 2); `nMaxInstances` = 18 = le 16, quella appena
-//!   accettata e giudicata, e quella nuova in ascolto, creata **prima** di lasciare la precedente:
-//!   finché isola è accesa il nome non resta mai libero.
+//!   accettata e giudicata, e quella nuova in ascolto, creata **prima** di lasciare la precedente.
+//!   Un'istanza in ascolto andata in errore si scollega e si riusa (non si chiude): finché isola
+//!   è accesa e le istanze si creano, il nome non resta libero. Se la creazione fallisce
+//!   `FALLIMENTI_MASSIMI` volte di fila, il servitore smette e lo dice al gestore (`canale_perso`)
+//!   invece di riprovare in silenzio.
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -67,6 +71,10 @@ pub const CONNESSIONI_MASSIME: usize = 16;
 pub const NOME_SERVER: &str = "assistente.exe";
 /// L'aiutante: isola accetta solo lui, nella sua stessa cartella.
 pub const NOME_AIUTANTE: &str = "isola-hook.exe";
+/// In prova (`ITSYHOME_ASSISTENTE_DIR`) isola serve `nome_tubo()` con questo suffisso: un'isola di
+/// prova e quella vera non si contendono il nome. L'aiutante vero usa sempre il nome senza
+/// suffisso; per parlare con un'isola di prova serve l'esempio `aiutante_prova`.
+pub const SUFFISSO_PROVA: &str = "-prova";
 /// Il prefisso di ogni nome di tubo locale.
 const PREFISSO_TUBO: &str = r"\\.\pipe\";
 
@@ -91,6 +99,10 @@ pub struct Arrivo {
     /// Il numero d'ordine della connessione, preso all'accettazione (prima di leggere): cresce a
     /// ogni connessione accettata. Dice a chi riceve su thread diversi quale è arrivato prima.
     pub sequenza: u64,
+    /// Con `pid_mittente`: l'aiutante e i suoi genitori (PID e nome dell'eseguibile, al più 6:
+    /// aiutante → `claude.exe` → terminale…), presi mentre l'aiutante è ancora collegato. Per
+    /// portare davanti il terminale (Task 10). Vuota altrimenti.
+    pub catena_mittente: Vec<(u32, String)>,
 }
 
 impl std::fmt::Debug for Arrivo {
@@ -104,6 +116,7 @@ impl std::fmt::Debug for Arrivo {
             .field("tipo", &tipo)
             .field("pid_mittente", &self.pid_mittente)
             .field("sequenza", &self.sequenza)
+            .field("catena_mittente", &self.catena_mittente.len())
             .finish()
     }
 }
@@ -136,6 +149,9 @@ pub trait Gestore: Send + Sync + 'static {
     /// Una connessione è stata rifiutata (stesso conteggio di `Servitore::rifiutate`). Nessun dato;
     /// può arrivare da qualunque thread di connessione.
     fn rifiutata(&self) {}
+    /// Il servitore non riesce più a creare istanze del tubo e ha smesso: isola non riceve più
+    /// nulla finché non riapre il canale. Arriva dal thread di ascolto, una volta.
+    fn canale_perso(&self) {}
 }
 
 /// Come servire.
@@ -236,6 +252,11 @@ pub fn collega(d: &Destinazione, attesa: Duration) -> Option<Canale> {
     #[cfg(windows)]
     {
         let h = sys::apri_cliente(&d.nome, attesa)?;
+        // 1. Il proprietario dell'oggetto tubo (fissato dal kernel) è l'utente corrente.
+        if !crate::verifica::tubo_dell_utente(h.0) {
+            return None;
+        }
+        // 2. Il processo server: stesso utente, integrità almeno media, esattamente `server_atteso`.
         let immagine = crate::verifica::immagine_server(h.0)?;
         crate::verifica::stesso_file(&immagine, &d.server_atteso).then_some(Canale { h })
     }
@@ -325,8 +346,9 @@ pub(crate) mod sys {
         OPEN_EXISTING, PIPE_ACCESS_DUPLEX, SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT,
     };
     use windows_sys::Win32::System::Pipes::{
-        ConnectNamedPipe, CreateNamedPipeW, PeekNamedPipe, SetNamedPipeHandleState, WaitNamedPipeW,
-        PIPE_READMODE_MESSAGE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_MESSAGE, PIPE_WAIT,
+        ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PeekNamedPipe,
+        SetNamedPipeHandleState, WaitNamedPipeW, PIPE_READMODE_MESSAGE, PIPE_REJECT_REMOTE_CLIENTS,
+        PIPE_TYPE_MESSAGE, PIPE_WAIT,
     };
     use windows_sys::Win32::System::Threading::{
         CreateEventW, SetEvent, WaitForMultipleObjects, INFINITE,
@@ -401,7 +423,7 @@ pub(crate) mod sys {
 
     /// L'SDDL del tubo: DACL protetta, un solo ACE con tutti i diritti al SID dell'utente.
     pub fn sddl_solo_utente(sid: &str) -> String {
-        format!("D:P(A;;GA;;;{sid})")
+        format!("O:{sid}D:P(A;;GA;;;{sid})")
     }
 
     pub fn descrittore_solo_utente() -> Result<Descrittore, String> {
@@ -589,6 +611,12 @@ pub(crate) mod sys {
         completa(h, &ov, avviata, Some(tempo), fermo).is_ok_and(|n| n as usize == dati.len())
     }
 
+    /// Scollega l'istanza dal cliente (andato o in errore) perché torni in ascolto.
+    pub fn scollega(h: &Maniglia) {
+        // SAFETY: maniglia valida del lato server.
+        unsafe { DisconnectNamedPipe(h.0) };
+    }
+
     /// `true` se l'altro capo ha chiuso (o il tubo non è più usabile).
     pub fn chiuso(h: &Maniglia) -> bool {
         let mut disponibili = 0u32;
@@ -761,14 +789,21 @@ mod server {
 
     fn accetta(prima: Maniglia, nome: Vec<u16>, d: Descrittore, ctx: Arc<Contesto>) {
         let mut ascolto = Some(prima);
+        // Errori di fila (creazione di un'istanza o attesa di un cliente); si azzera a ogni cliente.
+        let mut fallimenti = 0u32;
         while !ctx.fermato() {
+            if fallimenti >= FALLIMENTI_MASSIMI {
+                // Niente giri a vuoto senza fine: si smette e lo si dice.
+                ctx.gestore.canale_perso();
+                break;
+            }
             let h = match ascolto.take() {
                 Some(h) => h,
                 None => match sys::crea_istanza(&nome, false, &d) {
                     Ok(h) => h,
                     Err(_) => {
-                        // Risorse finite o tubo pieno: un attimo di respiro, non un giro a vuoto.
-                        if ctx.fermo_ev.attendi(Duration::from_millis(10)) {
+                        fallimenti += 1;
+                        if ctx.fermo_ev.attendi(RESPIRO) {
                             break;
                         }
                         continue;
@@ -778,14 +813,17 @@ mod server {
             match sys::connetti(&h, &ctx.fermo_ev) {
                 Collegamento::Fermo => break,
                 Collegamento::Errore => {
-                    // Un cliente arrivato e già sparito: l'istanza si ricrea.
-                    drop(h);
-                    if ctx.fermo_ev.attendi(Duration::from_millis(10)) {
+                    // Un cliente arrivato e già sparito: la stessa istanza si scollega e torna in
+                    // ascolto, così il nome non resta mai senza istanze.
+                    sys::scollega(&h);
+                    ascolto = Some(h);
+                    fallimenti += 1;
+                    if ctx.fermo_ev.attendi(RESPIRO) {
                         break;
                     }
                     continue;
                 }
-                Collegamento::Collegato => {}
+                Collegamento::Collegato => fallimenti = 0,
             }
             if ctx.fermato() {
                 break;
@@ -818,6 +856,11 @@ mod server {
             }
         }
     }
+
+    /// Errori di fila dopo cui il servitore smette (`Gestore::canale_perso`): circa mezzo secondo.
+    const FALLIMENTI_MASSIMI: u32 = 50;
+    /// La pausa fra due tentativi dopo un errore.
+    const RESPIRO: Duration = Duration::from_millis(10);
 
     fn servi(h: Maniglia, ctx: &Contesto, sequenza: u64) {
         if istruisci(&h, ctx, sequenza).is_err() {
@@ -860,15 +903,21 @@ mod server {
                     contenuto: Contenuto::Barra(d),
                     pid_mittente: None,
                     sequenza,
+                    catena_mittente: Vec::new(),
                 });
             }
             Richiesta::Evento(e) => {
                 let pid_mittente = ctx.sessioni.nuova(&e.sessione).then_some(pid);
+                // La catena si prende ora, prima della risposta: l'aiutante è ancora collegato.
+                let catena_mittente = pid_mittente
+                    .map(verifica::catena_processi)
+                    .unwrap_or_default();
                 let permesso = e.tipo == TipoEvento::PermissionRequest;
                 let arrivo = Arrivo {
                     contenuto: Contenuto::Evento(e),
                     pid_mittente,
                     sequenza,
+                    catena_mittente,
                 };
                 if permesso {
                     attendi_permesso(h, ctx, arrivo);
@@ -984,6 +1033,7 @@ mod test {
             contenuto: Contenuto::Evento(e),
             pid_mittente: Some(7),
             sequenza: 9,
+            catena_mittente: vec![(7, "isola-hook.exe".into()), (5, "claude.exe".into())],
         };
         let d = format!("{a:?}");
         assert!(!d.contains("SEGRET"), "{d}");

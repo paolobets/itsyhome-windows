@@ -3,8 +3,9 @@
 //!
 //! Uso: `cargo run -p claude-hook --example sessioni_finte -- --assistente <percorso di assistente.exe> [--sessioni 3] [--secondi 60]`
 //!
-//! Parla per il tubo protetto come l'aiutante (`aiutante::evento`, `barra::esegui`): verifica che
-//! il server sia l'`assistente.exe` indicato. Isola, dal canto suo, accetta solo il cliente atteso:
+//! Parla per il tubo protetto di un'isola **di prova** (`isola-claude-<SID>-prova`) come
+//! l'aiutante (`aiutante::evento`, `barra::esegui`): verifica che il server sia l'`assistente.exe`
+//! indicato. Isola, dal canto suo, accetta solo il cliente atteso:
 //! avviarla in prova (`ITSYHOME_ASSISTENTE_DIR`) con `ITSYHOME_AIUTANTE_ATTESO` = il percorso di
 //! questo esempio. Per ogni sessione: un prompt all'inizio, un `PreToolUse` ogni 2 s, uno `Stop` ogni
 //! 30 s (seguito da 10 s di pausa e da un nuovo prompt), una barra di stato ogni 5 s, un
@@ -13,7 +14,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use claude_hook::tubo::{nome_tubo, Destinazione};
+use claude_hook::tubo::{nome_tubo, Destinazione, SUFFISSO_PROVA};
 
 const STRUMENTI: [&str; 4] = ["Edit", "Bash", "Read", "Grep"];
 const CARTELLE: [&str; 6] = [
@@ -99,7 +100,7 @@ fn main() {
         std::process::exit(2);
     };
     let nome = match nome_tubo() {
-        Ok(n) => n,
+        Ok(n) => format!("{n}{SUFFISSO_PROVA}"),
         Err(e) => {
             eprintln!("{e}");
             std::process::exit(2);

@@ -394,6 +394,17 @@ fn mittente_solo_alla_prima_richiesta_di_una_sessione() {
     let pid: Vec<Option<u32>> = eventi.iter().map(|e| e.pid_mittente).collect();
     let io = Some(std::process::id());
     assert_eq!(pid, vec![io, None, io]);
+    // Con il PID, la catena dell'aiutante presa mentre era collegato (qui: questo processo e i
+    // suoi genitori); senza PID, nessuna catena.
+    let catene: Vec<&Vec<(u32, String)>> = eventi.iter().map(|e| &e.catena_mittente).collect();
+    assert!(catene[1].is_empty());
+    for c in [catene[0], catene[2]] {
+        assert!(
+            !c.is_empty() && c.len() <= crate::verifica::CATENA_MASSIMA,
+            "{c:?}"
+        );
+        assert_eq!(c[0].0, std::process::id());
+    }
 }
 
 #[test]
@@ -490,6 +501,49 @@ fn drop_ferma_e_libera_il_nome() {
 fn sddl_solo_l_utente() {
     assert_eq!(
         sys::sddl_solo_utente("S-1-5-21-1-2-3-1001"),
-        "D:P(A;;GA;;;S-1-5-21-1-2-3-1001)"
+        "O:S-1-5-21-1-2-3-1001D:P(A;;GA;;;S-1-5-21-1-2-3-1001)"
+    );
+}
+
+/// Il tubo creato ha il proprietario e la DACL attesi, riletti dall'oggetto vero: proprietario =
+/// utente, DACL protetta con un solo ACE per l'utente, nessun Everyone, anonimo, SYSTEM o
+/// Administrators. E l'aiutante, dalla sua maniglia, rilegge lo stesso proprietario.
+#[test]
+fn proprietario_e_dacl_riletti_dal_tubo() {
+    let nome = nome_di_prova();
+    let d = sys::descrittore_solo_utente().unwrap();
+    let h = sys::crea_istanza(&sys::larga(&nome), true, &d).expect("tubo del test");
+    let sid = crate::verifica::sid_utente().unwrap();
+    let sddl = crate::verifica::sddl_del_tubo(h.0).expect("descrittore riletto");
+    assert!(sddl.starts_with(&format!("O:{sid}D:P(")), "{sddl}");
+    assert_eq!(sddl.matches("(A;").count(), 1, "{sddl}");
+    assert!(sddl.ends_with(&format!(";;;{sid})")), "{sddl}");
+    for estraneo in [";WD)", ";AN)", ";SY)", ";BA)", ";BU)", ";AC)"] {
+        assert!(!sddl.contains(estraneo), "{estraneo} in {sddl}");
+    }
+    // Lato cliente: la maniglia aperta come l'aiutante rilegge il proprietario.
+    let c = sys::apri_cliente(&nome, ATTESA_CLIENTE).expect("cliente");
+    assert!(crate::verifica::tubo_dell_utente(c.0));
+}
+
+/// Clienti che si collegano e spariscono subito non lasciano mai il nome libero: dopo la
+/// raffica nessuno può creare la «prima istanza» con lo stesso nome e il servitore risponde.
+#[test]
+fn clienti_che_spariscono_non_liberano_il_nome() {
+    let g = Registro::nuovo(Modo::Subito);
+    let (_s, nome) = avvia_prova(&g, ATTESA_MASSIMA);
+    let d = sys::descrittore_solo_utente().unwrap();
+    for _ in 0..40 {
+        if let Some(c) = sys::apri_cliente(&nome, ATTESA_CLIENTE) {
+            drop(c);
+        }
+        assert!(
+            sys::crea_istanza(&sys::larga(&nome), true, &d).is_err(),
+            "il nome era libero"
+        );
+    }
+    assert_eq!(
+        invia(&nome, &evento("s1", TipoEvento::PreToolUse)),
+        Some(Risposta::Ricevuto)
     );
 }

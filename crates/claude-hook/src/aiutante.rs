@@ -6,7 +6,7 @@
 //! isola verificata, e nasce solo da `messaggio::decisione_json`. Ogni altro caso → `None`: nessun
 //! output, Claude Code prosegue come se l'hook non ci fosse.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::time::{Duration, Instant};
 
 use crate::evento::{evento_da_json, TipoEvento};
@@ -17,6 +17,31 @@ use crate::tubo::{self, Decisione, Destinazione, ATTESA_MASSIMA};
 pub const STDIN_MASSIMO: usize = 256 * 1024;
 /// Tempo totale per un evento che non è un permesso (Claude Code aspetta i `PreToolUse`).
 pub const TEMPO_EVENTO: Duration = Duration::from_millis(300);
+/// Budget totale della barra di stato.
+pub const TEMPO_BARRA: Duration = Duration::from_millis(40);
+
+/// Il corpo di `isola-hook.exe` (e dell'esempio di prova `aiutante_prova`, che cambia solo la
+/// destinazione): `evento` o `barra`, ogni altro comando non fa nulla. È **l'unico punto** in cui
+/// `evento` scrive su stdout, e il testo viene solo da `decisione_json`.
+pub fn principale(
+    comando: Option<&str>,
+    ingresso: impl Read,
+    mut uscita: impl Write,
+    destinazione: Option<&Destinazione>,
+) {
+    match comando {
+        Some("evento") => {
+            if let Some(testo) = evento(ingresso, destinazione) {
+                let _ = uscita.write_all(testo.as_bytes());
+                let _ = uscita.flush();
+            }
+        }
+        Some("barra") => {
+            let _ = crate::barra::esegui(ingresso, uscita, destinazione, TEMPO_BARRA);
+        }
+        _ => {}
+    }
+}
 
 fn resto(inizio: Instant, tempo: Duration) -> Option<Duration> {
     let r = tempo.saturating_sub(inizio.elapsed());
