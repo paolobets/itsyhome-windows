@@ -1314,6 +1314,26 @@ mod accessibilita {
         ))
     }
 
+    /// 18/11, R1-16: dentro la card dispositivo il ritmo è a 4/8: margine di 12, nome a 40 e stato
+    /// a 20 dal fondo; nome e stato non si toccano né toccano l'icona.
+    #[test]
+    fn card_casa_ritmo_4_8() {
+        let (p, _) = pannello_casa();
+        let card = elemento(&p, "Preferita, Spento");
+        let (cp, cs) = (card.absolute_position(), card.size());
+        let figli: Vec<(f32, f32, f32, f32)> = card
+            .query_descendants()
+            .find_all()
+            .into_iter()
+            .filter(|e| e.size().width > 0.0 && e.size().height > 0.0)
+            .map(|e| (e.absolute_position().x - cp.x, e.absolute_position().y - cp.y, e.size().width, e.size().height))
+            .collect();
+        assert!(figli.iter().any(|f| f.0 == 12.0 && f.1 == cs.height - 40.0 && f.2 == cs.width - 24.0), "nome: {figli:?}");
+        assert!(figli.iter().any(|f| f.0 == 12.0 && f.1 == cs.height - 20.0 && f.2 == cs.width - 24.0), "stato: {figli:?}");
+        let icona = figli.iter().find(|f| f.0 == 12.0 && f.2 == 22.0).expect("icona a 12");
+        assert!(icona.1 + icona.3 <= cs.height - 40.0, "l'icona non tocca il nome: {icona:?} in {cs:?}");
+    }
+
     /// 18/11 (Paolo): il clic su «N luci accese» della Panoramica apre la Casa filtrata sulle luci
     /// accese, in entrambi i layout; senza luci accese la riga resta solo una riga.
     #[test]
@@ -3181,6 +3201,33 @@ mod accessibilita {
             elemento(&p, "RETE").accessible_value().as_deref(),
             Some("↓ 999,9 MB/s · ↑ 999,9 MB/s, Wi-Fi, 2 tacche su 3")
         );
+    }
+
+    /// 18/11, R1-15 e R1-16: la vista PC ha un solo stile di etichetta (quelle delle righe, senza
+    /// l'intestazione in tondo sopra) e il ritmo a 4/8: righe alte 40, la rete 28.
+    #[test]
+    fn vista_pc_un_solo_stile_e_ritmo_4_8() {
+        piattaforma_di_prova();
+        let p = pannello_connessioni();
+        assert!(
+            ElementHandle::find_by_element_type_name(&p, "Intestazione").next().is_none(),
+            "niente intestazioni di colonna: un solo stile di etichetta"
+        );
+        let (cpu, ram, disco, gpu) = (elemento(&p, "CPU"), elemento(&p, "RAM"), elemento(&p, "DISCO"), elemento(&p, "GPU"));
+        for (nome, riga) in [("CPU", &cpu), ("RAM", &ram), ("DISCO", &disco), ("GPU", &gpu)] {
+            assert_eq!(riga.size().height, 40.0, "la riga {nome} è alta 40");
+        }
+        assert_eq!(ram.absolute_position().y - cpu.absolute_position().y, 40.0, "passo di 40");
+        assert_eq!(elemento(&p, "RETE").size().height, 28.0);
+        // Il margine laterale è 16: l'etichetta parte 16 px dentro la colonna.
+        let colonna = elemento(&p, "Sistema");
+        let etichetta = cpu
+            .query_descendants()
+            .find_all()
+            .into_iter()
+            .map(|e| e.absolute_position().x - colonna.absolute_position().x)
+            .fold(f32::MAX, f32::min);
+        assert_eq!(etichetta, 16.0, "margine di 16");
     }
 
     /// M2, Task 10: nella vista PC la riga «GPU» (indicatore col valore, barra come la CPU) c'è

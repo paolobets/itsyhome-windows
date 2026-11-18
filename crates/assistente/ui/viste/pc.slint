@@ -3,7 +3,8 @@
 // solo se c'è il dato). «Energia e audio»: batteria (se c'è), volume (Task 7) e cuffie Bluetooth (Task 9).
 // «Connessioni»: la rete (icona con le tacche e velocità), i riquadri Wi-Fi e Bluetooth e le
 // righe che aprono le pagine di Windows (solo su Windows: altrove la colonna ha solo la rete).
-// Le righe sono alte 38 (testi ≥ 12 px). Che la colonna più piena (intestazione e quattro righe)
+// Le righe sono alte 40 (ritmo 4/8, testi ≥ 12 px), senza intestazioni: un solo stile di etichetta,
+// quello delle righe. Che la colonna più piena (quattro righe)
 // stia nel pannello lo prova il test `vista_pc_entra_nel_pannello`, col caso più pieno.
 import { Tema } from "../tema.slint";
 import { Icone, Icona, Vetro } from "../icone.slint";
@@ -13,26 +14,8 @@ import { Etichetta, GlifoBatteria, Fuoco, Anello, IconaRete, NomeRete } from "..
 // La colonna del valore (testo e barra) di ogni riga, a destra.
 global MisurePc {
     out property <length> colonna: 120px;
-    out property <length> alto-riga: 38px;
-    out property <length> margine: 14px;
-}
-
-// L'intestazione di una colonna («Sistema», «Energia e audio», «Connessioni»).
-component Intestazione inherits Rectangle {
-    in property <string> text;
-    height: 18px;
-
-    Text {
-        x: MisurePc.margine;
-        width: parent.width - 2 * MisurePc.margine;
-        text: root.text;
-        overflow: elide;
-        font-size: Tema.testo-piccolo;
-        font-weight: 600;
-        color: Tema.testo-tenue;
-        vertical-alignment: center;
-        accessible-role: none;
-    }
+    out property <length> alto-riga: 40px;
+    out property <length> margine: 16px;
 }
 
 // Una riga: etichetta, valore e (se serve) una barra sottile con la frazione usata.
@@ -60,15 +43,15 @@ component Riga inherits Rectangle {
 
     Etichetta {
         x: MisurePc.margine;
-        y: 3px;
-        height: 18px;
+        y: 4px;
+        height: 16px;
         text: etichetta;
     }
 
     // Il dettaglio si ferma prima della colonna del valore e della barra.
     Text {
         x: MisurePc.margine;
-        y: 20px;
+        y: 22px;
         width: max(0px, colonna-x - MisurePc.margine - 8px);
         text: dettaglio;
         overflow: elide;
@@ -78,7 +61,7 @@ component Riga inherits Rectangle {
 
     if !con-glifo: Text {
         x: parent.width - MisurePc.margine - self.width;
-        y: 2px;
+        y: 4px;
         width: MisurePc.colonna;
         text: valore;
         horizontal-alignment: right;
@@ -90,7 +73,7 @@ component Riga inherits Rectangle {
     // Con il glifo (batteria): glifo e valore insieme, a destra, sulla stessa linea di base.
     if con-glifo: HorizontalLayout {
         x: colonna-x;
-        y: 2px;
+        y: 4px;
         width: MisurePc.colonna;
         height: 20px;
         alignment: end;
@@ -115,7 +98,7 @@ component Riga inherits Rectangle {
 
     if frazione >= 0 && !senza-barra: Rectangle {
         x: colonna-x;
-        y: 27px;
+        y: 28px;
         width: MisurePc.colonna;
         height: 4px;
         border-radius: self.height / 2;
@@ -164,14 +147,14 @@ component RigaVolume inherits Rectangle {
 
     Etichetta {
         x: MisurePc.margine;
-        y: 3px;
-        height: 18px;
+        y: 4px;
+        height: 16px;
         text: "VOLUME";
     }
 
     if muto: Text {
         x: MisurePc.margine;
-        y: 20px;
+        y: 22px;
         width: max(0px, colonna-x - MisurePc.margine - 10px);
         text: "Audio disattivato";
         overflow: elide;
@@ -183,7 +166,7 @@ component RigaVolume inherits Rectangle {
     // L'altoparlante: bersaglio 28 × 22, icona 18, all'inizio della colonna del valore.
     Rectangle {
         x: colonna-x - 6px;
-        y: 1px;
+        y: 3px;
         width: 28px;
         height: 22px;
         border-radius: Tema.raggio-s;
@@ -210,7 +193,7 @@ component RigaVolume inherits Rectangle {
 
     Text {
         x: root.width - MisurePc.margine - self.width;
-        y: 2px;
+        y: 4px;
         width: 70px;
         text: pct + "%";
         horizontal-alignment: right;
@@ -224,7 +207,7 @@ component RigaVolume inherits Rectangle {
     // riempimento e pomello.
     cursore := Rectangle {
         x: colonna-x;
-        y: 19px;
+        y: 20px;
         width: MisurePc.colonna;
         height: 18px;
         accessible-role: slider;
@@ -298,7 +281,7 @@ component RigaRete inherits Rectangle {
     in property <bool> con-icona;
     in property <TipoReteUi> tipo;
     in property <int> tacche;
-    height: 26px;
+    height: 28px;
     accessible-role: text;
     accessible-label: "RETE";
     accessible-value: velocita + (con-icona ? ", " + NomeRete.di(tipo, tacche) : "");
@@ -336,7 +319,7 @@ component RigaRete inherits Rectangle {
     }
 }
 
-// Un riquadro Wi-Fi o Bluetooth (M2, Task 8): raggio 14, interruttore per Narrator (`switch`,
+// Un riquadro Wi-Fi o Bluetooth (M2, Task 8): raggio 16, interruttore per Narrator (`switch`,
 // acceso = `checked`). Acceso: fondo, bordo e icona nel token `radio-acceso`. Radio assente:
 // «Non presente», spento e non cliccabile. Il clic e Invio li gira al pannello (`commuta`).
 component Riquadro inherits Rectangle {
@@ -351,7 +334,7 @@ component Riquadro inherits Rectangle {
     in property <bool> fuoco;
     callback commuta();
     property <bool> attivo: letto && presente;
-    border-radius: 14px;
+    border-radius: 16px;
     border-width: 1px;
     border-color: attivo && acceso ? Tema.radio-acceso-bordo : Tema.vetro-bordo;
     background: attivo && acceso ? Tema.radio-acceso-fondo
@@ -370,8 +353,8 @@ component Riquadro inherits Rectangle {
     fuoco-riquadro := Fuoco { chiede: fuoco; }
 
     Image {
-        x: 10px;
-        y: 9px;
+        x: 12px;
+        y: 8px;
         width: 16px;
         height: 16px;
         source: icona;
@@ -382,22 +365,22 @@ component Riquadro inherits Rectangle {
 
     Text {
         x: 32px;
-        y: 7px;
+        y: 6px;
         width: parent.width - 32px - 8px;
         height: 20px;
         text: nome;
         overflow: elide;
         vertical-alignment: center;
-        font-weight: 600;
+        font-weight: 500;
         font-size: Tema.testo-corpo;
         color: attivo ? Tema.testo : Tema.testo-tenue;
         accessible-role: none;
     }
 
     Text {
-        x: 10px;
-        y: 31px;
-        width: parent.width - 20px;
+        x: 12px;
+        y: 30px;
+        width: parent.width - 24px;
         height: 16px;
         text: stato;
         overflow: elide;
@@ -497,7 +480,7 @@ export component VistaPc inherits Rectangle {
 
     Vetro {
         HorizontalLayout {
-            padding-top: 8px;
+            padding-top: 12px;
             padding-bottom: 8px;
             spacing: 4px;
 
@@ -508,7 +491,6 @@ export component VistaPc inherits Rectangle {
                 accessible-role: groupbox;
                 accessible-label: "Sistema";
 
-                Intestazione { text: "Sistema"; }
 
                 // Prima del primo campione i testi sono vuoti: «—» e niente barra, come nei
                 // Quadranti e nell'Orologio.
@@ -547,7 +529,6 @@ export component VistaPc inherits Rectangle {
                 accessible-role: groupbox;
                 accessible-label: "Energia e audio";
 
-                Intestazione { text: "Energia e audio"; }
 
                 if stat.ha-batteria: Riga {
                     etichetta: "BATTERIA";
@@ -586,7 +567,6 @@ export component VistaPc inherits Rectangle {
                 accessible-role: groupbox;
                 accessible-label: "Connessioni";
 
-                Intestazione { text: "Connessioni"; }
 
                 // Giù e su con lo stesso peso, sulla stessa riga (UX22). Frecce solo con un valore
                 // accanto (mai «↓ » orfano).
@@ -603,7 +583,7 @@ export component VistaPc inherits Rectangle {
                     padding-left: MisurePc.margine - 2px;
                     padding-right: MisurePc.margine - 2px;
                     padding-top: 4px;
-                    spacing: 6px;
+                    spacing: 8px;
 
                     riquadri := HorizontalLayout {
                         spacing: 8px;
