@@ -13,9 +13,11 @@ import { Etichetta, GlifoBatteria, Fuoco, Anello, IconaRete, NomeRete } from "..
 
 // La colonna del valore (testo e barra) di ogni riga, a destra.
 global MisurePc {
-    out property <length> colonna: 120px;
+    out property <length> colonna: 104px;
     out property <length> alto-riga: 40px;
     out property <length> margine: 16px;
+    // Fra il dettaglio e la colonna del valore.
+    out property <length> stacco: 4px;
 }
 
 // Una riga: etichetta, valore e (se serve) una barra sottile con la frazione usata.
@@ -48,11 +50,29 @@ component Riga inherits Rectangle {
         text: etichetta;
     }
 
+    // La misura del dettaglio (trasparente): quanto sarebbe largo intero. Serve al test che il
+    // dettaglio («1023,9 / 1023,9 GB») entri senza essere accorciato.
+    HorizontalLayout {
+        x: MisurePc.margine;
+        y: 22px;
+        width: parent.width - 2 * MisurePc.margine;
+        height: 16px;
+        opacity: 0;
+        alignment: start;
+
+        Text {
+            text: dettaglio;
+            font-size: Tema.testo-piccolo;
+            accessible-role: text;
+            accessible-label: "misura " + etichetta;
+        }
+    }
+
     // Il dettaglio si ferma prima della colonna del valore e della barra.
     Text {
         x: MisurePc.margine;
         y: 22px;
-        width: max(0px, colonna-x - MisurePc.margine - 8px);
+        width: max(0px, colonna-x - MisurePc.margine - MisurePc.stacco);
         text: dettaglio;
         overflow: elide;
         font-size: Tema.testo-piccolo;
@@ -580,8 +600,8 @@ export component VistaPc inherits Rectangle {
                 }
 
                 if connessioni-disponibili: VerticalLayout {
-                    padding-left: MisurePc.margine - 2px;
-                    padding-right: MisurePc.margine - 2px;
+                    padding-left: MisurePc.margine - 4px;
+                    padding-right: MisurePc.margine - 4px;
                     padding-top: 4px;
                     spacing: 8px;
 

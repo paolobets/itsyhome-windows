@@ -2959,7 +2959,7 @@ mod accessibilita {
         assert_eq!(cursore.accessible_role(), Some(AccessibleRole::Slider));
         assert_eq!(cursore.accessible_value().as_deref(), Some("40%"));
         assert_eq!((cursore.accessible_value_minimum(), cursore.accessible_value_maximum()), (Some(0.0), Some(100.0)));
-        assert_eq!(cursore.size().width, 120.0, "largo quanto le barre delle altre righe");
+        assert_eq!(cursore.size().width, 104.0, "largo quanto le barre delle altre righe");
         let muti = std::rc::Rc::new(std::cell::RefCell::new(Vec::<bool>::new()));
         let m = muti.clone();
         p.on_muto_volume(move |si| m.borrow_mut().push(si));
@@ -3209,10 +3209,14 @@ mod accessibilita {
     fn vista_pc_un_solo_stile_e_ritmo_4_8() {
         piattaforma_di_prova();
         let p = pannello_connessioni();
-        assert!(
-            ElementHandle::find_by_element_type_name(&p, "Intestazione").next().is_none(),
-            "niente intestazioni di colonna: un solo stile di etichetta"
-        );
+        // Nessun testo di intestazione: i nomi dei gruppi li dice solo Narrator (groupbox).
+        let vista = ElementHandle::find_by_element_type_name(&p, "VistaPc").next().expect("vista PC");
+        for e in vista.query_descendants().find_all() {
+            let t = e.accessible_label().unwrap_or_default();
+            if ["Sistema", "Energia e audio", "Connessioni"].contains(&t.as_str()) {
+                assert_eq!(e.accessible_role(), Some(AccessibleRole::Groupbox), "«{t}» solo come gruppo, mai come testo");
+            }
+        }
         let (cpu, ram, disco, gpu) = (elemento(&p, "CPU"), elemento(&p, "RAM"), elemento(&p, "DISCO"), elemento(&p, "GPU"));
         for (nome, riga) in [("CPU", &cpu), ("RAM", &ram), ("DISCO", &disco), ("GPU", &gpu)] {
             assert_eq!(riga.size().height, 40.0, "la riga {nome} è alta 40");
@@ -3228,6 +3232,37 @@ mod accessibilita {
             .map(|e| e.absolute_position().x - colonna.absolute_position().x)
             .fold(f32::MAX, f32::min);
         assert_eq!(etichetta, 16.0, "margine di 16");
+    }
+
+    /// R1-4 (fix round 1): il dettaglio di RAM e disco entra intero, anche coi valori più larghi
+    /// («1023,9 / 1023,9 GB», «63,9 / 127,9 GB»), nello spazio fra margine e colonna del valore.
+    #[test]
+    fn dettaglio_ram_e_disco_non_tagliato() {
+        piattaforma_di_prova();
+        for (ram, disco) in [("63,9 / 127,9 GB", "1023,9 / 1023,9 GB"), ("15,9 / 15,9 GB", "1863,0 / 1863,0 GB")] {
+            let p = pannello_connessioni();
+            p.set_pc(StatPcUi {
+                pronta: true,
+                ram: 0.5,
+                ram_testo: "56%".into(),
+                ram_dettaglio: ram.into(),
+                disco: 0.5,
+                disco_testo: "65%".into(),
+                disco_dettaglio: disco.into(),
+                ..Default::default()
+            });
+            for (nome, dettaglio) in [("RAM", ram), ("DISCO", disco)] {
+                let riga = elemento(&p, nome);
+                let misura = elemento(&p, &format!("misura {nome}"));
+                // Spazio del dettaglio: la riga meno i due margini (16), la colonna del valore (104) e lo stacco (4).
+                let spazio = riga.size().width - 2.0 * 16.0 - 104.0 - 4.0;
+                assert!(
+                    misura.size().width <= spazio + 0.01,
+                    "«{dettaglio}» largo {} in {spazio} px: verrebbe accorciato",
+                    misura.size().width
+                );
+            }
+        }
     }
 
     /// M2, Task 10: nella vista PC la riga «GPU» (indicatore col valore, barra come la CPU) c'è
