@@ -254,7 +254,7 @@ struct Testata {
 }
 
 /// Un testo; qualunque altro tipo JSON diventa `None` (senza costruirne l'albero).
-fn solo_testo<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+pub(crate) fn solo_testo<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
     use serde::de::{Error, IgnoredAny, MapAccess, SeqAccess, Visitor};
     struct V;
     impl<'de> Visitor<'de> for V {
@@ -636,7 +636,7 @@ impl SessioniViste {
 }
 
 /// Un `session_id` si accetta se è di 1..=128 caratteri `[A-Za-z0-9_-]`.
-fn sessione_valida(s: Option<&str>) -> Option<&str> {
+pub(crate) fn sessione_valida(s: Option<&str>) -> Option<&str> {
     s.filter(|s| {
         (1..=128).contains(&s.len())
             && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
