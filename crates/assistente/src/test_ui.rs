@@ -1206,6 +1206,70 @@ mod accessibilita {
         }
     }
 
+    /// Un pannello sulla Panoramica col fuoco da tastiera sulla riga «N luci accese» (↓).
+    fn panoramica_col_fuoco_sulle_luci(layout: i32) -> (Pannello, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
+        use slint::platform::Key;
+        let (p, eventi) = pannello_casa();
+        p.set_vista("panoramica".into());
+        p.set_layout(layout);
+        p.set_stato_casa("1 luce accesa".into());
+        p.set_luci(luci_accese_di_prova(&["light.a"]).into());
+        tasto(&p, Key::DownArrow);
+        assert!(etichetta_col_fuoco(&p).ends_with("mostra le luci accese"), "il fuoco è sulla riga: «{}»", etichetta_col_fuoco(&p));
+        (p, eventi)
+    }
+
+    /// Il pannello ha ancora la tastiera: Esc lo chiude.
+    fn esc_chiude(p: &Pannello, eventi: &std::rc::Rc<std::cell::RefCell<Vec<String>>>, dove: &str) {
+        use slint::platform::Key;
+        tasto(p, Key::Escape);
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("chiudi pannello"), "{dove}: la tastiera è rimasta viva");
+    }
+
+    /// Il fuoco sulla riga e l'ultima luce si spegne altrove (o la casa si disconnette): la riga
+    /// non è più un bersaglio, ma il fuoco non resta su un elemento che sparisce e il pannello
+    /// continua a rispondere ai tasti.
+    #[test]
+    fn la_riga_luci_perde_il_bersaglio_col_fuoco_addosso() {
+        for layout in [0, 1] {
+            let (p, eventi) = panoramica_col_fuoco_sulle_luci(layout);
+            p.set_luci(luci_accese_di_prova(&[]).into());
+            esc_chiude(&p, &eventi, &format!("layout {layout}, ultima luce spenta"));
+            let (p, eventi) = panoramica_col_fuoco_sulle_luci(layout);
+            p.set_casa_pronta(false);
+            esc_chiude(&p, &eventi, &format!("layout {layout}, casa disconnessa"));
+        }
+    }
+
+    /// Quadranti con un sensore: il quadrante CASA non c'è, quindi la riga non è un bersaglio da
+    /// tastiera (↓ e Invio non aprono il filtro da niente) e cambiare layout col fuoco sulla riga
+    /// non blocca la tastiera.
+    #[test]
+    fn quadranti_con_sensori_non_hanno_la_riga_luci_da_tastiera() {
+        use slint::platform::Key;
+        let sensore = crate::SensoreUi { voce: voce_casa("sensor.t", "Temperatura"), frazione: 0.5 };
+        let (p, eventi) = pannello_casa();
+        p.set_vista("panoramica".into());
+        p.set_layout(1);
+        p.set_stato_casa("1 luce accesa".into());
+        p.set_luci(luci_accese_di_prova(&["light.a"]).into());
+        p.set_sensori(ModelRc::new(VecModel::from(vec![sensore.clone()])));
+        let e = eventi.clone();
+        p.on_scorri_layout(move |_| e.borrow_mut().push("scorri".into()));
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::Return);
+        assert_eq!((p.get_vista().as_str(), p.get_filtro_luci()), ("panoramica", false), "Invio non apre il filtro da un bersaglio assente");
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("scorri"), "Invio cambia layout, come sempre");
+        tasto(&p, Key::RightArrow);
+        tasto(&p, Key::LeftArrow);
+        esc_chiude(&p, &eventi, "Quadranti con sensori");
+        // Il fuoco sulla riga dell'Orologio, poi i Quadranti con sensori (frecce): nessun blocco.
+        let (p, eventi) = panoramica_col_fuoco_sulle_luci(0);
+        p.set_sensori(ModelRc::new(VecModel::from(vec![sensore])));
+        p.set_layout(1);
+        esc_chiude(&p, &eventi, "layout cambiato col fuoco sulla riga");
+    }
+
     /// Senza connessione la Casa filtrata non ha pulsanti che non funzionano: dice lo stato.
     #[test]
     fn casa_filtrata_senza_connessione_dice_lo_stato() {

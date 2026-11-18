@@ -1,7 +1,7 @@
 // Layout Orologio della Panoramica (bozza bozza-in-attesa.html): a sinistra l'ora grande e la
 // data, a destra una riga di stato per app (Casa, PC). Solo sintesi, nessun comando.
 import { Tema } from "../tema.slint";
-import { Anello, Fuoco } from "../componenti.slint";
+import { Anello } from "../componenti.slint";
 import { StatPcUi } from "../voci.slint";
 
 export component LayoutOrologio inherits Rectangle {
@@ -75,9 +75,9 @@ export component LayoutOrologio inherits Rectangle {
                 min-width: largo-stato;
                 max-width: largo-stato;
                 spacing: 4px;
+                alignment: start;
 
                 Text {
-                    horizontal-stretch: 1;
                     text: riga-casa;
                     overflow: elide;
                     font-size: Tema.testo-corpo;
@@ -118,8 +118,6 @@ export component LayoutOrologio inherits Rectangle {
         accessible-label: riga-casa + ": mostra le luci accese";
         accessible-action-default => { root.apri-luci(); }
         clicked => { root.apri-luci(); }
-
-        Fuoco { chiede: anello-luci; }
 
         if anello-luci: Anello { raggio: 6px; distanza: 2px; }
     }

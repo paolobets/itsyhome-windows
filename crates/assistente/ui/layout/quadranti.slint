@@ -5,7 +5,7 @@
 import { Tema } from "../tema.slint";
 import { Icone, Icona, Vetro } from "../icone.slint";
 import { StatPcUi, SensoreUi, QuadranteUi, FonteQuadranteUi } from "../voci.slint";
-import { Anello, Etichetta, Fuoco } from "../componenti.slint";
+import { Anello, Etichetta } from "../componenti.slint";
 
 component Quadrante inherits Vetro {
     in property <string> etichetta;
@@ -107,9 +107,8 @@ component Quadrante inherits Vetro {
             spacing: 3px;
 
             Text {
-                // Senza larghezza preferita: un nome lungo si accorcia invece di allargare la card.
-                preferred-width: 0px;
-                horizontal-stretch: 1;
+                // Un nome lungo si accorcia invece di allargare la card; l'«›» sta subito dopo.
+                max-width: root.width - 16px - (cliccabile ? 12px : 0px);
                 text: dettaglio;
                 horizontal-alignment: center;
                 overflow: elide;
@@ -137,7 +136,6 @@ component Quadrante inherits Vetro {
         accessible-action-default => { root.clic(); }
         clicked => { root.clic(); }
 
-        Fuoco { chiede: anello; }
     }
 
     if cliccabile && anello: Anello { raggio: Tema.raggio-xl; distanza: -3px; }
