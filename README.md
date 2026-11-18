@@ -35,6 +35,30 @@ $env:ITSYHOME_ASSISTENTE_DIR = "$env:TEMP\itsyhome-prova"; .\target\release\assi
 
 Scorciatoie: **Ctrl+Alt+Maiusc+Spazio** apre il pannello, **Ctrl+Alt+Maiusc+I** ritira o rimette la pillola. Misure di memoria e CPU nel [CHANGELOG](CHANGELOG.md).
 
+### Claude Code e API Claude
+
+L'isola può dirti che cosa fanno le tue sessioni di Claude Code (lavora, ti aspetta, ha finito), farti rispondere ai permessi dalla pillola e mostrarti i limiti dell'abbonamento e la spesa delle API. Tutto è facoltativo e spento finché non lo colleghi. Disponibile **solo su Windows**.
+
+**Collegare Claude Code**
+1. Apri Impostazioni › Claude e scegli «Collega Claude Code».
+2. Prima di cambiare qualcosa l'isola ti mostra un'**anteprima** di ciò che scriverà nel file delle impostazioni di Claude Code (`settings.json`): leggila e conferma.
+3. Se confermi, l'isola salva una copia del file com'era (`settings.json.isola-bak`) e aggiunge solo le sue voci, lasciando intatte le tue. Non serve riaprire i terminali già aperti né impostare variabili.
+4. «Scollega» toglie le voci dell'isola e **ripristina il file com'era** (puoi sempre confrontarlo con la copia `.isola-bak`).
+
+**Che cosa garantisce il canale protetto.** Claude Code e l'isola si parlano tramite un piccolo programma accanto all'isola (`isola-hook.exe`) e un canale interno di Windows riservato al tuo utente: nessuna porta di rete aperta, nessun codice o password da custodire, nessuna pagina web che possa raggiungerlo. Il programma controlla che dall'altra parte ci sia davvero l'isola, e l'isola controlla che arrivi davvero il programma; se qualcosa non torna, non viene inviato nulla. Il programma può rispondere a Claude Code in un solo caso: una tua decisione su un permesso, presa dalla pillola. Non può dare altri ordini né aggiungere istruzioni.
+
+**Se l'isola è chiusa**, Claude Code continua a lavorare come sempre: i permessi si decidono nel terminale, come se l'isola non ci fosse. Se il canale è occupato da un altro programma l'isola lo dice con un avviso e non si collega.
+
+**La scheda Claude** (icona fra Casa e PC): le sessioni aperte nell'ordine di urgenza, i due limiti dell'abbonamento («5 ore» e «settimanale», con l'ora in cui si azzerano) e la spesa del mese. Un clic su una sessione porta davanti il suo terminale. Se un dato manca, l'isola scrive «—» o «nessun dato», mai uno zero inventato.
+
+**La chiave da amministratore (facoltativa).** Per la spesa e i consumi serve una chiave da amministratore dell'organizzazione Anthropic. L'isola la usa **solo per leggere** (un elenco chiuso di sette letture, nessuna modifica possibile). Creala nella Console (Impostazioni › Admin keys) **con una scadenza**, incollala in Impostazioni › Claude › «Chiave da amministratore» e usa «Prova». Resta nell'archivio sicuro di Windows (Gestione credenziali), mai in un file; dopo il salvataggio se ne vedono solo le ultime 4 cifre. «Togli» la cancella. I dati arrivano con 4–24 ore di ritardo e si rileggono ogni 3 ore.
+
+**«Dettagli delle API»**: dalla card della spesa si apre una finestra con cinque schede di sola lettura (Spesa, Token, Chiavi, Workspace e membri, Limiti), con «Apri la Console» per andare alla pagina giusta del sito.
+
+**Quadranti e soglie.** Nella Panoramica puoi mettere tre quadranti: «Limite 5 ore», «Limite settimanale» e «Spesa API del mese». In Impostazioni › Claude › Avvisi scegli la soglia dei limiti (da 50 a 100 %, di serie 80 %) e, se vuoi, una soglia di spesa mensile in dollari: l'isola avvisa una volta per finestra o per gradino, e segnala una spesa insolita (ieri più di tre volte la media). Lasciando vuota la soglia di spesa non ci sono avvisi di spesa.
+
+**Solo su Windows:** il canale protetto e il collegamento con Claude Code, e il «porta davanti» del terminale di una sessione. Su macOS e Linux la sezione di collegamento dice «Disponibile solo su Windows».
+
 ---
 
 ## Funzionalità
