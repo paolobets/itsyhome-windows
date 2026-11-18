@@ -247,6 +247,54 @@ mod accessibilita {
         assert_eq!(elemento(&p, "Consenti").accessible_role(), Some(AccessibleRole::Button));
     }
 
+    /// 18/11: nella voce espansa il titolo si legge intero (va a capo, niente «…») e la riga sotto
+    /// e il testo scendono di conseguenza; un titolo corto occupa una riga sola.
+    #[test]
+    fn titolo_della_voce_espansa_va_a_capo() {
+        use i_slint_backend_testing::ElementHandle;
+        piattaforma_di_prova();
+        let voce = |titolo: &str| VoceAttesaUi {
+            id: "v".into(),
+            livello: LivelloUi::Bloccante,
+            titolo: titolo.into(),
+            sotto: "Aspetta te · Prova".into(),
+            dettaglio: "Il testo completo".into(),
+            icona: Default::default(),
+            pulsanti: ModelRc::new(VecModel::from(Vec::<PulsanteUi>::new())),
+        };
+        let altezza = |p: &Pannello, id: &str| {
+            let e = ElementHandle::find_by_element_id(p, id).next().unwrap_or_else(|| panic!("nessun elemento {id}"));
+            (e.absolute_position().y, e.size().height)
+        };
+        let p = pannello();
+        p.set_attese(ModelRc::new(VecModel::from(vec![voce("Permesso breve")])));
+        p.invoke_espandi(0);
+        let (_, una_riga) = altezza(&p, "VoceEspansa::titolo");
+        let (y_sotto_corto, _) = altezza(&p, "VoceEspansa::sotto-testo");
+
+        let lungo = "Consentire a un programma di prova di cancellare la cartella dei documenti temporanei                      e di tutte le sue sottocartelle, compresi i file nascosti e quelli di sistema?";
+        p.set_attese(ModelRc::new(VecModel::from(vec![voce(lungo)])));
+        let (_, piu_righe) = altezza(&p, "VoceEspansa::titolo");
+        let (y_sotto_lungo, _) = altezza(&p, "VoceEspansa::sotto-testo");
+        assert!(piu_righe > una_riga * 1.5, "titolo lungo a capo: {piu_righe} contro {una_riga}");
+        assert!(y_sotto_lungo > y_sotto_corto, "la riga sotto scende: {y_sotto_lungo} contro {y_sotto_corto}");
+    }
+
+    /// 18/11 (Paolo): «Nega» e «Consenti» sono entrambi neutri, senza tinta d'azione; la tinta resta
+    /// all'ultimo pulsante di una voce che non è un permesso («Apri», «Riprova»).
+    #[test]
+    fn nega_e_consenti_sono_neutri() {
+        use crate::{RegolaPulsanti, TipoPulsante};
+        piattaforma_di_prova();
+        let p = pannello();
+        let regola = p.global::<RegolaPulsanti>();
+        // «Nega» (primo, non delicato) e «Consenti» (ultimo, delicato): nessuno ha la tinta.
+        assert_eq!(regola.invoke_tipo(false, false), TipoPulsante::Neutro, "Nega");
+        assert_eq!(regola.invoke_tipo(true, true), TipoPulsante::Neutro, "Consenti");
+        // Un'azione sicura in coda la mantiene.
+        assert_eq!(regola.invoke_tipo(true, false), TipoPulsante::Azione, "Apri");
+    }
+
     #[test]
     fn quadranti_dicono_nome_e_valore() {
         piattaforma_di_prova();
@@ -490,6 +538,27 @@ mod accessibilita {
         elemento(&f, "Videogiochi").invoke_accessible_default_action();
         assert_eq!(azioni.borrow().last().map(String::as_str), Some("icona cucina 36"));
         assert!(ElementHandle::find_by_accessible_label(&f, "ICONA DI «Cucina»").next().is_none(), "chiusa");
+    }
+
+    /// 18/11: le istruzioni di «Dispositivi» (ordine, stella, occhio) non compaiono con l'elenco vuoto.
+    #[test]
+    fn dispositivi_senza_righe_niente_istruzioni() {
+        use crate::{RigaDispositivoUi, TipoRigaUi};
+        piattaforma_di_prova();
+        let f = FinestraImpostazioni::new().expect("impostazioni");
+        f.set_sezione(1);
+        f.show().expect("impostazioni mostrate nel backend di prova");
+        let istruzioni = "Ordine con le frecce, preferiti con la stella, nascosti con l'occhio.";
+        assert!(ElementHandle::find_by_accessible_label(&f, "Nessun dispositivo da gestire").next().is_some());
+        assert!(ElementHandle::find_by_accessible_label(&f, istruzioni).next().is_none(), "istruzioni senza elenco");
+        f.set_righe_dispositivi(ModelRc::new(VecModel::from(vec![RigaDispositivoUi {
+            id: "s:cucina".into(),
+            tipo: TipoRigaUi::TestataStanza,
+            chiave: "cucina".into(),
+            nome: "Cucina".into(),
+            ..Default::default()
+        }])));
+        assert!(ElementHandle::find_by_accessible_label(&f, istruzioni).next().is_some(), "istruzioni con l'elenco");
     }
 
     /// Task 14e: la scelta dell'icona da tastiera (frecce, Invio) ed Esc che la chiude senza
@@ -1400,10 +1469,16 @@ mod accessibilita {
         elemento(&f, "Sposta giù «Proxmox»").invoke_accessible_default_action();
         elemento(&f, "Sposta su «Router»").invoke_accessible_default_action();
         assert_eq!(*eventi.borrow(), ["sposta proxmox 1", "sposta router -1"]);
-        // Senza collegamenti: lo stato vuoto, e «Aggiungi collegamento» resta.
+        // Senza collegamenti: lo stato vuoto, e «Aggiungi un collegamento» resta.
         f.set_collegamenti(ModelRc::new(VecModel::from(Vec::<crate::CollegamentoUi>::new())));
         assert!(ElementHandle::find_by_accessible_label(&f, "Nessun collegamento").next().is_some());
-        assert!(ElementHandle::find_by_accessible_label(&f, "Aggiungi collegamento").next().is_some());
+        assert!(ElementHandle::find_by_accessible_label(&f, "Aggiungi un collegamento").next().is_some());
+        // 18/11: a elenco vuoto il pulsante sta sotto il messaggio e al centro (come nel pannello).
+        let messaggio = elemento(&f, "Nessun collegamento");
+        let pulsante = elemento(&f, "Aggiungi un collegamento");
+        let centro = |e: &ElementHandle| e.absolute_position().x + e.size().width / 2.0;
+        assert!((centro(&messaggio) - centro(&pulsante)).abs() < 2.0, "centrato: {} contro {}", centro(&messaggio), centro(&pulsante));
+        assert!(pulsante.absolute_position().y > messaggio.absolute_position().y + messaggio.size().height, "sotto il messaggio");
     }
 
     /// Il modulo: etichette visibili; controllo al blur solo su un campo toccato; l'errore sparisce
@@ -1412,7 +1487,7 @@ mod accessibilita {
     fn scheda_collegamenti_modulo_con_controlli() {
         use slint::platform::Key;
         let (f, eventi) = scheda_collegamenti();
-        elemento(&f, "Aggiungi collegamento").invoke_accessible_default_action();
+        elemento(&f, "Aggiungi un collegamento").invoke_accessible_default_action();
         assert!(ElementHandle::find_by_accessible_label(&f, "NUOVO COLLEGAMENTO").next().is_some());
         // Il fuoco è nel Nome: Tab senza scrivere non segnala nulla (campo solo attraversato).
         tasto_finestra(&f, Key::Tab);
@@ -1527,7 +1602,7 @@ mod accessibilita {
         let chiusa = std::rc::Rc::new(std::cell::Cell::new(false));
         let c = chiusa.clone();
         f.on_chiudi(move || c.set(true));
-        elemento(&f, "Aggiungi ambiente").invoke_accessible_default_action();
+        elemento(&f, "Aggiungi un ambiente").invoke_accessible_default_action();
         assert!(ElementHandle::find_by_accessible_label(&f, "NUOVO AMBIENTE").next().is_some());
         scrivi(&f, "Casa");
         tasto_finestra(&f, Key::Escape);
@@ -1679,7 +1754,18 @@ mod accessibilita {
                 .unwrap_or_else(|| panic!("selettore «{nome}»"));
             assert_eq!(e.accessible_expandable(), Some(true));
         }
-        assert!(ElementHandle::find_by_accessible_label(&f, "«Rete»: Solo su Windows, solo l'icona della connessione. Il nome della rete non compare mai nella pillola.").next().is_some());
+        // Le note «solo su Windows» compaiono solo fuori da Windows (e con la minuscola dopo i due punti).
+        let rete = "«Rete»: solo su Windows, solo l'icona della connessione. Il nome della rete non compare mai nella pillola.";
+        let gpu = "«GPU»: solo su Windows.";
+        assert!(ElementHandle::find_by_accessible_label(&f, rete).next().is_none(), "nota Rete su Windows");
+        assert!(ElementHandle::find_by_accessible_label(&f, gpu).next().is_none(), "nota GPU su Windows");
+        f.set_fuori_da_windows(true);
+        assert!(ElementHandle::find_by_accessible_label(&f, rete).next().is_some(), "nota Rete fuori da Windows");
+        assert!(ElementHandle::find_by_accessible_label(&f, gpu).next().is_some(), "nota GPU fuori da Windows");
+        // L'avviso delle cuffie ha la sua sezione «AVVISI», fuori da «PILLOLA».
+        assert!(ElementHandle::find_by_accessible_label(&f, "AVVISI").next().is_none(), "AVVISI senza cuffie");
+        f.set_avvisi_bt_disponibile(true);
+        assert!(ElementHandle::find_by_accessible_label(&f, "AVVISI").next().is_some(), "AVVISI con le cuffie");
     }
 
     /// Le scelte arrivate a Rust: (0/1 lato o 10 + posizione del quadrante, indice).
@@ -2067,10 +2153,10 @@ mod accessibilita {
             cpu_testo: "100%".into(),
             ram: 0.6,
             ram_testo: "100%".into(),
-            ram_dettaglio: "15,9 GB di 15,9 GB".into(),
+            ram_dettaglio: "15,9 / 15,9 GB".into(),
             disco: 0.7,
             disco_testo: "100%".into(),
-            disco_dettaglio: "1023,9 GB di 1023,9 GB".into(),
+            disco_dettaglio: "1023,9 / 1023,9 GB".into(),
             rete_giu: "999,9 MB/s".into(),
             rete_su: "999,9 MB/s".into(),
             ha_batteria: true,

@@ -734,7 +734,7 @@ pub fn batteria(lettura: LetturaBatteria) {
 /// Una voce «In attesa» per la riga del pannello.
 /// `non_archiviata`: l'ultimo «Archivia» non è riuscito (lo dice la riga sotto il titolo).
 fn voce_attesa_ui(v: &Voce, non_archiviata: bool) -> VoceAttesaUi {
-    let mut sotto = format!("{} · {}", v.livello.parola(), v.fonte.come_stringa());
+    let mut sotto = format!("{} · {}", v.livello.parola(), v.fonte.nome());
     if non_archiviata {
         sotto.push_str(" · archiviazione non riuscita");
     }
@@ -3532,10 +3532,20 @@ pub(crate) mod test {
     #[test]
     fn sotto_il_titolo_la_parola_del_livello() {
         let v = attenzione::voce_di_prova(Livello::Attenzione, false, Instant::now());
-        assert_eq!(voce_attesa_ui(&v, false).sotto, "Guarda presto · prova");
-        assert_eq!(voce_attesa_ui(&v, true).sotto, "Guarda presto · prova · archiviazione non riuscita");
+        assert_eq!(voce_attesa_ui(&v, false).sotto, "Guarda presto · Prova");
+        assert_eq!(voce_attesa_ui(&v, true).sotto, "Guarda presto · Prova · archiviazione non riuscita");
         // Il nome interno resta per il colore.
         assert_eq!(voce_attesa_ui(&v, false).livello, crate::LivelloUi::Attenzione);
+    }
+
+    #[test]
+    fn sotto_il_titolo_il_nome_per_l_utente_non_l_identificativo() {
+        use crate::attenzione::Fonte;
+        let nomi: Vec<_> = [Fonte::Casa, Fonte::Pc, Fonte::Claude, Fonte::Prova].iter().map(|f| f.nome()).collect();
+        assert_eq!(nomi, ["Casa", "PC", "Claude Code", "Prova"]);
+        let mut v = attenzione::voce_di_prova(Livello::Informazione, false, Instant::now());
+        v.fonte = Fonte::Pc;
+        assert_eq!(voce_attesa_ui(&v, false).sotto, "Quando vuoi · PC");
     }
 
     #[test]

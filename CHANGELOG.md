@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — v3 «assistente isola» (ramo `v3-assistente`, milestone M1 e M2)
 
+### Changed (rifiniture grafiche dal controllo del 18/11)
+- Il «⋯» (che il carattere non ha e appariva come un quadratino) è scritto «…» nei testi delle scorciatoie e di Impostazioni › Sistema.
+- Voce espansa: il titolo si legge intero (a capo, fino a 4 righe) e riga sotto e testo scendono. Sotto le voci c'è il nome per l'utente della fonte («PC», «Casa», «Claude Code», «Prova») invece dell'identificativo interno.
+- Vista PC: i dettagli di RAM e disco sono più corti e non si tagliano («10,1 / 15,7 GB»).
+- Impostazioni: via il titolo ripetuto in testa (si recuperano 46 px); stati vuoti di Ambienti e Collegamenti col pulsante sotto il messaggio, al centro, come nel pannello; istruzioni di Dispositivi solo con l'elenco pieno; note «solo su Windows» solo fuori da Windows; «Avvisa quando le cuffie…» nella sezione «AVVISI»; il selettore ha una freccia in giù; «Aggiungi un ambiente» / «Aggiungi un collegamento» ovunque.
+- «Nega» e «Consenti» sono entrambi neutri (nessuna tinta d'azione), nel pannello e nella pillola; fuoco iniziale su «Nega», Ctrl+Invio e armamento di 600 ms invariati.
+
 ### Added (M3, Task 6: barra di stato e limiti dell'abbonamento)
 - `assistente --barra-stato <porta>` è il comando della barra di stato di Claude Code: gira prima di istanza unica, Slint, configurazione e registro; legge al più 64 KB di stdin, stampa «Opus 5.5 · contesto 42% · 5h 24% (↻ 14:30) · 7g 61%» (parti mancanti omesse, limite già azzerato nascosto, senza nulla «Claude») e poi, se `ISOLA_HOOK_TOKEN` c'è, inoltra all'assistente solo `DatiBarra` (sessione, modello, contesto, due limiti): mai cartella, trascrizione, workspace né il codice nella riga. Connessione con scadenza 30 ms, 40 ms in tutto.
 - L'assistente riconvalida il corpo sul thread della connessione (stesse regole di `session_id`, percentuali 0..=100, nome del modello ripulito) e tiene i limiti dell'account una finestra alla volta: una barra senza `rate_limits` non cancella quelli noti; un limite scaduto vale come assente (`Ponte::limiti`), senza abbonamento niente anelli. Il contesto è per sessione, al più 16, tolto con la sessione.

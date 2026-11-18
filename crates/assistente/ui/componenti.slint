@@ -35,6 +35,14 @@ export component Fuoco inherits FocusScope {
 // Tipo di un pulsante: neutro (bianco tenue), azione (verde acqua, con il bordo), pericolo (rosso).
 export enum TipoPulsante { neutro, azione, pericolo }
 
+// Chi ha la tinta d'azione fra i pulsanti di una voce: l'ultimo, ma mai un permesso (pulsante
+// delicato): «Nega» e «Consenti» sono entrambi neutri, perché il colore inviterebbe a concedere.
+export global RegolaPulsanti {
+    public pure function tipo(ultimo: bool, delicato: bool) -> TipoPulsante {
+        return ultimo && !delicato ? TipoPulsante.azione : TipoPulsante.neutro;
+    }
+}
+
 // Anello del fuoco da tastiera: 2 px, a `distanza` dall'elemento che lo contiene. Si mette dentro
 // l'elemento (`if …: Anello { raggio: parent.border-radius; }`) e ne prende le misure: senza
 // larghezza e altezza un elemento fuori da un layout riempie il genitore.
@@ -327,16 +335,16 @@ export component Scelta inherits FocusScope {
             accessible-role: none;
         }
 
-        Text {
-            x: parent.width - 22px;
-            width: 12px;
-            height: parent.height;
-            text: "›";
-            horizontal-alignment: center;
-            vertical-alignment: center;
-            font-family: Tema.carattere;
-            font-size: Tema.testo-medio;
-            color: Tema.testo-tenue;
+        // Freccia in giù: il selettore apre un elenco sul posto («›» nel pannello vuol dire
+        // «vai a un'altra pagina»).
+        Image {
+            x: parent.width - 24px;
+            y: (parent.height - self.height) / 2;
+            width: 14px;
+            height: 14px;
+            source: Icone.giu;
+            colorize: Tema.testo-tenue;
+            image-rendering: smooth;
             accessible-role: none;
         }
     }

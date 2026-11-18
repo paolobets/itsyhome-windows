@@ -704,6 +704,16 @@ pub fn formatta_byte(b: u64) -> String {
     format!("{} {}", numero(valore), UNITA[i])
 }
 
+/// «usato / totale» per i dettagli della vista PC, più corto di «usato di totale»: l'unità si
+/// scrive una volta sola se è la stessa («10,1 / 15,7 GB»), altrimenti due («512 MB / 1,5 GB»).
+pub fn formatta_usato_totale(usato: u64, totale: u64) -> String {
+    let (u, t) = (formatta_byte(usato), formatta_byte(totale));
+    match (u.rsplit_once(' '), t.rsplit_once(' ')) {
+        (Some((num, unita_u)), Some((_, unita_t))) if unita_u == unita_t => format!("{num} / {t}"),
+        _ => format!("{u} / {t}"),
+    }
+}
+
 /// Come `formatta_byte`, al secondo: "1,2 MB/s".
 pub fn formatta_velocita(bps: u64) -> String {
     format!("{}/s", formatta_byte(bps))
@@ -722,6 +732,14 @@ mod test {
         assert_eq!(formatta_byte(1024), "1 KB");
         // L'arrotondamento non deve mai dare "1024 KB".
         assert_eq!(formatta_byte(1024 * 1024 - 1), "1 MB");
+    }
+
+    #[test]
+    fn formatta_usato_totale_casi() {
+        let gb = 1024u64 * 1024 * 1024;
+        assert_eq!(formatta_usato_totale(gb * 101 / 10, gb * 157 / 10), "10,1 / 15,7 GB");
+        assert_eq!(formatta_usato_totale(512 * 1024 * 1024, gb * 3 / 2), "512 MB / 1,5 GB");
+        assert_eq!(formatta_usato_totale(0, 0), "0 / 0 B");
     }
 
     #[test]

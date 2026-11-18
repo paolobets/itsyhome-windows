@@ -4,7 +4,7 @@
 // Clic su una voce = si espande sul posto (testo completo e pulsanti), senza viste nuove.
 import { Tema } from "tema.slint";
 import { VoceAttesaUi, PulsanteUi } from "voci.slint";
-import { Anello, Fuoco, Pulsante, TipoPulsante } from "componenti.slint";
+import { Anello, Fuoco, Pulsante, RegolaPulsanti } from "componenti.slint";
 
 // Una voce chiusa: barretta, titolo, «livello · fonte».
 component VoceChiusa inherits Rectangle {
@@ -185,20 +185,24 @@ export component VoceEspansa inherits Rectangle {
         image-rendering: smooth;
     }
 
-    Text {
+    // Il titolo si legge intero: va a capo (al massimo 4 righe) e il resto scende di conseguenza.
+    titolo := Text {
         x: 54px;
         y: 12px;
         width: naviga.x - self.x - 12px;
+        height: min(self.preferred-height, 76px);
         text: voce.titolo;
+        wrap: word-wrap;
         overflow: elide;
+        vertical-alignment: top;
         font-weight: 500;
         font-size: Tema.testo-titolo;
         color: Tema.testo;
     }
 
-    Text {
+    sotto-testo := Text {
         x: 54px;
-        y: 33px;
+        y: titolo.y + titolo.height + 2px;
         width: naviga.x - self.x - 12px;
         text: voce.sotto;
         overflow: elide;
@@ -260,7 +264,7 @@ export component VoceEspansa inherits Rectangle {
     // fuoco sulla voce). Una sfumatura in basso dice che c'è altro da leggere.
     testo := Flickable {
         x: 54px;
-        y: 58px;
+        y: sotto-testo.y + 25px;
         width: parent.width - self.x - 18px;
         height: parent.height - self.y - (voce.pulsanti.length > 0 ? 52px : 14px);
         content-height: max(self.height, dettaglio.preferred-height);
@@ -308,10 +312,11 @@ export component VoceEspansa inherits Rectangle {
         height: 30px;
         spacing: 8px;
 
-        // La tinta d'azione va all'ultimo (es. «Consenti»), come nella pillola.
+        // La tinta d'azione va all'ultimo (es. «Apri»), come nella pillola, ma mai a un permesso
+        // (pulsante delicato): «Nega» e «Consenti» sono entrambi neutri.
         for p[i] in voce.pulsanti: Pulsante {
             testo: p.testo;
-            tipo: i == voce.pulsanti.length - 1 ? TipoPulsante.azione : TipoPulsante.neutro;
+            tipo: RegolaPulsanti.tipo(i == voce.pulsanti.length - 1, p.delicato);
             anello: i == root.fuoco;
             chiede-fuoco: i == root.fuoco;
             // La tastiera la governa il pannello (Ctrl+Invio per un permesso).

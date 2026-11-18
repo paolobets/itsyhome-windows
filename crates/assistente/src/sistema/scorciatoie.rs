@@ -37,7 +37,7 @@ impl Scorciatoia {
     fn altro_modo(self) -> &'static str {
         match self {
             Scorciatoia::Apri => "Il pannello si apre comunque con un clic sulla pillola.",
-            Scorciatoia::Ritirata => "L'isola si ritira comunque dal menu «⋯» in alto a destra del pannello.",
+            Scorciatoia::Ritirata => "L'isola si ritira comunque dal menu «…» in alto a destra del pannello.",
         }
     }
 }

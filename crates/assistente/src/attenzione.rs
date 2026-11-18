@@ -63,13 +63,13 @@ pub enum Fonte {
 }
 
 impl Fonte {
-    /// Nome per l'interfaccia (icona) e parola dopo il livello («attenzione · pc»).
-    pub fn come_stringa(self) -> &'static str {
+    /// Il nome per l'utente, sotto le voci «In attesa» («Quando vuoi · PC»).
+    pub fn nome(self) -> &'static str {
         match self {
-            Fonte::Casa => "casa",
-            Fonte::Pc => "pc",
-            Fonte::Claude => "claude",
-            Fonte::Prova => "prova",
+            Fonte::Casa => "Casa",
+            Fonte::Pc => "PC",
+            Fonte::Claude => "Claude Code",
+            Fonte::Prova => "Prova",
         }
     }
 }

@@ -9,7 +9,7 @@
 
 use crate::layout::Layout;
 use crate::registro::app_disponibili;
-use crate::pc_stats::{formatta_byte, formatta_velocita, tinta_batteria, Campionatore, Fonti, StatPc, TintaBatteria};
+use crate::pc_stats::{formatta_usato_totale, formatta_velocita, tinta_batteria, Campionatore, Fonti, StatPc, TintaBatteria};
 #[cfg(test)]
 use crate::pc_stats::{LetturaBatteria, StatoBatteria};
 use crate::ponte::Ponte;
@@ -143,9 +143,9 @@ fn stat_ui(s: &StatPc, cpu_pronta: bool) -> StatPcUi {
         disco,
         cpu_testo: cpu.map(percentuale).unwrap_or_else(|| "—".into()).into(),
         ram_testo: percentuale(ram * 100.0).into(),
-        ram_dettaglio: format!("{} di {}", formatta_byte(s.ram_usata), formatta_byte(s.ram_totale)).into(),
+        ram_dettaglio: formatta_usato_totale(s.ram_usata, s.ram_totale).into(),
         disco_testo: if s.disco_totale == 0 { "—".to_owned() } else { percentuale(disco * 100.0) }.into(),
-        disco_dettaglio: format!("{} di {}", formatta_byte(s.disco_usato), formatta_byte(s.disco_totale)).into(),
+        disco_dettaglio: formatta_usato_totale(s.disco_usato, s.disco_totale).into(),
         rete_giu: formatta_velocita(s.rete_giu_bps).into(),
         rete_su: formatta_velocita(s.rete_su_bps).into(),
         // Senza batteria la riga resta nascosta (mai "0%").

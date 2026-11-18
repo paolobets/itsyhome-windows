@@ -2,7 +2,7 @@
 // Pillola nera, due occhi di luce, aura con i colori dei petali lungo il bordo.
 import { Tema, Movimento } from "tema.slint";
 import { PulsanteUi, UmoreUi, AspettoPillolaUi, LivelloUi, ContenutoLatoUi } from "voci.slint";
-import { Pulsante, TipoPulsante, GlifoBatteria, IconaRete, NomeRete } from "componenti.slint";
+import { Pulsante, RegolaPulsanti, GlifoBatteria, IconaRete, NomeRete } from "componenti.slint";
 import { Faccia, Occhi } from "faccia.slint";
 
 // Uno strato dell'aura: la sagoma della pillola allargata di `espansione`.
@@ -566,7 +566,7 @@ export component Pillola inherits Window {
 
             // Alti 26 nell'attenzione e 28 nel bloccante (come TwoCode), larghi da 64 a 120 px:
             // un testo lungo si accorcia invece di spingere la riga fin sopra gli occhi. La tinta
-            // d'azione va all'ultimo (es. «Consenti»).
+            // d'azione va all'ultimo (es. «Apri»), mai a un permesso: «Nega» e «Consenti» sono neutri.
             for p[i] in pulsanti: Pulsante {
                 altezza: blocca ? 28px : 26px;
                 raggio: Tema.raggio-s;
@@ -575,7 +575,7 @@ export component Pillola inherits Window {
                 margine-testo: 16px;
                 corpo-testo: Tema.testo-piccolo;
                 testo: p.testo;
-                tipo: i == pulsanti.length - 1 ? TipoPulsante.azione : TipoPulsante.neutro;
+                tipo: RegolaPulsanti.tipo(i == pulsanti.length - 1, p.delicato);
                 // Nella pillola niente tastiera: i pulsanti non prendono il fuoco (né da Tab né
                 // altrimenti, quindi niente anello) e nessun tasto li preme. Il permesso si dà col
                 // clic, o dal pannello col testo intero.

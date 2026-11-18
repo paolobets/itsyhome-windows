@@ -650,7 +650,7 @@ export component FinestraImpostazioni inherits Window {
 
     // Collegamenti (Task 14f): l'elenco (lo scrive Rust) e il pulsante su cui riportare il fuoco
     // dopo una modifica (id della riga e azione «su», «giu», «modifica», «elimina»; id vuoto e
-    // «aggiungi» = «Aggiungi collegamento»), con lo stesso contatore `richiesta-fuoco`.
+    // «aggiungi» = «Aggiungi un collegamento»), con lo stesso contatore `richiesta-fuoco`.
     in property <[CollegamentoUi]> collegamenti;
     in-out property <string> fuoco-collegamento;
     in-out property <string> fuoco-azione-collegamento;
@@ -710,7 +710,7 @@ export component FinestraImpostazioni inherits Window {
 
     property <length> margine: 28px;
     property <length> largo-sezioni: 180px;
-    property <length> alto-testata: 64px;
+    property <length> alto-testata: 18px;
     property <length> contenuto-x: margine + largo-sezioni + 28px;
     property <length> alto-riga: 100px;
     property <length> passo-riga: alto-riga + 8px;
@@ -963,16 +963,7 @@ export component FinestraImpostazioni inherits Window {
             background: Tema.petali;
         }
 
-        Text {
-            x: margine;
-            y: 18px;
-            height: 30px;
-            text: "Impostazioni";
-            vertical-alignment: center;
-            font-weight: 500;
-            font-size: Tema.testo-intestazione;
-            color: Tema.testo;
-        }
+        // Niente titolo «Impostazioni»: lo dice già la barra della finestra.
 
         // ─── Sezioni ───
         for nome[i] in ["Home Assistant", "Dispositivi", "Collegamenti", "Isola", "Sistema", "Informazioni"]: Sezione {
@@ -1011,7 +1002,7 @@ export component FinestraImpostazioni inherits Window {
             Text {
                 x: 90px;
                 y: 0;
-                width: parent.width - self.x - aggiungi.width - 12px;
+                width: parent.width - self.x - 190px;
                 height: 30px;
                 text: errore-elenco;
                 vertical-alignment: center;
@@ -1020,11 +1011,12 @@ export component FinestraImpostazioni inherits Window {
                 color: Tema.caldo-2;
             }
 
-            aggiungi := Bottone {
+            // Con degli ambienti il pulsante sta in alto a destra; a elenco vuoto, sotto il messaggio
+            // e al centro (come nel pannello).
+            if ambienti.length > 0: Bottone {
                 x: parent.width - self.width;
                 y: 0;
-                testo: "Aggiungi ambiente";
-                tipo: ambienti.length == 0 ? TipoPulsante.azione : TipoPulsante.neutro;
+                testo: "Aggiungi un ambiente";
                 premuto => { apri-modulo(-1); }
             }
 
@@ -1048,6 +1040,17 @@ export component FinestraImpostazioni inherits Window {
                     wrap: word-wrap;
                     font-size: Tema.testo-corpo;
                     color: Tema.testo-tenue;
+                }
+
+                HorizontalLayout {
+                    alignment: center;
+                    padding-top: 4px;
+
+                    Bottone {
+                        testo: "Aggiungi un ambiente";
+                        tipo: TipoPulsante.azione;
+                        premuto => { apri-modulo(-1); }
+                    }
                 }
             }
 
@@ -1266,7 +1269,8 @@ export component FinestraImpostazioni inherits Window {
                 text: "STANZE E DISPOSITIVI";
             }
 
-            Text {
+            // Le istruzioni servono solo se c'è qualcosa da ordinare.
+            if righe-dispositivi.length > 0: Text {
                 x: 0;
                 y: 26px;
                 width: parent.width;
@@ -1515,11 +1519,12 @@ export component FinestraImpostazioni inherits Window {
                 text: "COLLEGAMENTI";
             }
 
-            aggiungi-collegamento := Bottone {
+            // Con dei collegamenti il pulsante sta in alto a destra; a elenco vuoto, sotto il
+            // messaggio e al centro (come nel pannello).
+            if collegamenti.length > 0: Bottone {
                 x: parent.width - self.width;
                 y: 0;
-                testo: "Aggiungi collegamento";
-                tipo: collegamenti.length == 0 ? TipoPulsante.azione : TipoPulsante.neutro;
+                testo: "Aggiungi un collegamento";
                 chiede-fuoco: fuoco-azione-collegamento == "aggiungi";
                 fuoco-preso => {
                     if (fuoco-azione-collegamento == "aggiungi") {
@@ -1560,6 +1565,23 @@ export component FinestraImpostazioni inherits Window {
                     wrap: word-wrap;
                     font-size: Tema.testo-corpo;
                     color: Tema.testo-tenue;
+                }
+
+                HorizontalLayout {
+                    alignment: center;
+                    padding-top: 4px;
+
+                    Bottone {
+                        testo: "Aggiungi un collegamento";
+                        tipo: TipoPulsante.azione;
+                        chiede-fuoco: fuoco-azione-collegamento == "aggiungi";
+                        fuoco-preso => {
+                            if (fuoco-azione-collegamento == "aggiungi") {
+                                fuoco-azione-collegamento = "";
+                            }
+                        }
+                        premuto => { apri-modulo-collegamento(-1); }
+                    }
                 }
             }
 
@@ -1897,8 +1919,9 @@ export component FinestraImpostazioni inherits Window {
                         fuoco-preso => { isola.porta-in-vista(self.y, self.height); }
                     }
 
-                    Text {
-                        text: "«Rete»: Solo su Windows, solo l'icona della connessione. Il nome della rete non compare mai nella pillola.";
+                    // Dove l'app gira (Windows) la nota non serve: la mostra solo chi non ha la fonte.
+                    if fuori-da-windows: Text {
+                        text: "«Rete»: solo su Windows, solo l'icona della connessione. Il nome della rete non compare mai nella pillola.";
                         wrap: word-wrap;
                         font-size: Tema.testo-piccolo;
                         color: Tema.testo-tenue;
@@ -1947,6 +1970,12 @@ export component FinestraImpostazioni inherits Window {
                                 }
                             }
                         }
+                    }
+
+                    // Un avviso non è un aspetto della pillola: ha la sua sezione.
+                    if avvisi-bt-disponibile: Etichetta {
+                        height: 30px;
+                        text: "AVVISI";
                     }
 
                     if avvisi-bt-disponibile: Rectangle {
@@ -2025,8 +2054,8 @@ export component FinestraImpostazioni inherits Window {
                         esci => { radice.focus(); }
                     }
 
-                    Text {
-                        text: "«GPU»: Solo su Windows.";
+                    if fuori-da-windows: Text {
+                        text: "«GPU»: solo su Windows.";
                         wrap: word-wrap;
                         font-size: Tema.testo-piccolo;
                         color: Tema.testo-tenue;
@@ -2106,7 +2135,7 @@ export component FinestraImpostazioni inherits Window {
                     x: 16px;
                     y: 35px;
                     width: interruttore-icona.x - self.x - 12px;
-                    text: "L'icona vicino all'orologio, con lo stesso menu del «⋯» del pannello.";
+                    text: "L'icona vicino all'orologio, con lo stesso menu del «…» del pannello.";
                     overflow: elide;
                     font-size: Tema.testo-piccolo;
                     color: Tema.testo-tenue;
