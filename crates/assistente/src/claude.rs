@@ -475,11 +475,19 @@ fn pulsante_ho_capito() -> Vec<Pulsante> {
     vec![Pulsante::new(crate::attenzione::PULSANTE_HO_CAPITO, "Ho capito")]
 }
 
+/// Due fini di finestra a meno di questo scarto (secondi) sono la stessa finestra: `resets_at` può
+/// oscillare di poco fra una barra e l'altra e non deve riavvisare né riscrivere la configurazione.
+pub const TOLLERANZA_FINESTRA: i64 = 300;
+
+pub fn stessa_finestra(a: i64, b: i64) -> bool {
+    (a - b).abs() < TOLLERANZA_FINESTRA
+}
+
 /// L'avviso «il limite sta finendo»: la percentuale ha raggiunto la `soglia`, la finestra non si è
 /// ancora azzerata (`azzera_alle > ora`, secondi Unix) e non è già stata avvisata (`avvisato` è la
 /// fine della finestra salvata: finestra nuova = `azzera_alle` diverso). Una voce di *attenzione*.
 pub fn avviso_limite(f: Finestra, l: &Limite, soglia: u8, avvisato: Option<i64>, ora: i64) -> Option<Voce> {
-    if !l.percentuale.is_finite() || l.percentuale < f32::from(soglia) || l.azzera_alle <= ora || avvisato == Some(l.azzera_alle) {
+    if !l.percentuale.is_finite() || l.percentuale < f32::from(soglia) || l.azzera_alle <= ora || avvisato.is_some_and(|a| stessa_finestra(a, l.azzera_alle)) {
         return None;
     }
     let adesso = Local.timestamp_opt(ora, 0).single()?;
@@ -584,8 +592,19 @@ pub fn leggi_soglia_spesa(testo: &str) -> Result<Option<f64>, &'static str> {
     if t.is_empty() {
         return Ok(None);
     }
+    // Solo cifre con al più un separatore decimale (virgola o punto) e due decimali: niente
+    // migliaia («1.000») né esponenti («1e3»).
+    let forma = {
+        let (intera, dec) = t.split_once([',', '.']).map_or((t, ""), |(i, d)| (i, d));
+        !intera.is_empty()
+            && intera.bytes().all(|b| b.is_ascii_digit())
+            && dec.len() <= 2
+            && dec.bytes().all(|b| b.is_ascii_digit())
+            && !dec.contains([',', '.'])
+            && (t.len() == intera.len() || (!dec.is_empty() && t.len() == intera.len() + 1 + dec.len()))
+    };
     match t.replace(',', ".").parse::<f64>() {
-        Ok(v) if v.is_finite() && v > 0.0 && v <= 1_000_000_000.0 => Ok(Some(v)),
+        Ok(v) if forma && v.is_finite() && v > 0.0 && v <= 1_000_000_000.0 => Ok(Some(v)),
         _ => Err("Scrivi un importo maggiore di zero, per esempio 250 o 99,50, oppure lascia vuoto per non avere una soglia."),
     }
 }
@@ -1163,6 +1182,27 @@ mod test {
         assert_eq!(titolo(11.0), "Limite 5 ore all'11%");
         assert_eq!(titolo(18.0), "Limite 5 ore al 18%");
         assert_eq!(titolo(85.4), "Limite 5 ore all'85%");
+    }
+
+    #[test]
+    fn finestra_con_resets_at_che_oscilla_e_la_stessa() {
+        let (ora, azzera) = (ora_locale(10, 0), ora_locale(14, 30));
+        // Qualche secondo di scarto: stessa finestra, niente riavviso.
+        assert!(avviso_limite(Finestra::CinqueOre, &lim(90.0, azzera + 7), 80, Some(azzera), ora).is_none());
+        assert!(avviso_limite(Finestra::CinqueOre, &lim(90.0, azzera - 299), 80, Some(azzera), ora).is_none());
+        // Cinque minuti o più: un'altra finestra.
+        assert!(avviso_limite(Finestra::CinqueOre, &lim(90.0, azzera + 300), 80, Some(azzera), ora).is_some());
+    }
+
+    #[test]
+    fn soglia_di_spesa_senza_migliaia_ne_esponenti() {
+        assert_eq!(leggi_soglia_spesa("12,5"), Ok(Some(12.5)));
+        assert_eq!(leggi_soglia_spesa("12.50"), Ok(Some(12.5)));
+        assert_eq!(leggi_soglia_spesa(" 250 "), Ok(Some(250.0)));
+        assert_eq!(leggi_soglia_spesa(""), Ok(None));
+        for male in ["1.000", "1e3", "1.000,50", "12,345", "1,2,3", ",5", "5,", "+5", "0", "-1", "abc", "1_000"] {
+            assert!(leggi_soglia_spesa(male).is_err(), "{male:?} si rifiuta");
+        }
     }
 
     #[test]

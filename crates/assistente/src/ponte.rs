@@ -568,7 +568,7 @@ pub fn quadranti_ui(q: &[Lato], menu: Option<&MenuData>, massimi: &HashMap<Strin
                 Lato::Limite5h | Lato::Limite7g | Lato::SpesaApi => {
                     let (fonte, etichetta) = match l {
                         Lato::Limite5h => (FonteQuadranteUi::Limite5h, "LIMITE 5 ORE"),
-                        Lato::Limite7g => (FonteQuadranteUi::Limite7g, "LIMITE SETTIMANALE"),
+                        Lato::Limite7g => (FonteQuadranteUi::Limite7g, "LIMITE 7 GIORNI"),
                         _ => (FonteQuadranteUi::SpesaApi, "SPESA API"),
                     };
                     // Senza dato «—» e nessun arco (PF9): mai «0%» né «0 $».

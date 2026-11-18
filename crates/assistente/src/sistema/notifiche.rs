@@ -11,6 +11,8 @@
 //! nome di Windows PowerShell, l'identificativo predefinito di notify-rust. Il clic sul toast non
 //! apre nulla (servirebbe un attivatore COM).
 
+#![cfg_attr(test, allow(dead_code, unused_imports))]
+
 use std::path::Path;
 use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
 use std::sync::OnceLock;
@@ -83,6 +85,18 @@ fn coda() -> Option<&'static SyncSender<(String, String)>> {
 }
 
 /// Mette un toast in coda. Ritorna subito.
+#[cfg(test)]
+pub fn mostra(titolo: &str, messaggio: &str) {
+    // Nei test mai una notifica vera (finirebbe nel centro notifiche dell'utente): si conta soltanto.
+    CHIAMATE_PROVA.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let _ = (titolo, messaggio);
+}
+
+/// Quante volte i test hanno chiesto una notifica (nessuna è partita).
+#[cfg(test)]
+pub static CHIAMATE_PROVA: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(not(test))]
 pub fn mostra(titolo: &str, messaggio: &str) {
     let Some(tx) = coda() else { return };
     match tx.try_send((titolo.to_owned(), messaggio.to_owned())) {

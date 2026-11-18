@@ -394,7 +394,7 @@ impl Ponte {
     pub(super) fn claude_limiti_a(&self, ora: i64) {
         let (cinque, sette) = self.limiti_a(ora);
         self.arma_sveglia_limiti([cinque, sette].into_iter().flatten().map(|l| l.azzera_alle).min(), ora);
-        let soglia = self.casa.con_config(|c| c.claude.soglia_limite);
+        let soglia = self.casa.con_config(|c| c.claude.soglia_limite).clamp(50, 100);
         for (finestra, limite) in [(claude::Finestra::CinqueOre, cinque), (claude::Finestra::SetteGiorni, sette)] {
             let Some(l) = limite else {
                 // La finestra si è azzerata (o non c'è più il dato): l'avviso non ha più senso.
@@ -417,10 +417,8 @@ impl Ponte {
     /// limite scaduto né un numero inventato) e la spesa dell'ultima lettura riuscita.
     pub(super) fn dati_claude_quadranti(&self) -> crate::lati::DatiClaude {
         let (cinque, sette) = self.limiti();
-        let spesa = match self.api_ultimo.borrow().as_ref() {
-            Some((_, Ok(r))) if r.errore.is_none() => r.spesa_mese,
-            _ => None,
-        };
+        let spesa = // Solo dati di questo mese (UTC): dopo il cambio di mese il quadrante dice «—» fino alla lettura nuova.
+        self.riepilogo_fresco(chrono::Utc::now()).and_then(|r| r.spesa_mese);
         crate::lati::DatiClaude { cinque, sette, spesa, soglia_spesa: self.casa.con_config(|c| c.claude.soglia_spesa) }
     }
 
@@ -439,7 +437,7 @@ impl Ponte {
     /// Impostazioni › Claude › Avvisi: i campi partono dalla configurazione (il limite all'80 % di
     /// serie, la soglia di spesa vuota = nessuna) e salvano al volo ciò che è valido.
     pub(crate) fn collega_soglie(&self, f: &FinestraImpostazioni) {
-        let (limite, spesa) = self.casa.con_config(|c| (c.claude.soglia_limite, c.claude.soglia_spesa));
+        let (limite, spesa) = self.casa.con_config(|c| (c.claude.soglia_limite.clamp(50, 100), c.claude.soglia_spesa));
         f.set_soglia_limite(limite.to_string().into());
         f.set_soglia_spesa(spesa.map(crate::lati::testo_massimo).unwrap_or_default().into());
         f.on_soglia_limite_scritta(|testo| ponte().map(|p| p.cambia_soglia_limite(&testo)).unwrap_or_default().into());
@@ -2394,8 +2392,8 @@ mod test {
     fn la_soglia_dei_limiti_e_quella_della_configurazione() {
         let (_s, p, _pillola, _d) = ponte_di_prova();
         let ora = ora_adesso();
-        p.casa().aggiorna_config(|c| c.claude.soglia_limite = 10);
-        p.claude_barra(barra("a", Some((12.0, ora + 600)), None));
+        p.casa().aggiorna_config(|c| c.claude.soglia_limite = 60);
+        p.claude_barra(barra("a", Some((62.0, ora + 600)), None));
         assert!(ha_voce_claude(&p, "claude.limite.5h"));
     }
 
@@ -2593,6 +2591,74 @@ mod test {
         arriva(&q, r);
         assert!(!ha_voce_claude(&q, "claude.spesa.insolita"));
         assert_eq!(q.casa().config().claude.insolita_avvisata, None);
+    }
+
+    #[test]
+    fn resets_at_che_oscilla_non_riavvisa_ne_riscrive() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let ora = ora_adesso();
+        p.claude_barra(barra("a", Some((82.0, ora + 600)), None));
+        p.azione("claude.limite.5h", crate::attenzione::PULSANTE_HO_CAPITO);
+        // La stessa finestra con la fine spostata di qualche secondo: né voce né scrittura.
+        p.claude_barra(barra("a", Some((85.0, ora + 603)), None));
+        assert!(!ha_voce_claude(&p, "claude.limite.5h"));
+        assert_eq!(p.casa().config().claude.limiti_avvisati.get("5h"), Some(&(ora + 600)), "nessuna scrittura");
+    }
+
+    #[test]
+    fn soglia_dei_limiti_del_file_fuori_scala_si_riporta_a_50_100() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let ora = ora_adesso();
+        p.casa().aggiorna_config(|c| c.claude.soglia_limite = 0);
+        p.claude_barra(barra("a", Some((30.0, ora + 600)), None));
+        assert!(!ha_voce_claude(&p, "claude.limite.5h"), "0 vale 50: il 30 % non avvisa");
+        p.claude_barra(barra("a", Some((55.0, ora + 600)), None));
+        assert!(ha_voce_claude(&p, "claude.limite.5h"));
+    }
+
+    #[test]
+    fn il_quadrante_della_spesa_non_mostra_il_mese_scorso() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        p.api_salva_ui("sk-ant-admin01-di-prova-1a2b");
+        con_quadranti(&p, &["spesa_api"]);
+        let mut vecchia = riepilogo_con_spesa("41280", true);
+        vecchia.aggiornato_a = Some(chrono::Utc::now() - chrono::Duration::days(40));
+        arriva(&p, vecchia);
+        assert_eq!(quadrante(&p, 0).valore.as_str(), "—");
+        arriva(&p, riepilogo_con_spesa("41280", true));
+        assert_eq!(quadrante(&p, 0).valore.as_str(), "413 $");
+    }
+
+    #[test]
+    fn collega_soglie_parte_dalla_configurazione_e_salva_dai_campi() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        p.casa().aggiorna_config(|c| {
+            c.claude.soglia_limite = 70;
+            c.claude.soglia_spesa = Some(99.5);
+        });
+        let f = crate::FinestraImpostazioni::new().unwrap();
+        p.collega_soglie(&f);
+        assert_eq!(f.get_soglia_limite().as_str(), "70");
+        assert_eq!(f.get_soglia_spesa().as_str(), "99,5");
+        // I callback veri: rifiutano senza salvare, accettano salvando.
+        assert!(!f.invoke_soglia_limite_scritta("abc".into()).is_empty());
+        assert_eq!(p.casa().config().claude.soglia_limite, 70);
+        assert_eq!(f.invoke_soglia_limite_scritta("90".into()).as_str(), "");
+        assert_eq!(p.casa().config().claude.soglia_limite, 90);
+        assert!(!f.invoke_soglia_spesa_scritta("1.000".into()).is_empty());
+        assert_eq!(p.casa().config().claude.soglia_spesa, Some(99.5));
+        assert_eq!(f.invoke_soglia_spesa_scritta("".into()).as_str(), "");
+        assert_eq!(p.casa().config().claude.soglia_spesa, None);
+    }
+
+    #[test]
+    fn nei_test_nessuna_notifica_vera() {
+        use std::sync::atomic::Ordering;
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let prima = crate::sistema::notifiche::CHIAMATE_PROVA.load(Ordering::Relaxed);
+        p.claude_barra(barra("a", Some((95.0, ora_adesso() + 600)), None));
+        // La voce di attenzione ha chiesto il toast: è stato solo contato, non mostrato.
+        assert!(crate::sistema::notifiche::CHIAMATE_PROVA.load(Ordering::Relaxed) > prima);
     }
 
     #[test]
