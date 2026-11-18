@@ -853,6 +853,12 @@ pub struct Ponte {
     /// La catena dei processi dell'aiutante per sessione (`session_id`), presa al primo evento:
     /// serve a portare davanti il terminale (Task 10). Al più 16, tolta con la sessione.
     claude_catene: RefCell<HashMap<String, Vec<(u32, String)>>>,
+    /// Le sessioni il cui terminale non si raggiunge dalla catena (finestra non trovata alla
+    /// prima richiesta, all'apertura della vista Claude o all'ultimo clic): il clic ripiega
+    /// sull'ultimo terminale usato, e la riga lo dice. Solo sessioni vive (tolte con loro).
+    claude_ripiego: RefCell<std::collections::HashSet<String>>,
+    /// Toglie da sola la voce «Non trovo il terminale».
+    sveglia_terminale: slint::Timer,
     /// La vista Claude del pannello (Task 9): si vede (pannello aperto su di lei) e il modello delle
     /// sue righe. Chiusa, niente si calcola né si scrive.
     vista_claude: Cell<bool>,
@@ -992,6 +998,8 @@ pub fn collega(
         claude_limiti: RefCell::new(None),
         claude_contesto: RefCell::new(HashMap::new()),
         claude_catene: RefCell::new(HashMap::new()),
+        claude_ripiego: RefCell::new(std::collections::HashSet::new()),
+        sveglia_terminale: slint::Timer::default(),
         vista_claude: Cell::new(false),
         claude_righe: Rc::new(VecModel::default()),
         claude_permessi: RefCell::new(HashMap::new()),

@@ -1441,6 +1441,7 @@ mod accessibilita {
             durata: Default::default(),
             contesto: Default::default(),
             terminale: Default::default(),
+            avviso: Default::default(),
         }
     }
 

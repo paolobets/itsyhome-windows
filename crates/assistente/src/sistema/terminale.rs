@@ -99,14 +99,22 @@ pub fn scegli_finestra(catena: &[&Processo], finestre: &[(u32, isize)]) -> Optio
 }
 
 /// Gli anelli della catena salvata alla prima richiesta che esistono ancora con lo STESSO nome di
-/// eseguibile: un PID riusato da un altro programma (nome diverso) cade. Nell'ordine salvato.
+/// eseguibile e, dove c'è un anello sopra, con quello stesso come genitore: un PID riusato da un
+/// altro programma (nome diverso) o da un'altra istanza dello stesso (genitore diverso) cade.
+/// Nell'ordine salvato.
 pub fn anelli_validi<'a>(salvata: &[(u32, String)], processi: &'a [Processo]) -> Vec<&'a Processo> {
     salvata
         .iter()
-        .filter_map(|(pid, nome)| {
-            processi
-                .iter()
-                .find(|p| p.pid == *pid && p.exe.eq_ignore_ascii_case(nome))
+        .enumerate()
+        .filter_map(|(i, (pid, nome))| {
+            let p = processi.iter().find(|p| p.pid == *pid && p.exe.eq_ignore_ascii_case(nome))?;
+            // Anche il genitore di adesso deve essere l'anello che stava sopra: chi ha preso il
+            // numero di un processo morto (magari lo stesso programma, un'altra shell) ha quasi
+            // sempre un altro genitore.
+            match salvata.get(i + 1) {
+                Some((genitore, _)) if p.genitore != *genitore => None,
+                _ => Some(p),
+            }
         })
         .collect()
 }
@@ -394,6 +402,20 @@ mod test {
     }
 
     #[test]
+    fn un_pid_riusato_dallo_stesso_programma_con_altro_genitore_cade() {
+        // La shell (20) è morta e il suo numero è passato a un'altra pwsh.exe, con un altro genitore e
+        // una finestra sua (5): non è quella di Claude.
+        let mut a = albero();
+        a[1] = p(20, 99, "pwsh.exe");
+        let valide: Vec<u32> = anelli_validi(&salvata(), &a).iter().map(|x| x.pid).collect();
+        assert_eq!(valide, [10, 30], "20 ha un genitore diverso da 30: scartato");
+        assert_eq!(finestra_della_sessione(&salvata(), &a, &[(20, 5), (30, 42)]), Some(42));
+        // L'ultimo anello salvato non ha un «sopra» da confrontare: resta.
+        let sola = vec![(30, "WindowsTerminal.exe".to_owned())];
+        assert_eq!(anelli_validi(&sola, &albero()).len(), 1);
+    }
+
+    #[test]
     fn il_nome_si_confronta_senza_badare_alle_maiuscole() {
         let mut a = albero();
         a[2] = p(30, 40, "windowsterminal.exe");
@@ -468,8 +490,10 @@ mod test {
 
     #[cfg(windows)]
     #[test]
-    fn le_finestre_visibili_si_leggono_senza_panico() {
-        // Solo lettura: nessuna finestra si tocca.
-        let _ = finestre_visibili();
+    fn le_finestre_visibili_hanno_handle_e_processo() {
+        // Solo lettura: nessuna finestra si tocca. Ogni voce ha un handle e un processo veri.
+        for (pid, hwnd) in finestre_visibili() {
+            assert!(pid != 0 && hwnd != 0, "finestra senza processo o handle: {pid} {hwnd}");
+        }
     }
 }

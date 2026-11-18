@@ -28,10 +28,12 @@ component RigaClaude inherits Rectangle {
     accessible-role: button;
     accessible-label: riga.cartella + ", " + riga.stato;
     // Senza la durata: cambia ogni secondo e Narrator non deve ripeterla.
-    // Il clic porta davanti la finestra del terminale (con Windows Terminal la finestra, non la scheda).
-    accessible-description: (riga.strumento != "" && riga.contesto != "" ? riga.strumento + ", contesto " + riga.contesto
-        : riga.strumento != "" ? riga.strumento : riga.contesto != "" ? "contesto " + riga.contesto : "")
-        + (riga.terminale != "" ? ". " + riga.terminale + ". " : ". ") + "Apre il terminale: la finestra, non la scheda";
+    property <string> dettagli: riga.strumento != "" && riga.contesto != "" ? riga.strumento + ", contesto " + riga.contesto
+        : riga.strumento != "" ? riga.strumento : riga.contesto != "" ? "contesto " + riga.contesto : "";
+    // Dove il clic ripiega o porta davanti la finestra e non la scheda lo si dice; senza, niente.
+    property <string> note: riga.terminale != "" && riga.avviso != "" ? riga.terminale + ". " + riga.avviso
+        : riga.terminale != "" ? riga.terminale : riga.avviso;
+    accessible-description: dettagli != "" && note != "" ? dettagli + ". " + note : dettagli + note;
     accessible-action-default => { root.apri(); }
 
     Fuoco { chiede: anello; }

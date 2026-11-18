@@ -11,7 +11,7 @@ pub use collegamento::Contesto;
 use super::{ponte, Ponte, MARGINE_SVEGLIA};
 use crate::attenzione::{Fonte, Livello, Pulsante, Voce, PULSANTE_IMPOSTAZIONI};
 use crate::claude::{
-    self, ID_AGGIORNA, ID_COLLEGAMENTO, PERMESSI_RISOLVIBILI, PULSANTE_CONSENTI, PULSANTE_NEGA, PULSANTE_TERMINALE,
+    self, ID_AGGIORNA, ID_COLLEGAMENTO, ID_TERMINALE_MANCANTE, PERMESSI_RISOLVIBILI, PULSANTE_CONSENTI, PULSANTE_NEGA, PULSANTE_TERMINALE,
 };
 use crate::pillola;
 use crate::umore::Umore;
@@ -170,6 +170,10 @@ pub fn azione(p: &Ponte, voce: &str, pulsante: &str) {
         if let Some(impronta) = claude::impronta_da_voce(voce) {
             p.claude_apri_terminale(impronta);
         }
+    } else if voce == ID_TERMINALE_MANCANTE {
+        // «Ho capito» (e ogni altro pulsante): la voce ha detto quel che doveva.
+        p.sveglia_terminale.stop();
+        p.togli_voce(voce);
     } else if voce == ID_COLLEGAMENTO && pulsante == PULSANTE_IMPOSTAZIONI {
         p.chiedi_impostazioni();
     } else if voce == ID_AGGIORNA && pulsante == PULSANTE_IMPOSTAZIONI {
@@ -430,7 +434,34 @@ impl Ponte {
             catene.retain(|id, _| note.contains(id));
         }
         if catene.contains_key(sessione) || catene.len() < MASSIMO_CONTESTI {
+            let raggiungibile = raggiungibili(std::slice::from_ref(&catena))[0];
             catene.insert(sessione.to_owned(), catena);
+            let mut ripiego = self.claude_ripiego.borrow_mut();
+            if raggiungibile {
+                ripiego.remove(sessione);
+            } else {
+                ripiego.insert(sessione.to_owned());
+            }
+        }
+        drop(catene);
+        // La riga della sessione (già scritta dall'evento) ora sa di avere la catena.
+        self.aggiorna_vista_claude();
+    }
+
+    /// Rilegge per ogni sessione con la catena salvata se il suo terminale si raggiunge (una sola
+    /// istantanea per tutte). Si fa all'apertura della vista Claude, non su un timer.
+    #[cfg(any(windows, test))]
+    fn claude_rileggi_ripiego(&self) {
+        let (ids, catene): (Vec<String>, Vec<Vec<(u32, String)>>) =
+            self.claude_catene.borrow().iter().map(|(i, c)| (i.clone(), c.clone())).unzip();
+        let esiti = raggiungibili(&catene);
+        let mut ripiego = self.claude_ripiego.borrow_mut();
+        for (id, ok) in ids.into_iter().zip(esiti) {
+            if ok {
+                ripiego.remove(&id);
+            } else {
+                ripiego.insert(id);
+            }
         }
     }
 
@@ -449,8 +480,51 @@ impl Ponte {
         else {
             return;
         };
-        let salvata = self.claude_catene.borrow().get(&id).cloned().unwrap_or_default();
-        porta_davanti_il_terminale(salvata);
+        #[cfg(all(not(windows), not(test)))]
+        {
+            // Altrove non c'è un terminale da portare davanti: si apre la vista Claude.
+            let _ = id;
+            self.apri_la_vista_claude();
+        }
+        #[cfg(any(windows, test))]
+        self.porta_davanti_sessione(&id);
+    }
+
+    /// Il clic vero: la catena salvata, poi il ripiego sull'ultimo terminale; la riga dice
+    /// «ultimo terminale usato» da quando si è ripiegato, e se non c'è nulla lo dice una voce.
+    #[cfg(any(windows, test))]
+    fn porta_davanti_sessione(&self, id: &str) {
+        let salvata = self.claude_catene.borrow().get(id).cloned().unwrap_or_default();
+        let esito = porta_davanti_il_terminale(&salvata);
+        let cambiato = if esito == Esito::Sessione {
+            self.claude_ripiego.borrow_mut().remove(id)
+        } else {
+            self.claude_ripiego.borrow_mut().insert(id.to_owned())
+        };
+        if cambiato {
+            self.aggiorna_vista_claude();
+        }
+        if esito == Esito::Niente {
+            self.metti_voce(claude::voce_terminale_mancante(Instant::now()), false);
+            self.sveglia_terminale.start(slint::TimerMode::SingleShot, Duration::from_secs(10), || {
+                if let Some(p) = ponte() {
+                    p.togli_voce(ID_TERMINALE_MANCANTE);
+                }
+            });
+        }
+    }
+
+    /// Fuori da Windows: il pannello sulla vista Claude (già aperto: ci si porta).
+    #[cfg(all(not(windows), not(test)))]
+    fn apri_la_vista_claude(&self) {
+        let aperto = self.pannello.borrow().upgrade();
+        match aperto {
+            Some(p) => {
+                p.set_vista("claude".into());
+                self.vista_claude(true);
+            }
+            None => crate::sistema::servizi::apri(),
+        }
     }
 
     /// Un permesso chiesto da Claude Code, sul thread dell'interfaccia: una voce bloccante e il
@@ -605,6 +679,7 @@ impl Ponte {
     fn togli_voci_sessione(&self, id: &str) {
         self.claude_contesto.borrow_mut().remove(id);
         self.claude_catene.borrow_mut().remove(id);
+        self.claude_ripiego.borrow_mut().remove(id);
         for voce in claude::id_voci(id) {
             self.togli_voce(&voce);
         }
@@ -687,6 +762,11 @@ impl Ponte {
         if self.vista_claude.replace(si) == si {
             return;
         }
+        if si {
+            // Il terminale di una sessione può essere sparito dall'ultima volta: lo si rilegge qui.
+            #[cfg(any(windows, test))]
+            self.claude_rileggi_ripiego();
+        }
         if !si {
             self.sveglia_limiti.stop();
             self.limiti_armati.set(None);
@@ -734,12 +814,23 @@ impl Ponte {
         } else {
             (Vec::new(), 0)
         };
-        let con_catena: Vec<String> = self.claude_catene.borrow().keys().map(|id| claude::id_sessione(id)).collect();
+        // Per impronta: la catena c'è e raggiunge il terminale / è un Windows Terminal o un VS Code.
+        let (raggiungibili, a_finestre): (Vec<String>, Vec<String>) = {
+            let ripiego = self.claude_ripiego.borrow();
+            let catene = self.claude_catene.borrow();
+            let a_finestre = |c: &Vec<(u32, String)>| {
+                c.iter().any(|(_, n)| n.eq_ignore_ascii_case("WindowsTerminal.exe") || n.eq_ignore_ascii_case("Code.exe"))
+            };
+            (
+                catene.keys().filter(|id| !ripiego.contains(*id)).map(|id| claude::id_sessione(id)).collect(),
+                catene.iter().filter(|(_, c)| a_finestre(c)).map(|(id, _)| claude::id_sessione(id)).collect(),
+            )
+        };
         let voci = righe
             .into_iter()
             .map(|r| {
-                let senza = !con_catena.contains(&r.id);
-                riga_ui(r, senza)
+                let (ripiego, a_finestra) = (!raggiungibili.contains(&r.id), a_finestre.contains(&r.id));
+                riga_ui(r, ripiego, a_finestra)
             })
             .collect();
         let n = super::aggiorna_modello(&self.claude_righe, voci);
@@ -833,41 +924,83 @@ impl Ponte {
     }
 }
 
+/// Come è andato un «Apri il terminale».
+#[cfg(any(windows, test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Esito {
+    /// Davanti la finestra del terminale della sessione.
+    Sessione,
+    /// La catena non portava a nessuna finestra: davanti l'ultimo terminale usato.
+    Ripiego,
+    /// Nessuna finestra, o Windows non l'ha portata davanti.
+    Niente,
+}
+
 /// Il passo finale di «Apri il terminale» (solo Windows): la catena salvata, l'elenco dei processi
 /// di adesso e le finestre visibili danno la finestra del terminale; senza, quella dell'ultimo
-/// terminale in primo piano (`primo_piano`). Niente se non c'è né l'una né l'altra.
+/// terminale in primo piano (`primo_piano`).
 #[cfg(all(windows, not(test)))]
-fn porta_davanti_il_terminale(salvata: Vec<(u32, String)>) {
+fn porta_davanti_il_terminale(salvata: &[(u32, String)]) -> Esito {
     use crate::sistema::{primo_piano, terminale};
-    let hwnd = terminale::finestra_della_sessione(&salvata, &terminale::processi(), &terminale::finestre_visibili())
-        .or_else(primo_piano::ultimo_terminale);
-    if let Some(h) = hwnd {
-        terminale::porta_davanti(h);
+    let (hwnd, ripiego) =
+        match terminale::finestra_della_sessione(salvata, &terminale::processi(), &terminale::finestre_visibili()) {
+            Some(h) => (Some(h), false),
+            None => (primo_piano::ultimo_terminale(), true),
+        };
+    match hwnd {
+        Some(h) if terminale::porta_davanti(h) => {
+            if ripiego {
+                Esito::Ripiego
+            } else {
+                Esito::Sessione
+            }
+        }
+        _ => Esito::Niente,
     }
 }
 
-/// Fuori da Windows non c'è un terminale da portare davanti: il clic apre il pannello.
-#[cfg(all(not(windows), not(test)))]
-fn porta_davanti_il_terminale(_salvata: Vec<(u32, String)>) {
-    crate::sistema::servizi::apri();
+/// Per ogni catena: la sua finestra si trova (una sola istantanea per tutte).
+#[cfg(all(windows, not(test)))]
+fn raggiungibili(catene: &[Vec<(u32, String)>]) -> Vec<bool> {
+    use crate::sistema::terminale;
+    let (processi, finestre) = (terminale::processi(), terminale::finestre_visibili());
+    catene.iter().map(|c| terminale::finestra_della_sessione(c, &processi, &finestre).is_some()).collect()
 }
 
-// Nei test non si tocca nessuna finestra: si annota la catena con cui sarebbe partita.
+// Fuori da Windows (e fuori dai test) non c'è nulla da raggiungere: nessuno lo chiede.
+#[cfg(all(not(windows), not(test)))]
+fn raggiungibili(catene: &[Vec<(u32, String)>]) -> Vec<bool> {
+    vec![true; catene.len()]
+}
+
+// Nei test non si tocca nessuna finestra: si annota la catena con cui sarebbe partita e l'esito
+// (e la raggiungibilità) lo decide il test.
 #[cfg(test)]
 thread_local! {
     static PORTATI_DAVANTI: std::cell::RefCell<Vec<Vec<(u32, String)>>> = const { std::cell::RefCell::new(Vec::new()) };
+    static ESITO_PROVA: Cell<Esito> = const { Cell::new(Esito::Sessione) };
+    static RAGGIUNGIBILE_PROVA: Cell<bool> = const { Cell::new(true) };
 }
 
 #[cfg(test)]
-fn porta_davanti_il_terminale(salvata: Vec<(u32, String)>) {
-    PORTATI_DAVANTI.with(|v| v.borrow_mut().push(salvata));
+fn porta_davanti_il_terminale(salvata: &[(u32, String)]) -> Esito {
+    PORTATI_DAVANTI.with(|v| v.borrow_mut().push(salvata.to_vec()));
+    ESITO_PROVA.with(Cell::get)
 }
 
-/// Una riga della vista Claude come la vuole l'interfaccia. `senza_catena`: nessuna catena di
-/// processi salvata per la sessione, il clic ripiega sull'ultimo terminale usato (solo Windows).
-fn riga_ui(r: claude::RigaSessione, senza_catena: bool) -> RigaSessioneUi {
+#[cfg(test)]
+fn raggiungibili(catene: &[Vec<(u32, String)>]) -> Vec<bool> {
+    vec![RAGGIUNGIBILE_PROVA.with(Cell::get); catene.len()]
+}
+
+/// Una riga della vista Claude come la vuole l'interfaccia. `ripiego`: il terminale della sessione
+/// non si raggiunge (nessuna catena salvata o nessuna finestra), il clic ripiega sull'ultimo
+/// terminale usato (solo Windows). `finestra_non_scheda`: il terminale probabile è Windows Terminal
+/// o VS Code, di cui si porta davanti la finestra e non la scheda.
+fn riga_ui(r: claude::RigaSessione, ripiego: bool, finestra_non_scheda: bool) -> RigaSessioneUi {
     RigaSessioneUi {
-        terminale: if senza_catena && cfg!(windows) { "ultimo terminale usato" } else { "" }.into(),
+        terminale: if ripiego && cfg!(windows) { "ultimo terminale usato" } else { "" }.into(),
+        avviso: if finestra_non_scheda && cfg!(windows) { "Apre la finestra del terminale, non la scheda" } else { "" }.into(),
         id: r.id.into(),
         cartella: r.cartella.into(),
         stato: r.stato_testo.into(),
@@ -969,6 +1102,12 @@ mod test {
         PORTATI_DAVANTI.with(|v| std::mem::take(&mut *v.borrow_mut()))
     }
 
+    /// Ripristina i valori di prova (i thread di test si riusano).
+    fn esito_prova(e: Esito, raggiungibile: bool) {
+        ESITO_PROVA.with(|c| c.set(e));
+        RAGGIUNGIBILE_PROVA.with(|c| c.set(raggiungibile));
+    }
+
     /// Una sessione con la catena arrivata col primo evento.
     fn con_catena(p: &Ponte, id: &str, tipo: TipoEvento) {
         manda(p, ev(id, tipo));
@@ -1050,9 +1189,95 @@ mod test {
                 contesto: None,
             },
             senza,
+            false,
         );
         assert_eq!(riga(false).terminale.as_str(), "");
         assert_eq!(riga(true).terminale.as_str(), if cfg!(windows) { "ultimo terminale usato" } else { "" });
+    }
+
+    /// Il filo intero: catena salvata -> raggiungibilità -> riga della vista. Se la finestra della
+    /// catena non c'è la riga lo dichiara; un clic andato bene lo toglie, uno ripiegato lo rimette.
+    #[test]
+    fn la_riga_dichiara_il_ripiego_quando_puo_scattare() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        esito_prova(Esito::Sessione, true);
+        let pannello = con_pannello(&p);
+        p.casa().aggiorna_config(|c| c.claude.collegato = true);
+        let attesa = if cfg!(windows) { "ultimo terminale usato" } else { "" };
+        p.vista_claude(true);
+        // Catena con finestra: nessuna dichiarazione.
+        con_catena(&p, "a", TipoEvento::UserPromptSubmit);
+        assert_eq!(pannello.get_claude_righe().row_data(0).unwrap().terminale.as_str(), "");
+        // Catena senza finestra (terminale chiuso, passaggio di consegne di Windows 11...).
+        esito_prova(Esito::Ripiego, false);
+        con_catena(&p, "b", TipoEvento::UserPromptSubmit);
+        let righe = pannello.get_claude_righe();
+        let terminale = |id: &str| {
+            (0..righe.row_count())
+                .map(|i| righe.row_data(i).unwrap())
+                .find(|r| r.id.as_str() == claude::id_sessione(id))
+                .unwrap()
+                .terminale
+                .to_string()
+        };
+        assert_eq!(terminale("a"), "");
+        assert_eq!(terminale("b"), attesa);
+        // Riaprendo la vista si rilegge: ora anche «a» non ha più la finestra.
+        p.vista_claude(false);
+        p.vista_claude(true);
+        let righe = pannello.get_claude_righe();
+        let terminale = |id: &str| {
+            (0..righe.row_count())
+                .map(|i| righe.row_data(i).unwrap())
+                .find(|r| r.id.as_str() == claude::id_sessione(id))
+                .unwrap()
+                .terminale
+                .to_string()
+        };
+        assert_eq!((terminale("a"), terminale("b")), (attesa.to_owned(), attesa.to_owned()));
+        // Un clic che ripiega lo dichiara da lì in poi; uno riuscito lo toglie.
+        esito_prova(Esito::Sessione, true);
+        p.claude_apri_terminale(&claude::id_sessione("a"));
+        assert!(!p.claude_ripiego.borrow().contains("a"));
+        esito_prova(Esito::Ripiego, true);
+        p.claude_apri_terminale(&claude::id_sessione("a"));
+        assert!(p.claude_ripiego.borrow().contains("a"));
+        esito_prova(Esito::Sessione, true);
+    }
+
+    #[test]
+    fn senza_finestra_una_voce_lo_dice_e_sparisce() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        con_catena(&p, "a", TipoEvento::UserPromptSubmit);
+        esito_prova(Esito::Niente, true);
+        p.claude_apri_terminale(&claude::id_sessione("a"));
+        esito_prova(Esito::Sessione, true);
+        let voce = p.attese.borrow().voce(ID_TERMINALE_MANCANTE).cloned().expect("la voce c'è");
+        assert_eq!(voce.livello, Livello::Informazione);
+        assert_eq!(voce.titolo, "Non trovo il terminale di questa sessione");
+        assert!(p.sveglia_terminale.running(), "sparisce da sola");
+        p.azione(ID_TERMINALE_MANCANTE, crate::attenzione::PULSANTE_HO_CAPITO);
+        assert!(p.attese.borrow().voce(ID_TERMINALE_MANCANTE).is_none());
+        assert!(!p.sveglia_terminale.running());
+        // Un clic andato bene non la mette.
+        p.claude_apri_terminale(&claude::id_sessione("a"));
+        assert!(p.attese.borrow().voce(ID_TERMINALE_MANCANTE).is_none());
+    }
+
+    #[test]
+    fn l_avviso_della_finestra_solo_per_windows_terminal_e_vs_code() {
+        let r = || claude::RigaSessione {
+            id: "x".into(),
+            cartella: "c".into(),
+            stato_testo: "Fatto",
+            livello: None,
+            strumento: String::new(),
+            durata: String::new(),
+            contesto: None,
+        };
+        assert_eq!(riga_ui(r(), false, false).avviso.as_str(), "");
+        let con = riga_ui(r(), false, true).avviso.to_string();
+        assert_eq!(con, if cfg!(windows) { "Apre la finestra del terminale, non la scheda" } else { "" });
     }
 
     #[test]

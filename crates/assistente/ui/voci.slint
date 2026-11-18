@@ -218,6 +218,9 @@ export struct RigaSessioneUi {
     // «ultimo terminale usato» se non si conosce il terminale della sessione (il clic ripiega
     // sull'ultimo usato); vuoto altrimenti.
     terminale: string,
+    // «Apre la finestra del terminale, non la scheda» per Windows Terminal e VS Code (solo
+    // lettori di schermo); vuoto altrimenti.
+    avviso: string,
 }
 
 // Un limite dell'abbonamento (5 ore o 7 giorni): `presente` falso = niente anello (limite assente

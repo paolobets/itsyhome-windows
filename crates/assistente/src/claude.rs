@@ -3,7 +3,7 @@
 //! arriva sempre dal chiamante e nessun testo di prompt, risposta o file passa di qui (le sessioni
 //! portano solo cartella, stato e nome dello strumento).
 
-use crate::attenzione::{Fonte, Livello, Pulsante, Voce};
+use crate::attenzione::{Fonte, Livello, Pulsante, Voce, PULSANTE_HO_CAPITO};
 use claude_hook::evento::EventoHook;
 use api_claude::Riepilogo;
 use chrono::{DateTime, Datelike, Local, TimeZone, Weekday};
@@ -28,6 +28,9 @@ pub const PERMESSI_RISOLVIBILI: bool = true;
 pub const PULSANTE_NEGA: &str = "nega";
 pub const PULSANTE_CONSENTI: &str = "consenti";
 pub const PULSANTE_TERMINALE: &str = "terminale";
+/// La voce informativa «non trovo il terminale»: un clic su «Apri il terminale» non ha trovato
+/// nessuna finestra (o Windows non l'ha portata davanti). Sparisce da sola.
+pub const ID_TERMINALE_MANCANTE: &str = "claude.terminale.mancante";
 /// Quanti caratteri del riassunto stanno nel titolo della voce di un permesso.
 const MASSIMO_RIASSUNTO_TITOLO: usize = 60;
 
@@ -96,6 +99,19 @@ pub fn voce_permesso(id: u64, e: &EventoHook, ora: Instant) -> Voce {
         vec![Pulsante::new(PULSANTE_TERMINALE, "Apri il terminale")]
     };
     Voce { id: id_voce_permesso(id), livello: Livello::Bloccante, fonte: Fonte::Claude, titolo, dettaglio, pulsanti, creata: ora }
+}
+
+/// La voce «Non trovo il terminale di questa sessione» (informazione).
+pub fn voce_terminale_mancante(ora: Instant) -> Voce {
+    Voce {
+        id: ID_TERMINALE_MANCANTE.into(),
+        livello: Livello::Informazione,
+        fonte: Fonte::Claude,
+        titolo: "Non trovo il terminale di questa sessione".into(),
+        dettaglio: "Non è stata portata davanti nessuna finestra: aprila tu dalla barra.".into(),
+        pulsanti: vec![Pulsante::new(PULSANTE_HO_CAPITO, "Ho capito")],
+        creata: ora,
+    }
 }
 
 /// La frase per un errore dell'API di Claude (`StopFailure.error`).
@@ -450,6 +466,15 @@ mod test {
         let errore = EventoHook { errore: Some("rate_limit".into()), ..ev("a", TipoEvento::StopFailure) };
         con(&mut s, errore, t);
         assert!(voce_sessione(prima(&s), t).unwrap().pulsanti.is_empty(), "l'errore non ha il pulsante");
+    }
+
+    #[test]
+    fn la_voce_del_terminale_mancante_e_informativa_e_non_e_una_sessione() {
+        let v = voce_terminale_mancante(Instant::now());
+        assert_eq!(v.livello, Livello::Informazione);
+        assert_eq!(v.titolo, "Non trovo il terminale di questa sessione");
+        assert_eq!(impronta_da_voce(&v.id), None);
+        assert!(v.id.starts_with(PREFISSO_CLAUDE));
     }
 
     #[test]

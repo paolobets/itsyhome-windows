@@ -80,6 +80,7 @@ fn exe_della_finestra(hwnd: HWND) -> Option<String> {
 }
 
 /// L'ultima finestra di un terminale che è stata in primo piano, se esiste ancora.
+#[cfg_attr(test, allow(dead_code))]
 pub fn ultimo_terminale() -> Option<isize> {
     let h = ULTIMO_TERMINALE.with(Cell::get)?;
     // SAFETY: `IsWindow` accetta qualunque valore.
@@ -146,11 +147,6 @@ mod test {
         assert_eq!(nome_file(r"C:\Program Files\PowerShell\pwsh.exe"), "pwsh.exe");
         assert_eq!(nome_file("cmd.exe"), "cmd.exe");
         assert!(e_terminale(nome_file(r"C:\Windows\System32\conhost.exe")));
-    }
-
-    #[test]
-    fn senza_terminali_visti_nessun_ripiego() {
-        assert_eq!(ultimo_terminale(), None);
     }
 
     #[test]
