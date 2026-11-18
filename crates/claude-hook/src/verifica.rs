@@ -6,6 +6,14 @@
 //!    OWNER_SECURITY_INFORMATION)` sulla maniglia aperta) è il SID dell'utente corrente. Lo fissa
 //!    il kernel alla creazione: isola lo scrive esplicito (`O:<SID>`), e un altro utente non può
 //!    impostare il nostro SID come proprietario senza privilegi di ripristino. Non dipende da PID.
+//!    **Etichetta d'integrità del tubo** (`GetSecurityInfo(…, LABEL_SECURITY_INFORMATION)`, serve
+//!    solo `READ_CONTROL`). Regola esatta, dalla documentazione di Mandatory Integrity Control
+//!    («un oggetto senza etichetta è trattato come di integrità media»):
+//!    - etichetta **assente** → medio implicito → ammesso (il proprietario è già verificato);
+//!    - etichetta con livello **≥ medio** (RID `0x2000`) → ammesso;
+//!    - etichetta **sotto il medio** (bassa, non attendibile) → rifiutato: un tubo a bassa
+//!      integrità può averlo creato un processo in sandbox;
+//!    - etichetta illeggibile o fatta in modo strano → rifiutato (non ci si fida).
 //! 2. il PID dal tubo (`GetNamedPipeServerProcessId` / `GetNamedPipeClientProcessId`) e il processo
 //!    aperto con `PROCESS_QUERY_LIMITED_INFORMATION`;
 //! 3. il processo gira **come l'utente corrente** (SID del token uguale al nostro) e con
@@ -37,6 +45,24 @@ pub fn integrita_sufficiente(rid: u32) -> bool {
     rid >= INTEGRITA_MEDIA
 }
 
+/// L'etichetta d'integrità di un oggetto: assente (medio implicito), un livello, o illeggibile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Etichetta {
+    Assente,
+    Livello(u32),
+    Illeggibile,
+}
+
+/// La regola sul tubo (vedi l'intestazione): assente o almeno media sì, sotto il medio o
+/// illeggibile no.
+pub fn etichetta_accettabile(e: Etichetta) -> bool {
+    match e {
+        Etichetta::Assente => true,
+        Etichetta::Livello(rid) => integrita_sufficiente(rid),
+        Etichetta::Illeggibile => false,
+    }
+}
+
 /// `true` se i due percorsi indicano lo stesso file: percorsi canonici (collegamenti e `..`
 /// risolti), confrontati senza distinzione di maiuscole come fa il file system di Windows. Un
 /// percorso che non esiste non è mai «lo stesso». (Le maiuscole si piegano con le regole Unicode e
@@ -52,6 +78,18 @@ pub fn stesso_file(a: &Path, b: &Path) -> bool {
 #[cfg(windows)]
 pub fn tubo_dell_utente(h: HANDLE) -> bool {
     sys::proprietario_e_utente(h)
+}
+
+/// L'etichetta d'integrità dell'oggetto tubo `h`.
+#[cfg(windows)]
+pub fn etichetta_tubo(h: HANDLE) -> Etichetta {
+    sys::etichetta(h)
+}
+
+/// `true` se l'etichetta d'integrità del tubo `h` passa la regola (`etichetta_accettabile`).
+#[cfg(windows)]
+pub fn tubo_integrita_ok(h: HANDLE) -> bool {
+    etichetta_accettabile(etichetta_tubo(h))
 }
 
 /// L'eseguibile del processo che ha creato il tubo `h` (dal lato del cliente), se gira come
@@ -96,6 +134,11 @@ pub fn tubo_dell_utente(_h: HANDLE) -> bool {
 }
 
 #[cfg(not(windows))]
+pub fn tubo_integrita_ok(_h: HANDLE) -> bool {
+    false
+}
+
+#[cfg(not(windows))]
 pub fn immagine_server(_h: HANDLE) -> Option<PathBuf> {
     None
 }
@@ -127,10 +170,21 @@ pub fn sid_utente() -> Option<String> {
     None
 }
 
-/// Il descrittore del tubo `h` (proprietario e DACL) in SDDL, per i test.
+/// Il descrittore di un oggetto riletto per struttura (per i test): chi lo possiede e gli ACE della
+/// DACL come (tipo, maschera, «il SID è quello dell'utente corrente»).
 #[cfg(all(test, windows))]
-pub(crate) fn sddl_del_tubo(h: HANDLE) -> Option<String> {
-    sys::sddl_di(h)
+#[derive(Debug)]
+pub(crate) struct StrutturaDescrittore {
+    pub proprietario_utente: bool,
+    pub dacl_presente: bool,
+    pub dacl_protetta: bool,
+    pub ace: Vec<(u8, u32, bool)>,
+}
+
+/// Il descrittore del tubo `h`, per i test.
+#[cfg(all(test, windows))]
+pub(crate) fn struttura_del_tubo(h: HANDLE) -> Option<StrutturaDescrittore> {
+    sys::struttura_di(h)
 }
 
 /// Il livello d'integrità del processo corrente, per i test.
@@ -152,9 +206,10 @@ mod sys {
         ConvertSidToStringSidW, GetSecurityInfo, SE_KERNEL_OBJECT,
     };
     use windows_sys::Win32::Security::{
-        EqualSid, GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation,
-        TokenIntegrityLevel, TokenUser, OWNER_SECURITY_INFORMATION, TOKEN_INFORMATION_CLASS,
-        TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TOKEN_USER,
+        EqualSid, GetAce, GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation,
+        IsValidSid, TokenIntegrityLevel, TokenUser, ACL, LABEL_SECURITY_INFORMATION,
+        OWNER_SECURITY_INFORMATION, TOKEN_INFORMATION_CLASS, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
+        TOKEN_USER,
     };
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
@@ -166,7 +221,7 @@ mod sys {
         PROCESS_QUERY_LIMITED_INFORMATION,
     };
 
-    use super::{integrita_sufficiente, CATENA_MASSIMA};
+    use super::{integrita_sufficiente, Etichetta, CATENA_MASSIMA};
 
     /// Una maniglia chiusa all'uscita.
     struct Chiudi(HANDLE);
@@ -275,6 +330,66 @@ mod sys {
         }
     }
 
+    /// `SYSTEM_MANDATORY_LABEL_ACE_TYPE`.
+    const ACE_ETICHETTA: u8 = 0x11;
+
+    /// L'etichetta d'integrità dell'oggetto `h` (la SACL con `LABEL_SECURITY_INFORMATION`: basta
+    /// `READ_CONTROL`). Nessuna SACL o nessun ACE di etichetta → `Assente`.
+    pub fn etichetta(h: HANDLE) -> Etichetta {
+        let mut sacl: *mut ACL = null_mut();
+        let mut sd: *mut c_void = null_mut();
+        // SAFETY: maniglia valida; `sacl` punta dentro a `sd`, che si libera alla fine. L'ACE è
+        // letto per il layout documentato (intestazione di 4 byte: tipo, flag, dimensione; maschera
+        // di 4 byte; poi il SID), dopo aver controllato che il SID stia dentro la dimensione dell'ACE.
+        unsafe {
+            let e = GetSecurityInfo(
+                h,
+                SE_KERNEL_OBJECT,
+                LABEL_SECURITY_INFORMATION,
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                &mut sacl,
+                &mut sd,
+            );
+            if e != 0 {
+                return Etichetta::Illeggibile;
+            }
+            let mut esito = Etichetta::Assente;
+            if !sacl.is_null() {
+                for i in 0..u32::from((*sacl).AceCount) {
+                    let mut ace: *mut c_void = null_mut();
+                    if GetAce(sacl, i, &mut ace) == 0 || ace.is_null() {
+                        esito = Etichetta::Illeggibile;
+                        break;
+                    }
+                    let base = ace.cast::<u8>();
+                    if *base != ACE_ETICHETTA {
+                        continue;
+                    }
+                    let dimensione = usize::from(u16::from_le_bytes([*base.add(2), *base.add(3)]));
+                    let sid = base.add(8).cast::<c_void>();
+                    // Almeno intestazione + maschera + un SID minimo (8 byte).
+                    if dimensione < 16 || IsValidSid(sid) == 0 {
+                        esito = Etichetta::Illeggibile;
+                        break;
+                    }
+                    let n = *GetSidSubAuthorityCount(sid);
+                    esito = if n == 0 || 8 + 8 + 4 * usize::from(n) > dimensione {
+                        Etichetta::Illeggibile
+                    } else {
+                        Etichetta::Livello(*GetSidSubAuthority(sid, u32::from(n) - 1))
+                    };
+                    break;
+                }
+            }
+            if !sd.is_null() {
+                LocalFree(sd);
+            }
+            esito
+        }
+    }
+
     pub fn sid_testo_corrente() -> Option<String> {
         let blocco = utente_corrente()?;
         let mut testo: *mut u16 = null_mut();
@@ -305,43 +420,65 @@ mod sys {
         s
     }
 
-    /// Il descrittore (proprietario e DACL) dell'oggetto `h` in SDDL.
+    /// Il descrittore di `h` letto per struttura, senza passare dall'SDDL (che per l'Administrator
+    /// integrato usa alias come `LA` e non si può confrontare col SID per esteso).
     #[cfg(test)]
-    pub fn sddl_di(h: HANDLE) -> Option<String> {
-        use windows_sys::Win32::Security::Authorization::{
-            ConvertSecurityDescriptorToStringSecurityDescriptorW, SDDL_REVISION_1,
+    pub fn struttura_di(h: HANDLE) -> Option<super::StrutturaDescrittore> {
+        use windows_sys::Win32::Security::{
+            GetSecurityDescriptorControl, DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED,
         };
-        use windows_sys::Win32::Security::DACL_SECURITY_INFORMATION;
-        let quali = OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+        let mio = utente_corrente()?;
+        let mut proprietario: *mut c_void = null_mut();
+        let mut dacl: *mut ACL = null_mut();
         let mut sd: *mut c_void = null_mut();
-        // SAFETY: come in `proprietario_e_utente`; il testo si copia e si libera.
+        // SAFETY: come in `proprietario_e_utente`; `dacl` e `proprietario` puntano dentro a `sd`,
+        // che si libera dopo la lettura. Gli ACE sono letti per il layout documentato
+        // (intestazione di 4 byte, maschera di 4, poi il SID).
         unsafe {
             let e = GetSecurityInfo(
                 h,
                 SE_KERNEL_OBJECT,
-                quali,
+                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+                &mut proprietario,
                 null_mut(),
-                null_mut(),
-                null_mut(),
+                &mut dacl,
                 null_mut(),
                 &mut sd,
             );
             if e != 0 || sd.is_null() {
                 return None;
             }
-            let mut testo: *mut u16 = null_mut();
-            let ok = ConvertSecurityDescriptorToStringSecurityDescriptorW(
-                sd,
-                SDDL_REVISION_1,
-                quali,
-                &mut testo,
-                null_mut(),
-            );
-            LocalFree(sd);
-            if ok == 0 || testo.is_null() {
-                return None;
+            let mut controllo = 0u16;
+            let mut revisione = 0u32;
+            let ok = GetSecurityDescriptorControl(sd, &mut controllo, &mut revisione) != 0;
+            let mut ace = Vec::new();
+            if !dacl.is_null() {
+                for i in 0..u32::from((*dacl).AceCount) {
+                    let mut p: *mut c_void = null_mut();
+                    if GetAce(dacl, i, &mut p) == 0 || p.is_null() {
+                        continue;
+                    }
+                    let base = p.cast::<u8>();
+                    let maschera = u32::from_le_bytes([
+                        *base.add(4),
+                        *base.add(5),
+                        *base.add(6),
+                        *base.add(7),
+                    ]);
+                    let sid = base.add(8).cast::<c_void>();
+                    let utente = EqualSid(sid, sid_utente_di(&mio)) != 0;
+                    ace.push((*base, maschera, utente));
+                }
             }
-            testo_e_libera(testo)
+            let risultato = super::StrutturaDescrittore {
+                proprietario_utente: !proprietario.is_null()
+                    && EqualSid(proprietario, sid_utente_di(&mio)) != 0,
+                dacl_presente: !dacl.is_null(),
+                dacl_protetta: ok && controllo & SE_DACL_PROTECTED != 0,
+                ace,
+            };
+            LocalFree(sd);
+            Some(risultato)
         }
     }
 
@@ -459,6 +596,22 @@ mod test {
         assert!(integrita_sufficiente(0x2100), "media più");
         assert!(integrita_sufficiente(0x3000), "alta");
         assert!(integrita_sufficiente(0x4000), "sistema");
+    }
+
+    #[test]
+    fn regola_dell_etichetta_del_tubo() {
+        assert!(
+            etichetta_accettabile(Etichetta::Assente),
+            "assente = medio implicito"
+        );
+        assert!(etichetta_accettabile(Etichetta::Livello(0x2000)));
+        assert!(etichetta_accettabile(Etichetta::Livello(0x3000)));
+        assert!(!etichetta_accettabile(Etichetta::Livello(0x1000)), "bassa");
+        assert!(
+            !etichetta_accettabile(Etichetta::Livello(0)),
+            "non attendibile"
+        );
+        assert!(!etichetta_accettabile(Etichetta::Illeggibile));
     }
 
     #[cfg(windows)]

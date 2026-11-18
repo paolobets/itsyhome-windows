@@ -30,6 +30,7 @@ struct Registro {
     mittenti: Mutex<Vec<Sender<Decisione>>>,
     prossimo_id: AtomicUsize,
     rifiuti: AtomicUsize,
+    persi: AtomicUsize,
 }
 
 impl Registro {
@@ -43,6 +44,7 @@ impl Registro {
             mittenti: Mutex::new(Vec::new()),
             prossimo_id: AtomicUsize::new(1),
             rifiuti: AtomicUsize::new(0),
+            persi: AtomicUsize::new(0),
         })
     }
     fn chiamate(&self) -> usize {
@@ -78,6 +80,9 @@ impl Gestore for Registro {
     }
     fn rifiutata(&self) {
         self.rifiuti.fetch_add(1, Ordering::SeqCst);
+    }
+    fn canale_perso(&self) {
+        self.persi.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -505,31 +510,86 @@ fn sddl_solo_l_utente() {
     );
 }
 
-/// Il tubo creato ha il proprietario e la DACL attesi, riletti dall'oggetto vero: proprietario =
-/// utente, DACL protetta con un solo ACE per l'utente, nessun Everyone, anonimo, SYSTEM o
-/// Administrators. E l'aiutante, dalla sua maniglia, rilegge lo stesso proprietario.
+/// Il tubo creato ha il proprietario e la DACL attesi, riletti dall'oggetto vero **per struttura**
+/// (non con l'SDDL testuale, che per l'Administrator integrato usa alias come `LA`): proprietario =
+/// utente corrente, DACL presente e protetta con un solo ACE «consenti», per l'utente e con accesso
+/// completo (nessun Everyone, anonimo, SYSTEM o Administrators). E l'aiutante, dalla sua maniglia,
+/// rilegge lo stesso proprietario.
 #[test]
 fn proprietario_e_dacl_riletti_dal_tubo() {
     let nome = nome_di_prova();
     let d = sys::descrittore_solo_utente().unwrap();
     let h = sys::crea_istanza(&sys::larga(&nome), true, &d).expect("tubo del test");
-    let sid = crate::verifica::sid_utente().unwrap();
-    let sddl = crate::verifica::sddl_del_tubo(h.0).expect("descrittore riletto");
-    assert!(sddl.starts_with(&format!("O:{sid}D:P(")), "{sddl}");
-    assert_eq!(sddl.matches("(A;").count(), 1, "{sddl}");
-    assert!(sddl.ends_with(&format!(";;;{sid})")), "{sddl}");
-    for estraneo in [";WD)", ";AN)", ";SY)", ";BA)", ";BU)", ";AC)"] {
-        assert!(!sddl.contains(estraneo), "{estraneo} in {sddl}");
-    }
+    let s = crate::verifica::struttura_del_tubo(h.0).expect("descrittore riletto");
+    assert!(s.proprietario_utente, "{s:?}");
+    assert!(s.dacl_presente && s.dacl_protetta, "{s:?}");
+    // Un solo ACE, `ACCESS_ALLOWED_ACE_TYPE` (0), per l'utente, con tutti i diritti del file.
+    const ACCESSO_COMPLETO: u32 = 0x001F_01FF;
+    assert_eq!(s.ace.len(), 1, "{s:?}");
+    let (tipo, maschera, utente) = s.ace[0];
+    assert_eq!(tipo, 0, "{s:?}");
+    assert!(utente, "l'unico ACE non è dell'utente: {s:?}");
+    assert_eq!(maschera & ACCESSO_COMPLETO, ACCESSO_COMPLETO, "{s:?}");
     // Lato cliente: la maniglia aperta come l'aiutante rilegge il proprietario.
     let c = sys::apri_cliente(&nome, ATTESA_CLIENTE).expect("cliente");
     assert!(crate::verifica::tubo_dell_utente(c.0));
 }
 
-/// Clienti che si collegano e spariscono subito non lasciano mai il nome libero: dopo la
-/// raffica nessuno può creare la «prima istanza» con lo stesso nome e il servitore risponde.
+/// Un creatore di istanze che dopo la prima fallisce sempre (risorse finite): dà il via all'arresto
+/// del servitore dopo troppi errori di fila.
+fn crea_e_poi_fallisce(
+    nome: &[u16],
+    prima: bool,
+    d: &sys::Descrittore,
+) -> Result<sys::Maniglia, u32> {
+    if prima {
+        sys::crea_istanza(nome, true, d)
+    } else {
+        Err(windows_sys::Win32::Foundation::ERROR_NO_SYSTEM_RESOURCES)
+    }
+}
+
+/// Il percorso di arresto di M1: 50 errori di fila nel creare le istanze → il servitore smette e
+/// lo dice al gestore **una volta sola** (`canale_perso`); non gira a vuoto.
 #[test]
-fn clienti_che_spariscono_non_liberano_il_nome() {
+fn cinquanta_errori_di_fila_fermano_il_servitore() {
+    let g = Registro::nuovo(Modo::Subito);
+    let nome = nome_di_prova();
+    let s = avvia_con_creatore(
+        config(&nome, exe(), ATTESA_MASSIMA),
+        g.clone() as Arc<dyn Gestore>,
+        crea_e_poi_fallisce,
+    )
+    .expect("avvio");
+    assert_eq!(
+        g.persi.load(Ordering::SeqCst),
+        0,
+        "finché non arriva nessuno non si crea nulla"
+    );
+    // Un cliente che si collega fa cercare la prossima istanza: fallisce, e fallisce di nuovo.
+    let _c = sys::apri_cliente(&nome, ATTESA_CLIENTE).expect("cliente");
+    assert!(
+        aspetta(|| g.persi.load(Ordering::SeqCst) == 1, 5),
+        "canale_perso non è arrivato"
+    );
+    std::thread::sleep(Duration::from_millis(150));
+    assert_eq!(g.persi.load(Ordering::SeqCst), 1, "una volta sola");
+    // Un servitore fermato si chiude pulito.
+    let inizio = Instant::now();
+    drop(s);
+    assert!(
+        inizio.elapsed() < Duration::from_secs(1),
+        "{:?}",
+        inizio.elapsed()
+    );
+}
+
+/// Una raffica di clienti che si collegano e spariscono subito non lascia mai il nome libero:
+/// dopo la raffica nessuno può creare la «prima istanza» con lo stesso nome e il servitore
+/// risponde. (Non è il ramo `Errore` di `connetti`, che non si può provocare da fuori: quello è
+/// coperto dalla riga che scollega e rimette in ascolto la stessa istanza.)
+#[test]
+fn raffica_di_clienti_che_spariscono_lascia_il_nome_occupato() {
     let g = Registro::nuovo(Modo::Subito);
     let (_s, nome) = avvia_prova(&g, ATTESA_MASSIMA);
     let d = sys::descrittore_solo_utente().unwrap();
@@ -545,5 +605,49 @@ fn clienti_che_spariscono_non_liberano_il_nome() {
     assert_eq!(
         invia(&nome, &evento("s1", TipoEvento::PreToolUse)),
         Some(Risposta::Ricevuto)
+    );
+}
+
+/// L'etichetta d'integrità riletta da tubi veri: senza etichetta (o media) passa, bassa no. Il
+/// cliente dell'aiutante (`collega`) rifiuta un tubo a bassa integrità anche se il resto è in regola.
+#[test]
+fn etichetta_d_integrita_del_tubo() {
+    use crate::verifica::{etichetta_accettabile, etichetta_tubo, Etichetta};
+    let sid = crate::verifica::sid_utente().unwrap();
+    let base = sys::sddl_solo_utente(&sid);
+    // Nessuna etichetta esplicita (come i tubi di isola): `Assente` o un livello almeno medio.
+    let d = sys::descrittore_solo_utente().unwrap();
+    let h = sys::crea_istanza(&sys::larga(&nome_di_prova()), true, &d).expect("tubo");
+    let e = etichetta_tubo(h.0);
+    assert!(
+        matches!(e, Etichetta::Assente | Etichetta::Livello(_)),
+        "{e:?}"
+    );
+    assert!(etichetta_accettabile(e), "{e:?}");
+    // Etichetta media esplicita.
+    let d = sys::descrittore_da_sddl(&format!("{base}S:(ML;;NW;;;ME)")).unwrap();
+    let h_me = sys::crea_istanza(&sys::larga(&nome_di_prova()), true, &d).expect("tubo medio");
+    assert_eq!(etichetta_tubo(h_me.0), Etichetta::Livello(0x2000));
+    // Etichetta bassa: letta e rifiutata, anche dalla maniglia del cliente.
+    let nome_lw = nome_di_prova();
+    let d = sys::descrittore_da_sddl(&format!("{base}S:(ML;;NW;;;LW)")).unwrap();
+    let h_lw = sys::crea_istanza(&sys::larga(&nome_lw), true, &d).expect("tubo basso");
+    assert_eq!(etichetta_tubo(h_lw.0), Etichetta::Livello(0x1000));
+    assert!(!etichetta_accettabile(etichetta_tubo(h_lw.0)));
+    let c = sys::apri_cliente(&nome_lw, ATTESA_CLIENTE).expect("cliente");
+    assert_eq!(etichetta_tubo(c.0), Etichetta::Livello(0x1000));
+    assert!(!crate::verifica::tubo_integrita_ok(c.0));
+    drop(c);
+    // `collega` verso quel tubo: nessun canale.
+    assert!(
+        collega(
+            &Destinazione {
+                nome: nome_lw,
+                server_atteso: exe()
+            },
+            ATTESA_CLIENTE
+        )
+        .is_none(),
+        "un tubo a bassa integrità non è un server valido"
     );
 }

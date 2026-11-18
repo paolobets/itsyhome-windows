@@ -256,6 +256,10 @@ pub fn collega(d: &Destinazione, attesa: Duration) -> Option<Canale> {
         if !crate::verifica::tubo_dell_utente(h.0) {
             return None;
         }
+        // 1b. L'etichetta d'integrità del tubo: assente (medio implicito) o almeno media.
+        if !crate::verifica::tubo_integrita_ok(h.0) {
+            return None;
+        }
         // 2. Il processo server: stesso utente, integrità almeno media, esattamente `server_atteso`.
         let immagine = crate::verifica::immagine_server(h.0)?;
         crate::verifica::stesso_file(&immagine, &d.server_atteso).then_some(Canale { h })
@@ -271,6 +275,13 @@ pub fn collega(d: &Destinazione, attesa: Duration) -> Option<Canale> {
 pub struct Servitore {
     #[cfg(windows)]
     interno: server::Interno,
+}
+
+/// Fuori da Windows non c'è nulla da fermare, ma il tipo ha comunque un `Drop` (vuoto): così
+/// `drop(servitore)` di chi chiama ha lo stesso senso ovunque e non è un `drop` di un tipo senza `Drop`.
+#[cfg(not(windows))]
+impl Drop for Servitore {
+    fn drop(&mut self) {}
 }
 
 impl Servitore {
@@ -301,6 +312,16 @@ pub fn avvia(c: ConfigTubo, g: std::sync::Arc<dyn Gestore>) -> Result<Servitore,
         let _ = g;
         Err(ErroreAvvio::Altro("Disponibile solo su Windows".into()))
     }
+}
+
+/// Come `avvia`, con un creatore di istanze dato: solo per i test (arresto dopo troppi errori).
+#[cfg(all(test, windows))]
+pub(crate) fn avvia_con_creatore(
+    c: ConfigTubo,
+    g: std::sync::Arc<dyn Gestore>,
+    crea: server::Creatore,
+) -> Result<Servitore, ErroreAvvio> {
+    server::avvia_con(c, g, crea).map(|interno| Servitore { interno })
 }
 
 /// I `session_id` già visti (al più 16: quando è pieno si scarta il più vecchio).
@@ -429,7 +450,12 @@ pub(crate) mod sys {
     pub fn descrittore_solo_utente() -> Result<Descrittore, String> {
         let sid = crate::verifica::sid_utente()
             .ok_or_else(|| "SID dell'utente non disponibile".to_owned())?;
-        let sddl = larga(&sddl_solo_utente(&sid));
+        descrittore_da_sddl(&sddl_solo_utente(&sid))
+    }
+
+    /// Un descrittore da un testo SDDL (i test ci aggiungono un'etichetta d'integrità).
+    pub fn descrittore_da_sddl(sddl: &str) -> Result<Descrittore, String> {
+        let sddl = larga(sddl);
         let mut sd: *mut c_void = null_mut();
         // SAFETY: stringa terminata da zero; `sd` riceve un buffer che `Descrittore` libera.
         let ok = unsafe {
@@ -688,7 +714,12 @@ mod server {
     use crate::messaggio::{Richiesta, Risposta, MESSAGGIO_MASSIMO};
     use crate::verifica;
 
+    /// Come si crea un'istanza del tubo (`prima`, descrittore). In produzione è `sys::crea_istanza`;
+    /// i test ne danno una che fallisce, per provare l'arresto dopo troppi errori.
+    pub(super) type Creatore = fn(&[u16], bool, &Descrittore) -> Result<Maniglia, u32>;
+
     struct Contesto {
+        crea: Creatore,
         cliente_atteso: PathBuf,
         attesa_massima: Duration,
         gestore: Arc<dyn Gestore>,
@@ -747,15 +778,24 @@ mod server {
     }
 
     pub(super) fn avvia(c: ConfigTubo, g: Arc<dyn Gestore>) -> Result<Interno, ErroreAvvio> {
+        avvia_con(c, g, sys::crea_istanza)
+    }
+
+    pub(super) fn avvia_con(
+        c: ConfigTubo,
+        g: Arc<dyn Gestore>,
+        crea: Creatore,
+    ) -> Result<Interno, ErroreAvvio> {
         let d = sys::descrittore_solo_utente().map_err(ErroreAvvio::Altro)?;
         let nome = sys::larga(&c.nome);
-        let prima = sys::crea_istanza(&nome, true, &d).map_err(|e| match e {
+        let prima = crea(&nome, true, &d).map_err(|e| match e {
             ERROR_ACCESS_DENIED | ERROR_PIPE_BUSY => ErroreAvvio::CanaleOccupato,
             e => ErroreAvvio::Altro(format!("tubo non creato (errore {e})")),
         })?;
         let fermo_ev =
             EventoWin::nuovo().ok_or_else(|| ErroreAvvio::Altro("evento non creato".into()))?;
         let contesto = Arc::new(Contesto {
+            crea,
             cliente_atteso: c.cliente_atteso,
             attesa_massima: c.attesa_massima,
             gestore: g,
@@ -799,7 +839,7 @@ mod server {
             }
             let h = match ascolto.take() {
                 Some(h) => h,
-                None => match sys::crea_istanza(&nome, false, &d) {
+                None => match (ctx.crea)(&nome, false, &d) {
                     Ok(h) => h,
                     Err(_) => {
                         fallimenti += 1;
@@ -829,7 +869,7 @@ mod server {
                 break;
             }
             // La prossima istanza in ascolto prima di lasciare questa: il nome non resta mai libero.
-            ascolto = sys::crea_istanza(&nome, false, &d).ok();
+            ascolto = (ctx.crea)(&nome, false, &d).ok();
             let sequenza = ctx.sequenza.fetch_add(1, Ordering::SeqCst);
             let gia = ctx.connessioni.fetch_add(1, Ordering::SeqCst);
             let guardiano = Guardiano(Arc::clone(&ctx));

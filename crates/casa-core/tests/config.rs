@@ -260,17 +260,15 @@ fn config_di_m2_scollegata() {
     let mut c = st.leggi();
     assert!(!c.claude.collegato);
     assert_eq!(c.claude.soglia_limite, 80);
-    assert_eq!(c.claude.porta, None);
     assert_eq!(c, Config { claude: ConfigClaude::default(), ..c.clone() });
     assert_eq!(Config::default().claude, ConfigClaude::default());
     // Una chiave `claude` con solo qualche campo si completa con i valori di serie.
     std::fs::write(d.path().join("assistente.json"), r#"{ "claude": { "collegato": true, "porta": 51234 } }"#).unwrap();
     let parziale = st.leggi();
     assert!(parziale.claude.collegato);
-    assert_eq!(parziale.claude.porta, Some(51234));
+    // La chiave `porta` di prima (Task 7) si ignora: il file si legge lo stesso.
     assert_eq!(parziale.claude.soglia_limite, 80);
     c.claude.collegato = true;
-    c.claude.porta = Some(4711);
     c.claude.soglia_spesa = Some(50.0);
     c.claude.limiti_avvisati.insert("cinque_ore".into(), 1_700_000_000);
     st.salva(&c).unwrap();

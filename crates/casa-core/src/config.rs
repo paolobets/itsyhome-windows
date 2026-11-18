@@ -66,21 +66,19 @@ pub struct Config {
     /// riscrivere la configurazione per questo). Un file di prima, senza la chiave, si legge vuoto.
     #[serde(default)]
     pub bt_avvisati: HashMap<String, String>,
-    /// Claude Code (M3): collegamento, porta e soglie. Un file di M2, senza la chiave, si legge
+    /// Claude Code (M3): collegamento e soglie. Un file di M2, senza la chiave, si legge
     /// scollegato.
     #[serde(default)]
     pub claude: ConfigClaude,
 }
 
-/// Le scelte su Claude Code (M3). Il codice segreto dell'ascoltatore non sta qui: sta nel
-/// portachiavi.
+/// Le scelte su Claude Code (M3). Nessun segreto e nessuna porta: il canale è il tubo protetto.
+/// Un file di prima con la chiave `porta` si legge lo stesso (le chiavi sconosciute si ignorano).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ConfigClaude {
-    /// Gli hook sono collegati: l'assistente ascolta su `porta`.
+    /// Gli hook sono collegati: l'assistente ascolta sul tubo.
     pub collegato: bool,
-    /// La porta dell'ascoltatore (scelta al collegamento); `None` finché non si è collegato.
-    pub porta: Option<u16>,
     /// Percentuale dei limiti dell'abbonamento oltre la quale si avvisa (predefinita 80).
     pub soglia_limite: u8,
     /// Spesa del mese (dollari) oltre la quale si avvisa; `None` = nessuna soglia.
@@ -97,7 +95,6 @@ impl Default for ConfigClaude {
     fn default() -> ConfigClaude {
         ConfigClaude {
             collegato: false,
-            porta: None,
             soglia_limite: 80,
             soglia_spesa: None,
             limiti_avvisati: HashMap::new(),
