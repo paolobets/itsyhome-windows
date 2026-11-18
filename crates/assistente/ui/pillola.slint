@@ -114,6 +114,12 @@ export component Pillola inherits Window {
     // urgente fra le sessioni colora gli occhi (`nessuno` = come sempre). Rust li riscrive solo
     // quando cambiano.
     in property <string> attivita;
+    // Lo stesso testo in due pezzi: a sinistra «Claude · Modifica» (può tagliarsi), a destra
+    // « · 3:12» (la durata sta sempre intera).
+    in property <string> attivita-sinistra;
+    in property <string> attivita-destra;
+    out property <length> attivita-destra-x: attivita-destra-testo.x;
+    out property <length> attivita-destra-larghezza: attivita-destra-testo.width;
     in property <string> nome-attivita;
     in property <LivelloUi> tinta-occhi: LivelloUi.nessuno;
     property <bool> con-barra: volume-mostrato >= 0 && !allargata && !ritirata;
@@ -481,12 +487,26 @@ export component Pillola inherits Window {
 
         // La pillola media: il testo dell'attività, dopo gli occhi. Il nome per Narrator sta
         // sulla pillola (`nome-attivita`), non qui.
-        if attivita-visibile: attivita-testo := Text {
+        attivita-sinistra-testo := Text {
+            visible: attivita-visibile;
             x: x-attivita;
-            width: max(0px, parent.width - self.x - 10px);
+            width: max(0px, attivita-destra-testo.x - self.x);
             height: parent.height;
-            text: attivita;
+            text: attivita-sinistra;
             overflow: elide;
+            vertical-alignment: center;
+            font-family: Tema.carattere;
+            font-weight: 500;
+            font-size: Tema.testo-corpo;
+            color: Tema.testo;
+            accessible-role: none;
+        }
+        attivita-destra-testo := Text {
+            visible: attivita-visibile;
+            width: self.preferred-width;
+            x: larghezza-attivita - 10px - self.width;
+            height: parent.height;
+            text: attivita-destra;
             vertical-alignment: center;
             font-family: Tema.carattere;
             font-weight: 500;

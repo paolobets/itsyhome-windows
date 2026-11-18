@@ -120,20 +120,27 @@ fn lavorano(s: &Sessioni, ora: Instant) -> Vec<(&Sessione, Duration)> {
         .collect()
 }
 
-/// Il testo della pillola media: «Claude · Modifica · 3:12»; con più sessioni che lavorano
-/// «Claude ×2 · 3:12» (la durata è quella della più lunga). `None` se nessuna lavora.
-pub fn testo_attivita(s: &Sessioni, ora: Instant) -> Option<String> {
+/// Le due parti del testo della pillola media: a sinistra «Claude · Modifica» (la sola che può
+/// tagliarsi), a destra la durata «3:12», sempre intera. Con più sessioni che lavorano
+/// «Claude ×2» e la durata della più lunga. `None` se nessuna lavora.
+pub fn parti_attivita(s: &Sessioni, ora: Instant) -> Option<(String, String)> {
     let l = lavorano(s, ora);
     match l.as_slice() {
         [] => None,
         [(una, durata)] => {
-            Some(format!("Claude · {} · {}", strumento_italiano(una.strumento.as_deref()), durata_breve(*durata)))
+            Some((format!("Claude · {}", strumento_italiano(una.strumento.as_deref())), durata_breve(*durata)))
         }
         _ => {
             let piu_lunga = l.iter().map(|(_, d)| *d).max().unwrap_or(Duration::ZERO);
-            Some(format!("Claude ×{} · {}", l.len(), durata_breve(piu_lunga)))
+            Some((format!("Claude ×{}", l.len()), durata_breve(piu_lunga)))
         }
     }
+}
+
+/// Il testo intero: «Claude · Modifica · 3:12», «Claude ×2 · 3:12».
+#[cfg_attr(not(test), allow(dead_code))] // la pillola usa le due parti
+pub fn testo_attivita(s: &Sessioni, ora: Instant) -> Option<String> {
+    parti_attivita(s, ora).map(|(a, d)| format!("{a} · {d}"))
 }
 
 /// Quanto dura, a parole, per Narrator: «meno di un minuto», «3 minuti», «1 ora e 2 minuti».

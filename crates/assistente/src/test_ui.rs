@@ -1576,8 +1576,16 @@ mod accessibilita {
         assert!(elemento(&p, "ItsyHome, Claude, Modifica, 3 minuti, una voce in attesa").accessible_role().is_some());
         // Il testo più lungo che Rust può scrivere ci sta senza tagliarsi troppo: lo misura la prova
         // viva; qui basta che la pillola non cresca.
-        p.set_attivita("Claude · UnNomeLungh · 1:02:05".into());
+        p.set_attivita("Claude · UnNomeLunghi · 1:02:05".into());
+        p.set_attivita_sinistra("Claude · UnNomeLunghi".into());
+        p.set_attivita_destra(" · 1:02:05".into());
         assert_eq!(p.get_larghezza_pillola(), crate::finestre::LARGHEZZA_ATTIVITA);
+        // La durata sta sempre intera dentro la pillola, anche col nome più lungo: si taglia solo
+        // il nome (la sua larghezza arriva fin dove parte la durata).
+        let (x, l) = (p.get_attivita_destra_x(), p.get_attivita_destra_larghezza());
+        assert!(l > 30.0, "la durata ha una larghezza: {l}");
+        assert!(x + l <= crate::finestre::LARGHEZZA_ATTIVITA, "la durata esce dalla pillola: {x} + {l}");
+        assert!(x >= 50.0, "la durata non copre gli occhi: {x}");
 
         // Allargata (una voce che chiama): l'attività non si vede e la larghezza è quella dell'attenzione.
         p.set_aspetto(AspettoPillolaUi::Allargata);

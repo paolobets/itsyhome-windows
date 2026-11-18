@@ -844,13 +844,12 @@ pub struct Ponte {
     /// Claude Code (M3, Task 4): le sessioni, l'ascolto degli hook (solo se collegato), la
     /// sveglia singola alla prossima scadenza di una sessione, il timer da un secondo del testo di
     /// attività (acceso solo mentre serve: `attivita_serve`), le richieste rifiutate già contate
-    /// e il giro di conteggio della diagnosi (solo se acceso).
+    /// (la diagnosi le copia a ogni evento e allo spegnimento: nessun timer).
     claude_sessioni: RefCell<Sessioni>,
     claude_ascolto: RefCell<Option<claude_hook::Ascoltatore>>,
     sveglia_claude: slint::Timer,
     timer_attivita: slint::Timer,
     claude_rifiutate_viste: Cell<u64>,
-    sveglia_diagnosi_claude: slint::Timer,
     /// Impostazioni › Isola: i modelli dei selettori e i cataloghi da cui vengono (un indice
     /// scelto nell'interfaccia diventa la fonte da salvare).
     isola: RefCell<Isola>,
@@ -958,7 +957,6 @@ pub fn collega(
         sveglia_claude: slint::Timer::default(),
         timer_attivita: slint::Timer::default(),
         claude_rifiutate_viste: Cell::new(0),
-        sveglia_diagnosi_claude: slint::Timer::default(),
         isola: RefCell::new(Isola::default()),
         voci_lati: Rc::new(VecModel::default()),
         voci_meteo: Rc::new(VecModel::default()),

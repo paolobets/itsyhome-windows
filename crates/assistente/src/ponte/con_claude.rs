@@ -23,25 +23,34 @@ pub const SEGRETO_HOOK: &str = "isola:claude-hook";
 /// In prova (`ITSYHOME_ASSISTENTE_DIR`) il codice viene da questa variabile del processo: mai il
 /// portachiavi vero.
 pub const VARIABILE_PROVA: &str = "ISOLA_HOOK_TOKEN";
-/// Con la diagnosi accesa, ogni quanto si contano le richieste rifiutate dall'ascoltatore.
-const GIRO_DIAGNOSI: Duration = Duration::from_secs(30);
 
 /// Il codice dell'ascoltatore: in prova dalla variabile `ISOLA_HOOK_TOKEN` del processo, altrimenti
 /// dal portachiavi. `None` se manca o non è un codice valido. Non lo scrive mai da nessuna parte.
+#[cfg_attr(not(test), allow(dead_code))] // main passa per `avvia_se_collegato_con`
 pub fn codice_attivo(segreti: &dyn Segreti, in_prova: bool) -> Option<CodiceHook> {
-    let testo = if in_prova { std::env::var(VARIABILE_PROVA).ok() } else { segreti.leggi(SEGRETO_HOOK).ok().flatten() };
+    codice_da(segreti, in_prova, std::env::var(VARIABILE_PROVA).ok())
+}
+
+/// Come `codice_attivo`, con il valore della variabile passato (i test non leggono l'ambiente).
+fn codice_da(segreti: &dyn Segreti, in_prova: bool, variabile: Option<String>) -> Option<CodiceHook> {
+    let testo = if in_prova { variabile } else { segreti.leggi(SEGRETO_HOOK).ok().flatten() };
     testo.as_deref().and_then(CodiceHook::da_testo)
 }
 
 /// Chiamata da `main` dopo `ponte::collega`: se Claude Code è collegato, c'è una porta e c'è il
 /// codice, si mette in ascolto.
 pub fn avvia_se_collegato(p: &Ponte) {
+    let in_prova = std::env::var_os(crate::avvio::VAR_CARTELLA).is_some_and(|v| !v.is_empty());
+    avvia_se_collegato_con(p, in_prova, std::env::var(VARIABILE_PROVA).ok());
+}
+
+/// `avvia_se_collegato` con «in prova» e il valore di `ISOLA_HOOK_TOKEN` passati.
+fn avvia_se_collegato_con(p: &Ponte, in_prova: bool, variabile: Option<String>) {
     let (collegato, porta) = p.casa.con_config(|c| (c.claude.collegato, c.claude.porta));
     if !collegato || porta.is_none() {
         return;
     }
-    let in_prova = std::env::var_os(crate::avvio::VAR_CARTELLA).is_some_and(|v| !v.is_empty());
-    match codice_attivo(p.segreti.as_ref(), in_prova) {
+    match codice_da(p.segreti.as_ref(), in_prova, variabile) {
         Some(codice) => avvia_con(p, codice),
         None => eprintln!("Claude Code: codice di collegamento non trovato, ascolto non avviato"),
     }
@@ -60,15 +69,6 @@ pub fn avvia_con(p: &Ponte, codice: CodiceHook) {
         Ok(ascolto) => {
             *p.claude_ascolto.borrow_mut() = Some(ascolto);
             p.togli_voce(ID_COLLEGAMENTO);
-            // Le richieste rifiutate si contano nel registro diagnostico, che è opt-in: il giro
-            // c'è solo se è acceso.
-            if p.casa.diagnosi().acceso() {
-                p.sveglia_diagnosi_claude.start(slint::TimerMode::Repeated, GIRO_DIAGNOSI, || {
-                    if let Some(p) = ponte() {
-                        p.conta_rifiutate();
-                    }
-                });
-            }
         }
         Err(e) => {
             let dettaglio = match e {
@@ -100,7 +100,6 @@ pub fn spegni() {
         drop(ascolto);
         p.sveglia_claude.stop();
         p.timer_attivita.stop();
-        p.sveglia_diagnosi_claude.stop();
     }
 }
 
@@ -281,9 +280,9 @@ impl Ponte {
             self.timer_attivita.stop();
         }
         let Some(ui) = self.pillola.upgrade().filter(|p| p.get_attiva()) else { return };
-        let (tinta, testo, nome) = {
+        let (tinta, parti, nome) = {
             let s = self.claude_sessioni.borrow();
-            (claude::tinta_occhi(&s), claude::testo_attivita(&s, ora), claude::nome_attivita(&s, ora))
+            (claude::tinta_occhi(&s), claude::parti_attivita(&s, ora), claude::nome_attivita(&s, ora))
         };
         let tinta = tinta.map_or(LivelloUi::Nessuno, pillola::livello_ui);
         if ui.get_tinta_occhi() != tinta {
@@ -294,10 +293,16 @@ impl Ponte {
         if !self.pillola_mostrata.get() {
             return;
         }
-        let (testo, nome) = if self.pillola_dorme() { (String::new(), String::new()) } else { (testo.unwrap_or_default(), nome.unwrap_or_default()) };
+        let (sinistra, destra, nome) = match parti {
+            Some((a, d)) if !self.pillola_dorme() => (a, d, nome.unwrap_or_default()),
+            _ => (String::new(), String::new(), String::new()),
+        };
+        let testo = if sinistra.is_empty() { String::new() } else { format!("{sinistra} · {destra}") };
         let mut cambiato = false;
         if ui.get_attivita() != testo.as_str() {
             ui.set_attivita(testo.as_str().into());
+            ui.set_attivita_sinistra(sinistra.as_str().into());
+            ui.set_attivita_destra(format!(" · {destra}").as_str().into());
             cambiato = true;
         }
         if ui.get_nome_attivita() != nome.as_str() {
@@ -413,16 +418,25 @@ mod test {
     fn scollegato_niente_ascoltatore() {
         let (_s, p, _pillola, _d) = ponte_di_prova();
         assert!(!p.casa.con_config(|c| c.claude.collegato));
-        avvia_se_collegato(&p);
+        avvia_se_collegato_con(&p, false, None);
         assert!(p.claude_ascolto.borrow().is_none());
         // Collegato ma senza codice nel portachiavi: nessun ascolto (e nessuna voce).
         p.casa.aggiorna_config(|c| {
             c.claude.collegato = true;
             c.claude.porta = Some(1);
         });
-        avvia_se_collegato(&p);
+        avvia_se_collegato_con(&p, false, None);
+        assert!(p.claude_ascolto.borrow().is_none());
+        // In prova, senza la variabile (o con una che non è un codice): nessun ascolto.
+        avvia_se_collegato_con(&p, true, None);
+        avvia_se_collegato_con(&p, true, Some("non un codice".into()));
         assert!(p.claude_ascolto.borrow().is_none());
         assert!(voci_claude(&p).is_empty());
+        // In prova con un codice valido: ascolta (la porta è libera).
+        let porta = porta_libera();
+        p.casa.aggiorna_config(|c| c.claude.porta = Some(porta));
+        avvia_se_collegato_con(&p, true, Some(CodiceHook::nuovo().unwrap().come_testo()));
+        assert_eq!(p.claude_ascolto.borrow().as_ref().map(|a| a.porta()), Some(porta));
     }
 
     fn porta_libera() -> u16 {
@@ -502,6 +516,24 @@ mod test {
         assert_eq!(pillola.get_attivita(), "");
         manda(&p, ev("a", TipoEvento::SessionEnd));
         assert!(!p.sveglia_claude.running(), "nessuna sessione: nessuna sveglia");
+    }
+
+    #[test]
+    fn umore_dorme_ferma_il_timer_da_un_secondo() {
+        let (_s, p, pillola, _d) = ponte_di_prova();
+        manda(&p, ev("a", TipoEvento::UserPromptSubmit));
+        assert!(p.timer_attivita.running());
+        assert_eq!(pillola.get_attivita(), "Claude · Pensa · 0:00");
+        // L'utente è inattivo da dieci minuti: la pillola dorme, niente timer né testo.
+        p.inattivo(crate::umore::DORME_DOPO);
+        assert!(p.pillola_dorme(), "umore dorme");
+        assert!(!p.timer_attivita.running(), "dorme: il timer si ferma");
+        assert_eq!(pillola.get_attivita(), "");
+        // Si risveglia: il timer riparte e il testo torna.
+        p.inattivo(Duration::ZERO);
+        assert!(!p.pillola_dorme());
+        assert!(p.timer_attivita.running());
+        assert_eq!(pillola.get_attivita(), "Claude · Pensa · 0:00");
     }
 
     #[test]
