@@ -2566,6 +2566,36 @@ mod accessibilita {
         assert!(chiusa.get(), "il terzo chiude la finestra");
     }
 
+    /// R1-17: un campo col fuoco ha l'anello bianco di tutti gli altri controlli, fuori dalla
+    /// casella; uscito il fuoco l'anello sparisce. R1-19: il filo dei petali in cima è quello della
+    /// gestione, 1,5 px arrotondato al pixel fisico.
+    #[test]
+    fn campo_col_fuoco_ha_l_anello_comune_e_filo_sul_pixel() {
+        use slint::platform::Key;
+        piattaforma_di_prova();
+        let f = FinestraImpostazioni::new().expect("impostazioni");
+        f.show().expect("impostazioni mostrate nel backend di prova");
+        f.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        let anelli = || ElementHandle::find_by_element_type_name(&f, "Anello").collect::<Vec<_>>();
+        elemento(&f, "Aggiungi un ambiente").invoke_accessible_default_action();
+        let nome = campo(&f, "Nome");
+        let a = anelli();
+        assert_eq!(a.len(), 1, "un anello sul campo col fuoco");
+        let (pa, la) = (a[0].absolute_position(), a[0].size());
+        let (pn, ln) = (nome.absolute_position(), nome.size());
+        // L'anello circonda la casella: comincia a sinistra del testo e la copre in altezza.
+        assert!(pa.x < pn.x && pa.x + la.width > pn.x + ln.width, "anello {pa:?} {la:?} campo {pn:?} {ln:?}");
+        tasto_finestra(&f, Key::Escape);
+        assert!(anelli().is_empty(), "fuori dal campo niente anello");
+
+        let filo = |scala: f32| {
+            f.global::<crate::Tema>().set_scala(scala);
+            ElementHandle::find_by_element_id(&f, "FinestraImpostazioni::filo-petali").next().expect("filo").size().height
+        };
+        assert_eq!(filo(1.0), 2.0, "a 100% 2 px");
+        assert!((filo(1.75) - 3.0 / 1.75).abs() < 0.001, "a 175% 3 px fisici: {}", filo(1.75));
+    }
+
     /// Giro di rifinitura: un clic fuori dalla conferma vale «Annulla»; con la conferma aperta i
     /// pulsanti delle righe sotto sono spenti (Narrator e UIA non li invocano).
     #[test]

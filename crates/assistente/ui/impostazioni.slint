@@ -168,11 +168,13 @@ component Campo inherits Rectangle {
             color: Tema.testo-etichetta;
         }
 
+        // Col fuoco il bordo resta quello di sempre e fuori compare l'anello bianco di tutti gli
+        // altri controlli (R1-17: un solo anello del fuoco nella finestra); l'errore resta arancio.
         casella := Rectangle {
             horizontal-stretch: 1;
             border-radius: Tema.raggio-m;
-            border-width: input.has-focus || errore != "" ? 2px : 1px;
-            border-color: errore != "" ? Tema.caldo-2 : input.has-focus ? Tema.petalo-4 : Tema.vetro-bordo;
+            border-width: errore != "" ? 2px : 1px;
+            border-color: errore != "" ? Tema.caldo-2 : Tema.vetro-bordo;
             background: Tema.riquadro-fondo;
 
             // Suggerimento e testo stanno uno sopra l'altro, a 12 dal bordo. Il suggerimento è più
@@ -221,6 +223,8 @@ component Campo inherits Rectangle {
                     return reject;
                 }
             }
+
+            if input.has-focus: Anello { raggio: Tema.raggio-m; }
         }
     }
 }
@@ -1137,10 +1141,11 @@ export component FinestraImpostazioni inherits Window {
             return reject;
         }
 
-        // Filo dei petali in cima, come il bordo dell'isola.
-        Rectangle {
+        // Sotto la barra di Windows il filo dei petali, come il bordo del pannello e la cornice della
+        // gestione (R1-19): 1,5 px arrotondato al pixel fisico.
+        filo-petali := Rectangle {
             y: 0;
-            height: 2px;
+            height: Tema.sul-pixel(1.5px);
             background: Tema.petali;
         }
 
