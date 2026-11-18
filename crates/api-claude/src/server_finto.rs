@@ -164,8 +164,14 @@ fn servi(mut flusso: TcpStream, registro: &Mutex<Vec<Richiesta>>, gestore: &Gest
     };
     registro.lock().unwrap().push(richiesta.clone());
     let (codice, corpo) = gestore(&richiesta);
+    // Un reindirizzamento punta al server stesso: se il client lo seguisse si vedrebbe nel registro.
+    let dove = if (300..400).contains(&codice) {
+        "location: /v1/organizations/me\r\n"
+    } else {
+        ""
+    };
     let risposta = format!(
-        "HTTP/1.1 {codice} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{corpo}",
+        "HTTP/1.1 {codice} X\r\n{dove}content-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{corpo}",
         corpo.len()
     );
     let _ = flusso.write_all(risposta.as_bytes());

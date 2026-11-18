@@ -81,6 +81,8 @@ fn radici_del_sistema() -> ureq::tls::RootCerts {
     ureq::tls::RootCerts::Specific(Arc::new(certificati))
 }
 
+/// ATTENZIONE: `ureq` a livello TRACE scrive nei log le intestazioni SENZA oscurarle (compresa
+/// `x-api-key`). Qualunque logger futuro deve tenere `ureq` sotto TRACE.
 fn agente(solo_https: bool) -> ureq::Agent {
     let tls = ureq::tls::TlsConfig::builder()
         .provider(ureq::tls::TlsProvider::Rustls)

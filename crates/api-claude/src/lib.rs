@@ -37,6 +37,10 @@ mod test {
             concat!(".pa", "tch("),
             concat!(".del", "ete("),
             concat!("Meth", "od::"),
+            concat!(".r", "un("),
+            concat!(".req", "uest("),
+            concat!(".he", "ad("),
+            concat!(".opt", "ions("),
         ] {
             assert!(!sorgente.contains(vietata), "client.rs contiene {vietata}");
         }

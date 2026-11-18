@@ -64,6 +64,7 @@ fn client_fa_solo_get() {
 fn intestazioni_giuste() {
     let s = ServerFinto::avvia(gestore_fixture);
     aggiorna(&client(&s), adesso());
+    assert!(!s.richieste().is_empty(), "almeno una richiesta registrata");
     for q in s.richieste() {
         assert_eq!(q.intestazione("x-api-key"), Some(CHIAVE_FINTA));
         assert_eq!(q.intestazione("anthropic-version"), Some("2026-10-21"));
@@ -448,4 +449,94 @@ fn senza_scheda_chiavi_si_mostra_l_id() {
     let r = aggiorna(&client(&s), adesso());
     assert_eq!(r.non_disponibili, vec![Scheda::Chiavi]);
     assert_eq!(r.per_chiave[0].0, "apikey_FAKE0001");
+}
+
+#[test]
+fn riga_di_costo_senza_importo_leggibile_rende_illeggibile_la_spesa() {
+    for sostituto in [r#""amount":"non-un-numero""#, r#""x":"0""#] {
+        let s = ServerFinto::avvia(move |r| match fixture(r) {
+            Some(c)
+                if r.percorso.contains("/analytics/cost")
+                    && r.parametro("group_by[]") == Some("model") =>
+            {
+                (200, c.replacen(r#""amount":"11280.000000""#, sostituto, 1))
+            }
+            _ => gestore_fixture(r),
+        });
+        let r = aggiorna(&client(&s), adesso());
+        assert!(r.non_disponibili.contains(&Scheda::Spesa), "{sostituto}");
+        assert_eq!(r.spesa_mese, None, "mai una somma più piccola del vero");
+        assert!(r.per_modello.is_empty());
+        assert!(r.token.is_some(), "le altre schede proseguono");
+    }
+}
+
+/// Le fixture dei giorni senza la riga di `giorno` (data `2026-11-DD`).
+fn senza_giorno(corpo: &str, giorno: &str) -> String {
+    corpo
+        .lines()
+        .filter(|l| !l.contains(&format!(r#""starting_at":"2026-11-{giorno}T"#)))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace(",\n  ]", "\n  ]")
+}
+
+#[test]
+fn giorno_senza_riga_con_dati_completi_vale_zero() {
+    // 12/11 senza riga; i dati sono di stamattina (17/11 08:02): quel giorno ha speso 0 $.
+    let s = ServerFinto::avvia(|r| match fixture(r) {
+        Some(c) if r.parametro("time_bucket_width").is_some() => (200, senza_giorno(c, "12")),
+        _ => gestore_fixture(r),
+    });
+    let r = aggiorna(&client(&s), adesso());
+    assert_eq!(r.giorni.len(), 8);
+    let dodici = NaiveDate::from_ymd_opt(2026, 11, 12).unwrap();
+    assert_eq!(
+        r.giorni
+            .iter()
+            .find(|(d, _)| *d == dodici)
+            .unwrap()
+            .1
+            .in_dollari(),
+        "0,00 $"
+    );
+    assert!(
+        spesa_insolita(&r, oggi()),
+        "con un giorno a zero il verdetto c'è ancora"
+    );
+}
+
+#[test]
+fn ieri_senza_riga_con_dati_incompleti_non_si_sa() {
+    // Dati fermi a ieri sera (16/11 20:00): ieri non è finito, senza riga non si dice 0.
+    let s = ServerFinto::avvia(|r| match fixture(r) {
+        Some(c) if r.percorso.contains("/analytics/") => {
+            let c = c.replace("2026-11-17T08:02:11Z", "2026-11-16T20:00:00Z");
+            if r.parametro("time_bucket_width").is_some() {
+                (200, senza_giorno(&c, "16"))
+            } else {
+                (200, c)
+            }
+        }
+        _ => gestore_fixture(r),
+    });
+    let r = aggiorna(&client(&s), adesso());
+    assert_eq!(r.spesa_ieri, None);
+    assert_eq!(r.giorni.len(), 7, "ieri manca, gli altri 7 sì");
+    assert!(!spesa_insolita(&r, oggi()));
+}
+
+#[test]
+fn senza_nessuna_riga_ma_con_dati_aggiornati_i_giorni_finiti_sono_zero() {
+    let s = ServerFinto::avvia(|r| {
+        match fixture(r) {
+        Some(_) if r.parametro("time_bucket_width").is_some() => {
+            (200, r#"{"data":[],"data_refreshed_at":"2026-11-17T08:02:11Z","has_more":false,"next_page":null}"#.to_owned())
+        }
+        _ => gestore_fixture(r),
+    }
+    });
+    let r = aggiorna(&client(&s), adesso());
+    assert_eq!(r.spesa_ieri.unwrap().in_dollari(), "0,00 $");
+    assert_eq!(r.giorni.len(), 8);
 }

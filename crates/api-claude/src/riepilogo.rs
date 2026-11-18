@@ -147,6 +147,23 @@ impl Giro<'_> {
         self.sbagliato()
     }
 
+    /// Come `analitica`, ma una riga di costo senza `amount` leggibile rende illeggibile TUTTA la
+    /// lettura: mai una somma più piccola del vero.
+    fn costi(
+        &mut self,
+        fai: impl Fn(Option<String>) -> Lettura,
+    ) -> Result<Righe<RigaCosto>, ErroreApi> {
+        let righe = self.analitica::<RigaCosto>(fai)?;
+        if righe
+            .righe
+            .iter()
+            .any(|r| importo_da(&r.cost.amount).is_none())
+        {
+            return self.sbagliato();
+        }
+        Ok(righe)
+    }
+
     /// Un elenco con cursore `after_id`, tutte le pagine.
     fn elenco<E: DeserializeOwned>(
         &mut self,
@@ -293,23 +310,11 @@ pub fn aggiorna(c: &ClientApi, adesso: DateTime<Utc>) -> Riepilogo {
     let spesa = (|| -> Result<_, ErroreApi> {
         let (mut modello, mut chiave, mut area) = (None, None, None);
         if mese_chiedibile {
-            modello = Some(g.analitica::<RigaCosto>(costo(
-                Raggruppa::Modello,
-                da_mese,
-                a_mese,
-                false,
-            ))?);
-            chiave =
-                Some(g.analitica::<RigaCosto>(costo(Raggruppa::Chiave, da_mese, a_mese, false))?);
-            area = Some(g.analitica::<RigaCosto>(costo(
-                Raggruppa::Workspace,
-                da_mese,
-                a_mese,
-                false,
-            ))?);
+            modello = Some(g.costi(costo(Raggruppa::Modello, da_mese, a_mese, false))?);
+            chiave = Some(g.costi(costo(Raggruppa::Chiave, da_mese, a_mese, false))?);
+            area = Some(g.costi(costo(Raggruppa::Workspace, da_mese, a_mese, false))?);
         }
-        let giorni =
-            g.analitica::<RigaCosto>(costo(Raggruppa::Nessuno, da_giorni, a_giorni, true))?;
+        let giorni = g.costi(costo(Raggruppa::Nessuno, da_giorni, a_giorni, true))?;
         Ok((modello, chiave, area, giorni))
     })();
     let mut costi_chiave: Vec<(Option<String>, Importo)> = Vec::new();
@@ -337,12 +342,20 @@ pub fn aggiorna(c: &ClientApi, adesso: DateTime<Utc>) -> Riepilogo {
                     })
                     .collect();
             }
-            if giorni.aggiornato.is_some() {
+            if let Some(fresco) = giorni.aggiornato {
                 let mut per_giorno: BTreeMap<NaiveDate, Importo> = BTreeMap::new();
                 for riga in &giorni.righe {
                     if let Some(i) = importo_da(&riga.cost.amount) {
                         let e = per_giorno.entry(riga.starting_at.date_naive()).or_default();
                         *e = *e + i;
+                    }
+                }
+                // Un giorno dell'intervallo senza riga ha speso 0 $, ma solo se i dati coprono
+                // tutto il giorno (aggiornati almeno alla sua fine, UTC); altrimenti non si sa.
+                for n in 1..=8u64 {
+                    let giorno = oggi - chrono::Days::new(n);
+                    if fresco >= mezzanotte(giorno + chrono::Days::new(1)) {
+                        per_giorno.entry(giorno).or_default();
                     }
                 }
                 r.giorni = per_giorno.into_iter().collect();

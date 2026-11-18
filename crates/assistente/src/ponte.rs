@@ -866,7 +866,10 @@ pub struct Ponte {
     /// Chiave da amministratore e letture delle API (M3, Task 8): il timer da 3 ore (esiste solo con
     /// la chiave), una lettura in corso, una prova in corso, l'ultimo esito (ora e riepilogo).
     sveglia_api: slint::Timer,
-    api_in_corso: Cell<bool>,
+    /// Il segnale «lettura in corso» della generazione attuale (si cambia a ogni Salva/Togli) e il
+    /// numero della generazione: un risultato di una generazione vecchia si scarta.
+    api_in_corso: RefCell<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    api_generazione: Cell<u64>,
     api_prova_in_corso: Cell<bool>,
     api_ultimo: RefCell<Option<(String, Result<api_claude::Riepilogo, String>)>>,
     timer_attivita: slint::Timer,
@@ -982,7 +985,8 @@ pub fn collega(
         claude_generazione: Cell::new(0),
         sveglia_claude: slint::Timer::default(),
         sveglia_api: slint::Timer::default(),
-        api_in_corso: Cell::new(false),
+        api_in_corso: RefCell::new(Default::default()),
+        api_generazione: Cell::new(0),
         api_prova_in_corso: Cell::new(false),
         api_ultimo: RefCell::new(None),
         timer_attivita: slint::Timer::default(),

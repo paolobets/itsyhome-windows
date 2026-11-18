@@ -20,8 +20,9 @@
 //!   `after_id`, `has_more`, `last_id`; `workspaces` con `include_default`; `rate_limits` con
 //!   `limit`/`page`/`next_page` (senza `limit` torna tutto in una pagina).
 //! - La chiave `sk-ant-admin01-…` della Console non ha ambiti da scegliere (accesso pieno).
-//! - Differenza dal piano: negli esempi la chiave appare come `Authorization: Bearer`; la pagina
-//!   «Create an Admin API key» dice `x-api-key`: si usa `x-api-key`, come da brief.
+//! - Intestazione della chiave: gli esempi per endpoint mostrano `Authorization: Bearer`, ma la guida
+//!   https://platform.claude.com/docs/en/manage-claude/admin-api e la pagina «Create an Admin API key»
+//!   indicano `x-api-key` per le chiavi da amministratore: si usa `x-api-key` (confermato in revisione).
 
 use chrono::{DateTime, SecondsFormat, Utc};
 

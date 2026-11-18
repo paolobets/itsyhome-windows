@@ -18,6 +18,7 @@ use crate::FinestraImpostazioni;
 use api_claude::{aggiorna, anthropic, finto, ChiaveAdmin, ClientApi, Lettura, Riepilogo, Scheda};
 use casa_core::diagnosi::Contatore;
 use chrono::{DateTime, Local, Utc};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 /// La voce del portachiavi della chiave da amministratore.
@@ -159,14 +160,17 @@ impl Ponte {
 
     /// Una lettura completa in un thread `api-claude`; se un'altra è in corso non ne parte una seconda.
     fn api_leggi(&self) {
-        if self.api_in_corso.replace(true) {
+        let in_corso = self.api_in_corso.borrow().clone();
+        if in_corso.swap(true, Ordering::SeqCst) {
             return;
         }
+        let generazione = self.api_generazione.get();
         let id = id_portachiavi(in_prova());
         let segreti = self.segreti.clone();
         let finta = finta_dall_ambiente();
         let diagnosi = self.casa.diagnosi_condivisa();
         diagnosi.conta(Contatore::api_letture);
+        let segnale = in_corso.clone();
         let partito = std::thread::Builder::new()
             .name("api-claude".into())
             .spawn(move || {
@@ -179,21 +183,35 @@ impl Ponte {
                     diagnosi.conta(Contatore::api_errori);
                 }
                 let ora = Local::now().format("%H:%M").to_string();
-                let _ = slint::invoke_from_event_loop(move || {
+                let consegnato = slint::invoke_from_event_loop(move || {
                     if let Some(p) = ponte() {
-                        p.api_arrivato(ora, esito);
+                        p.api_arrivato(generazione, ora, esito);
                     }
                 });
+                // Il ciclo eventi è finito: nessuno riceverà il risultato, la lettura non è più in corso.
+                if consegnato.is_err() {
+                    segnale.store(false, Ordering::SeqCst);
+                }
             });
         if partito.is_err() {
-            self.api_in_corso.set(false);
+            in_corso.store(false, Ordering::SeqCst);
         }
     }
 
     /// Il riepilogo è arrivato (thread dell'interfaccia). Se nel frattempo la chiave è stata tolta
     /// si scarta: chi non ha la chiave non tiene dati.
-    pub(crate) fn api_arrivato(&self, ora: String, esito: Result<Riepilogo, String>) {
-        self.api_in_corso.set(false);
+    pub(crate) fn api_arrivato(
+        &self,
+        generazione: u64,
+        ora: String,
+        esito: Result<Riepilogo, String>,
+    ) {
+        // Di una generazione vecchia (nel frattempo «Togli» o «Salva»): né mostrato né tocca il segnale
+        // della lettura nuova.
+        if generazione != self.api_generazione.get() {
+            return;
+        }
+        self.api_in_corso.borrow().store(false, Ordering::SeqCst);
         if !self.sveglia_api.running() {
             return;
         }
@@ -258,6 +276,13 @@ impl Ponte {
 
     /// «Salva»: controlla la forma, la mette nel portachiavi (se non l'accetta non resta in nessun
     /// altro posto), svuota il campo e mostra le ultime 4 cifre.
+    /// «Togli» e «Salva» aprono una generazione nuova: le letture partite prima non contano più e non
+    /// bloccano quella nuova.
+    fn api_nuova_generazione(&self) {
+        self.api_generazione.set(self.api_generazione.get() + 1);
+        *self.api_in_corso.borrow_mut() = Default::default();
+    }
+
     pub(crate) fn api_salva_ui(&self, campo: &str) {
         let chiave = match ChiaveAdmin::nuova(campo) {
             Ok(c) => c,
@@ -275,6 +300,7 @@ impl Ponte {
             f.set_api_presente(true);
             f.set_api_ultime(chiave.ultime_quattro().into());
         });
+        self.api_nuova_generazione();
         self.api_esito(
             "Chiave salvata. La prima lettura parte fra pochi secondi.",
             false,
@@ -288,6 +314,7 @@ impl Ponte {
             return self.api_esito("Il portachiavi non ha tolto la chiave.", true);
         }
         self.sveglia_api.stop();
+        self.api_nuova_generazione();
         *self.api_ultimo.borrow_mut() = None;
         self.con_finestra_claude(|f| {
             f.set_api_presente(false);
@@ -498,13 +525,52 @@ mod test {
     #[test]
     fn un_riepilogo_che_arriva_dopo_il_togli_si_scarta() {
         let (_s, p, _pillola, _d) = ponte_di_prova();
-        p.api_in_corso.set(true);
-        p.api_arrivato("10:00".into(), Ok(Riepilogo::default()));
-        assert!(!p.api_in_corso.get());
+        p.api_in_corso.borrow().store(true, Ordering::SeqCst);
+        p.api_arrivato(
+            p.api_generazione.get(),
+            "10:00".into(),
+            Ok(Riepilogo::default()),
+        );
+        assert!(!p.api_in_corso.borrow().load(Ordering::SeqCst));
         assert!(
             p.api_ultimo.borrow().is_none(),
             "senza chiave (timer spento) nessun dato si tiene"
         );
+    }
+
+    #[test]
+    fn togli_e_salva_durante_una_lettura_non_mostrano_il_vecchio_ne_bloccano_il_nuovo() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        p.api_salva_ui("sk-ant-admin01-di-prova-1a2b");
+        // Una lettura parte (generazione vecchia)...
+        let vecchia = p.api_generazione.get();
+        p.api_in_corso.borrow().store(true, Ordering::SeqCst);
+        // ...e intanto Togli e di nuovo Salva.
+        p.api_togli_ui();
+        p.api_salva_ui("sk-ant-admin01-di-prova-1a2b");
+        assert_ne!(p.api_generazione.get(), vecchia);
+        assert!(
+            !p.api_in_corso.borrow().load(Ordering::SeqCst),
+            "la lettura da 5 s non è saltata: il segnale è libero"
+        );
+        // La nuova lettura parte...
+        p.api_in_corso.borrow().store(true, Ordering::SeqCst);
+        // ...e arriva il risultato della vecchia: scartato, non tocca il segnale della nuova.
+        p.api_arrivato(vecchia, "10:00".into(), Ok(Riepilogo::default()));
+        assert!(
+            p.api_ultimo.borrow().is_none(),
+            "il vecchio risultato non si mostra"
+        );
+        assert!(p.api_in_corso.borrow().load(Ordering::SeqCst));
+        // Quello nuovo vale.
+        p.api_arrivato(
+            p.api_generazione.get(),
+            "10:05".into(),
+            Ok(Riepilogo::default()),
+        );
+        assert!(p.api_ultimo.borrow().is_some());
+        assert!(!p.api_in_corso.borrow().load(Ordering::SeqCst));
+        p.sveglia_api.stop();
     }
 
     #[test]
