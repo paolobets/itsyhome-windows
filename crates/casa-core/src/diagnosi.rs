@@ -111,6 +111,12 @@ contatori!(
     ui_pillola,
     // Millisecondi passati con l'umore «pensa» (l'animazione più cara), contati quando finisce.
     ui_pensa_ms,
+    // M3 (hook di Claude Code): eventi arrivati all'ascoltatore e passati al gestore, richieste
+    // rifiutate prima del gestore, permessi chiesti, dati della barra di stato.
+    claude_eventi,
+    claude_rifiutate,
+    claude_permessi,
+    claude_barre,
 );
 
 /// Il contatore del campo `campo` di `changes` (elenco fisso; il resto è `registro_campo_altro`).

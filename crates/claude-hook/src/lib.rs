@@ -1,6 +1,17 @@
 //! Hook HTTP di Claude Code per l'assistente «isola» (M3).
 //!
-//! Per ora solo i percorsi su cui l'ascoltatore risponde (spec M3 §4).
+//! L'ascoltatore locale blindato (spec M3 §6.2): solo 127.0.0.1, codice segreto, nessuna
+//! intestazione CORS, limiti stretti su intestazioni e corpo.
+
+pub mod ascoltatore;
+pub mod codice;
+pub mod mittente;
+
+pub use ascoltatore::{
+    avvia, Arrivo, Ascoltatore, AttesaPermesso, ConfigAscolto, Decisione, ErroreAvvio, Gestore,
+    Percorso, ATTESA_MASSIMA,
+};
+pub use codice::CodiceHook;
 
 /// Percorso a cui Claude Code manda gli eventi degli hook.
 pub const PERCORSO_EVENTO: &str = "/isola/v1/evento";

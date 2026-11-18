@@ -7,6 +7,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — v3 «assistente isola» (ramo `v3-assistente`, milestone M1 e M2)
 
+### Added (M3, Task 2: ascoltatore locale blindato)
+- `claude-hook`: ascoltatore HTTP degli hook di Claude Code, solo su 127.0.0.1 e su una porta precisa (porta occupata = errore esplicito, mai un'altra porta). Codice segreto di 32 byte (`Authorization: Bearer`, confronto a tempo costante, `Debug` senza il codice). Rifiuti prima di leggere il corpo, nell'ordine: oltre 16 connessioni `503`; intestazioni oltre 8 KB o 32 righe `431`; lettura oltre 2 s chiusa; metodo diverso da `POST` `405` (nessuna intestazione CORS); `Origin` `403`; `Host` diverso da `127.0.0.1:<porta>` `403`; `Content-Type` diverso da `application/json` `415`; codice errato `401`; `Transfer-Encoding` o `Content-Length` assente `411`; corpo oltre 256 KB letto e scartato (fino a 1 MiB) poi `413`; percorso sconosciuto `404`; JSON illeggibile `400`. Ogni rifiuto è contato (`Ascoltatore::rifiutate`) e non arriva mai al gestore.
+- Eventi: risposta `200 {}` e solo dopo il gestore. `PermissionRequest`: attesa della decisione (115 s al massimo) con controllo ogni 250 ms che il mittente non abbia chiuso; risposta `allow` o `deny` nel formato di Claude Code, `{}` se scaduta o senza decisione.
+- Il PID del mittente (tabella TCP di Windows, spostata dall'esempio nella libreria) si cerca una sola volta per `session_id` nuovo (ricordati al più 16), prima di rispondere.
+- `casa-core`: contatori diagnostici `claude_eventi`, `claude_rifiutate`, `claude_permessi`, `claude_barre`.
+
 ### Added (M3, Task 1: spike del permesso con hook HTTP)
 - Nuovo crate `claude-hook` (per ora solo i percorsi `/isola/v1/evento` e `/isola/v1/barra`) e l'esempio `prova_permesso`, non codice di prodotto: ascolta solo su 127.0.0.1, scrive `impostazioni-prova.json` in una cartella temporanea (mai `~/.claude/settings.json`) con hook `http` per `PermissionRequest` (120 s), `PreToolUse`, `Notification` e `Stop` (5 s), il codice usa-e-getta solo nella variabile `ISOLA_HOOK_TOKEN`. Per ogni richiesta stampa evento, strumento, nomi delle intestazioni, `Origin`, porta e PID del mittente (Windows: tabella TCP) con la catena dei genitori; mai `tool_input`, `prompt`, `cwd`. Sui permessi chiede in console consenti, nega, aspetta o chiudi, e controlla ogni 250 ms se il terminale ha chiuso la connessione. Serve a chiudere P1-P8 della spec M3 §6.3 con Paolo prima del Task 5.
 
