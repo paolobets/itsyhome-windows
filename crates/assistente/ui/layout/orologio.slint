@@ -14,18 +14,21 @@ export component LayoutOrologio inherits Rectangle {
     // Ci sono luci accese: la riga della casa si può cliccare e porta alla Casa filtrata sulle luci
     // accese (il «›» in fondo lo dice).
     in property <bool> luci-cliccabili;
+    // Casa non configurata: la riga è un invito («Collega la casa ›») che porta alle Impostazioni.
+    in property <bool> casa-invito;
     // Il fuoco da tastiera è sulla riga (anello visibile).
     in property <bool> anello-luci;
     callback apri-luci();
 
     // Con la casa connessa la riga dice solo i fatti ("2 luci accese · 21.5 °C"): le si mette
     // davanti il nome; gli altri stati ("Casa non connessa", …) lo contengono già.
-    property <string> riga-casa: casa-pronta ? "Casa · " + stato-casa : stato-casa;
+    property <bool> cliccabile: luci-cliccabili || casa-invito;
+    property <string> riga-casa: casa-invito ? "Collega la casa" : casa-pronta ? "Casa · " + stato-casa : stato-casa;
     property <string> riga-pc: "PC · CPU " + (pc.pronta ? pc.cpu-testo : "—")
         + " · RAM " + (pc.ram-testo != "" ? pc.ram-testo : "—");
     // La colonna di stato è larga quanto la sua riga più lunga (fra 160 e 340): con un minimo
     // fisso di 220 il blocco ora + stato restava spostato a sinistra.
-    property <length> largo-stato: min(340px, max(160px, max(misura-casa.preferred-width + (luci-cliccabili ? 14px : 0px), misura-pc.preferred-width)));
+    property <length> largo-stato: min(340px, max(160px, max(misura-casa.preferred-width + (cliccabile ? 14px : 0px), misura-pc.preferred-width)));
 
     // Solo per misurare le due righe (mai disegnate).
     misura-casa := Text {
@@ -81,17 +84,18 @@ export component LayoutOrologio inherits Rectangle {
                     text: riga-casa;
                     overflow: elide;
                     font-size: Tema.testo-corpo;
-                    color: Tema.testo-ora;
+                    // L'invito ha il verde acqua dell'azione: è l'unica cosa da fare.
+                    color: casa-invito ? Tema.petalo-5 : Tema.testo-ora;
                 }
 
                 // Il «›» che dice che la riga si apre: a parte, così non si accorcia coi testi lunghi
                 // e Narrator non lo legge.
-                if luci-cliccabili: Text {
+                if cliccabile: Text {
                     accessible-role: none;
                     horizontal-stretch: 0;
                     text: "›";
                     font-size: Tema.testo-corpo;
-                    color: Tema.testo-ora;
+                    color: casa-invito ? Tema.petalo-5 : Tema.testo-ora;
                 }
             }
 
@@ -108,14 +112,14 @@ export component LayoutOrologio inherits Rectangle {
 
     // Il clic sulla riga della casa, sopra il testo (che sta in un layout: se ne prende il posto
     // in coordinate assolute). Un bersaglio di 24 px almeno in altezza (WCAG 2.2).
-    if luci-cliccabili: TouchArea {
+    if cliccabile: TouchArea {
         x: riga-casa-elemento.absolute-position.x - root.absolute-position.x;
         y: riga-casa-elemento.absolute-position.y - root.absolute-position.y + (riga-casa-elemento.height - self.height) / 2;
         width: riga-casa-elemento.width;
         height: max(24px, riga-casa-elemento.height);
         mouse-cursor: pointer;
         accessible-role: button;
-        accessible-label: riga-casa + ": mostra le luci accese";
+        accessible-label: riga-casa + (casa-invito ? ": apri le Impostazioni" : ": mostra le luci accese");
         accessible-action-default => { root.apri-luci(); }
         clicked => { root.apri-luci(); }
 

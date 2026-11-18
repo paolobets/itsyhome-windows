@@ -499,7 +499,7 @@ export component Pillola inherits Window {
         attivita-sinistra-testo := Text {
             visible: attivita-visibile;
             x: x-attivita;
-            width: max(0px, attivita-destra-testo.x - self.x);
+            width: max(0px, attivita-destra-testo.x - self.x - 8px);
             height: parent.height;
             text: attivita-sinistra;
             overflow: elide;

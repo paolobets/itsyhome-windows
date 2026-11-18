@@ -467,7 +467,7 @@ impl Finestra {
     fn nome(self) -> &'static str {
         match self {
             Finestra::CinqueOre => "Limite 5 ore",
-            Finestra::SetteGiorni => "Limite settimanale",
+            Finestra::SetteGiorni => "Limite 7 giorni",
         }
     }
 }
@@ -591,6 +591,12 @@ pub fn voce_insolita(ieri: &Importo, giorno: NaiveDate) -> Voce {
         pulsanti: pulsante_ho_capito(),
         creata: Instant::now(),
     }
+}
+
+/// La soglia d'avviso come frazione 0..1 (50..100 % come l'avviso: fuori si ferma ai bordi); il
+/// colore caldo dell'arco parte sopra di lei.
+pub fn frazione_soglia(percento: u8) -> f32 {
+    f32::from(percento.clamp(50, 100)) / 100.0
 }
 
 /// «Avvisa al … % del limite» come scritto nelle Impostazioni: un intero da 50 a 100.
@@ -1191,7 +1197,7 @@ mod test {
         assert!(avviso_limite(Finestra::CinqueOre, &lim(80.0, azzera), 80, None, ora).is_some());
         // La finestra dei 7 giorni, con la sua voce e il suo nome; l'articolo segue il numero.
         let v = avviso_limite(Finestra::SetteGiorni, &lim(61.0, azzera), 50, None, ora).unwrap();
-        assert_eq!((v.id.as_str(), v.titolo.as_str()), ("claude.limite.7g", "Limite settimanale al 61%"));
+        assert_eq!((v.id.as_str(), v.titolo.as_str()), ("claude.limite.7g", "Limite 7 giorni al 61%"));
         let titolo = |p: f32| avviso_limite(Finestra::CinqueOre, &lim(p, azzera), 10, None, ora).unwrap().titolo;
         assert_eq!(titolo(80.0), "Limite 5 ore all'80%");
         assert_eq!(titolo(100.0), "Limite 5 ore al 100%");

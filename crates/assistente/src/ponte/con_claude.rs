@@ -422,8 +422,20 @@ impl Ponte {
                 self.metti_voce(v, true);
             }
         }
+        if let Some(p) = self.pannello.borrow().upgrade() {
+            self.aggiorna_soglia_claude(&p);
+        }
         self.claude_quadranti_cambiati();
         self.aggiorna_vista_claude();
+    }
+
+    /// La soglia d'avviso dell'utente (80 % di serie) al pannello: da lì l'arco dei limiti e della
+    /// spesa diventa caldo, nella vista Claude e nei quadranti (RC-44). Solo se cambia.
+    pub(super) fn aggiorna_soglia_claude(&self, p: &crate::Pannello) {
+        let soglia = claude::frazione_soglia(self.casa.con_config(|c| c.claude.soglia_limite));
+        if p.get_claude_soglia() != soglia {
+            p.set_claude_soglia(soglia);
+        }
     }
 
     /// Ciò che i quadranti di Claude leggono: i soli limiti validi di `limiti()` (PF9: mai un
@@ -432,7 +444,8 @@ impl Ponte {
         let (cinque, sette) = self.limiti();
         // Solo dati di questo mese (UTC): dopo il cambio di mese il quadrante dice «—» fino alla lettura nuova.
         let spesa = self.riepilogo_fresco(chrono::Utc::now()).and_then(|r| r.spesa_mese);
-        crate::lati::DatiClaude { cinque, sette, spesa, soglia_spesa: self.casa.con_config(|c| c.claude.soglia_spesa) }
+        let lettura_attesa = spesa.is_none() && self.sveglia_api.running();
+        crate::lati::DatiClaude { cinque, sette, spesa, soglia_spesa: self.casa.con_config(|c| c.claude.soglia_spesa), lettura_attesa }
     }
 
     /// Un dato di Claude è cambiato: i quadranti che lo mostrano si riscrivono (solo a modelli
@@ -1093,7 +1106,6 @@ impl Ponte {
         let testo = if sinistra.is_empty() { String::new() } else { format!("{sinistra} · {destra}") };
         let mut cambiato = false;
         if ui.get_attivita() != testo.as_str() {
-            let destra = if destra.is_empty() { String::new() } else { format!(" · {destra}") };
             ui.set_attivita(testo.as_str().into());
             ui.set_attivita_sinistra(sinistra.as_str().into());
             ui.set_attivita_destra(destra.as_str().into());
@@ -1737,7 +1749,8 @@ mod test {
     fn senza_eventi_attivita_destra_e_vuota() {
         let (_s, p, pillola, _d) = ponte_di_prova();
         manda(&p, ev("a", TipoEvento::UserPromptSubmit));
-        assert_eq!(pillola.get_attivita_destra(), " · 0:00");
+        // RC-36: la durata sta da sola a destra, senza il «·» davanti.
+        assert_eq!(pillola.get_attivita_destra(), "0:00");
         manda(&p, ev("a", TipoEvento::Stop));
         assert_eq!(pillola.get_attivita(), "");
         assert_eq!(pillola.get_attivita_destra(), "");
@@ -2321,6 +2334,21 @@ mod test {
         assert!(pannello.get_claude_collegato());
     }
 
+    /// RC-44: il colore caldo parte dalla soglia d'avviso dell'utente (80 di serie), non da un
+    /// 85 % fisso: il pannello la riceve da Rust e la segue se cambia.
+    #[test]
+    fn la_soglia_d_avviso_arriva_al_pannello() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let pannello = con_pannello(&p);
+        assert!((pannello.get_claude_soglia() - 0.80).abs() < 1e-6, "di serie 80");
+        assert_eq!(p.cambia_soglia_limite("70"), "");
+        assert!((pannello.get_claude_soglia() - 0.70).abs() < 1e-6, "dopo il cambio 70");
+        // Fuori dai 50..100 si ferma ai bordi, come l'avviso.
+        p.casa().aggiorna_config(|c| c.claude.soglia_limite = 30);
+        p.claude_limiti_cambiati();
+        assert!((pannello.get_claude_soglia() - 0.50).abs() < 1e-6);
+    }
+
     #[test]
     fn anelli_dai_limiti_senza_zeri_inventati() {
         let (_s, p, _pillola, _d) = ponte_di_prova();
@@ -2554,6 +2582,8 @@ mod test {
         p.api_salva_ui("sk-ant-admin01-di-prova-1a2b");
         con_quadranti(&p, &["spesa_api"]);
         assert_eq!(quadrante(&p, 0).valore.as_str(), "—");
+        // RC-51: con la chiave e senza ancora una lettura il quadrante lo dice.
+        assert_eq!(quadrante(&p, 0).dettaglio.as_str(), "prima lettura fra poco");
         p.casa().aggiorna_config(|c| c.claude.soglia_spesa = Some(1000.0));
         arriva(&p, riepilogo_con_spesa("41280", true));
         assert_eq!(quadrante(&p, 0).valore.as_str(), "413 $");

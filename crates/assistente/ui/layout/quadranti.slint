@@ -20,8 +20,14 @@ component Quadrante inherits Vetro {
     // Valore vecchio (casa non connessa): colori tenui ma leggibili (FE18: il valore in
     // testo-tenue pieno, circa 7:1 sulla card, invece di `opacity` 0,55 che dava 2,9:1).
     in property <bool> tenue;
-    // Il quadrante si clicca (solo il quadrante CASA con luci accese): un TouchArea su tutta la card.
+    // Il quadrante si clicca (solo il quadrante CASA con luci accese, o da configurare): un TouchArea
+    // su tutta la card.
     in property <bool> cliccabile;
+    // Il clic porta alle Impostazioni (casa non configurata) invece che alle luci accese.
+    in property <bool> invito;
+    // L'arco diventa caldo sopra questa frazione: 85 % per il PC, la soglia d'avviso dell'utente
+    // per i limiti e la spesa di Claude (RC-44).
+    in property <float> soglia-caldo: 0.85;
     // Il fuoco da tastiera è sul quadrante (anello visibile).
     in property <bool> anello;
     callback clic();
@@ -39,7 +45,7 @@ component Quadrante inherits Vetro {
 
     VerticalLayout {
         alignment: center;
-        spacing: arco < 90px ? 3px : 8px;
+        spacing: arco < 90px ? 4px : 8px;
         padding-left: 8px;
         padding-right: 8px;
 
@@ -65,7 +71,7 @@ component Quadrante inherits Vetro {
                 viewbox-width: 110;
                 viewbox-height: 110;
                 commands: "M 23.89 86.11 A 44 44 0 " + (frazione > 0.6667 ? 1 : 0) + " 1 " + (55 + 44 * cos(fine)) + " " + (55 + 44 * sin(fine));
-                stroke: tenue ? Tema.icona-spenta : frazione > 0.85 ? Tema.caldo-2 : Tema.petalo-2;
+                stroke: tenue ? Tema.icona-spenta : Tema.oltre-soglia(frazione, soglia-caldo) ? Tema.caldo-2 : Tema.petalo-2;
                 stroke-width: arco < 90px ? 7px : 8px;
                 stroke-line-cap: round;
             }
@@ -113,7 +119,7 @@ component Quadrante inherits Vetro {
                 horizontal-alignment: center;
                 overflow: elide;
                 font-size: Tema.testo-piccolo;
-                color: Tema.testo-tenue;
+                color: invito ? Tema.petalo-5 : Tema.testo-tenue;
             }
 
             // Il «›» che dice che il quadrante si apre: a parte, non si accorcia e Narrator non lo legge.
@@ -122,7 +128,7 @@ component Quadrante inherits Vetro {
                 horizontal-stretch: 0;
                 text: "›";
                 font-size: Tema.testo-piccolo;
-                color: Tema.testo-tenue;
+                color: invito ? Tema.petalo-5 : Tema.testo-tenue;
             }
         }
     }
@@ -132,7 +138,7 @@ component Quadrante inherits Vetro {
         height: parent.height;
         mouse-cursor: pointer;
         accessible-role: button;
-        accessible-label: etichetta + ", " + dettaglio + ": mostra le luci accese";
+        accessible-label: etichetta + ", " + dettaglio + (invito ? ": apri le Impostazioni" : ": mostra le luci accese");
         accessible-action-default => { root.clic(); }
         clicked => { root.clic(); }
 
@@ -153,6 +159,10 @@ export component LayoutQuadranti inherits Rectangle {
     // Ci sono luci accese: il quadrante CASA (quello senza sensori, che dice «N luci accese») si
     // può cliccare e porta alla Casa filtrata sulle luci accese.
     in property <bool> luci-cliccabili;
+    // Casa non configurata: il quadrante CASA invita a collegarla e porta alle Impostazioni.
+    in property <bool> casa-invito;
+    // La soglia d'avviso dell'utente per i quadranti di Claude (frazione 0..1).
+    in property <float> soglia-claude: 0.8;
     in property <bool> anello-luci;
     callback apri-luci();
 
@@ -216,9 +226,11 @@ export component LayoutQuadranti inherits Rectangle {
         }
         return Icone.pc;
     }
-    property <length> spazio: 10px;
-    // Card uguali, qualunque sia la lunghezza dei valori; con poche card non diventano enormi.
-    property <length> lato: min(170px, (self.width - (quanti - 1) * spazio) / quanti);
+    // Ritmo 4/8 (RC-50): 8 px fra le card, come fra le voci «In attesa» sopra.
+    property <length> spazio: 8px;
+    // Card uguali, qualunque sia la lunghezza dei valori. Tre card riempiono tutta la larghezza,
+    // bordo a bordo con la riga «In attesa» (R1-11); con meno card non diventano più grandi di così.
+    property <length> lato: min((self.width - 2 * spazio) / 3, (self.width - (quanti - 1) * spazio) / quanti);
     // L'arco si adatta all'altezza (con la riga «In attesa» il centro è più basso): sotto ci
     // stanno etichetta e dettaglio.
     property <length> arco: max(56px, min(96px, self.height - 54px));
@@ -232,6 +244,7 @@ export component LayoutQuadranti inherits Rectangle {
             arco: root.arco;
             // I valori della casa (meteo, sensori) senza connessione sono vecchi: tenui.
             tenue: (q.fonte == FonteQuadranteUi.meteo || q.fonte == FonteQuadranteUi.sensore) && !casa-pronta;
+            soglia-caldo: q.fonte == FonteQuadranteUi.limite-5h || q.fonte == FonteQuadranteUi.limite-7g || q.fonte == FonteQuadranteUi.spesa-api ? soglia-claude : 0.85;
             etichetta: q.etichetta;
             icona: icona-di(q);
             valore: valore-di(q);
@@ -255,8 +268,9 @@ export component LayoutQuadranti inherits Rectangle {
             arco: root.arco;
             etichetta: "CASA";
             icona: Icone.casa;
-            dettaglio: stato-casa;
-            cliccabile: luci-cliccabili;
+            dettaglio: casa-invito ? "Collega la casa" : stato-casa;
+            cliccabile: luci-cliccabili || casa-invito;
+            invito: casa-invito;
             anello: anello-luci;
             clic => { root.apri-luci(); }
         }

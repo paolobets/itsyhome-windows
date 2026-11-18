@@ -308,6 +308,205 @@ mod accessibilita {
         }
     }
 
+    /// `n` voci «In attesa» di prova: «Titolo 0», «Titolo 1»… con livello «Quando vuoi».
+    fn voci_attesa(n: usize) -> ModelRc<VoceAttesaUi> {
+        ModelRc::new(VecModel::from(
+            (0..n)
+                .map(|i| VoceAttesaUi {
+                    id: format!("v{i}").into(),
+                    livello: LivelloUi::Informazione,
+                    titolo: format!("Titolo {i}").into(),
+                    sotto: "Quando vuoi · prova".into(),
+                    dettaglio: "Il testo completo".into(),
+                    icona: Default::default(),
+                    pulsanti: ModelRc::new(VecModel::from(Vec::<PulsanteUi>::new())),
+                })
+                .collect::<Vec<_>>(),
+        ))
+    }
+
+    fn voce_chiusa(p: &Pannello, i: usize) -> Option<ElementHandle> {
+        ElementHandle::find_by_accessible_label(p, &format!("Titolo {i}, Quando vuoi · prova")).next()
+    }
+
+    /// R1-22 (Paolo): da tre voci in su la riga «In attesa» ha due card larghe e «+N» con le
+    /// altre, invece di tre strette dove i titoli si tagliano; con una o due voci nessun «+N».
+    #[test]
+    fn da_tre_voci_due_card_larghe_e_piu_n() {
+        piattaforma_di_prova();
+        let p = pannello();
+        for (n, chiuse, piu_n) in [
+            (1, 1, None),
+            (2, 2, None),
+            (3, 2, Some("Un'altra voce in attesa")),
+            (4, 2, Some("Altre 2 voci in attesa")),
+            (5, 2, Some("Altre 3 voci in attesa")),
+        ] {
+            p.set_attese(voci_attesa(n));
+            let viste = (0..n).filter(|i| voce_chiusa(&p, *i).is_some()).count();
+            assert_eq!(viste, chiuse, "{n} voci: card chiuse");
+            let ci_sono_altre = ["Un'altra voce in attesa", "Altre 2 voci in attesa", "Altre 3 voci in attesa"]
+                .iter()
+                .any(|nome| ElementHandle::find_by_accessible_label(&p, nome).count() > 0);
+            assert_eq!(ci_sono_altre, piu_n.is_some(), "{n} voci: «+N»");
+            if let Some(t) = piu_n {
+                assert_eq!(elemento(&p, t).accessible_role(), Some(AccessibleRole::Button), "{n} voci");
+            }
+        }
+        // Le due card sono larghe: più di quanto lo erano le tre (circa 220 px).
+        p.set_attese(voci_attesa(4));
+        let larghezza = voce_chiusa(&p, 0).expect("prima voce").size().width;
+        assert!(larghezza > 300.0, "card larga: {larghezza}");
+    }
+
+    /// R1-22: il «+N» si raggiunge da tastiera (→ dalla seconda card), prende il fuoco e Invio apre
+    /// la prima voce nascosta; nessun elemento irraggiungibile.
+    #[test]
+    fn il_piu_n_si_raggiunge_da_tastiera() {
+        use slint::platform::Key;
+        for n in [3usize, 5] {
+            piattaforma_di_prova();
+            let p = pannello();
+            p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+            p.global::<crate::Fuochi>().set_pronti(true);
+            p.set_attese(voci_attesa(n));
+            // Maiusc+Tab dal contenuto: «In attesa», prima voce.
+            con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
+            assert_eq!(etichetta_col_fuoco(&p), "Titolo 0, Quando vuoi · prova", "{n} voci");
+            tasto(&p, Key::RightArrow);
+            assert_eq!(etichetta_col_fuoco(&p), "Titolo 1, Quando vuoi · prova", "{n} voci");
+            tasto(&p, Key::RightArrow);
+            let piu_n = if n == 3 { "Un'altra voce in attesa".to_owned() } else { format!("Altre {} voci in attesa", n - 2) };
+            assert_eq!(etichetta_col_fuoco(&p), piu_n, "{n} voci: il fuoco arriva su «+N»");
+            tasto(&p, Key::RightArrow);
+            assert_eq!(etichetta_col_fuoco(&p), piu_n, "{n} voci: «+N» è l'ultimo");
+            tasto(&p, Key::Return);
+            assert_eq!(
+                etichetta_col_fuoco(&p),
+                format!("Titolo 2, Quando vuoi · prova, voce 3 di {n}"),
+                "{n} voci: Invio su «+N» apre la prima nascosta"
+            );
+        }
+    }
+
+    /// R1-12: «‹ 1 di 3 › Riduci» ha la forma di pulsanti (sfondo sempre visibile, bersaglio da
+    /// 28 px), non di etichette che si scoprono col mouse.
+    #[test]
+    fn frecce_e_riduci_sono_pulsanti_veri() {
+        piattaforma_di_prova();
+        let p = pannello();
+        p.set_attese(voci_attesa(3));
+        p.invoke_espandi(0);
+        for nome in ["Voce precedente", "Voce successiva", "Riduci"] {
+            let e = elemento(&p, nome);
+            assert_eq!(e.accessible_role(), Some(AccessibleRole::Button), "{nome}");
+            let l = e.size();
+            assert!(l.width >= 28.0 && l.height >= 28.0, "{nome}: bersaglio {l:?}");
+        }
+        let sorgente = include_str!("../ui/attesa.slint");
+        let inizio = sorgente.find("naviga := HorizontalLayout").expect("la navigazione");
+        let fine = sorgente[inizio..].find("testo := Flickable").expect("il testo");
+        assert!(!sorgente[inizio..inizio + fine].contains("transparent"), "uno sfondo trasparente nasconde il pulsante");
+    }
+
+    /// R1-14: nel layout Orologio della Panoramica l'ora piccola della riga alta non c'è (c'è la
+    /// grande); negli altri layout, nelle altre viste e con una voce espansa (che copre il centro) sì.
+    #[test]
+    fn ora_piccola_nascosta_solo_nell_orologio() {
+        piattaforma_di_prova();
+        let p = pannello();
+        p.set_layout(0);
+        assert!(!p.get_ora_riga_visibile(), "Orologio: c'è già l'ora grande");
+        p.set_layout(1);
+        assert!(p.get_ora_riga_visibile(), "Quadranti");
+        p.set_layout(0);
+        p.set_vista("pc".into());
+        assert!(p.get_ora_riga_visibile(), "altre viste");
+        p.set_vista("panoramica".into());
+        p.set_attese(voci_attesa(1));
+        p.invoke_espandi(0);
+        assert!(p.get_ora_riga_visibile(), "voce espansa: il centro è coperto");
+    }
+
+    /// R1-13: a casa non configurata la riga «Casa» (Orologio) e il quadrante CASA (Quadranti) sono
+    /// un invito che porta alle Impostazioni: col clic, con Narrator e solo con la tastiera.
+    #[test]
+    fn casa_non_configurata_invita_alle_impostazioni() {
+        use slint::platform::Key;
+        for (layout, nome) in [(0, "Collega la casa: apri le Impostazioni"), (1, "CASA, Collega la casa: apri le Impostazioni")] {
+            piattaforma_di_prova();
+            let p = pannello();
+            p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+            p.global::<crate::Fuochi>().set_pronti(true);
+            let aperte = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+            let a = aperte.clone();
+            p.on_apri_app(move |id| a.borrow_mut().push(id.to_string()));
+            p.set_layout(layout);
+            p.set_stato_casa("Casa non configurata".into());
+            assert!(
+                ElementHandle::find_by_accessible_label(&p, nome).next().is_none(),
+                "layout {layout}: senza invito niente bersaglio"
+            );
+            p.set_casa_da_configurare(true);
+            let bottone = ElementHandle::find_by_accessible_label(&p, nome)
+                .find(|e| e.accessible_role() == Some(AccessibleRole::Button))
+                .unwrap_or_else(|| panic!("layout {layout}: nessun pulsante «{nome}»"));
+            bottone.invoke_accessible_default_action();
+            assert_eq!(*aperte.borrow(), ["impostazioni"], "layout {layout}: Narrator");
+            // Da tastiera: ↓ porta sulla riga, Invio la apre.
+            tasto(&p, Key::DownArrow);
+            assert_eq!(etichetta_col_fuoco(&p), nome, "layout {layout}");
+            tasto(&p, Key::Return);
+            assert_eq!(*aperte.borrow(), ["impostazioni", "impostazioni"], "layout {layout}: Invio");
+        }
+    }
+
+    /// R1-11 e RC-50: i quadranti riempiono la larghezza bordo a bordo con la riga «In attesa»
+    /// (stesso margine a sinistra e a destra) e stanno a 8 px l'uno dall'altro come le voci.
+    #[test]
+    fn quadranti_allineati_alla_riga_in_attesa() {
+        piattaforma_di_prova();
+        let p = pannello();
+        p.set_layout(1);
+        p.set_stato_casa("Casa non connessa".into());
+        p.set_attese(voci_attesa(3));
+        let (v0, piu_n) = (voce_chiusa(&p, 0).expect("prima voce"), elemento(&p, "Un'altra voce in attesa"));
+        let (a, b, c, d) = (
+            elemento(&p, "CPU"),
+            elemento(&p, "RAM"),
+            elemento(&p, "DISCO"),
+            elemento(&p, "CASA, Casa non connessa"),
+        );
+        let bordi = |e: &ElementHandle| (e.absolute_position().x, e.absolute_position().x + e.size().width);
+        let (sinistra_voci, destra_voci) = (bordi(&v0).0, bordi(&piu_n).1);
+        assert!((bordi(&a).0 - sinistra_voci).abs() < 0.5, "a sinistra: {} contro {sinistra_voci}", bordi(&a).0);
+        assert!((bordi(&d).1 - destra_voci).abs() < 0.5, "a destra: {} contro {destra_voci}", bordi(&d).1);
+        for (prima, dopo) in [(&a, &b), (&b, &c), (&c, &d)] {
+            let spazio = bordi(dopo).0 - bordi(prima).1;
+            assert!((spazio - 8.0).abs() < 0.5, "spazio fra le card: {spazio}");
+        }
+    }
+
+    /// RC-44: il colore caldo dell'arco parte SOPRA la soglia d'avviso dell'utente (70 → caldo a
+    /// 71, non a 85), nella vista Claude e nei quadranti; il PC resta all'85 %.
+    #[test]
+    fn il_caldo_parte_oltre_la_soglia_dell_utente() {
+        piattaforma_di_prova();
+        let p = pannello();
+        let tema = p.global::<crate::Tema>();
+        assert!(tema.invoke_oltre_soglia(0.71, 0.70), "71 con soglia 70: caldo");
+        assert!(!tema.invoke_oltre_soglia(0.70, 0.70), "alla soglia esatta non ancora");
+        assert!(!tema.invoke_oltre_soglia(0.50, 0.70));
+        assert!(tema.invoke_oltre_soglia(0.80, 0.70), "a 80 con soglia 70 l'arco è caldo (prima no)");
+        let (claude, quadranti) = (include_str!("../ui/viste/claude.slint"), include_str!("../ui/layout/quadranti.slint"));
+        assert!(!claude.contains("0.85"), "la vista Claude non ha più un 85 % fisso");
+        assert!(
+            quadranti.contains("soglia-caldo: q.fonte == FonteQuadranteUi.limite-5h"),
+            "i quadranti di Claude usano la soglia dell'utente"
+        );
+        assert!((p.get_claude_soglia() - 0.80).abs() < 1e-6, "di serie 80");
+    }
+
     #[test]
     fn quadranti_dicono_nome_e_valore() {
         piattaforma_di_prova();
@@ -1752,11 +1951,11 @@ mod accessibilita {
     fn anelli_nascosti_senza_abbonamento() {
         let (p, _) = pannello_claude(true, tre_righe_claude());
         let ha = |nome: &str| ElementHandle::find_by_accessible_label(&p, nome).next().is_some();
-        assert!(!ha("Limite 5 ore") && !ha("Limite settimanale"), "senza limiti nessun anello");
+        assert!(!ha("Limite 5 ore") && !ha("Limite 7 giorni"), "senza limiti nessun anello");
         assert!(ha("Limiti non disponibili"));
 
         p.set_claude_cinque_ore(limite_claude("37%", 0.37, "si azzera alle 14:30"));
-        assert!(ha("Limite 5 ore") && !ha("Limite settimanale"), "solo la finestra che c'è");
+        assert!(ha("Limite 5 ore") && !ha("Limite 7 giorni"), "solo la finestra che c'è");
         assert!(!ha("Limiti non disponibili"));
         let anello = elemento(&p, "Limite 5 ore");
         assert_eq!(anello.accessible_role(), Some(AccessibleRole::ProgressIndicator));
@@ -1764,10 +1963,10 @@ mod accessibilita {
         assert_eq!(anello.accessible_description().as_deref(), Some("si azzera alle 14:30"));
 
         p.set_claude_sette_giorni(limite_claude("61%", 0.61, "si azzera sabato alle 09:00"));
-        assert_eq!(elemento(&p, "Limite settimanale").accessible_value().as_deref(), Some("61%"));
+        assert_eq!(elemento(&p, "Limite 7 giorni").accessible_value().as_deref(), Some("61%"));
         // Un limite scaduto torna assente: l'anello sparisce.
         p.set_claude_cinque_ore(Default::default());
-        assert!(!ha("Limite 5 ore") && ha("Limite settimanale"));
+        assert!(!ha("Limite 5 ore") && ha("Limite 7 giorni"));
     }
 
     /// La spesa del mese: il valore e la nota; senza valore solo la nota (nessuno «0»).
@@ -2338,7 +2537,7 @@ mod accessibilita {
         // viva; qui basta che la pillola non cresca.
         p.set_attivita("Claude · UnNomeLunghi · 1:02:05".into());
         p.set_attivita_sinistra("Claude · UnNomeLunghi".into());
-        p.set_attivita_destra(" · 1:02:05".into());
+        p.set_attivita_destra("1:02:05".into());
         assert_eq!(p.get_larghezza_pillola(), crate::finestre::LARGHEZZA_ATTIVITA);
         // La durata sta sempre intera dentro la pillola, anche col nome più lungo: si taglia solo
         // il nome (la sua larghezza arriva fin dove parte la durata).

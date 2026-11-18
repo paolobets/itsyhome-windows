@@ -591,7 +591,7 @@ pub fn quadranti_ui(q: &[Lato], menu: Option<&MenuData>, massimi: &HashMap<Strin
                     let (fonte, etichetta) = match l {
                         Lato::Limite5h => (FonteQuadranteUi::Limite5h, "LIMITE 5 ORE"),
                         Lato::Limite7g => (FonteQuadranteUi::Limite7g, "LIMITE 7 GIORNI"),
-                        _ => (FonteQuadranteUi::SpesaApi, "SPESA API"),
+                        _ => (FonteQuadranteUi::SpesaApi, "SPESA API DEL MESE"),
                     };
                     // Senza dato «—» e nessun arco (PF9): mai «0%» né «0 $».
                     let q = lati::quadrante_claude(l, claude, massimi.get(&l.come_str()).copied(), ora)?;
@@ -2119,6 +2119,8 @@ impl Ponte {
             p.set_stato_casa(riga.into());
         }
         p.set_casa_pronta(*stato == StatoConnessione::Connesso && menu.is_some());
+        p.set_casa_da_configurare(*stato == StatoConnessione::NonConfigurato);
+        self.aggiorna_soglia_claude(p);
         let dati = self.dati_delle.borrow().clone().unwrap_or_default();
         if p.get_dati_delle() != dati.as_str() {
             p.set_dati_delle(dati.into());
@@ -3343,6 +3345,23 @@ pub(crate) mod test {
         let pannello = crate::Pannello::new().unwrap();
         p.riempi(&pannello);
         assert_eq!(pannello.get_preferiti().row_data(0).unwrap().stato, "Spento", "il pannello nuovo ha i dati di adesso");
+    }
+
+    /// R1-13: a casa non configurata il pannello lo sa (la riga «Casa» diventa un invito alle
+    /// Impostazioni); appena la casa è configurata l'invito sparisce.
+    #[test]
+    fn casa_non_configurata_e_un_invito() {
+        let (_spegni, p, _pillola, _c) = ponte_di_prova();
+        let pannello = crate::Pannello::new().unwrap();
+        p.pannello_aperto(&pannello);
+        p.riempi(&pannello);
+        p.ricevi(CasaEvento::Stato(StatoConnessione::NonConfigurato));
+        assert!(pannello.get_casa_da_configurare());
+        p.ricevi(CasaEvento::Stato(StatoConnessione::Disconnesso));
+        assert!(!pannello.get_casa_da_configurare(), "non connessa non vuol dire non configurata");
+        p.ricevi(CasaEvento::Stato(StatoConnessione::NonConfigurato));
+        p.ricevi(CasaEvento::Stato(StatoConnessione::Connesso));
+        assert!(!pannello.get_casa_da_configurare());
     }
 
     fn stato_mostrato(p: &Ponte) -> String {

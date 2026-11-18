@@ -32,7 +32,7 @@ import { Faccia, Occhi } from "faccia.slint";
 import { Anello, Fuoco, Fuochi } from "componenti.slint";
 import { Icone } from "icone.slint";
 import { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, UmoreUi, StanzaUi, CollegamentoUi, QuadranteUi, FonteQuadranteUi, TipoReteUi, TintaBatteriaUi, RigaSessioneUi, LimiteClaudeUi } from "voci.slint";
-import { RigaAttesa, VoceEspansa } from "attesa.slint";
+import { Attesa, RigaAttesa, VoceEspansa } from "attesa.slint";
 import { VistaPc } from "viste/pc.slint";
 import { VistaClaude } from "viste/claude.slint";
 import { VistaCasa } from "viste/casa.slint";
@@ -130,6 +130,8 @@ export component Pannello inherits Window {
     // Layout della Panoramica (indice del puntino: 0 Orologio, 1 Quadranti, come `layout.rs`).
     in-out property <int> layout: 0;
     out property <int> numero-layout: 2;
+    // L'ora piccola della riga alta: nascosta nel layout Orologio della Panoramica (c'è la grande).
+    out property <bool> ora-riga-visibile: !(vista == "panoramica" && layout == 0 && !espansa);
     // L'app mostrata al centro; "panoramica" è la schermata principale. È l'id di un'app del
     // registro (un dato, non uno stato con un nome: resta una stringa).
     in-out property <string> vista: "panoramica";
@@ -149,6 +151,9 @@ export component Pannello inherits Window {
     in property <int> claude-altre;
     in property <LimiteClaudeUi> claude-cinque-ore;
     in property <LimiteClaudeUi> claude-sette-giorni;
+    // La soglia d'avviso dell'utente come frazione (80 % di serie): sopra, l'arco dei limiti e
+    // della spesa è caldo, nella vista Claude e nei quadranti (RC-44). La scrive Rust.
+    in property <float> claude-soglia: 0.8;
     in property <string> claude-spesa;
     in property <string> claude-spesa-nota;
     // La chiave da amministratore c'è: la vista mostra «Dettagli» (schede delle API).
@@ -214,6 +219,9 @@ export component Pannello inherits Window {
     in-out property <int> stanza-aperta: -1;
     in property <string> stato-casa;
     in property <bool> casa-pronta;
+    // La casa non è configurata (nessun Home Assistant scelto): la riga «Casa» e il quadrante CASA
+    // diventano un invito che porta alle Impostazioni (R1-13).
+    in property <bool> casa-da-configurare;
     // Senza connessione: l'ora degli ultimi dati («dati delle 10:42») e se ha senso «Riprova».
     in property <string> dati-delle;
     in property <bool> casa-riprovabile;
@@ -347,9 +355,12 @@ export component Pannello inherits Window {
     // connessa e almeno una luce accesa. `fuoco-luci`: il fuoco da tastiera è su di lei (↓ o Tab
     // dal contenuto; Invio o Spazio aprono la Casa filtrata, altrove Invio cambia layout).
     property <bool> luci-cliccabili: casa-pronta && luci.length > 0;
+    // La stessa riga, quando è un invito alle Impostazioni (casa non configurata), si usa allo
+    // stesso modo: clic, Tab, Invio.
+    property <bool> casa-cliccabile: luci-cliccabili || casa-da-configurare;
     // Il bersaglio della riga da tastiera esiste: nei Quadranti solo il quadrante CASA (senza
     // sensori) dice «N luci accese».
-    property <bool> luci-da-tastiera: luci-cliccabili && (layout == 0 || sensori.length == 0);
+    property <bool> luci-da-tastiera: casa-cliccabile && (layout == 0 || sensori.length == 0);
     property <bool> fuoco-luci: false;
     property <bool> fuoco-luci-valido: fuoco-luci && luci-da-tastiera && vista == "panoramica" && !espansa && zona == Zona.contenuto;
     // La testata della Casa filtrata ha i suoi pulsanti solo a casa connessa: altrimenti dice lo
@@ -382,7 +393,7 @@ export component Pannello inherits Window {
         : pc-successivo(fuoco-pc) >= 0 ? pc-successivo(fuoco-pc) : pc-precedente(fuoco-pc);
     // «Riprova» nella testata della vista Casa: casa non connessa che si può riprovare.
     property <bool> riprova-visibile: !casa-pronta && casa-riprovabile && (griglia.length > 0 || stanze.length > 0);
-    // «In attesa»: voce col fuoco (da chiusa 0..2, 3 = «+N») e pulsante della voce espansa
+    // «In attesa»: voce col fuoco (da chiusa 0..1, 2 = «+N», vedi `Attesa.visibili`) e pulsante della voce espansa
     // (-1 = la voce stessa).
     property <int> fuoco-attesa: 0;
     property <int> fuoco-pulsante: -1;
@@ -549,7 +560,7 @@ export component Pannello inherits Window {
             voce-aperta = attese[i].id;
             indice-aperta = i;
             zona = Zona.attesa;
-            fuoco-attesa = min(i, 3);
+            fuoco-attesa = min(i, Attesa.visibili);
             fuoco-pulsante = chiede-permesso(i) ? primo-non-delicato(i) : -1;
         }
     }
@@ -601,10 +612,15 @@ export component Pannello inherits Window {
 
     // La Casa filtrata sulle luci accese (clic su «N luci accese» della Panoramica): la vista Casa
     // con l'elenco delle luci accese, il fuoco sulla prima.
+    // Casa non configurata: la stessa riga porta alle Impostazioni (R1-13).
     function mostra-luci() {
-        vai("casa");
-        filtro-luci = true;
-        fuoco-casa = 0;
+        if (casa-da-configurare) {
+            root.apri-app("impostazioni");
+        } else {
+            vai("casa");
+            filtro-luci = true;
+            fuoco-casa = 0;
+        }
     }
 
     // Torna all'elenco completo (Preferiti). Il fuoco da tastiera sta sulle card o nella testata,
@@ -738,9 +754,9 @@ export component Pannello inherits Window {
             }
         } else if (zona == Zona.attesa) {
             if (k == Key.LeftArrow) {
-                fuoco-attesa = max(0, min(fuoco-attesa, 3) - 1);
+                fuoco-attesa = max(0, min(fuoco-attesa, Attesa.visibili) - 1);
             } else if (k == Key.RightArrow) {
-                fuoco-attesa = min(min(attese.length, 4) - 1, fuoco-attesa + 1);
+                fuoco-attesa = min(min(attese.length, Attesa.visibili + 1) - 1, fuoco-attesa + 1);
             }
         } else if (zona == Zona.contenuto && vista == "panoramica") {
             if (k == Key.DownArrow && luci-da-tastiera) {
@@ -1081,7 +1097,11 @@ export component Pannello inherits Window {
                 accessible-label: riga-sinistra-nome;
             }
 
+            // L'ora piccola in alto a destra: nel layout Orologio della Panoramica c'è già quella
+            // grande al centro, ripeterla è rumore (R1-14); una voce espansa copre il centro e la
+            // riporta.
             Text {
+                visible: ora-riga-visibile;
                 x: 0;
                 y: 0;
                 width: piu.x - 6px;
@@ -1196,7 +1216,9 @@ export component Pannello inherits Window {
                     chiede: fuoco-luci-valido && da-tastiera;
                     accessible-role: button;
                     accessible-enabled: fuoco-luci-valido;
-                    accessible-label: !fuoco-luci-valido ? "" : layout == 0 ? "Casa · " + stato-casa + ": mostra le luci accese"
+                    accessible-label: !fuoco-luci-valido ? ""
+                        : casa-da-configurare ? (layout == 0 ? "Collega la casa: apri le Impostazioni" : "CASA, Collega la casa: apri le Impostazioni")
+                        : layout == 0 ? "Casa · " + stato-casa + ": mostra le luci accese"
                         : "CASA, " + stato-casa + ": mostra le luci accese";
                     accessible-action-default => { mostra-luci(); }
                 }
@@ -1230,6 +1252,7 @@ export component Pannello inherits Window {
                     casa-pronta: root.casa-pronta;
                     pc: root.pc;
                     luci-cliccabili: root.luci-cliccabili;
+                    casa-invito: root.casa-da-configurare;
                     anello-luci: root.fuoco-luci-valido && root.da-tastiera;
                     apri-luci => { mostra-luci(); }
                 }
@@ -1243,6 +1266,8 @@ export component Pannello inherits Window {
                     stato-casa: root.stato-casa;
                     casa-pronta: root.casa-pronta;
                     luci-cliccabili: root.luci-cliccabili;
+                    casa-invito: root.casa-da-configurare;
+                    soglia-claude: root.claude-soglia;
                     anello-luci: root.fuoco-luci-valido && root.da-tastiera;
                     apri-luci => { mostra-luci(); }
                 }
@@ -1308,6 +1333,7 @@ export component Pannello inherits Window {
                     altre: root.claude-altre;
                     cinque-ore: root.claude-cinque-ore;
                     sette-giorni: root.claude-sette-giorni;
+                    soglia: root.claude-soglia;
                     spesa: root.claude-spesa;
                     spesa-nota: root.claude-spesa-nota;
                     dettagli-visibili: root.claude-dettagli;
@@ -1571,7 +1597,7 @@ export component Pannello inherits Window {
 
     // C'è un elemento per la zona e l'indice col fuoco da tastiera? Se no (clic col mouse, voce
     // sparita, Casa svuotata) il fuoco torna a `tasti`, che tiene comunque la tastiera.
-    property <bool> bersaglio: zona == Zona.attesa ? (espansa || (con-attese && (fuoco-attesa < min(3, attese.length) || (fuoco-attesa == 3 && attese.length > 3))))
+    property <bool> bersaglio: zona == Zona.attesa ? (espansa || (con-attese && (fuoco-attesa < min(Attesa.visibili, attese.length) || (fuoco-attesa == Attesa.visibili && attese.length > Attesa.visibili))))
         : zona == Zona.stanze ? ha-zona(Zona.stanze)
         : zona == Zona.contenuto ? ha-zona(Zona.contenuto) && (vista == "panoramica" || vista == "collegamenti" || vista == "claude" || vista == "pc"
             || (griglia.length > 0 ? (fuoco-casa >= 0 || riprova-visibile) : !casa-pronta))

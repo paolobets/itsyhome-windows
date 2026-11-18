@@ -147,7 +147,7 @@ pub fn scelte(
             v.push((Lato::Gpu, "GPU".into()));
         }
         v.push((Lato::Limite5h, "Limite 5 ore".into()));
-        v.push((Lato::Limite7g, "Limite settimanale".into()));
+        v.push((Lato::Limite7g, "Limite 7 giorni".into()));
         v.push((Lato::SpesaApi, "Spesa API del mese".into()));
     } else if windows {
         v.push((Lato::Rete, "Rete".into()));
@@ -415,6 +415,9 @@ pub struct DatiClaude {
     pub spesa: Option<Importo>,
     /// La soglia di spesa mensile (dollari): se c'è, è il fondo scala dell'arco della spesa.
     pub soglia_spesa: Option<f64>,
+    /// C'è la chiave da amministratore (la lettura è in programma) ma non è ancora arrivata una
+    /// spesa: il quadrante lo dice invece di restare vuoto.
+    pub lettura_attesa: bool,
 }
 
 /// Valore, arco e riga piccola di un quadrante di Claude.
@@ -448,7 +451,10 @@ pub fn quadrante_claude(
         Lato::Limite5h => limite(&d.cinque),
         Lato::Limite7g => limite(&d.sette),
         Lato::SpesaApi => match d.spesa {
-            None => senza_dato(),
+            None => QuadranteClaude {
+                dettaglio: if d.lettura_attesa { "prima lettura fra poco".into() } else { String::new() },
+                ..senza_dato()
+            },
             Some(s) => {
                 let dollari = s.micro_centesimi as f64 / MICRO_PER_DOLLARO;
                 let tetto = d.soglia_spesa.filter(|t| t.is_finite() && *t > 0.0).or(massimo_utente);
@@ -459,12 +465,18 @@ pub fn quadrante_claude(
                     dettaglio: d
                         .soglia_spesa
                         .filter(|t| t.is_finite() && *t > 0.0)
-                        .map_or_else(String::new, |t| format!("soglia {}", importo_da_dollari(t).in_dollari())),
+                        .map_or_else(String::new, |t| format!("soglia {}", dollari_interi(t))),
                 }
             }
         },
         _ => return None,
     })
+}
+
+/// Una soglia in dollari: senza centesimi se è intera («500 $»), altrimenti «250,50 $».
+fn dollari_interi(d: f64) -> String {
+    let testo = importo_da_dollari(d).in_dollari();
+    testo.strip_suffix(",00 $").map_or_else(|| testo.clone(), |interi| format!("{interi} $"))
 }
 
 /// Quanti micro-centesimi (l'unità di `Importo`) fanno un dollaro.
@@ -609,7 +621,7 @@ mod test {
                 "Rete in uscita",
                 "GPU",
                 "Limite 5 ore",
-                "Limite settimanale",
+                "Limite 7 giorni",
                 "Spesa API del mese",
                 "Temperatura esterna",
                 "Temperatura · Sala",
@@ -814,7 +826,7 @@ mod test {
         assert!(![Lato::Limite5h, Lato::Limite7g, Lato::SpesaApi].iter().any(|l| lati.contains(l)));
         let q = scelte(true, &[], true, true, true);
         for (l, nome) in
-            [(Lato::Limite5h, "Limite 5 ore"), (Lato::Limite7g, "Limite settimanale"), (Lato::SpesaApi, "Spesa API del mese")]
+            [(Lato::Limite5h, "Limite 5 ore"), (Lato::Limite7g, "Limite 7 giorni"), (Lato::SpesaApi, "Spesa API del mese")]
         {
             assert!(q.contains(&(l.clone(), nome.into())), "{nome}");
             // Mai testo né campione a lato della pillola, e nessuna sorgente da accendere.
@@ -826,6 +838,25 @@ mod test {
 
     fn limite(percentuale: f32, azzera_alle: i64) -> Limite {
         Limite { percentuale, azzera_alle }
+    }
+
+    /// RC-51: nel primo minuto, con la chiave da amministratore ma senza ancora una lettura, il
+    /// quadrante della spesa lo dice in una riga piccola invece di restare vuoto; senza la chiave
+    /// la lettura non arriverà e la riga non c'è.
+    #[test]
+    fn spesa_nel_primo_minuto_dice_prima_lettura() {
+        let ora = chrono::Local::now();
+        let attesa = DatiClaude { lettura_attesa: true, ..Default::default() };
+        let q = quadrante_claude(&Lato::SpesaApi, &attesa, None, ora).unwrap();
+        assert_eq!((q.valore.as_str(), q.frazione, q.dettaglio.as_str()), ("—", -1.0, "prima lettura fra poco"));
+        let senza_chiave = DatiClaude::default();
+        assert_eq!(quadrante_claude(&Lato::SpesaApi, &senza_chiave, None, ora).unwrap().dettaglio, "");
+        // Arrivato il dato, la riga è la soglia (o niente), mai «prima lettura».
+        let spesa = api_claude::importo_da("41280").unwrap();
+        let arrivata = DatiClaude { spesa: Some(spesa), lettura_attesa: true, ..Default::default() };
+        assert_eq!(quadrante_claude(&Lato::SpesaApi, &arrivata, None, ora).unwrap().dettaglio, "");
+        // Solo la spesa ha una prima lettura: i limiti restano vuoti.
+        assert_eq!(quadrante_claude(&Lato::Limite5h, &attesa, None, ora).unwrap().dettaglio, "");
     }
 
     /// PF9: senza dato il quadrante dice «—», mai «0%» né «0 $», e non ha arco.
@@ -850,6 +881,10 @@ mod test {
         let dati = DatiClaude { spesa: Some(spesa), soglia_spesa: Some(1000.0), ..Default::default() };
         let q = quadrante_claude(&Lato::SpesaApi, &dati, Some(500.0), ora).unwrap();
         assert_eq!(q.valore, "413 $");
+        // RC-51: la soglia intera senza centesimi, con i centesimi solo se ci sono.
+        assert_eq!(q.dettaglio, "soglia 1000 $");
+        let con_centesimi = DatiClaude { soglia_spesa: Some(250.5), ..dati.clone() };
+        assert_eq!(quadrante_claude(&Lato::SpesaApi, &con_centesimi, None, ora).unwrap().dettaglio, "soglia 250,50 $");
         assert!((q.frazione - 0.4128).abs() < 1e-4, "la soglia vince sul massimo dell'utente");
         let dati = DatiClaude { soglia_spesa: None, ..dati };
         assert!((quadrante_claude(&Lato::SpesaApi, &dati, Some(500.0), ora).unwrap().frazione - 0.8256).abs() < 1e-4);

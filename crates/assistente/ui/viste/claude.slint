@@ -1,7 +1,7 @@
 // Vista Claude (M3, Task 9): Claude Code in un colpo d'occhio, nel pannello 800 × 300. A sinistra
 // le sessioni (al più tre righe: cartella, stato col colore del suo livello, strumento, durata,
 // contesto; «+N altre» se ce ne sono di più); a destra i due limiti dell'abbonamento ad anello
-// («Limite 5 ore», «Limite settimanale», con quando si azzerano) e sotto la spesa delle API del
+// («Limite 5 ore», «Limite 7 giorni», con quando si azzerano) e sotto la spesa delle API del
 // mese. Un limite assente o già azzerato non ha l'anello (mai «0%»); senza nessuno la card dice
 // «Limiti non disponibili». Stati vuoti: scollegato («Collega Claude Code dalle Impostazioni» con
 // «Impostazioni» sotto) e nessuna sessione («Nessuna sessione aperta»).
@@ -124,6 +124,8 @@ component RigaClaude inherits Rectangle {
 component CardLimite inherits Rectangle {
     in property <string> titolo;
     in property <LimiteClaudeUi> limite;
+    // Sopra questa frazione l'arco è caldo: la soglia d'avviso dell'utente (RC-44).
+    in property <float> soglia: 0.8;
 
     property <length> arco: 48px;
     // Come nei quadranti: parte da 135° e gira in senso orario.
@@ -162,7 +164,7 @@ component CardLimite inherits Rectangle {
             viewbox-width: 110;
             viewbox-height: 110;
             commands: "M 23.89 86.11 A 44 44 0 " + (limite.frazione > 0.6667 ? 1 : 0) + " 1 " + (55 + 44 * cos(fine)) + " " + (55 + 44 * sin(fine));
-            stroke: limite.frazione > 0.85 ? Tema.caldo-2 : Tema.petalo-2;
+            stroke: Tema.oltre-soglia(limite.frazione, soglia) ? Tema.caldo-2 : Tema.petalo-2;
             stroke-width: 4px;
             stroke-line-cap: round;
         }
@@ -250,6 +252,8 @@ export component VistaClaude inherits Rectangle {
     in property <int> altre;
     in property <LimiteClaudeUi> cinque-ore;
     in property <LimiteClaudeUi> sette-giorni;
+    // La soglia d'avviso dell'utente (frazione 0..1): sopra, l'arco dei limiti è caldo.
+    in property <float> soglia: 0.8;
     // La spesa API del mese («412,80 $», vuoto se non c'è) e la sua nota («aggiornato alle 14:02», ora
     // locale, «nessun dato» o la frase per aggiungere la chiave).
     in property <string> spesa;
@@ -391,6 +395,7 @@ export component VistaClaude inherits Rectangle {
         height: alto-card-limite;
         titolo: "Limite 5 ore";
         limite: cinque-ore;
+        soglia: root.soglia;
     }
 
     if sette-giorni.presente: CardLimite {
@@ -398,8 +403,9 @@ export component VistaClaude inherits Rectangle {
         y: alto-card-limite + spazio;
         width: larghezza-destra;
         height: alto-card-limite;
-        titolo: "Limite settimanale";
+        titolo: "Limite 7 giorni";
         limite: sette-giorni;
+        soglia: root.soglia;
     }
 
     // Un solo limite c'è: l'altro posto lo dice. Nessuno: una card sola.
@@ -416,7 +422,7 @@ export component VistaClaude inherits Rectangle {
         y: alto-card-limite + spazio;
         width: larghezza-destra;
         height: alto-card-limite;
-        testo: "Limite settimanale non disponibile";
+        testo: "Limite 7 giorni non disponibile";
     }
 
     if !cinque-ore.presente && !sette-giorni.presente: CardLimiteAssente {
