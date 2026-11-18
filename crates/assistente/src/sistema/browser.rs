@@ -55,6 +55,53 @@ pub fn apri(url: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Le pagine della Console di Anthropic che il dettaglio delle API apre nel browser (M3, Task 11).
+/// Indirizzi fissi, mai composti da testo che arriva da fuori: la finestra di gestione manda solo un
+/// id (`da_id`) e ogni id che non è in elenco si ignora. Verificati il 18/11/2026 sul sito
+/// (platform.claude.com, pagine della Console con la sua barra laterale: Cost, Usage, Rate limits,
+/// Keys, Admin keys, Members, Organization).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaginaConsole {
+    Spesa,
+    Uso,
+    Limiti,
+    /// Le chiavi API (`/settings/keys`).
+    Chiavi,
+    /// Le chiavi da amministratore (`/settings/admin-keys`).
+    ChiaviAdmin,
+    Membri,
+    Organizzazione,
+}
+
+impl PaginaConsole {
+    /// La pagina dietro un id della finestra di gestione; ogni altro id (anche con un solo
+    /// carattere in più) è `None`.
+    pub fn da_id(id: &str) -> Option<PaginaConsole> {
+        Some(match id {
+            "console:spesa" => PaginaConsole::Spesa,
+            "console:uso" => PaginaConsole::Uso,
+            "console:limiti" => PaginaConsole::Limiti,
+            "console:chiavi" => PaginaConsole::Chiavi,
+            "console:chiavi-admin" => PaginaConsole::ChiaviAdmin,
+            "console:membri" => PaginaConsole::Membri,
+            "console:organizzazione" => PaginaConsole::Organizzazione,
+            _ => return None,
+        })
+    }
+
+    pub fn url(self) -> &'static str {
+        match self {
+            PaginaConsole::Spesa => "https://platform.claude.com/cost",
+            PaginaConsole::Uso => "https://platform.claude.com/usage",
+            PaginaConsole::Limiti => "https://platform.claude.com/usage/limits",
+            PaginaConsole::Chiavi => "https://platform.claude.com/settings/keys",
+            PaginaConsole::ChiaviAdmin => "https://platform.claude.com/settings/admin-keys",
+            PaginaConsole::Membri => "https://platform.claude.com/settings/members",
+            PaginaConsole::Organizzazione => "https://platform.claude.com/settings/organization",
+        }
+    }
+}
+
 /// Le pagine di Windows che il pannello apre (vista PC, Connessioni).
 #[cfg(any(windows, test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

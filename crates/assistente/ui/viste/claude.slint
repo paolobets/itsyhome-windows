@@ -5,7 +5,8 @@
 // mese. Un limite assente o già azzerato non ha l'anello (mai «0%»); senza nessuno la card dice
 // «Limiti non disponibili». Stati vuoti: scollegato («Collega Claude Code dalle Impostazioni» con
 // «Impostazioni» sotto) e nessuna sessione («Nessuna sessione aperta»).
-// Da tastiera (in pannello.slint): ↑/↓ fra le righe, Invio apre la sessione (`apri-sessione`).
+// Da tastiera (in pannello.slint): ↑/↓ fra le righe, Invio apre la sessione (`apri-sessione`); da
+// ultima riga ↓ porta su «Dettagli» (con la chiave da amministratore), Invio apre le schede.
 // La vista non ha timer: i dati li scrive Rust, e solo mentre la vista è aperta.
 import { Tema } from "../tema.slint";
 import { Icone, Icona } from "../icone.slint";
@@ -256,6 +257,10 @@ export component VistaClaude inherits Rectangle {
     // Riga col fuoco da tastiera (-1 = nessuna) e fuoco su «Impostazioni» (stato scollegato).
     in property <int> fuoco: -1;
     in property <bool> fuoco-impostazioni;
+    // La chiave da amministratore c'è: «Dettagli» apre le schede delle API nella finestra di gestione.
+    in property <bool> dettagli-visibili;
+    in property <bool> fuoco-dettagli;
+    callback dettagli();
     callback apri-sessione(string);
     // Le Impostazioni sulla scheda Claude.
     callback gestisci();
@@ -441,16 +446,29 @@ export component VistaClaude inherits Rectangle {
         Etichetta {
             x: 12px;
             y: 4px;
-            width: parent.width - 24px;
+            width: parent.width - 24px - (dettagli-visibili ? 84px : 0px);
             height: 16px;
             text: "SPESA API DEL MESE";
             accessible-role: none;
         }
 
+        if dettagli-visibili: Pulsante {
+            x: parent.width - self.width - 8px;
+            y: (parent.height - self.height) / 2;
+            testo: "Dettagli";
+            tipo: TipoPulsante.neutro;
+            altezza: 28px;
+            largo-min: 72px;
+            anello: fuoco-dettagli;
+            chiede-fuoco: fuoco-dettagli;
+            tasti-propri: false;
+            premuto => { root.dettagli(); }
+        }
+
         if spesa != "": Text {
             x: 12px;
             y: 20px;
-            width: parent.width - 24px;
+            width: parent.width - 24px - (dettagli-visibili ? 84px : 0px);
             height: 22px;
             text: spesa;
             vertical-alignment: center;
@@ -463,7 +481,7 @@ export component VistaClaude inherits Rectangle {
         Text {
             x: 12px;
             y: spesa != "" ? 42px : 22px;
-            width: parent.width - 24px;
+            width: parent.width - 24px - (dettagli-visibili ? 84px : 0px);
             height: spesa != "" ? 15px : 32px;
             text: spesa-nota;
             vertical-alignment: top;

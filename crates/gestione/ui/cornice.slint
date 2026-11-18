@@ -17,6 +17,8 @@
 import { Tema } from "../../assistente/ui/tema.slint";
 export { Tema }
 import { Anello, Etichetta } from "../../assistente/ui/componenti.slint";
+import { Schede, SchedaUi } from "schede.slint";
+export { SchedaUi }
 
 // Pulsante chiudi della testata: icona a croce nel colore delle icone, rosso tenue al passaggio.
 component Chiudi inherits FocusScope {
@@ -82,6 +84,9 @@ export component Cornice inherits Window {
     // Piano B: il contenuto come testo semplice, mostrato al posto del riquadro web.
     in property <bool> piano-b;
     in property <string> testo-semplice;
+    // Dettaglio delle API (Task 11): schede native al posto del riquadro web, in sola lettura.
+    in property <bool> con-schede;
+    in property <[SchedaUi]> schede;
 
     // Geometria dell'area del contenuto: Rust ci appoggia il riquadro web, rientrato di `rientro`
     // dai bordi e `sotto-linea` sotto la linea di separazione (1 px a `alto-testata`).
@@ -94,11 +99,21 @@ export component Cornice inherits Window {
     property <length> contenuto-l: root.width - 2 * contenuto-x;
     property <length> contenuto-a: root.height - contenuto-y - bordo - rientro;
 
+    // Appena le schede compaiono il fuoco va alla loro riga (←/→ cambiano scheda, Tab prosegue).
+    changed con-schede => {
+        if (self.con-schede) {
+            elenco-schede.focus-linguette();
+        }
+    }
+
     callback chiudi();
     // Pressione sulla testata: Rust avvia lo spostamento della finestra.
     callback trascina();
     // Il fuoco va nel contenuto (riquadro web): da lì si scorre con la tastiera.
     callback al-contenuto();
+    // «Apri la Console» (con l'id della pagina) e «Aggiorna» delle schede: vanno all'assistente.
+    callback apri-console(string);
+    callback aggiorna();
 
     title: titolo == "" ? "ItsyHome" : "ItsyHome — " + titolo;
     no-frame: true;
@@ -133,7 +148,11 @@ export component Cornice inherits Window {
             // Tasti di scorrimento sulla cornice: il fuoco passa al contenuto (il tasto dopo scorre).
             if (evento.text == Key.PageDown || evento.text == Key.PageUp || evento.text == Key.DownArrow
                     || evento.text == Key.UpArrow || evento.text == Key.Home || evento.text == Key.End) {
-                root.al-contenuto();
+                if (con-schede) {
+                    elenco-schede.focus-tabella();
+                } else {
+                    root.al-contenuto();
+                }
                 return accept;
             }
             return reject;
@@ -167,7 +186,7 @@ export component Cornice inherits Window {
             x: 38px;
             y: bordo;
             height: alto-testata - bordo;
-            text: "CONTENUTO ESTERNO";
+            text: con-schede ? "DETTAGLIO API" : "CONTENUTO ESTERNO";
         }
 
         titolo-testo := Text {
@@ -201,7 +220,13 @@ export component Cornice inherits Window {
             x: root.width - self.width - 10px;
             y: bordo + (alto-testata - bordo - self.height) / 2;
             premuto => { root.chiudi(); }
-            avanti => { root.al-contenuto(); }
+            avanti => {
+                if (con-schede) {
+                    elenco-schede.focus-linguette();
+                } else {
+                    root.al-contenuto();
+                }
+            }
         }
 
         // Linea di separazione fidata fra testata e contenuto.
@@ -215,12 +240,25 @@ export component Cornice inherits Window {
 
         // Filo intorno al contenuto: il riquadro web sta dentro, la cornice tutt'intorno.
         Rectangle {
+            visible: !con-schede;
             x: contenuto-x - 1px;
             y: contenuto-y - 1px;
             width: contenuto-l + 2px;
             height: contenuto-a + 2px;
             border-width: 1px;
             border-color: Tema.vetro-bordo;
+        }
+
+        // Dettaglio delle API: schede Slint, nello stesso posto del riquadro web.
+        elenco-schede := Schede {
+            visible: con-schede;
+            x: contenuto-x;
+            y: contenuto-y;
+            width: contenuto-l;
+            height: contenuto-a;
+            schede: root.schede;
+            apri-console(id) => { root.apri-console(id); }
+            aggiorna => { root.aggiorna(); }
         }
 
         // Piano B: testo semplice, solo se il motore web manca (stesso posto del riquadro web).

@@ -16,7 +16,10 @@ pub use chiave::ChiaveAdmin;
 pub use client::{anthropic, finto, ClientApi, ErroreApi};
 pub use letture::{Lettura, Raggruppa, PERCORSI_AMMESSI};
 pub use modello::{importo_da, Importo};
-pub use riepilogo::{aggiorna, spesa_insolita, Riepilogo, Scheda};
+pub use riepilogo::{
+    aggiorna, spesa_insolita, GruppoLimiti, InfoChiave, InfoMembro, InfoWorkspace, Riepilogo,
+    Scheda, Token,
+};
 
 #[cfg(test)]
 mod server_finto;

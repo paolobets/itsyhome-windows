@@ -36,6 +36,9 @@ pub struct InfoChiave {
     pub nome: String,
     pub stato: String,
     pub scadenza: Option<DateTime<Utc>>,
+    pub creata: Option<DateTime<Utc>>,
+    /// Solo la coda del suggerimento dell'API («0001»): mai il prefisso né il valore.
+    pub suggerimento: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -265,6 +268,8 @@ pub fn aggiorna(c: &ClientApi, adesso: DateTime<Utc>) -> Riepilogo {
                     nome: k.name,
                     stato: k.status,
                     scadenza: k.expires_at,
+                    creata: k.created_at,
+                    suggerimento: modello::coda_suggerimento(&k.partial_key_hint),
                 })
                 .collect();
         }

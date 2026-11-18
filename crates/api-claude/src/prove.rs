@@ -439,6 +439,11 @@ fn riepilogo_completo_dalle_fixture() {
     assert_eq!(r.chiamate_mese, Some(128));
     assert_eq!(r.chiavi.len(), 2);
     assert_eq!(r.chiavi[1].stato, "inactive");
+    assert_eq!(
+        r.chiavi[0].suggerimento, "0001",
+        "solo la coda del suggerimento"
+    );
+    assert!(r.chiavi[0].creata.is_some());
     assert_eq!(r.workspace.len(), 1);
     assert_eq!(r.membri[0].email, "membro@example.com");
     assert_eq!(r.limiti.len(), 2);

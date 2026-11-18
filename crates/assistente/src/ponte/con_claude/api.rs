@@ -35,7 +35,7 @@ const DOPO_SALVATAGGIO: Duration = Duration::from_secs(5);
 /// Poi ogni 3 ore: i dati arrivano con 4-24 ore di ritardo, leggere più spesso non dà nulla.
 const OGNI: Duration = Duration::from_secs(3 * 60 * 60);
 
-fn in_prova() -> bool {
+pub(super) fn in_prova() -> bool {
     std::env::var_os(crate::avvio::VAR_CARTELLA).is_some_and(|v| !v.is_empty())
 }
 
@@ -159,7 +159,7 @@ impl Ponte {
     }
 
     /// Una lettura completa in un thread `api-claude`; se un'altra è in corso non ne parte una seconda.
-    fn api_leggi(&self) {
+    pub(super) fn api_leggi(&self) {
         let in_corso = self.api_in_corso.borrow().clone();
         if in_corso.swap(true, Ordering::SeqCst) {
             return;
@@ -217,8 +217,9 @@ impl Ponte {
         }
         *self.api_ultimo.borrow_mut() = Some((ora, esito));
         self.con_finestra_claude(|f| self.mostra_api_stato(f));
-        // La spesa del mese nella vista Claude, se è aperta.
+        // La spesa del mese nella vista Claude, se è aperta; e le schede, se la finestra è aperta.
         self.aggiorna_vista_claude();
+        self.dettagli_dati_nuovi();
     }
 
     fn mostra_api_stato(&self, f: &FinestraImpostazioni) {
@@ -318,6 +319,8 @@ impl Ponte {
         self.sveglia_api.stop();
         self.api_nuova_generazione();
         *self.api_ultimo.borrow_mut() = None;
+        // Senza la chiave non restano dati: la finestra delle schede si chiude.
+        self.dettagli_chiudi();
         self.con_finestra_claude(|f| {
             f.set_api_presente(false);
             f.set_api_ultime("".into());

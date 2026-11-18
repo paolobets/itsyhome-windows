@@ -757,6 +757,10 @@ pub struct Ponte {
     pillola: slint::Weak<Pillola>,
     /// Il pannello esiste solo da aperto: qui il riferimento debole, vuoto da chiuso.
     pannello: RefCell<slint::Weak<Pannello>>,
+    /// La finestra di gestione con le schede delle API (Task 11): il processo nasce al primo «Dettagli».
+    gestione: RefCell<Option<crate::gestione::Gestione>>,
+    /// La finestra delle schede è aperta: una lettura nuova la rimpiazza.
+    dettagli_aperti: Cell<bool>,
     /// La vista su cui deve aprirsi il prossimo pannello (una volta sola): chi apre il pannello da
     /// fuori (fuori da Windows, un pulsante di una voce di Claude) la chiede qui.
     #[cfg(any(not(windows), test))]
@@ -953,6 +957,8 @@ pub fn collega(
         casa,
         pillola: pillola.as_weak(),
         pannello: RefCell::new(slint::Weak::default()),
+        gestione: RefCell::new(None),
+        dettagli_aperti: Cell::new(false),
         #[cfg(any(not(windows), test))]
         vista_richiesta: Cell::new(None),
         cervello,
@@ -2101,6 +2107,12 @@ impl Ponte {
         p.on_apri_sessione(|impronta| {
             if let Some(ponte) = ponte() {
                 ponte.claude_apri_terminale(&impronta);
+            }
+        });
+        // «Dettagli» nella vista Claude (Task 11): le schede delle API nella finestra di gestione.
+        p.on_apri_dettagli_claude(|| {
+            if let Some(ponte) = ponte() {
+                ponte.claude_apri_dettagli();
             }
         });
         p.on_riprova_casa(|| {

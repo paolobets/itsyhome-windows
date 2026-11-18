@@ -23,9 +23,9 @@ mod misure;
 mod sicurezza;
 mod testo;
 
-use gestione_protocollo::{messaggio_da_riga, riga_da_messaggio, titolo_pulito, Messaggio};
+use gestione_protocollo::{messaggio_da_riga, riga_da_messaggio, scheda_pulita, titolo_pulito, Messaggio, SchedaDati};
 use slint::winit_030::WinitWindowAccessor;
-use slint::ComponentHandle;
+use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use std::cell::{Cell, RefCell};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
@@ -92,6 +92,10 @@ fn avvia(dati: PathBuf, senza_web: bool) -> Result<(), slint::PlatformError> {
     cornice.on_chiudi(|| {
         let _ = slint::quit_event_loop();
     });
+    // Le schede: «Apri la Console» rimanda l'id della pagina, «Aggiorna» chiede una nuova lettura.
+    // Decide tutto l'assistente (qui nessuna rete e nessun indirizzo).
+    cornice.on_apri_console(|id| invia(&Messaggio::Azione { id: id.to_string() }));
+    cornice.on_aggiorna(|| invia(&Messaggio::Azione { id: ID_AGGIORNA.into() }));
     segui_la_scala(&cornice);
     let debole = cornice.as_weak();
     cornice.on_trascina(move || {
@@ -155,9 +159,28 @@ fn avvia(dati: PathBuf, senza_web: bool) -> Result<(), slint::PlatformError> {
     esito
 }
 
+/// L'azione «Aggiorna» delle schede (le altre sono `console:…`, decise dall'assistente).
+const ID_AGGIORNA: &str = "aggiorna";
+
+/// Il messaggio vuole il riquadro web? Solo `apri` (HTML): le schede sono native, senza web.
+pub fn serve_il_web(m: &Messaggio) -> bool {
+    matches!(m, Messaggio::Apri { .. })
+}
+
 fn gestisci(m: Messaggio) {
+    // Il riquadro web si vede solo per l'HTML: con le schede (e a ogni `apri` dopo) si nasconde o si
+    // rimostra.
+    if matches!(m, Messaggio::Apri { .. } | Messaggio::ApriSchede { .. }) {
+        let serve = serve_il_web(&m);
+        STATO.with_borrow(|s| {
+            if let Some(web) = s.as_ref().and_then(|s| s.web.as_ref()) {
+                let _ = web.set_visible(serve);
+            }
+        });
+    }
     match m {
         Messaggio::Apri { titolo, html } => apri(titolo, html),
+        Messaggio::ApriSchede { titolo, schede } => apri_schede(titolo, schede),
         Messaggio::Chiudi => {
             let _ = slint::quit_event_loop();
         }
@@ -173,6 +196,7 @@ fn apri(titolo: String, html: String) {
         let Some(stato) = s.as_mut() else { return };
         // Seconda difesa: lo ripulisce già l'assistente, ma la finestra non si fida.
         stato.cornice.set_titolo(titolo_pulito(&titolo).into());
+        stato.cornice.set_con_schede(false);
         if !stato.misurata {
             stato.misurata = true;
             misura_sull_area_di_lavoro(&stato.cornice);
@@ -198,6 +222,41 @@ fn apri(titolo: String, html: String) {
             }
         }
     });
+}
+
+/// Le schede del dettaglio delle API: Slint nativo, niente riquadro web. Una nuova `apri_schede`
+/// sostituisce i dati e lascia la scheda scelta.
+fn apri_schede(titolo: String, schede: Vec<SchedaDati>) {
+    STATO.with_borrow_mut(|s| {
+        let Some(stato) = s.as_mut() else { return };
+        stato.cornice.set_titolo(titolo_pulito(&titolo).into());
+        let modello: Vec<SchedaUi> = schede.iter().map(|s| a_slint(&scheda_pulita(s))).collect();
+        stato.cornice.set_schede(ModelRc::new(VecModel::from(modello)));
+        stato.cornice.set_con_schede(true);
+        stato.cornice.set_piano_b(false);
+        if !stato.misurata {
+            stato.misurata = true;
+            misura_sull_area_di_lavoro(&stato.cornice);
+        }
+        if let Err(e) = stato.cornice.show() {
+            eprintln!("gestione: finestra non mostrata: {e}");
+            let _ = slint::quit_event_loop();
+            return;
+        }
+        invia(&Messaggio::Pronta);
+    });
+}
+
+/// Una scheda (già ripulita) come la vuole l'interfaccia.
+fn a_slint(s: &SchedaDati) -> SchedaUi {
+    let testi = |v: &[String]| ModelRc::new(VecModel::from(v.iter().map(|t| SharedString::from(t.as_str())).collect::<Vec<_>>()));
+    SchedaUi {
+        nome: s.nome.as_str().into(),
+        nota: s.nota.as_str().into(),
+        colonne: testi(&s.colonne),
+        righe: ModelRc::new(VecModel::from(s.righe.iter().map(|r| testi(r)).collect::<Vec<_>>())),
+        azione_console: s.azione_console.as_str().into(),
+    }
 }
 
 /// Prima di mostrarla la prima volta: al più 780 × 680 logici, ridotta se l'area di lavoro del
@@ -543,6 +602,16 @@ fn esc_chiude(web: &WebView) -> Result<(), String> {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn apri_schede_non_chiede_il_web() {
+        let schede = Messaggio::ApriSchede { titolo: "API Claude".into(), schede: vec![] };
+        assert!(!serve_il_web(&schede), "le schede sono native: niente riquadro web");
+        assert!(serve_il_web(&Messaggio::Apri { titolo: "T".into(), html: "<p>x</p>".into() }));
+        for m in [Messaggio::Chiudi, Messaggio::Pronta, Messaggio::Chiusa, Messaggio::Azione { id: "a".into() }] {
+            assert!(!serve_il_web(&m), "{m:?}");
+        }
+    }
 
     #[test]
     fn solo_esc_premuto_chiude() {

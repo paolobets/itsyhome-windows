@@ -1613,6 +1613,51 @@ mod accessibilita {
         assert!(chiuso.get());
     }
 
+    /// Con la chiave da amministratore «Dettagli» sta sotto l'ultima riga: ↓ dall'ultima ci arriva,
+    /// Invio apre le schede, ↑ torna alla riga; senza la chiave il pulsante non c'è.
+    #[test]
+    fn dettagli_da_tastiera_e_da_narrator() {
+        use slint::platform::Key;
+        let (p, eventi) = pannello_claude(true, tre_righe_claude());
+        assert!(ElementHandle::find_by_accessible_label(&p, "Dettagli").next().is_none(), "senza la chiave non c'è");
+        let e = eventi.clone();
+        p.on_apri_dettagli_claude(move || e.borrow_mut().push("dettagli".into()));
+        p.set_claude_dettagli(true);
+        let pulsante = elemento(&p, "Dettagli");
+        assert_eq!(pulsante.accessible_role(), Some(AccessibleRole::Button));
+        // ↓ fino all'ultima riga e poi su «Dettagli»; Invio apre le schede.
+        for _ in 0..3 {
+            tasto(&p, Key::DownArrow);
+        }
+        tasto(&p, Key::Return);
+        assert_eq!(*eventi.borrow(), ["dettagli"]);
+        // ↑ torna alla riga, Invio apre la sessione; ancora ↑ sale di una riga.
+        tasto(&p, Key::UpArrow);
+        tasto(&p, Key::Return);
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("apri cccc"));
+        // Il clic o Narrator sul pulsante fanno la stessa cosa.
+        pulsante.invoke_accessible_default_action();
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("dettagli"));
+    }
+
+    /// Scollegato ma con la chiave: ↓ da «Impostazioni» porta su «Dettagli», ↑ torna.
+    #[test]
+    fn dettagli_anche_da_scollegato() {
+        use slint::platform::Key;
+        let (p, eventi) = pannello_claude(false, ModelRc::new(VecModel::from(Vec::<crate::RigaSessioneUi>::new())));
+        let e = eventi.clone();
+        p.on_apri_dettagli_claude(move || e.borrow_mut().push("dettagli".into()));
+        p.set_claude_dettagli(true);
+        tasto(&p, Key::Return);
+        assert_eq!(*eventi.borrow(), ["gestisci"]);
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::Return);
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("dettagli"));
+        tasto(&p, Key::UpArrow);
+        tasto(&p, Key::Return);
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("gestisci"));
+    }
+
     /// Il caso più pieno (tre righe con tutto, «+N altre», due anelli, spesa con la nota più lunga):
     /// nulla esce dalla vista e la vista sta nel pannello.
     #[test]

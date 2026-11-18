@@ -19,7 +19,7 @@
 //! sotto); l'eseguibile `itsyhome-gestione` si costruisce con `-p gestione`, non con
 //! `-p assistente`, e va distribuito accanto a quello dell'assistente.
 
-use gestione_protocollo::{messaggio_da_riga, riga_da_messaggio, titolo_pulito, Messaggio};
+use gestione_protocollo::{messaggio_da_riga, riga_da_messaggio, scheda_pulita, titolo_pulito, Messaggio, SchedaDati};
 use std::cell::RefCell;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -135,12 +135,25 @@ impl Gestione {
     /// Il titolo è testo NON fidato (con la Mail, l'oggetto): parte ripulito (`titolo_pulito` del protocollo; la finestra lo ripulisce di nuovo).
     pub fn apri(&mut self, titolo: &str, html: &str) -> Result<(), String> {
         let titolo = titolo_pulito(titolo);
-        let titolo = titolo.as_str();
+        self.manda(riga_da_messaggio(&Messaggio::Apri { titolo, html: html.to_owned() }))
+    }
+
+    /// Mostra (o aggiorna) le schede native del dettaglio delle API: nessun riquadro web. Titolo e
+    /// testi delle schede sono NON fidati; la finestra li ripulisce di nuovo (`scheda_pulita`).
+    /// Stesso significato di `apri`: `Ok` vuol dire inviato.
+    pub fn apri_schede(&mut self, titolo: &str, schede: Vec<SchedaDati>) -> Result<(), String> {
+        let titolo = titolo_pulito(titolo);
+        let schede = schede.iter().map(scheda_pulita).collect();
+        self.manda(riga_da_messaggio(&Messaggio::ApriSchede { titolo, schede }))
+    }
+
+    /// Una riga allo scrittore del processo, avviandolo se non c'è (o se la sua finestra è stata
+    /// chiusa).
+    fn manda(&mut self, riga: String) -> Result<(), String> {
         self.raccogli_finiti();
         if self.figlio.as_ref().is_some_and(|f| !f.viva.load(Ordering::SeqCst)) {
             self.congeda();
         }
-        let riga = riga_da_messaggio(&Messaggio::Apri { titolo: titolo.to_owned(), html: html.to_owned() });
         if self.figlio.is_none() {
             self.figlio = Some(self.avvia()?);
         }
@@ -491,6 +504,22 @@ mod test {
         assert_eq!(rx.recv_timeout(Duration::from_secs(10)), Ok(Messaggio::Chiusa));
         drop(g);
         assert_eq!(chiuse(&rx), 0, "una sola Chiusa");
+    }
+
+    #[test]
+    fn le_schede_arrivano_al_figlio_e_la_finestra_risponde() {
+        let (mut g, rx, _dir) = con_figlio("educato");
+        let sporca = SchedaDati {
+            nome: "Spesa".into(),
+            nota: "n\u{202E}ota".into(),
+            colonne: (0..9).map(|i| format!("c{i}")).collect(),
+            righe: (0..300).map(|i| vec![format!("r{i}")]).collect(),
+            azione_console: "console:spesa".into(),
+        };
+        g.apri_schede("API \u{202E}Claude", vec![sporca]).unwrap();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(10)), Ok(Messaggio::Pronta));
+        g.chiudi();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(10)), Ok(Messaggio::Chiusa));
     }
 
     #[test]

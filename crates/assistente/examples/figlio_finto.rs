@@ -2,7 +2,7 @@
 //!
 //! Si comporta secondo il nome dell'ultima cartella di `--dati <cartella>` e scrive il proprio
 //! PID in `<cartella>/../pid.txt`:
-//! - `educato`: a ogni `apri` risponde `pronta`; alla `chiudi` scrive `chiusa` DUE volte ed esce
+//! - `educato`: a ogni `apri` o `apri_schede` risponde `pronta`; alla `chiudi` scrive `chiusa` DUE volte ed esce
 //!   (l'assistente deve consegnare `Chiusa` una volta sola);
 //! - `muto`: esce subito senza dire niente (stdout chiuso = finestra chiusa);
 //! - `appeso`: legge una riga e poi si blocca per un'ora con stdout aperto, senza più leggere stdin
@@ -37,7 +37,7 @@ fn main() {
         _ => {
             for riga in std::io::stdin().lock().lines() {
                 let Ok(riga) = riga else { break };
-                if riga.contains(r#""tipo":"apri""#) {
+                if riga.contains(r#""tipo":"apri""#) || riga.contains(r#""tipo":"apri_schede""#) {
                     let _ = writeln!(uscita, r#"{{"tipo":"pronta"}}"#);
                 } else if riga.contains(r#""tipo":"chiudi""#) {
                     let _ = writeln!(uscita, r#"{{"tipo":"chiusa"}}"#);

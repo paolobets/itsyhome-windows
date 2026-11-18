@@ -1,0 +1,266 @@
+// Le schede del dettaglio delle API Claude (M3, Task 11): Spesa, Token, Chiavi, Workspace e membri,
+// Limiti. Sola lettura: ogni modifica si fa nella Console («Apri la Console»). I testi vengono dalle
+// API (non fidati), ma qui sono solo `Text`: nessun HTML, nessun collegamento, e al più 200 righe
+// per 6 colonne per scheda (lo garantisce `scheda_pulita`, prima di arrivare qui).
+//
+// Tastiera: Tab porta il fuoco dalla riga delle schede alla tabella e ai pulsanti; ←/→/Home/Fine
+// cambiano scheda; nella tabella ↑/↓/PagSu/PagGiù/Home/Fine scorrono. Per Narrator le schede sono
+// `tab`, scelta quella corrente.
+import { Tema } from "../../assistente/ui/tema.slint";
+import { Anello, Etichetta, Pulsante, TipoPulsante } from "../../assistente/ui/componenti.slint";
+
+export struct SchedaUi {
+    nome: string,
+    nota: string,
+    colonne: [string],
+    righe: [[string]],
+    azione-console: string,
+}
+
+// Una scheda della riga in alto.
+component Linguetta inherits Rectangle {
+    in property <string> testo;
+    in property <bool> scelta;
+    in property <bool> anello;
+    callback scelta-da-clic();
+
+    height: 28px;
+    width: etichetta.preferred-width + 24px;
+    border-radius: Tema.raggio-s;
+    background: scelta ? Tema.scheda-attiva : area.has-hover ? Tema.scheda-sopra : transparent;
+    accessible-role: tab;
+    accessible-label: testo;
+    accessible-item-selectable: true;
+    accessible-item-selected: scelta;
+    accessible-action-default => { root.scelta-da-clic(); }
+
+    etichetta := Text {
+        text: root.testo;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        font-size: Tema.testo-corpo;
+        font-weight: scelta ? 500 : 400;
+        color: scelta ? Tema.testo : Tema.testo-tenue;
+    }
+
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.scelta-da-clic(); }
+    }
+
+    if root.anello: Anello { raggio: Tema.raggio-s; distanza: 1px; }
+}
+
+export component Schede inherits Rectangle {
+    in property <[SchedaUi]> schede;
+    // Indice della scheda mostrata: sopravvive a un aggiornamento dei dati.
+    in-out property <int> corrente: 0;
+    // «Apri la Console» con l'id della pagina; «Aggiorna».
+    callback apri-console(string);
+    callback aggiorna();
+
+    property <int> n: max(1, min(schede.length, 5));
+    property <int> scelta: min(max(0, corrente), max(0, schede.length - 1));
+    property <SchedaUi> attiva: schede[scelta];
+    property <length> alto-riga: 28px;
+    property <length> alto-pie: 30px;
+    property <length> alto-testa: 32px;
+    property <int> colonne: max(1, attiva.colonne.length);
+    // La prima colonna (il nome) pesa un po' di più.
+    property <length> unita: (self.width - 24px) / (colonne + 0.6);
+
+    public function focus-linguette() {
+        linguette.focus();
+    }
+
+    public function focus-tabella() {
+        tabella.focus();
+    }
+
+    function vai(i: int) {
+        if (schede.length > 0) {
+            corrente = max(0, min(schede.length - 1, i));
+        }
+        flick.content-y = 0;
+    }
+
+    // La riga delle schede.
+    linguette := FocusScope {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: alto-testa;
+        key-pressed(evento) => {
+            if (evento.text == Key.LeftArrow) {
+                root.vai(scelta - 1);
+                return accept;
+            }
+            if (evento.text == Key.RightArrow) {
+                root.vai(scelta + 1);
+                return accept;
+            }
+            if (evento.text == Key.Home) {
+                root.vai(0);
+                return accept;
+            }
+            if (evento.text == Key.End) {
+                root.vai(schede.length - 1);
+                return accept;
+            }
+            return reject;
+        }
+
+        HorizontalLayout {
+            alignment: start;
+            spacing: 4px;
+            padding-left: 4px;
+            padding-top: 2px;
+
+            for s[i] in schede: Linguetta {
+                testo: s.nome;
+                scelta: i == root.scelta;
+                anello: linguette.has-focus && i == root.scelta;
+                scelta-da-clic => {
+                    root.vai(i);
+                    linguette.focus();
+                }
+            }
+        }
+    }
+
+    // Da quando sono i dati (o perché non ci sono).
+    Text {
+        x: 8px;
+        y: alto-testa + 4px;
+        width: root.width - 16px;
+        height: 18px;
+        text: attiva.nota;
+        vertical-alignment: center;
+        overflow: elide;
+        font-size: Tema.testo-piccolo;
+        color: Tema.testo-tenue;
+    }
+
+    // Intestazione della tabella.
+    for c[ci] in attiva.colonne: Etichetta {
+        x: 12px + (ci == 0 ? 0px : (ci + 0.6) * unita);
+        y: alto-testa + 30px;
+        width: (ci == 0 ? 1.6 : 1.0) * unita - 8px;
+        height: 20px;
+        text: c;
+        overflow: elide;
+    }
+
+    Rectangle {
+        x: 8px;
+        y: alto-testa + 52px;
+        width: root.width - 16px;
+        height: 1px;
+        background: Tema.vetro-bordo;
+    }
+
+    // Il corpo: scorrevole, con la tastiera.
+    tabella := FocusScope {
+        x: 0;
+        y: alto-testa + 54px;
+        width: root.width;
+        height: root.height - self.y - alto-pie - 12px;
+        accessible-role: table;
+        accessible-label: attiva.nome;
+        key-pressed(evento) => {
+            if (!(evento.modifiers.alt || evento.modifiers.control || evento.modifiers.meta)) {
+                if (evento.text == Key.DownArrow) {
+                    flick.content-y = max(min(0px, flick.height - flick.content-height), flick.content-y - alto-riga);
+                    return accept;
+                }
+                if (evento.text == Key.UpArrow) {
+                    flick.content-y = min(0px, flick.content-y + alto-riga);
+                    return accept;
+                }
+                if (evento.text == Key.PageDown) {
+                    flick.content-y = max(min(0px, flick.height - flick.content-height), flick.content-y - flick.height);
+                    return accept;
+                }
+                if (evento.text == Key.PageUp) {
+                    flick.content-y = min(0px, flick.content-y + flick.height);
+                    return accept;
+                }
+                if (evento.text == Key.Home) {
+                    flick.content-y = 0px;
+                    return accept;
+                }
+                if (evento.text == Key.End) {
+                    flick.content-y = min(0px, flick.height - flick.content-height);
+                    return accept;
+                }
+            }
+            return reject;
+        }
+
+        flick := Flickable {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: parent.height;
+            content-width: self.width;
+            content-height: max(self.height, attiva.righe.length * alto-riga);
+
+            for riga[ri] in attiva.righe: Rectangle {
+                x: 0;
+                y: ri * alto-riga;
+                width: flick.content-width;
+                height: alto-riga;
+                background: mod(ri, 2) == 1 ? Tema.card-fondo : transparent;
+
+                for cella[ci] in riga: Text {
+                    x: 12px + (ci == 0 ? 0px : (ci + 0.6) * unita);
+                    width: (ci == 0 ? 1.6 : 1.0) * unita - 8px;
+                    height: alto-riga;
+                    text: cella;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    font-size: Tema.testo-corpo;
+                    color: ci == 0 ? Tema.testo : Tema.testo-ora;
+                }
+            }
+        }
+
+        if tabella.has-focus: Rectangle {
+            border-width: 1px;
+            border-color: Tema.anello;
+            border-radius: Tema.raggio-s;
+        }
+
+        if attiva.righe.length == 0: Text {
+            width: parent.width;
+            height: 40px;
+            text: "Nessun dato";
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            font-size: Tema.testo-corpo;
+            color: Tema.testo-tenue;
+        }
+    }
+
+    // Pie: i pulsanti, neutri, col verbo.
+    HorizontalLayout {
+        x: 8px;
+        y: root.height - alto-pie - 4px;
+        width: root.width - 16px;
+        height: alto-pie;
+        alignment: start;
+        spacing: 8px;
+
+        Pulsante {
+            testo: "Apri la Console";
+            tipo: TipoPulsante.neutro;
+            premuto => { root.apri-console(attiva.azione-console); }
+        }
+
+        Pulsante {
+            testo: "Aggiorna";
+            tipo: TipoPulsante.neutro;
+            premuto => { root.aggiorna(); }
+        }
+    }
+}

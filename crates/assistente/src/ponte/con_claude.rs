@@ -6,6 +6,7 @@
 
 mod api;
 mod collegamento;
+mod dettagli;
 
 pub use collegamento::Contesto;
 use super::{ponte, Ponte, MARGINE_SVEGLIA};
@@ -159,6 +160,8 @@ pub fn spegni() {
         p.claude_ferma_tubo();
         p.sveglia_claude.stop();
         p.timer_attivita.stop();
+        // La finestra delle schede (se c'è) si chiude e il suo processo si raccoglie.
+        p.dettagli_spegni();
     }
 }
 
@@ -868,6 +871,9 @@ impl Ponte {
             let ultimo = self.api_ultimo.borrow();
             claude::testo_spesa(ultimo.as_ref().and_then(|(_, esito)| esito.as_ref().ok()), con_chiave)
         };
+        if p.get_claude_dettagli() != con_chiave {
+            p.set_claude_dettagli(con_chiave);
+        }
         if p.get_claude_spesa() != spesa.as_str() {
             p.set_claude_spesa(spesa.as_str().into());
         }

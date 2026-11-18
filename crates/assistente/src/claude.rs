@@ -9,7 +9,7 @@ use api_claude::Riepilogo;
 use chrono::{DateTime, Datelike, Local, TimeZone, Weekday};
 use claude_hook::sessioni::{Sessione, Sessioni, Stato};
 use claude_hook::Limite;
-use gestione_protocollo::testo_pulito;
+use gestione_protocollo::{testo_pulito, SchedaDati};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -415,6 +415,203 @@ pub fn testo_limite(l: &Limite, ora: DateTime<Local>) -> TestoLimite {
     TestoLimite { frazione: pct / 100.0, testo: format!("{}%", pct.round() as u32), azzera }
 }
 
+// ─── Dettaglio delle API nelle schede della finestra di gestione (Task 11) ─────────────────
+
+/// La nota di una scheda che la chiave non riesce a leggere.
+pub const SCHEDA_NON_DISPONIBILE: &str = "Non disponibile con questa chiave";
+const RITARDO_DATI: &str = "dati con 4–24 ore di ritardo";
+const NESSUN_VALORE: &str = "—";
+
+/// «1.284.500»: le migliaia col punto, come si scrive in italiano.
+fn numero(n: u64) -> String {
+    let cifre = n.to_string();
+    let mut fuori = String::new();
+    for (i, c) in cifre.chars().enumerate() {
+        if i > 0 && (cifre.len() - i).is_multiple_of(3) {
+            fuori.push('.');
+        }
+        fuori.push(c);
+    }
+    fuori
+}
+
+fn data_in<Tz: TimeZone>(d: Option<DateTime<chrono::Utc>>, tz: &Tz) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    d.map_or_else(|| NESSUN_VALORE.to_owned(), |d| d.with_timezone(tz).format("%d/%m/%Y").to_string())
+}
+
+fn stato_chiave(s: &str) -> String {
+    match s {
+        "active" => "Attiva".into(),
+        "inactive" => "Disattivata".into(),
+        "archived" => "Archiviata".into(),
+        "expired" => "Scaduta".into(),
+        "" => NESSUN_VALORE.into(),
+        altro => altro.to_owned(),
+    }
+}
+
+fn ruolo_membro(r: &str) -> String {
+    match r {
+        "admin" => "Amministratore".into(),
+        "developer" => "Sviluppatore".into(),
+        "billing" => "Fatturazione".into(),
+        "user" => "Utente".into(),
+        "claude_code_user" => "Utente di Claude Code".into(),
+        "" => NESSUN_VALORE.into(),
+        altro => altro.to_owned(),
+    }
+}
+
+fn nome_limite(t: &str) -> String {
+    match t {
+        "requests_per_minute" => "Richieste al minuto".into(),
+        "input_tokens_per_minute" => "Token in ingresso al minuto".into(),
+        "output_tokens_per_minute" => "Token in uscita al minuto".into(),
+        altro => altro.to_owned(),
+    }
+}
+
+/// Il suggerimento della chiave: solo le ultime cifre, mai il prefisso né il valore.
+fn suggerimento(s: &str) -> String {
+    if s.is_empty() || s.contains("sk-ant") {
+        NESSUN_VALORE.to_owned()
+    } else {
+        format!("…{s}")
+    }
+}
+
+fn riga<const N: usize>(celle: [String; N]) -> Vec<String> {
+    celle.into()
+}
+
+fn colonne(nomi: &[&str]) -> Vec<String> {
+    nomi.iter().map(|n| (*n).to_owned()).collect()
+}
+
+/// Nome e azione della Console delle cinque schede, nell'ordine in cui si mostrano.
+const SCHEDE: [(&str, &str); 5] = [
+    ("Spesa", "console:spesa"),
+    ("Token", "console:uso"),
+    ("Chiavi", "console:chiavi"),
+    ("Workspace e membri", "console:membri"),
+    ("Limiti", "console:limiti"),
+];
+
+fn scheda_di(i: usize, nota: &str, colonne: Vec<String>, righe: Vec<Vec<String>>) -> SchedaDati {
+    SchedaDati { nome: SCHEDE[i].0.into(), nota: nota.into(), colonne, righe, azione_console: SCHEDE[i].1.into() }
+}
+
+/// Le cinque schede senza dati, tutte con la stessa nota (nessuna lettura ancora, o non riuscita).
+pub fn schede_vuote(nota: &str) -> Vec<SchedaDati> {
+    (0..SCHEDE.len()).map(|i| scheda_di(i, nota, Vec::new(), Vec::new())).collect()
+}
+
+/// Le cinque schede del dettaglio (Spesa, Token, Chiavi, Workspace e membri, Limiti), nel fuso
+/// del sistema. `adesso_locale` è l'ora della lettura («14:05»). Una scheda che la chiave non
+/// legge ha la sua nota e nessuna riga; un riepilogo senza nessuna lettura riuscita dice perché.
+/// Mai il valore di una chiave: solo il nome e le ultime cifre del suggerimento.
+pub fn schede(r: &Riepilogo, adesso_locale: &str) -> Vec<SchedaDati> {
+    schede_in(r, adesso_locale, &Local)
+}
+
+/// `schede` nel fuso `tz` (i test ne passano uno fisso).
+pub fn schede_in<Tz: TimeZone>(r: &Riepilogo, adesso_locale: &str, tz: &Tz) -> Vec<SchedaDati>
+where
+    Tz::Offset: std::fmt::Display,
+{
+    use api_claude::Scheda;
+    if let Some(e) = r.errore {
+        return schede_vuote(&format!("Lettura delle {adesso_locale} non riuscita: {e}"));
+    }
+    let nota_ritardo = match r.aggiornato_a {
+        Some(a) => {
+            let a = a.with_timezone(tz);
+            format!("Aggiornato al {} alle {} · {RITARDO_DATI}", a.format("%d/%m"), a.format("%H:%M"))
+        }
+        None => format!("Letto alle {adesso_locale} · {RITARDO_DATI}"),
+    };
+    let nota_diretta = format!("Letto alle {adesso_locale}");
+    let dollari = |i: Option<api_claude::Importo>| i.map_or_else(|| SPESA_NESSUN_DATO.to_owned(), |i| i.in_dollari());
+
+    let mut spesa = vec![
+        riga(["Mese in corso".into(), String::new(), dollari(r.spesa_mese)]),
+        riga(["Ieri".into(), String::new(), dollari(r.spesa_ieri)]),
+    ];
+    spesa.extend(r.per_modello.iter().map(|(n, i)| riga(["Modello".into(), n.clone(), i.in_dollari()])));
+    spesa.extend(r.per_chiave.iter().map(|(n, i, _)| riga(["Chiave".into(), n.clone(), i.in_dollari()])));
+    spesa.extend(r.per_workspace.iter().map(|(n, i)| riga(["Workspace".into(), n.clone(), i.in_dollari()])));
+    spesa.extend(r.giorni.iter().rev().map(|(d, i)| riga(["Giorno".into(), d.format("%d/%m").to_string(), i.in_dollari()])));
+
+    let token = r.token.map_or_else(Vec::new, |t| {
+        vec![
+            riga(["Ingresso".into(), numero(t.ingresso)]),
+            riga(["Uscita".into(), numero(t.uscita)]),
+            riga(["Cache letta".into(), numero(t.cache_lettura)]),
+            riga(["Cache scritta".into(), numero(t.cache_scrittura)]),
+            riga(["Chiamate del mese".into(), r.chiamate_mese.map_or_else(|| "non fornite".to_owned(), numero)]),
+        ]
+    });
+
+    let chiavi = r
+        .chiavi
+        .iter()
+        .map(|k| {
+            let chiamate = r.per_chiave.iter().find(|(n, _, _)| *n == k.nome).and_then(|(_, _, c)| *c);
+            riga([
+                k.nome.clone(),
+                stato_chiave(&k.stato),
+                data_in(k.creata, tz),
+                data_in(k.scadenza, tz),
+                suggerimento(&k.suggerimento),
+                chiamate.map_or_else(|| NESSUN_VALORE.to_owned(), numero),
+            ])
+        })
+        .collect();
+
+    let mut membri: Vec<Vec<String>> =
+        r.workspace.iter().map(|w| riga(["Workspace".into(), w.nome.clone(), String::new(), String::new()])).collect();
+    membri.extend(
+        r.membri.iter().map(|m| riga(["Membro".into(), m.nome.clone(), m.email.clone(), ruolo_membro(&m.ruolo)])),
+    );
+
+    let limiti = r
+        .limiti
+        .iter()
+        .flat_map(|g| g.limiti.iter().map(|(t, v)| riga([g.nome.clone(), nome_limite(t), numero(*v)])))
+        .collect();
+
+    let dati = [
+        (Scheda::Spesa, &nota_ritardo, colonne(&["Voce", "Dettaglio", "Spesa"]), spesa),
+        (Scheda::Token, &nota_ritardo, colonne(&["Voce", "Token"]), token),
+        (
+            Scheda::Chiavi,
+            &nota_diretta,
+            colonne(&["Nome", "Stato", "Creata", "Scade", "Suggerimento", "Chiamate"]),
+            chiavi,
+        ),
+        (Scheda::WorkspaceMembri, &nota_diretta, colonne(&["Tipo", "Nome", "Email", "Ruolo"]), membri),
+        (Scheda::Limiti, &nota_diretta, colonne(&["Gruppo", "Limite", "Valore"]), limiti),
+    ];
+    dati.into_iter()
+        .enumerate()
+        .map(|(i, (quale, nota, colonne, mut righe))| {
+            if r.non_disponibili.contains(&quale) {
+                return scheda_di(i, SCHEDA_NON_DISPONIBILE, Vec::new(), Vec::new());
+            }
+            // Ultimo controllo: nessuna chiave per intero in nessuna cella, qualunque cosa dica l'API.
+            for cella in righe.iter_mut().flatten() {
+                if cella.contains("sk-ant-") {
+                    *cella = NESSUN_VALORE.to_owned();
+                }
+            }
+            scheda_di(i, nota, colonne, righe)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -753,6 +950,118 @@ mod test {
         // PF18: un mese ancora a zero ma con dati aggiornati fino a fine periodo è «0,00 $».
         let zero = riepilogo_con_spesa(Some("0"), Some((10, 0)));
         assert_eq!(testo_spesa(Some(&zero), true).0, "0,00 $");
+    }
+
+    // ─── Dettaglio API nelle schede (Task 11) ────────────────────────────────
+
+    fn riepilogo_completo() -> Riepilogo {
+        use api_claude::{importo_da, GruppoLimiti, InfoChiave, InfoMembro, InfoWorkspace, Token};
+        use chrono::{NaiveDate, Utc};
+        let euro = |s: &str| importo_da(s).unwrap();
+        Riepilogo {
+            aggiornato_a: Some(Utc.with_ymd_and_hms(2026, 11, 18, 14, 2, 0).unwrap()),
+            spesa_mese: Some(euro("41280")),
+            spesa_ieri: Some(euro("4000")),
+            giorni: vec![(NaiveDate::from_ymd_opt(2026, 11, 17).unwrap(), euro("4000"))],
+            per_modello: vec![("claude-sonnet-5-5".into(), euro("25000"))],
+            per_chiave: vec![("Chiave di prova A".into(), euro("25000"), Some(90))],
+            per_workspace: vec![("Workspace di prova".into(), euro("41280"))],
+            token: Some(Token { ingresso: 1_284_500, uscita: 891_000, cache_lettura: 3_200_000, cache_scrittura: 120_000 }),
+            chiamate_mese: Some(128),
+            chiavi: vec![
+                InfoChiave {
+                    id: "apikey_FAKE0001".into(),
+                    nome: "Chiave di prova A".into(),
+                    stato: "active".into(),
+                    scadenza: Some(Utc.with_ymd_and_hms(2027, 1, 10, 9, 0, 0).unwrap()),
+                    creata: Some(Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap()),
+                    suggerimento: "0001".into(),
+                },
+                InfoChiave {
+                    id: "apikey_FAKE0002".into(),
+                    nome: "Chiave di prova B".into(),
+                    stato: "inactive".into(),
+                    scadenza: None,
+                    creata: None,
+                    // Un suggerimento ostile: il prefisso non deve uscire comunque.
+                    suggerimento: "sk-ant-api03-SEGRETO".into(),
+                },
+            ],
+            workspace: vec![InfoWorkspace { id: "w1".into(), nome: "Workspace di prova".into() }],
+            membri: vec![InfoMembro { id: "u1".into(), email: "membro@example.com".into(), nome: "Membro di prova".into(), ruolo: "admin".into() }],
+            limiti: vec![GruppoLimiti {
+                nome: "Claude Sonnet di prova".into(),
+                limiti: vec![("requests_per_minute".into(), 4000), ("input_tokens_per_minute".into(), 2_000_000)],
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn schede_dal_riepilogo() {
+        let r = Riepilogo { non_disponibili: vec![api_claude::Scheda::Token], token: None, chiamate_mese: None, ..riepilogo_completo() };
+        let s = schede_in(&r, "14:05", &chrono::Utc);
+        let nomi: Vec<_> = s.iter().map(|x| x.nome.as_str()).collect();
+        assert_eq!(nomi, ["Spesa", "Token", "Chiavi", "Workspace e membri", "Limiti"]);
+        let console: Vec<_> = s.iter().map(|x| x.azione_console.as_str()).collect();
+        assert_eq!(console, ["console:spesa", "console:uso", "console:chiavi", "console:membri", "console:limiti"]);
+        // La scheda non disponibile lo dice e non ha righe.
+        assert_eq!(s[1].nota, "Non disponibile con questa chiave");
+        assert!(s[1].righe.is_empty());
+        // La spesa dice da quando sono i dati e che arrivano in ritardo.
+        assert_eq!(s[0].nota, "Aggiornato al 18/11 alle 14:02 · dati con 4–24 ore di ritardo");
+        assert!(s[0].righe.contains(&vec!["Mese in corso".to_owned(), String::new(), "412,80 $".to_owned()]));
+        // Le chiavi: nome, stato, creata, scade, suggerimento, chiamate del mese; mai il valore.
+        assert_eq!(s[2].colonne, ["Nome", "Stato", "Creata", "Scade", "Suggerimento", "Chiamate"]);
+        assert_eq!(s[2].righe[0], ["Chiave di prova A", "Attiva", "10/01/2026", "10/01/2027", "…0001", "90"]);
+        assert_eq!(s[2].righe[1], ["Chiave di prova B", "Disattivata", "—", "—", "—", "—"]);
+        assert_eq!(s[3].righe[1][3], "Amministratore");
+        assert_eq!(s[4].righe[0], ["Claude Sonnet di prova", "Richieste al minuto", "4.000"]);
+        for scheda in &s {
+            assert!(scheda.colonne.len() <= 6, "{}", scheda.nome);
+            for cella in scheda.righe.iter().flatten().chain(scheda.colonne.iter()).chain([&scheda.nota]) {
+                assert!(!cella.contains("sk-ant-"), "{}: {cella}", scheda.nome);
+            }
+        }
+    }
+
+    #[test]
+    fn schede_senza_lettura_o_con_errore() {
+        let s = schede_vuote("Nessuna lettura ancora: premi Aggiorna");
+        assert_eq!(s.len(), 5);
+        assert!(s.iter().all(|x| x.righe.is_empty() && x.nota == "Nessuna lettura ancora: premi Aggiorna"));
+        let r = Riepilogo { errore: Some(api_claude::ErroreApi::ChiaveNonValida), ..Default::default() };
+        let s = schede_in(&r, "14:05", &chrono::Utc);
+        assert!(s.iter().all(|x| x.righe.is_empty() && x.nota.starts_with("Lettura delle 14:05 non riuscita")), "{:?}", s[0].nota);
+    }
+
+    #[test]
+    fn azioni_della_console_chiuse() {
+        use crate::sistema::browser::PaginaConsole;
+        assert_eq!(PaginaConsole::da_id("console:spesa"), Some(PaginaConsole::Spesa));
+        assert_eq!(PaginaConsole::da_id("console:uso"), Some(PaginaConsole::Uso));
+        assert_eq!(PaginaConsole::da_id("console:limiti"), Some(PaginaConsole::Limiti));
+        assert_eq!(PaginaConsole::da_id("console:chiavi"), Some(PaginaConsole::Chiavi));
+        assert_eq!(PaginaConsole::da_id("console:chiavi-admin"), Some(PaginaConsole::ChiaviAdmin));
+        assert_eq!(PaginaConsole::da_id("console:membri"), Some(PaginaConsole::Membri));
+        assert_eq!(PaginaConsole::da_id("console:organizzazione"), Some(PaginaConsole::Organizzazione));
+        for no in ["console:altro", "https://evil.example/", "console:", "", "aggiorna", "CONSOLE:spesa", "console:spesa ", "console:spesa\n"] {
+            assert_eq!(PaginaConsole::da_id(no), None, "{no:?}");
+        }
+        // Gli indirizzi sono fissi (verificati sul sito il 18/11/2026) e passano dal controllo di `apri`.
+        let attesi = [
+            (PaginaConsole::Spesa, "https://platform.claude.com/cost"),
+            (PaginaConsole::Uso, "https://platform.claude.com/usage"),
+            (PaginaConsole::Limiti, "https://platform.claude.com/usage/limits"),
+            (PaginaConsole::Chiavi, "https://platform.claude.com/settings/keys"),
+            (PaginaConsole::ChiaviAdmin, "https://platform.claude.com/settings/admin-keys"),
+            (PaginaConsole::Membri, "https://platform.claude.com/settings/members"),
+            (PaginaConsole::Organizzazione, "https://platform.claude.com/settings/organization"),
+        ];
+        for (p, url) in attesi {
+            assert_eq!(p.url(), url);
+            assert!(crate::sistema::browser::ammesso(p.url()));
+        }
     }
 
     fn locale(g: u32, h: u32, m: u32) -> chrono::DateTime<chrono::Local> {

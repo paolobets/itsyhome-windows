@@ -161,6 +161,39 @@ pub struct Chiave {
     pub status: String,
     #[serde(default)]
     pub expires_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub created_at: Option<DateTime<Utc>>,
+    /// Il suggerimento che l'API dà al posto del valore («sk-ant-api03-ABC...wxyz»): si tiene solo
+    /// la coda (`coda_suggerimento`), mai il prefisso.
+    #[serde(default)]
+    pub partial_key_hint: String,
+}
+
+/// Le ultime cifre di un suggerimento di chiave: ciò che sta dopo l'ultimo «...» (o «…»); senza
+/// puntini, gli ultimi 4 caratteri. Il prefisso (`sk-ant-…`) non esce mai di qui.
+pub fn coda_suggerimento(hint: &str) -> String {
+    let hint = hint.trim();
+    let dopo = hint
+        .rsplit_once("...")
+        .or_else(|| hint.rsplit_once('…'))
+        .map(|(_, coda)| coda.to_owned())
+        .unwrap_or_else(|| {
+            let v: Vec<char> = hint.chars().collect();
+            v[v.len().saturating_sub(4)..].iter().collect()
+        });
+    let dopo: String = dopo
+        .chars()
+        .rev()
+        .take(8)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    if dopo.contains("sk-ant") {
+        String::new()
+    } else {
+        dopo
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -225,6 +258,18 @@ pub struct PaginaLimiti {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn coda_del_suggerimento_senza_prefisso() {
+        assert_eq!(coda_suggerimento("sk-ant-api03-FAK...0001"), "0001");
+        assert_eq!(
+            coda_suggerimento("sk-ant-api03-ABCDEFGHIJ"),
+            "GHIJ",
+            "senza puntini: gli ultimi 4"
+        );
+        assert_eq!(coda_suggerimento(""), "");
+        assert!(!coda_suggerimento("sk-ant-").contains("sk-ant"));
+    }
 
     #[test]
     fn importo_centesimi_sei_decimali() {

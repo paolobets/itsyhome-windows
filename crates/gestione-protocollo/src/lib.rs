@@ -1,7 +1,7 @@
 //! Protocollo tra l'assistente e la finestra di gestione (processo `itsyhome-gestione`).
 //!
 //! Una riga JSON per messaggio, su stdin (verso la finestra) e stdout (verso l'assistente):
-//! - verso la finestra: `{"tipo":"apri","titolo":…,"html":…}`, `{"tipo":"chiudi"}`;
+//! - verso la finestra: `{"tipo":"apri","titolo":…,"html":…}`, `{"tipo":"apri_schede","titolo":…,"schede":[…]}`, `{"tipo":"chiudi"}`;
 //! - verso l'assistente: `{"tipo":"pronta"}`, `{"tipo":"chiusa"}`, `{"tipo":"azione","id":…}`.
 //!
 //! Se lo stdout della finestra si chiude, l'assistente lo tratta come `chiusa`; se lo stdin della
@@ -15,6 +15,10 @@ pub enum Messaggio {
     /// Mostra (o sostituisce) il contenuto. Entrambi i campi sono NON fidati: il titolo (con la
     /// Mail, l'oggetto) va solo in testo semplice nella cornice; l'HTML nell'area web isolata.
     Apri { titolo: String, html: String },
+    /// Mostra (o sostituisce) le schede native del dettaglio delle API: nessun riquadro web. I
+    /// testi sono NON fidati (vengono dalle API): la finestra li ripassa da `scheda_pulita`.
+    #[serde(rename = "apri_schede")]
+    ApriSchede { titolo: String, schede: Vec<SchedaDati> },
     /// Chiude la finestra: il processo esce.
     Chiudi,
     /// Il contenuto dell'ultima `apri` è visibile.
@@ -23,6 +27,39 @@ pub enum Messaggio {
     Chiusa,
     /// L'utente ha scelto un'azione della cornice.
     Azione { id: String },
+}
+
+/// Una scheda del dettaglio: nome, nota (da quando sono i dati), tabella e la pagina della Console
+/// dove si cambia qualcosa (`azione_console`, un id che torna indietro in `azione`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SchedaDati {
+    pub nome: String,
+    pub nota: String,
+    pub colonne: Vec<String>,
+    pub righe: Vec<Vec<String>>,
+    pub azione_console: String,
+}
+
+/// Al più tante righe per scheda.
+pub const RIGHE_MASSIME: usize = 200;
+/// Al più tante colonne per scheda.
+pub const COLONNE_MASSIME: usize = 6;
+
+/// La scheda con i testi ripuliti (`testo_pulito`) e le misure limitate: `RIGHE_MASSIME` righe di
+/// al più `COLONNE_MASSIME` celle. `azione_console` è un id interno, non si tocca.
+pub fn scheda_pulita(s: &SchedaDati) -> SchedaDati {
+    SchedaDati {
+        nome: testo_pulito(&s.nome),
+        nota: testo_pulito(&s.nota),
+        colonne: s.colonne.iter().take(COLONNE_MASSIME).map(|c| testo_pulito(c)).collect(),
+        righe: s
+            .righe
+            .iter()
+            .take(RIGHE_MASSIME)
+            .map(|r| r.iter().take(COLONNE_MASSIME).map(|c| testo_pulito(c)).collect())
+            .collect(),
+        azione_console: s.azione_console.clone(),
+    }
 }
 
 /// Legge una riga del protocollo (senza il ritorno a capo finale, che comunque si tollera; si
@@ -157,6 +194,48 @@ mod test {
             Ok(Messaggio::Apri { titolo: "T".into(), html: "<b>x</b>".into() })
         );
         assert_eq!(messaggio_da_riga(r#"{"tipo":"azione","id":"a1"}"#), Ok(Messaggio::Azione { id: "a1".into() }));
+    }
+
+    fn scheda(nome: &str) -> SchedaDati {
+        SchedaDati {
+            nome: nome.into(),
+            nota: "Aggiornato alle 14:02".into(),
+            colonne: vec!["Voce".into(), "Valore".into()],
+            righe: vec![vec!["Mese".into(), "412,80 $".into()]],
+            azione_console: "console:spesa".into(),
+        }
+    }
+
+    #[test]
+    fn apri_schede_andata_e_ritorno() {
+        let m = Messaggio::ApriSchede { titolo: "API Claude".into(), schede: vec![scheda("Spesa"), scheda("Token")] };
+        let riga = riga_da_messaggio(&m);
+        assert!(!riga.contains('\n'), "una riga sola: {riga}");
+        assert!(riga.starts_with(r#"{"tipo":"apri_schede","#), "{riga}");
+        assert_eq!(messaggio_da_riga(&riga), Ok(m.clone()));
+        assert_eq!(messaggio_da_riga(&format!("{riga}\r\n")), Ok(m));
+    }
+
+    #[test]
+    fn la_scheda_si_ripulisce_e_si_limita() {
+        let sporca = SchedaDati {
+            nome: "Sp\u{202E}esa\n".into(),
+            nota: "no\u{200B}ta\tlunga".into(),
+            colonne: (0..9).map(|i| format!("c\u{202E}{i}")).collect(),
+            righe: (0..300).map(|i| (0..9).map(|j| format!("r{i}\u{200B}c{j}\n")).collect()).collect(),
+            azione_console: "console:spesa".into(),
+        };
+        let p = scheda_pulita(&sporca);
+        assert_eq!((p.nome.as_str(), p.nota.as_str()), ("Spesa", "nota lunga"));
+        assert_eq!(p.colonne.len(), COLONNE_MASSIME);
+        assert_eq!(p.colonne[0], "c0");
+        assert_eq!(p.righe.len(), RIGHE_MASSIME);
+        assert!(p.righe.iter().all(|r| r.len() == COLONNE_MASSIME));
+        assert_eq!(p.righe[0][0], "r0c0");
+        assert_eq!(p.azione_console, "console:spesa");
+        // Una riga più corta resta com'è (non si riempie).
+        let corta = SchedaDati { righe: vec![vec!["solo".into()]], ..scheda("X") };
+        assert_eq!(scheda_pulita(&corta).righe, vec![vec!["solo".to_owned()]]);
     }
 
     #[test]
