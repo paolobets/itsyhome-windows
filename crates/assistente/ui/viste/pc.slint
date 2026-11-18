@@ -60,16 +60,16 @@ component Riga inherits Rectangle {
         opacity: 0;
         alignment: start;
 
-        Text {
+        // Nascosta a Narrator: la trova il test per id (`Riga::misura`).
+        misura := Text {
             text: dettaglio;
             font-size: Tema.testo-piccolo;
-            accessible-role: text;
-            accessible-label: "misura " + etichetta;
+            accessible-role: none;
         }
     }
 
-    // Il dettaglio si ferma prima della colonna del valore e della barra.
-    Text {
+    // Il dettaglio si ferma prima della colonna del valore e della barra (`Riga::dettaglio`).
+    dettaglio-testo := Text {
         x: MisurePc.margine;
         y: 22px;
         width: max(0px, colonna-x - MisurePc.margine - MisurePc.stacco);

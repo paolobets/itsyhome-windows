@@ -3252,14 +3252,19 @@ mod accessibilita {
                 ..Default::default()
             });
             for (nome, dettaglio) in [("RAM", ram), ("DISCO", disco)] {
-                let riga = elemento(&p, nome);
-                let misura = elemento(&p, &format!("misura {nome}"));
-                // Spazio del dettaglio: la riga meno i due margini (16), la colonna del valore (104) e lo stacco (4).
-                let spazio = riga.size().width - 2.0 * 16.0 - 104.0 - 4.0;
+                // Il Text vero del dettaglio e la sua misura sono nella stessa riga: stessa posizione.
+                let y = elemento(&p, nome).absolute_position().y + 22.0;
+                let della_riga = |id: &str| {
+                    ElementHandle::find_by_element_id(&p, id)
+                        .find(|e| (e.absolute_position().y - y).abs() < 0.5)
+                        .unwrap_or_else(|| panic!("nessun {id} nella riga {nome}"))
+                };
+                let (misura, vero) = (della_riga("Riga::misura"), della_riga("Riga::dettaglio-testo"));
                 assert!(
-                    misura.size().width <= spazio + 0.01,
-                    "«{dettaglio}» largo {} in {spazio} px: verrebbe accorciato",
-                    misura.size().width
+                    misura.size().width <= vero.size().width + 0.01,
+                    "«{dettaglio}» largo {} in {} px: verrebbe accorciato",
+                    misura.size().width,
+                    vero.size().width
                 );
             }
         }
