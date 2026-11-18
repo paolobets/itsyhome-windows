@@ -7,7 +7,10 @@ use crate::evento::{EventoHook, TipoEvento};
 
 /// Una sessione silenziosa da tanto sparisce (salvo se aspetta una risposta).
 pub const SILENZIO_MASSIMO: Duration = Duration::from_secs(30 * 60);
-/// Sessioni tenute al massimo.
+/// Chi aspetta una risposta scade molto più tardi (il terminale chiuso con la X non manda
+/// `SessionEnd`).
+pub const ATTESA_MASSIMA_SESSIONE: Duration = Duration::from_secs(2 * 60 * 60);
+/// Sessioni tenute al massimo (limite rigido).
 pub const MASSIMO_SESSIONI: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +52,15 @@ pub struct Sessioni {
     v: Vec<Sessione>,
 }
 
+/// Dopo quanto silenzio la sessione scade.
+fn limite_silenzio(s: &Sessione) -> Duration {
+    if s.stato == Stato::TiAspetta {
+        ATTESA_MASSIMA_SESSIONE
+    } else {
+        SILENZIO_MASSIMO
+    }
+}
+
 fn urgenza(s: &Sessione) -> u8 {
     match (s.stato, s.vista) {
         (Stato::TiAspetta, _) => 0,
@@ -85,17 +97,19 @@ impl Sessioni {
             );
         if ignorata {
             if let Some(p) = posto {
-                self.v[p].ultimo = ora;
+                self.tocca(p, ora);
             }
             return cambi;
         }
+        // Un `idle_prompt` di una sessione sconosciuta NON la crea: non dice cosa stava facendo
+        // e, senza altri eventi, resterebbe lì in attesa.
         let idle = e.tipo == TipoEvento::Notification && notifica == Some("idle_prompt");
         if idle {
             match posto {
                 // Un idle di una sessione ignota o già chiusa non dice nulla.
                 None => return cambi,
                 Some(p) if matches!(self.v[p].stato, Stato::Fatto | Stato::Errore) => {
-                    self.v[p].ultimo = ora;
+                    self.tocca(p, ora);
                     return cambi;
                 }
                 _ => {}
@@ -153,16 +167,24 @@ impl Sessioni {
         }
         self.v.push(s);
 
-        // Limite: si toglie la meno recente fra quelle che non aspettano, mai quella appena arrivata.
-        if self.v.len() > MASSIMO_SESSIONI {
+        // Limite rigido: si toglie la meno recente fra quelle che non aspettano e, se aspettano
+        // tutte, la meno recente in assoluto; mai quella appena arrivata (è l'ultima del Vec).
+        while self.v.len() > MASSIMO_SESSIONI {
             let ultima = self.v.len() - 1;
-            if let Some(p) = self.v[..ultima].iter().position(|s| s.stato != Stato::TiAspetta) {
-                let tolta = self.v.remove(p);
-                cambi.push(Cambio::Tolta(tolta.id));
-            }
+            let p = self.v[..ultima].iter().position(|s| s.stato != Stato::TiAspetta).unwrap_or(0);
+            let tolta = self.v.remove(p);
+            cambi.push(Cambio::Tolta(tolta.id));
         }
         cambi.push(Cambio::Cambiata(e.sessione.clone()));
         cambi
+    }
+
+    /// Un evento che aggiorna solo `ultimo`: la sessione passa in fondo, così la posizione resta
+    /// coerente con `ultimo` (limite e parità di `elenco`).
+    fn tocca(&mut self, p: usize, ora: Instant) {
+        let mut s = self.v.remove(p);
+        s.ultimo = ora;
+        self.v.push(s);
     }
 
     /// Per urgenza (TiAspetta, Errore, Fatto non vista, Lavora, Fatto vista); a parità la più
@@ -173,13 +195,12 @@ impl Sessioni {
         e
     }
 
-    /// Toglie e restituisce le sessioni silenziose da `SILENZIO_MASSIMO`, salvo quelle che
-    /// aspettano una risposta.
+    /// Toglie e restituisce le sessioni silenziose da `SILENZIO_MASSIMO`; quelle che aspettano una
+    /// risposta solo dopo `ATTESA_MASSIMA_SESSIONE`.
     pub fn scadute(&mut self, ora: Instant) -> Vec<String> {
         let mut tolte = Vec::new();
         self.v.retain(|s| {
-            let scaduta = s.stato != Stato::TiAspetta
-                && ora.saturating_duration_since(s.ultimo) >= SILENZIO_MASSIMO;
+            let scaduta = ora.saturating_duration_since(s.ultimo) >= limite_silenzio(s);
             if scaduta {
                 tolte.push(s.id.clone());
             }
@@ -188,12 +209,11 @@ impl Sessioni {
         tolte
     }
 
-    /// Fra quanto scade la prossima sessione (zero se già scaduta); `None` se nessuna può scadere.
+    /// Fra quanto scade la prossima sessione (zero se già scaduta); `None` se non ce ne sono.
     pub fn prossima_scadenza(&self, ora: Instant) -> Option<Duration> {
         self.v
             .iter()
-            .filter(|s| s.stato != Stato::TiAspetta)
-            .map(|s| SILENZIO_MASSIMO.saturating_sub(ora.saturating_duration_since(s.ultimo)))
+            .map(|s| limite_silenzio(s).saturating_sub(ora.saturating_duration_since(s.ultimo)))
             .min()
     }
 
@@ -305,9 +325,11 @@ mod test {
     fn notifica_dopo_il_permesso_resta_ti_aspetta() {
         let t = Instant::now();
         let mut s = Sessioni::new();
-        s.ricevi(&ev("a", TipoEvento::PermissionRequest), t);
+        let p = EventoHook { strumento: Some("Write".into()), ..ev("a", TipoEvento::PermissionRequest) };
+        s.ricevi(&p, t);
         s.ricevi(&notifica("a", "permission_prompt"), t + Duration::from_secs(6));
         assert_eq!(stato(&s, "a"), Some(Stato::TiAspetta));
+        assert_eq!(s.elenco()[0].strumento.as_deref(), Some("Write"));
     }
 
     #[test]
@@ -332,8 +354,41 @@ mod test {
         assert_eq!(s.prossima_scadenza(t + Duration::from_secs(600)), Some(Duration::from_secs(1200)));
         assert!(s.scadute(t + SILENZIO_MASSIMO - Duration::from_secs(1)).is_empty());
         assert_eq!(s.scadute(t + SILENZIO_MASSIMO), vec!["a".to_string()]);
-        assert_eq!(stato(&s, "b"), Some(Stato::TiAspetta), "chi aspetta non scade");
-        assert_eq!(s.prossima_scadenza(t + SILENZIO_MASSIMO), None);
+        assert_eq!(stato(&s, "b"), Some(Stato::TiAspetta), "chi aspetta non scade a 30 minuti");
+        assert_eq!(s.prossima_scadenza(t + SILENZIO_MASSIMO), Some(ATTESA_MASSIMA_SESSIONE - SILENZIO_MASSIMO));
+        assert!(s.scadute(t + ATTESA_MASSIMA_SESSIONE - Duration::from_secs(1)).is_empty());
+        assert_eq!(s.scadute(t + ATTESA_MASSIMA_SESSIONE), vec!["b".to_string()]);
+        assert_eq!(s.prossima_scadenza(t + ATTESA_MASSIMA_SESSIONE), None);
+    }
+
+    #[test]
+    fn tetto_rigido_anche_se_aspettano_tutte() {
+        let t = Instant::now();
+        let mut s = Sessioni::new();
+        for i in 0..MASSIMO_SESSIONI {
+            s.ricevi(&ev(&format!("s{i}"), TipoEvento::PermissionRequest), t + Duration::from_secs(i as u64));
+        }
+        let cambi = s.ricevi(&ev("nuova", TipoEvento::PermissionRequest), t + Duration::from_secs(99));
+        assert_eq!(cambi, vec![Cambio::Tolta("s0".into()), Cambio::Cambiata("nuova".into())]);
+        assert_eq!(s.elenco().len(), MASSIMO_SESSIONI);
+        assert_eq!(stato(&s, "nuova"), Some(Stato::TiAspetta));
+        assert_eq!(stato(&s, "s0"), None);
+    }
+
+    #[test]
+    fn evento_che_tocca_solo_ultimo_sposta_in_fondo() {
+        let t = Instant::now();
+        let mut s = Sessioni::new();
+        s.ricevi(&ev("a", TipoEvento::UserPromptSubmit), t);
+        s.ricevi(&ev("b", TipoEvento::UserPromptSubmit), t + Duration::from_secs(1));
+        // "a" è la più vecchia; una notifica irrilevante la rinfresca
+        assert!(s.ricevi(&notifica("a", "auth_success"), t + Duration::from_secs(2)).is_empty());
+        for i in 0..(MASSIMO_SESSIONI - 1) {
+            s.ricevi(&ev(&format!("n{i}"), TipoEvento::UserPromptSubmit), t + Duration::from_secs(10 + i as u64));
+        }
+        // 17 sessioni: va via "b" (ora la più vecchia), non "a"
+        assert_eq!(stato(&s, "b"), None);
+        assert_eq!(stato(&s, "a"), Some(Stato::Lavora));
     }
 
     #[test]

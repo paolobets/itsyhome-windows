@@ -14,6 +14,8 @@ use crate::ascoltatore::{sessione_valida, solo_testo};
 const MASSIMO_CARTELLA: usize = 60;
 /// Lunghezza massima del nome dello strumento.
 const MASSIMO_STRUMENTO: usize = 40;
+/// Lunghezza massima di `notifica` ed `errore`.
+const ERRORE_MASSIMO: usize = 200;
 /// Lunghezza massima del riassunto.
 const MASSIMO_RIASSUNTO: usize = 2000;
 
@@ -134,8 +136,8 @@ pub fn evento_da_json(corpo: &[u8]) -> Result<EventoHook, ErroreEvento> {
         tipo,
         cartella: g.cwd.as_deref().map(cartella_di).unwrap_or_default(),
         strumento: g.tool_name.as_deref().map(|s| taglia(s, MASSIMO_STRUMENTO)),
-        notifica: g.notification_type,
-        errore: g.error,
+        notifica: g.notification_type.as_deref().map(|s| taglia(s, ERRORE_MASSIMO)),
+        errore: g.error.as_deref().map(|s| taglia(s, ERRORE_MASSIMO)),
         riassunto,
     })
 }
@@ -240,6 +242,19 @@ mod test {
     fn evento_sconosciuto() {
         let j = r#"{"session_id":"s","hook_event_name":"SubagentStart"}"#;
         assert_eq!(leggi(j), Err(ErroreEvento::Sconosciuto));
+    }
+
+    #[test]
+    fn notifica_ed_errore_tagliati_a_200_caratteri() {
+        let lungo = "è".repeat(500);
+        let e = leggi(&format!(
+            r#"{{"session_id":"s","hook_event_name":"StopFailure","error":"{lungo}","notification_type":"{lungo}"}}"#
+        ))
+        .unwrap();
+        for t in [e.errore.unwrap(), e.notifica.unwrap()] {
+            assert_eq!(t.chars().count(), 200);
+            assert!(t.chars().all(|c| c == 'è'));
+        }
     }
 
     #[test]
