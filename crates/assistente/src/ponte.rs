@@ -757,6 +757,10 @@ pub struct Ponte {
     pillola: slint::Weak<Pillola>,
     /// Il pannello esiste solo da aperto: qui il riferimento debole, vuoto da chiuso.
     pannello: RefCell<slint::Weak<Pannello>>,
+    /// La vista su cui deve aprirsi il prossimo pannello (una volta sola): chi apre il pannello da
+    /// fuori (fuori da Windows, un pulsante di una voce di Claude) la chiede qui.
+    #[cfg(any(not(windows), test))]
+    vista_richiesta: Cell<Option<&'static str>>,
     cervello: Rc<RefCell<Cervello>>,
     /// `--umore`: umore fisso per prova, gli eventi non lo cambiano.
     umore_fisso: Option<Umore>,
@@ -949,6 +953,8 @@ pub fn collega(
         casa,
         pillola: pillola.as_weak(),
         pannello: RefCell::new(slint::Weak::default()),
+        #[cfg(any(not(windows), test))]
+        vista_richiesta: Cell::new(None),
         cervello,
         umore_fisso,
         stato: RefCell::new(StatoConnessione::Disconnesso),
@@ -2147,6 +2153,11 @@ impl Ponte {
     /// pillola) e il pannello prende l'umore.
     pub fn pannello_aperto(&self, p: &Pannello) {
         *self.pannello.borrow_mut() = p.as_weak();
+        #[cfg(any(not(windows), test))]
+        if let Some(vista) = self.vista_richiesta.take() {
+            p.set_vista(vista.into());
+            self.vista_claude(vista == "claude");
+        }
         self.attese.borrow_mut().segna_viste();
         // Il pannello compare: un permesso in attesa non si consente al primo istante.
         self.claude_superficie_compare(Instant::now());

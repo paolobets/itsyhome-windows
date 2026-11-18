@@ -27,6 +27,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Letture**: thread `api-claude` per ogni lettura (client creato e lasciato andare), prima dopo 60 s dall'avvio e poi ogni 3 ore con un solo `slint::Timer` che esiste **solo con la chiave** (si ferma con «Togli»); il riepilogo torna con `invoke_from_event_loop`. `diagnosi.log`: solo i contatori `api_letture` e `api_errori`.
 - **Prova**: con `ITSYHOME_ASSISTENTE_DIR`, `ITSYHOME_API_CLAUDE_BASE` (solo `http://127.0.0.1:<porta>`) e `ITSYHOME_API_CLAUDE_CHIAVE` (solo `finta-…`) l'assistente legge dal server finto `cargo run -p api-claude --example finta_api`; la chiave vera non può finirci e in prova il portachiavi usa un'altra voce (`isola:claude-admin-prova`).
 
+### Fixed (rifiniture del terminale della sessione, dalla seconda revisione del Task 10)
+- Un rifiuto di `SetForegroundWindow` è un esito a parte («Windows non ha permesso di portare davanti il terminale: cliccalo nella barra») e **non** segna la sessione come «ultimo terminale usato».
+- La rilettura del ripiego all'apertura della vista non prende l'istantanea se non ci sono catene salvate.
+- Fuori da Windows un pulsante di una voce con il pannello chiuso lo apre sulla vista Claude (non sull'ultima vista); la CI di Linux e macOS non vede più `voce_terminale_mancante` e l'import `PULSANTE_HO_CAPITO` come codice morto (definizioni sotto `cfg(any(windows, test))`, come il loro unico chiamante).
+
 ### Changed (rifiniture grafiche dal controllo del 18/11)
 - Il «⋯» (che il carattere non ha e appariva come un quadratino) è scritto «…» nei testi delle scorciatoie e di Impostazioni › Sistema.
 - Voce espansa: il titolo si legge intero (a capo, fino a 4 righe) e riga sotto e testo scendono. Sotto le voci c'è il nome per l'utente della fonte («PC», «Casa», «Claude Code», «Prova») invece dell'identificativo interno.

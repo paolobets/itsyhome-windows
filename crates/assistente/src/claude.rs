@@ -3,7 +3,7 @@
 //! arriva sempre dal chiamante e nessun testo di prompt, risposta o file passa di qui (le sessioni
 //! portano solo cartella, stato e nome dello strumento).
 
-use crate::attenzione::{Fonte, Livello, Pulsante, Voce, PULSANTE_HO_CAPITO};
+use crate::attenzione::{Fonte, Livello, Pulsante, Voce};
 use claude_hook::evento::EventoHook;
 use api_claude::Riepilogo;
 use chrono::{DateTime, Datelike, Local, TimeZone, Weekday};
@@ -101,7 +101,24 @@ pub fn voce_permesso(id: u64, e: &EventoHook, ora: Instant) -> Voce {
     Voce { id: id_voce_permesso(id), livello: Livello::Bloccante, fonte: Fonte::Claude, titolo, dettaglio, pulsanti, creata: ora }
 }
 
-/// La voce «Non trovo il terminale di questa sessione» (informazione).
+/// La voce «Windows non ha permesso…»: la finestra del terminale c'è, ma il sistema non l'ha
+/// portata davanti. Stesso id della voce «non trovo» (una voce sola, stessa chiusura).
+#[cfg(any(windows, test))]
+pub fn voce_terminale_rifiutato(ora: Instant) -> Voce {
+    Voce {
+        id: ID_TERMINALE_MANCANTE.into(),
+        livello: Livello::Informazione,
+        fonte: Fonte::Claude,
+        titolo: "Il terminale non è passato davanti".into(),
+        dettaglio: "Windows non ha permesso di portare davanti il terminale: cliccalo nella barra.".into(),
+        pulsanti: vec![Pulsante::new(crate::attenzione::PULSANTE_HO_CAPITO, "Ho capito")],
+        creata: ora,
+    }
+}
+
+/// La voce «Non trovo il terminale di questa sessione» (informazione). Solo dove c'è un terminale
+/// da portare davanti (Windows).
+#[cfg(any(windows, test))]
 pub fn voce_terminale_mancante(ora: Instant) -> Voce {
     Voce {
         id: ID_TERMINALE_MANCANTE.into(),
@@ -109,7 +126,7 @@ pub fn voce_terminale_mancante(ora: Instant) -> Voce {
         fonte: Fonte::Claude,
         titolo: "Non trovo il terminale di questa sessione".into(),
         dettaglio: "Non è stata portata davanti nessuna finestra: aprila tu dalla barra.".into(),
-        pulsanti: vec![Pulsante::new(PULSANTE_HO_CAPITO, "Ho capito")],
+        pulsanti: vec![Pulsante::new(crate::attenzione::PULSANTE_HO_CAPITO, "Ho capito")],
         creata: ora,
     }
 }
