@@ -134,11 +134,31 @@ in chat o nel repo». La barra di stato prende il codice dalla stessa variabile.
   (pillola larga 440, pulsanti 78×28 come da analisi TwoCode). La pillola esce dalla ritirata.
 - La connessione HTTP resta aperta finché Paolo risponde; timeout del hook **120 s** *(scelta mia)*: allo scadere
   l'assistente chiude senza decisione e il permesso segue il flusso normale del terminale.
-- Se Paolo risponde nel terminale prima, Claude Code chiude/abbandona la richiesta: la voce sparisce
-  (connessione chiusa o evento successivo della stessa sessione).
-- **Da verificare con uno spike all'inizio del piano**: che con un hook `PermissionRequest` in attesa il terminale
-  mostri comunque la sua domanda e accetti la risposta («vince il primo», come dichiara TwoCode). Se non è così,
-  il permesso nella pillola si fa solo come avviso + «Apri il terminale», senza Consenti — e lo si dice a Paolo.
+- Se Paolo risponde nel terminale prima, Claude Code **non chiude** la richiesta: la tiene aperta fino al timeout
+  (120 s). La voce sparisce quindi al **primo evento successivo della stessa sessione** (`PreToolUse`,
+  `Notification`, `Stop`…) o alla chiusura della connessione, quale arriva prima; una risposta tardiva
+  dell'assistente su quella connessione è ignorata da Claude Code. *(Esito dello spike, sotto.)*
+- **Esito dello spike, 18/11/2026** (Task 1, esempio `prova_permesso`, Claude Code in PowerShell su Windows,
+  modo «manual»):
+  - **P1 ✅** con l'hook in attesa il terminale mostra comunque la sua domanda e accetta la risposta: «vince il primo».
+  - **P2 ⚠️** rispondendo nel terminale la connessione dell'hook **resta aperta** fino ai 120 s, poi Claude la
+    chiude: la voce si toglie con l'evento successivo della sessione (regola sopra), non con la chiusura.
+  - **P3 ✅** «Consenti» dall'ascoltatore → lo strumento parte, il terminale scrive «Allowed by PermissionRequest
+    hook» e non mostra la sua domanda.
+  - **P4 ✅** «Nega» → lo strumento non parte (file non creato).
+  - **P5 ✅** nessuna risposta per 120 s → Claude chiude, la domanda resta nel terminale e vale.
+  - **P6 ✅ con un costo**: ascoltatore spento → la domanda di permesso compare subito, senza ritardi; però dopo la
+    risposta il terminale mostra «Stop hook failed». Con isola chiusa ogni fine risposta mostra quell'errore:
+    è il prezzo degli hook HTTP; per non vederlo si usa «Scollega» (§6.1). Da dire a Paolo.
+  - **P7 ✅ parziale** PID del mittente trovato ogni volta, catena `claude.exe ← powershell.exe ← explorer.exe`
+    (PowerShell da solo). Windows Terminal non provato: resta il ripiego «ultima finestra di terminale» (PF2).
+  - **P8 ✅** nessun `Origin`, `Host = 127.0.0.1:<porta>`, `Content-Type: application/json`, `Authorization`
+    corretta. Il caso «variabile non impostata» non è stato provato: il test automatico del Task 2 lo copre.
+  - Altri fatti visti: ogni `PermissionRequest` è preceduto da un `PreToolUse` dello stesso strumento; circa 6 s
+    dopo arriva una `Notification` (il «ti aspetta»); su Windows i comandi di sola lettura dello strumento
+    `PowerShell` partono senza chiedere permesso.
+  - **Decisione D1: ramo A** — Nega / Consenti nella pillola (P1 e P5 passano; P2 coperto dalla regola
+    dell'evento successivo).
 - **Più permessi insieme** (fino a 3 sessioni) *(scelta mia)*: la pillola ne mostra uno alla volta, il più vecchio,
   con «+1»/«+2» accanto; risolto uno compare il successivo. Nel pannello ci sono tutti come voci bloccanti
   separate, ognuna con i suoi pulsanti. Limite di connessioni aperte: **16** (permessi in attesa + eventi + barre
