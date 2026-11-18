@@ -1537,6 +1537,48 @@ mod accessibilita {
         assert_eq!(spesa.accessible_description().as_deref(), Some("aggiornato alle 14:02 UTC"));
     }
 
+    /// Concordanza: «+1 altra» e «e un'altra sessione»; da due in su «+N altre».
+    #[test]
+    fn vista_claude_altre_al_singolare() {
+        let (p, _) = pannello_claude(true, tre_righe_claude());
+        p.set_claude_altre(1);
+        assert!(ElementHandle::find_by_accessible_label(&p, "e un'altra sessione").next().is_some());
+        p.set_claude_altre(2);
+        assert!(ElementHandle::find_by_accessible_label(&p, "e altre 2 sessioni").next().is_some());
+        assert!(ElementHandle::find_by_accessible_label(&p, "e un'altra sessione").next().is_none());
+    }
+
+    /// Il dettaglio di «Limiti non disponibili» dice il vero: scollegato si collega, collegato si aspetta.
+    #[test]
+    fn limiti_non_disponibili_spiega_il_motivo() {
+        let (p, _) = pannello_claude(false, ModelRc::new(VecModel::from(Vec::<crate::RigaSessioneUi>::new())));
+        let ha = |t: &str| ElementHandle::find_by_accessible_label(&p, t).next().is_some();
+        assert!(ha("Si vedono dopo aver collegato Claude Code."));
+        p.set_claude_collegato(true);
+        assert!(ha("Compaiono dopo la prima risposta di una sessione, con un abbonamento Claude."));
+        assert!(!ha("Si vedono dopo aver collegato Claude Code."));
+    }
+
+    /// Il fuoco segue la sessione, non la posizione: se le righe si riordinano Invio apre la stessa.
+    #[test]
+    fn il_fuoco_delle_righe_segue_la_sessione() {
+        use slint::platform::Key;
+        let (p, eventi) = pannello_claude(true, tre_righe_claude());
+        tasto(&p, Key::DownArrow); // «bbbb»
+        // Riordino: «bbbb» passa in cima.
+        p.set_claude_righe(ModelRc::new(VecModel::from(vec![
+            riga_claude("bbbb", "due", "Ti aspetta", crate::LivelloUi::Attenzione),
+            riga_claude("aaaa", "uno", "Fatto", crate::LivelloUi::Informazione),
+            riga_claude("cccc", "tre", "Lavora", crate::LivelloUi::Nessuno),
+        ])));
+        tasto(&p, Key::Return);
+        assert_eq!(*eventi.borrow(), ["apri bbbb"]);
+        // Se la sessione sparisce, il fuoco torna alla prima riga.
+        p.set_claude_righe(ModelRc::new(VecModel::from(vec![riga_claude("cccc", "tre", "Lavora", crate::LivelloUi::Nessuno)])));
+        tasto(&p, Key::Return);
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("apri cccc"));
+    }
+
     /// ↓ due volte e Invio: `apri-sessione` con l'id della terza riga; ↑ risale, e i bordi tengono.
     #[test]
     fn righe_da_tastiera() {

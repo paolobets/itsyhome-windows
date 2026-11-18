@@ -303,14 +303,23 @@ pub fn righe_sessioni(s: &Sessioni, contesto: &HashMap<String, f32>, ora: Instan
 
 /// Il valore e la nota della spesa API del mese. Senza chiave la frase della guida; con la chiave ma
 /// senza un dato (nessuna lettura, lettura fallita, dati senza data) «nessun dato», mai «0 $»; con
-/// la spesa il valore e «aggiornato alle 14:02 UTC» (l'ora dei dati dell'API, non della lettura).
+/// la spesa il valore e «aggiornato alle 14:02» (l'ora dei dati dell'API, non della lettura, nel
+/// fuso del sistema come le altre ore dell'app).
 pub fn testo_spesa(r: Option<&Riepilogo>, chiave: bool) -> (String, String) {
+    testo_spesa_in(r, chiave, &Local)
+}
+
+/// `testo_spesa` nel fuso `tz` (i test ne passano uno fisso).
+pub fn testo_spesa_in<Tz: TimeZone>(r: Option<&Riepilogo>, chiave: bool, tz: &Tz) -> (String, String)
+where
+    Tz::Offset: std::fmt::Display,
+{
     if !chiave {
         return (String::new(), SPESA_SENZA_CHIAVE.to_owned());
     }
     match r.and_then(|r| r.spesa_mese.map(|s| (s, r.aggiornato_a))) {
         Some((spesa, aggiornato)) => {
-            let nota = aggiornato.map_or_else(String::new, |a| format!("aggiornato alle {} UTC", a.format("%H:%M")));
+            let nota = aggiornato.map_or_else(String::new, |a| format!("aggiornato alle {}", a.with_timezone(tz).format("%H:%M")));
             (spesa.in_dollari(), nota)
         }
         None => (String::new(), SPESA_NESSUN_DATO.to_owned()),
@@ -350,7 +359,9 @@ pub fn testo_limite(l: &Limite, ora: DateTime<Local>) -> TestoLimite {
             match giorni {
                 ..=0 => format!("si azzera alle {alle}"),
                 1 => format!("si azzera domani alle {alle}"),
-                _ => format!("si azzera {} alle {alle}", giorno_della_settimana(quando.weekday())),
+                2..=6 => format!("si azzera {} alle {alle}", giorno_della_settimana(quando.weekday())),
+                // Da una settimana in là il solo giorno della settimana si leggerebbe come oggi.
+                _ => format!("si azzera il {} alle {alle}", quando.format("%d/%m")),
             }
         }
     };
@@ -652,7 +663,11 @@ mod test {
     #[test]
     fn spesa_con_dati_e_ora_dell_aggiornamento() {
         let r = riepilogo_con_spesa(Some("41280"), Some((14, 2)));
-        assert_eq!(testo_spesa(Some(&r), true), ("412,80 $".to_owned(), "aggiornato alle 14:02 UTC".to_owned()));
+        // Nel fuso scelto (qui +1 ora), non in UTC.
+        let roma = chrono::FixedOffset::east_opt(3600).unwrap();
+        assert_eq!(testo_spesa_in(Some(&r), true, &roma), ("412,80 $".to_owned(), "aggiornato alle 15:02".to_owned()));
+        assert_eq!(testo_spesa_in(Some(&r), true, &chrono::Utc).1, "aggiornato alle 14:02");
+        assert!(!testo_spesa(Some(&r), true).1.contains("UTC"));
         // PF18: un mese ancora a zero ma con dati aggiornati fino a fine periodo è «0,00 $».
         let zero = riepilogo_con_spesa(Some("0"), Some((10, 0)));
         assert_eq!(testo_spesa(Some(&zero), true).0, "0,00 $");
@@ -672,6 +687,9 @@ mod test {
         assert!((t.frazione - 0.366).abs() < 1e-6);
         assert_eq!(testo_limite(&l(19, 9, 5, 5.0), ora).azzera, "si azzera domani alle 09:05");
         assert_eq!(testo_limite(&l(21, 14, 30, 61.0), ora).azzera, "si azzera sabato alle 14:30");
+        // Da sette giorni in là la data, mai un giorno della settimana che sembri oggi.
+        assert_eq!(testo_limite(&l(25, 14, 30, 10.0), ora).azzera, "si azzera il 25/11 alle 14:30");
+        assert_eq!(testo_limite(&l(24, 14, 30, 10.0), ora).azzera, "si azzera martedì alle 14:30");
         // Oltre il cento o sotto lo zero: l'arco resta nel suo giro e il testo nei limiti.
         let t = testo_limite(&l(18, 14, 30, 130.0), ora);
         assert_eq!((t.frazione, t.testo.as_str()), (1.0, "100%"));

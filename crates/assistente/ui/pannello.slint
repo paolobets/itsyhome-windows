@@ -330,8 +330,12 @@ export component Pannello inherits Window {
     property <int> fuoco-stanza: -1;
     property <int> fuoco-stanza-valido: max(-1, min(fuoco-stanza, stanze.length - 1));
     // Vista Claude: riga col fuoco (↑/↓), sempre dentro le righe che ci sono.
-    property <int> fuoco-sessione: 0;
-    property <int> fuoco-sessione-valido: max(0, min(fuoco-sessione, claude-righe.length - 1));
+    // Il fuoco segue la sessione (l'impronta), non la posizione: se le righe si riordinano resta
+    // sulla stessa sessione. Senza una scelta (o se la sessione è sparita) è la prima riga.
+    property <string> fuoco-sessione-id;
+    property <int> fuoco-sessione-valido: claude-righe.length > 0 && claude-righe[0].id == fuoco-sessione-id ? 0
+        : claude-righe.length > 1 && claude-righe[1].id == fuoco-sessione-id ? 1
+        : claude-righe.length > 2 && claude-righe[2].id == fuoco-sessione-id ? 2 : 0;
     // Collegamenti: card col fuoco (-1 = «Modifica» nella testata), 3 colonne.
     property <int> fuoco-collegamento: 0;
     property <int> fuoco-collegamento-valido: min(fuoco-collegamento, collegamenti.length - 1);
@@ -700,9 +704,9 @@ export component Pannello inherits Window {
         } else if (zona == Zona.contenuto && vista == "claude" && claude-collegato && claude-righe.length > 0) {
             // ↑/↓ fra le righe, ai bordi si resta.
             if (k == Key.UpArrow) {
-                fuoco-sessione = max(0, fuoco-sessione-valido - 1);
+                fuoco-sessione-id = claude-righe[max(0, fuoco-sessione-valido - 1)].id;
             } else if (k == Key.DownArrow) {
-                fuoco-sessione = min(claude-righe.length - 1, fuoco-sessione-valido + 1);
+                fuoco-sessione-id = claude-righe[min(claude-righe.length - 1, fuoco-sessione-valido + 1)].id;
             }
         } else if (zona == Zona.contenuto && vista == "collegamenti" && collegamenti.length > 0) {
             // -1 = «Modifica» nella testata: ↑ dalla prima riga, ↓ torna alle card.

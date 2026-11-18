@@ -238,8 +238,8 @@ export component VistaClaude inherits Rectangle {
     in property <int> altre;
     in property <LimiteClaudeUi> cinque-ore;
     in property <LimiteClaudeUi> sette-giorni;
-    // La spesa API del mese («412,80 $», vuoto se non c'è) e la sua nota («aggiornato alle 14:02
-    // UTC», «nessun dato» o la frase per aggiungere la chiave).
+    // La spesa API del mese («412,80 $», vuoto se non c'è) e la sua nota («aggiornato alle 14:02», ora
+    // locale, «nessun dato» o la frase per aggiungere la chiave).
     in property <string> spesa;
     in property <string> spesa-nota;
     // Riga col fuoco da tastiera (-1 = nessuna) e fuoco su «Impostazioni» (stato scollegato).
@@ -275,11 +275,11 @@ export component VistaClaude inherits Rectangle {
         y: righe.length * (alto-riga + spazio) + 2px;
         width: larghezza-sinistra - 8px;
         height: 18px;
-        text: "+" + altre + " altre";
+        text: altre == 1 ? "+1 altra" : "+" + altre + " altre";
         vertical-alignment: center;
         font-size: Tema.testo-piccolo;
         color: Tema.testo-tenue;
-        accessible-label: "e altre " + altre + " sessioni";
+        accessible-label: altre == 1 ? "e un'altra sessione" : "e altre " + altre + " sessioni";
     }
 
     // Nessuna sessione (collegato).
@@ -409,7 +409,7 @@ export component VistaClaude inherits Rectangle {
         width: larghezza-destra;
         height: 2 * alto-card-limite + spazio;
         testo: "Limiti non disponibili";
-        dettaglio: "Servono un abbonamento Claude e una sessione al lavoro.";
+        dettaglio: collegato ? "Compaiono dopo la prima risposta di una sessione, con un abbonamento Claude." : "Si vedono dopo aver collegato Claude Code.";
     }
 
     // La spesa API del mese: il valore e, sotto, da quando sono i dati (o perché non c'è).
@@ -422,7 +422,7 @@ export component VistaClaude inherits Rectangle {
         border-width: 1px;
         border-color: Tema.vetro-bordo;
         background: Tema.card-vetro;
-        accessible-role: progress-indicator;
+        accessible-role: text;
         accessible-label: "Spesa API del mese";
         accessible-value: spesa != "" ? spesa : spesa-nota;
         accessible-description: spesa != "" ? spesa-nota : "";

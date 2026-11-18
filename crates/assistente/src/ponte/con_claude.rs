@@ -360,7 +360,8 @@ impl Ponte {
     /// già azzerato (`azzera_alle <= ora`) vale come assente. Senza abbonamento niente anelli.
     pub fn limiti_a(&self, ora: i64) -> (Option<Limite>, Option<Limite>) {
         let (c, s) = self.claude_limiti.borrow().unwrap_or((None, None));
-        (c.filter(|l| l.azzera_alle > ora), s.filter(|l| l.azzera_alle > ora))
+        let buono = |l: &Limite| l.azzera_alle > ora && l.percentuale.is_finite();
+        (c.filter(buono), s.filter(buono))
     }
 
     /// Come `limiti_a`, all'ora di adesso.
@@ -634,7 +635,33 @@ impl Ponte {
         if self.vista_claude.replace(si) == si {
             return;
         }
+        if !si {
+            self.sveglia_limiti.stop();
+            self.limiti_armati.set(None);
+        }
         self.aggiorna_claude_pillola();
+    }
+
+    /// Una sveglia singola (mai ripetuta) all'azzeramento del primo limite mostrato: ripassa dalla
+    /// vista, che toglie l'anello scaduto. Si riarma solo se l'istante cambia; senza limiti si ferma.
+    fn arma_sveglia_limiti(&self, prossimo: Option<i64>, adesso: i64) {
+        if self.limiti_armati.get() == prossimo {
+            return;
+        }
+        self.limiti_armati.set(prossimo);
+        match prossimo {
+            None => self.sveglia_limiti.stop(),
+            Some(quando) => {
+                // Un secondo dopo, perché `azzera_alle <= ora` valga di sicuro.
+                let tra = Duration::from_secs((quando - adesso).max(0) as u64 + 1);
+                self.sveglia_limiti.start(slint::TimerMode::SingleShot, tra, || {
+                    if let Some(p) = ponte() {
+                        p.limiti_armati.set(None);
+                        p.aggiorna_vista_claude();
+                    }
+                });
+            }
+        }
     }
 
     /// I dati della vista Claude, scritti solo se la vista è aperta e solo ciò che è cambiato: le
@@ -664,6 +691,7 @@ impl Ponte {
         }
         let adesso = chrono::Local::now();
         let (cinque, sette) = self.limiti();
+        self.arma_sveglia_limiti([cinque, sette].into_iter().flatten().map(|l| l.azzera_alle).min(), adesso.timestamp());
         let (cinque, sette) = (limite_ui(cinque, adesso), limite_ui(sette, adesso));
         if p.get_claude_cinque_ore() != cinque {
             p.set_claude_cinque_ore(cinque);
@@ -1571,7 +1599,7 @@ mod test {
             manda(&p, ev(id, TipoEvento::UserPromptSubmit));
         }
         assert_eq!((pannello.get_claude_righe().row_count(), pannello.get_claude_altre()), (3, 2));
-        // Il tick di un secondo riscrive solo la durata di chi lavora.
+        // Solo chi lavora ha una durata (le altre righe non ne hanno).
         let prima: Vec<String> = (0..3).map(|i| pannello.get_claude_righe().row_data(i).unwrap().durata.to_string()).collect();
         assert_eq!(prima.iter().filter(|d| !d.is_empty()).count(), 2);
         // Chiusa di nuovo: gli eventi non scrivono più.
@@ -1621,6 +1649,43 @@ mod test {
     }
 
     #[test]
+    fn sveglia_singola_all_azzeramento_solo_a_vista_aperta() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let _pannello = con_pannello(&p);
+        let ora = chrono::Local::now().timestamp();
+        p.vista_claude(true);
+        assert!(!p.sveglia_limiti.running(), "senza limiti nessuna sveglia");
+        // Due limiti: la sveglia è per il primo ad azzerarsi.
+        p.claude_barra(barra("a", Some((10.0, ora + 600)), Some((20.0, ora + 90_000))));
+        assert!(p.sveglia_limiti.running());
+        assert_eq!(p.limiti_armati.get(), Some(ora + 600));
+        // Cambia il primo: si riarma per il nuovo istante.
+        p.claude_barra(barra("a", Some((10.0, ora + 300)), None));
+        assert_eq!(p.limiti_armati.get(), Some(ora + 300));
+        // Vista chiusa: niente sveglia.
+        p.vista_claude(false);
+        assert!(!p.sveglia_limiti.running());
+        assert_eq!(p.limiti_armati.get(), None);
+        p.claude_barra(barra("a", Some((10.0, ora + 300)), None));
+        assert!(!p.sveglia_limiti.running(), "a vista chiusa non si arma");
+        // Riaperta: si arma di nuovo; un limite che scade toglie l'anello e la sveglia.
+        p.vista_claude(true);
+        assert!(p.sveglia_limiti.running());
+        p.claude_barra(barra("a", Some((10.0, 1000)), Some((20.0, 2000))));
+        assert!(!p.sveglia_limiti.running(), "senza limiti validi la sveglia si ferma");
+    }
+
+    #[test]
+    fn percentuale_non_finita_e_assenza_non_zero() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let pannello = con_pannello(&p);
+        p.vista_claude(true);
+        p.claude_barra(barra("a", Some((f32::NAN, FUTURO)), Some((f32::INFINITY, FUTURO))));
+        assert!(!pannello.get_claude_cinque_ore().presente && !pannello.get_claude_sette_giorni().presente);
+        assert_eq!(p.limiti(), (None, None));
+    }
+
+    #[test]
     fn spesa_nella_vista_con_e_senza_chiave() {
         let (_s, p, _pillola, _d) = ponte_di_prova();
         let pannello = con_pannello(&p);
@@ -1640,7 +1705,8 @@ mod test {
         };
         p.api_arrivato(p.api_generazione.get(), "14:05".into(), Ok(r));
         assert_eq!(pannello.get_claude_spesa().as_str(), "412,80 $");
-        assert_eq!(pannello.get_claude_spesa_nota().as_str(), "aggiornato alle 14:02 UTC");
+        let locale = chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2026, 11, 18, 14, 2, 0).unwrap().with_timezone(&chrono::Local);
+        assert_eq!(pannello.get_claude_spesa_nota().as_str(), format!("aggiornato alle {}", locale.format("%H:%M")));
         // La chiave tolta: torna la frase.
         p.api_togli_ui();
         p.vista_claude(false);

@@ -867,6 +867,11 @@ pub struct Ponte {
     /// servitore vecchio («canale perso») non ferma quello nuovo (M3, Task 7B).
     claude_generazione: Cell<u64>,
     sveglia_claude: slint::Timer,
+    /// La sveglia singola della vista Claude (Task 9): all'azzeramento del primo limite mostrato,
+    /// perché un anello scaduto sparisca in orario. Solo a vista aperta; `limiti_armati` è
+    /// l'istante (secondi dall'epoca) per cui è armata.
+    sveglia_limiti: slint::Timer,
+    limiti_armati: Cell<Option<i64>>,
     /// Chiave da amministratore e letture delle API (M3, Task 8): il timer da 3 ore (esiste solo con
     /// la chiave), una lettura in corso, una prova in corso, l'ultimo esito (ora e riepilogo).
     sveglia_api: slint::Timer,
@@ -990,6 +995,8 @@ pub fn collega(
         claude_preparato: RefCell::new(None),
         claude_generazione: Cell::new(0),
         sveglia_claude: slint::Timer::default(),
+        sveglia_limiti: slint::Timer::default(),
+        limiti_armati: Cell::new(None),
         sveglia_api: slint::Timer::default(),
         api_in_corso: RefCell::new(Default::default()),
         api_generazione: Cell::new(0),
