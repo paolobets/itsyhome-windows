@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — v3 «assistente isola» (ramo `v3-assistente`, milestone M1 e M2)
 
+### Fixed (M3, Task 11: schede accessibili e rifiniture dalla revisione)
+- **Narrator e tastiera nelle schede**: le schede stanno in un `tab-list` e ognuna è un `tab` col fuoco (Tab raggiunge solo quella scelta; ←/→/Home/Fine spostano insieme fuoco e scelta, con posizione e numero); la tabella è una `list` e ogni riga un `list-item` col fuoco la cui etichetta legge le celle con i nomi delle colonne («Nome: …, Stato: …»), ↑/↓/PagSu/PagGiù/Home/Fine passano da una riga all'altra e la riga si porta in vista. Provato con un test Slint nella finestra (ruoli, nomi, scelta che segue i tasti) e con l'albero UIA del processo vero.
+- Nessuna cella con `sk-ant-` nemmeno con caratteri invisibili in mezzo (il controllo ora sta dopo `testo_pulito`, dentro `scheda_pulita`); tetti del protocollo: al più 8 schede e 500 caratteri per cella; tolta la proprietà `n` mai usata.
+- «Aggiorna»: almeno 60 s fra due richieste dell'utente («Appena aggiornato: riprova fra N s»), e «Lettura in corso…» nella nota finché la lettura dura.
+- Ogni processo della finestra ha un numero: una `chiusa` tardiva di un processo vecchio non segna chiusa la finestra nuova, e una lettura finita non riapre mai una finestra chiusa.
+- Le chiamate del mese di una chiave si abbinano per id (non per nome); «Dettagli» ha il nome accessibile «Dettagli delle API»; la prova del figlio finto controlla ciò che il figlio riceve davvero.
+
 ### Added (M3, Task 11: dettaglio delle API Claude nella finestra di gestione, spec M3 §6.7 e §6.8)
 - **«Dettagli»** nella vista Claude (nella card della spesa, solo con la chiave da amministratore): apre la finestra di gestione con cinque **schede native** in sola lettura, **Spesa** (mese, ieri, per modello, chiave e workspace, ultimi giorni), **Token** (ingresso, uscita, cache, chiamate del mese), **Chiavi** (nome, stato in italiano, creata, scade, ultime cifre del suggerimento, chiamate del mese), **Workspace e membri**, **Limiti**. Ogni scheda dice «Aggiornato al … · dati con 4–24 ore di ritardo» (o «Letto alle …»), oppure «Non disponibile con questa chiave»; mai «0 $» al posto di «nessun dato».
 - **Mai il valore di una chiave**: dell'API si tiene solo la coda di `partial_key_hint` (api-claude: `InfoChiave` ha ora `creata` e `suggerimento`), e ogni cella che contenesse `sk-ant-` si sostituisce con «—» (provato).

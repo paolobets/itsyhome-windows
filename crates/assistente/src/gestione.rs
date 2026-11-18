@@ -19,8 +19,8 @@
 //! sotto); l'eseguibile `itsyhome-gestione` si costruisce con `-p gestione`, non con
 //! `-p assistente`, e va distribuito accanto a quello dell'assistente.
 
-use gestione_protocollo::{messaggio_da_riga, riga_da_messaggio, scheda_pulita, titolo_pulito, Messaggio, SchedaDati};
-use std::cell::RefCell;
+use gestione_protocollo::{messaggio_da_riga, riga_da_messaggio, schede_pulite, titolo_pulito, Messaggio, SchedaDati};
+use std::cell::{Cell, RefCell};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -46,7 +46,9 @@ const ATTESA_USCITA: Duration = Duration::from_secs(5);
 /// (lato fidato, HTML anche grandi) nessun limite.
 const LIMITE_RIGA: usize = 64 * 1024;
 
-type AlMessaggio = Arc<dyn Fn(Messaggio) + Send + Sync>;
+/// Il numero del processo (`Gestione::generazione`) e il suo messaggio: chi riceve distingue un
+/// messaggio tardivo di un processo vecchio da quelli della finestra di adesso.
+type AlMessaggio = Arc<dyn Fn(u64, Messaggio) + Send + Sync>;
 
 pub struct Gestione {
     /// Percorso assoluto accanto all'eseguibile dell'assistente, o perché non lo si conosce.
@@ -54,11 +56,15 @@ pub struct Gestione {
     dati: PathBuf,
     al_messaggio: AlMessaggio,
     figlio: Option<Figlio>,
+    /// Quanti processi si sono avviati: il numero dell'ultimo è la generazione della finestra.
+    avviati: Cell<u64>,
     /// Processi lasciati andare (chiusi o in chiusura): si aspettano all'uscita.
     congedati: Vec<Congedato>,
 }
 
 struct Figlio {
+    /// Il numero di questo processo (1, 2, 3…).
+    numero: u64,
     /// Righe verso lo scrittore; chiuderlo chiude lo stdin del figlio.
     invio: Sender<String>,
     /// Falso appena la finestra si chiude (`chiusa` o stdout chiuso).
@@ -98,7 +104,7 @@ impl Gestione {
     /// `al_messaggio` riceve `pronta`, `azione` e `chiusa` (una volta per processo, anche se il
     /// figlio è morto senza dirlo). **Gira sul thread del guardiano**, non su quello
     /// dell'interfaccia: chi tocca l'interfaccia passa da `slint::invoke_from_event_loop`.
-    pub fn new(cartella_assistente: &Path, al_messaggio: impl Fn(Messaggio) + Send + Sync + 'static) -> Self {
+    pub fn new(cartella_assistente: &Path, al_messaggio: impl Fn(u64, Messaggio) + Send + Sync + 'static) -> Self {
         let eseguibile = std::env::current_exe()
             .map_err(|e| format!("finestra di gestione: posizione dell'assistente sconosciuta: {e}"))
             .and_then(|e| {
@@ -113,7 +119,7 @@ impl Gestione {
     pub fn con_eseguibile(
         eseguibile: PathBuf,
         dati: PathBuf,
-        al_messaggio: impl Fn(Messaggio) + Send + Sync + 'static,
+        al_messaggio: impl Fn(u64, Messaggio) + Send + Sync + 'static,
     ) -> Self {
         Self::costruisci(Ok(eseguibile), dati, al_messaggio)
     }
@@ -121,9 +127,9 @@ impl Gestione {
     fn costruisci(
         eseguibile: Result<PathBuf, String>,
         dati: PathBuf,
-        al_messaggio: impl Fn(Messaggio) + Send + Sync + 'static,
+        al_messaggio: impl Fn(u64, Messaggio) + Send + Sync + 'static,
     ) -> Self {
-        Self { eseguibile, dati, al_messaggio: Arc::new(al_messaggio), figlio: None, congedati: Vec::new() }
+        Self { eseguibile, dati, al_messaggio: Arc::new(al_messaggio), figlio: None, congedati: Vec::new(), avviati: Cell::new(0) }
     }
 
     /// Mostra il contenuto: avvia il processo se non c'è (o se la sua finestra è stata chiusa),
@@ -141,10 +147,23 @@ impl Gestione {
     /// Mostra (o aggiorna) le schede native del dettaglio delle API: nessun riquadro web. Titolo e
     /// testi delle schede sono NON fidati; la finestra li ripulisce di nuovo (`scheda_pulita`).
     /// Stesso significato di `apri`: `Ok` vuol dire inviato.
-    pub fn apri_schede(&mut self, titolo: &str, schede: Vec<SchedaDati>) -> Result<(), String> {
+    /// Restituisce la generazione del processo a cui è andato il messaggio.
+    pub fn apri_schede(&mut self, titolo: &str, schede: &[SchedaDati]) -> Result<u64, String> {
         let titolo = titolo_pulito(titolo);
-        let schede = schede.iter().map(scheda_pulita).collect();
-        self.manda(riga_da_messaggio(&Messaggio::ApriSchede { titolo, schede }))
+        let schede = schede_pulite(schede);
+        self.manda(riga_da_messaggio(&Messaggio::ApriSchede { titolo, schede }))?;
+        Ok(self.generazione())
+    }
+
+    /// La generazione della finestra di adesso: il numero del processo corrente, 0 se non c'è.
+    pub fn generazione(&self) -> u64 {
+        self.figlio.as_ref().map_or(0, |f| f.numero)
+    }
+
+    /// C'è un processo con la finestra ancora aperta (non l'ha chiusa nessuno): solo a lui si
+    /// manda un aggiornamento che nessuno ha chiesto, senza mai farne partire uno nuovo.
+    pub fn viva(&self) -> bool {
+        self.figlio.as_ref().is_some_and(|f| f.viva.load(Ordering::SeqCst))
     }
 
     /// Una riga allo scrittore del processo, avviandolo se non c'è (o se la sua finestra è stata
@@ -230,6 +249,8 @@ impl Gestione {
         let processo = Arc::new(Mutex::new(processo));
         let viva = Arc::new(AtomicBool::new(true));
         let (invio, ricezione) = mpsc::channel::<String>();
+        let numero = self.avviati.get() + 1;
+        self.avviati.set(numero);
 
         let filo = |nome: &str, corpo: Box<dyn FnOnce() + Send>| {
             std::thread::Builder::new()
@@ -247,7 +268,7 @@ impl Gestione {
         };
         let guardiano = {
             let (processo, viva, al_messaggio) = (processo.clone(), viva.clone(), self.al_messaggio.clone());
-            filo("gestione-guardiano", Box::new(move || guarda(processo, stdout, viva, al_messaggio)))
+            filo("gestione-guardiano", Box::new(move || guarda(processo, stdout, viva, al_messaggio, numero)))
         };
         let guardiano = match guardiano {
             Ok(g) => g,
@@ -256,7 +277,7 @@ impl Gestione {
                 return Err(e);
             }
         };
-        Ok(Figlio { invio, viva, fili: Congedato { processo, guardiano, scrittore } })
+        Ok(Figlio { numero, invio, viva, fili: Congedato { processo, guardiano, scrittore } })
     }
 }
 
@@ -316,6 +337,7 @@ fn guarda(
     stdout: std::process::ChildStdout,
     viva: Arc<AtomicBool>,
     al_messaggio: AlMessaggio,
+    numero: u64,
 ) {
     let mut lettore = BufReader::new(stdout);
     let mut buf = Vec::new();
@@ -325,14 +347,14 @@ fn guarda(
             Riga::TroppoLunga => eprintln!("finestra di gestione: riga troppo lunga, scartata"),
             Riga::Testo(riga) => match messaggio_da_riga(&riga) {
                 Ok(Messaggio::Chiusa) => break,
-                Ok(m) => al_messaggio(m),
+                Ok(m) => al_messaggio(numero, m),
                 Err(e) => eprintln!("finestra di gestione: {e}"),
             },
         }
     }
     // `chiusa` o stdout chiuso: per l'assistente la finestra non c'è più (una volta sola).
     viva.store(false, Ordering::SeqCst);
-    al_messaggio(Messaggio::Chiusa);
+    al_messaggio(numero, Messaggio::Chiusa);
     let limite = Instant::now() + ATTESA_USCITA;
     loop {
         let esito = processo.lock().map(|mut p| p.try_wait());
@@ -376,7 +398,7 @@ fn calendario_prova(cicli: Option<u32>) -> Vec<(Duration, bool)> {
 pub fn prova(cartella_assistente: &Path, cicli: Option<u32>) {
     let aperta_alle: Arc<Mutex<Option<Instant>>> = Arc::default();
     let per_messaggi = aperta_alle.clone();
-    let gestione = Gestione::new(cartella_assistente, move |m| match m {
+    let gestione = Gestione::new(cartella_assistente, move |_, m| match m {
         Messaggio::Pronta => {
             let ms = per_messaggi.lock().ok().and_then(|t| *t).map(|t| t.elapsed().as_millis());
             eprintln!("finestra di gestione: pronta dopo {} ms", ms.unwrap_or_default());
@@ -445,14 +467,14 @@ mod test {
     #[test]
     fn senza_posizione_dell_assistente_errore_senza_percorsi_relativi() {
         let dir = tempfile::tempdir().unwrap();
-        let mut g = Gestione::costruisci(Err("posizione sconosciuta".into()), dir.path().join("dati"), |_| {});
+        let mut g = Gestione::costruisci(Err("posizione sconosciuta".into()), dir.path().join("dati"), |_, _| {});
         assert_eq!(g.apri("T", "x"), Err("posizione sconosciuta".into()));
     }
 
     #[test]
     fn senza_eseguibile_apri_e_un_errore_non_un_panico() {
         let dir = tempfile::tempdir().unwrap();
-        let mut g = Gestione::con_eseguibile(dir.path().join(NOME_ESEGUIBILE), dir.path().join("dati"), |_| {});
+        let mut g = Gestione::con_eseguibile(dir.path().join(NOME_ESEGUIBILE), dir.path().join("dati"), |_, _| {});
         let errore = g.apri("T", "<p>x</p>").unwrap_err();
         assert!(errore.contains("non trovato"), "{errore}");
         g.chiudi();
@@ -477,7 +499,7 @@ mod test {
         let dir = tempfile::tempdir().unwrap();
         let (tx, rx) = std::sync::mpsc::channel();
         let tx = Mutex::new(tx);
-        let g = Gestione::con_eseguibile(figlio_finto(), dir.path().join(modo), move |m| {
+        let g = Gestione::con_eseguibile(figlio_finto(), dir.path().join(modo), move |_, m| {
             let _ = tx.lock().unwrap().send(m);
         });
         (g, rx, dir)
@@ -507,19 +529,64 @@ mod test {
     }
 
     #[test]
-    fn le_schede_arrivano_al_figlio_e_la_finestra_risponde() {
-        let (mut g, rx, _dir) = con_figlio("educato");
-        let sporca = SchedaDati {
-            nome: "Spesa".into(),
+    fn le_schede_arrivano_al_figlio_ripulite_e_limitate() {
+        use gestione_protocollo::{messaggio_da_riga, CELLA_MASSIMA, COLONNE_MASSIME, RIGHE_MASSIME, SCHEDE_MASSIME};
+        let (mut g, rx, dir) = con_figlio("educato");
+        let sporca = |nome: &str| SchedaDati {
+            nome: nome.into(),
             nota: "n\u{202E}ota".into(),
             colonne: (0..9).map(|i| format!("c{i}")).collect(),
-            righe: (0..300).map(|i| vec![format!("r{i}")]).collect(),
+            righe: (0..300).map(|i| (0..9).map(|j| format!("r{i}\u{200B}c{j}")).collect()).collect(),
             azione_console: "console:spesa".into(),
         };
-        g.apri_schede("API \u{202E}Claude", vec![sporca]).unwrap();
+        let mut lunga = sporca("Lunga");
+        lunga.righe = vec![vec!["x".repeat(900)]];
+        let mut schede: Vec<SchedaDati> = (0..12).map(|i| sporca(&format!("S{i}"))).collect();
+        schede.push(lunga);
+        g.apri_schede("API \u{202E}Claude", &schede).unwrap();
         assert_eq!(rx.recv_timeout(Duration::from_secs(10)), Ok(Messaggio::Pronta));
+        // Ciò che il figlio ha davvero ricevuto: pulito e limitato, prima ancora della sua difesa.
+        let ricevuto = std::fs::read_to_string(dir.path().join("ultima.json")).expect("il figlio ha salvato la riga");
+        let Ok(Messaggio::ApriSchede { titolo, schede }) = messaggio_da_riga(&ricevuto) else { panic!("{ricevuto}") };
+        assert_eq!(titolo, "API Claude");
+        assert_eq!(schede.len(), SCHEDE_MASSIME);
+        assert_eq!(schede[0].nota, "nota");
+        assert_eq!(schede[0].colonne.len(), COLONNE_MASSIME);
+        assert_eq!(schede[0].righe.len(), RIGHE_MASSIME);
+        assert!(schede[0].righe.iter().all(|r| r.len() == COLONNE_MASSIME));
+        assert_eq!(schede[0].righe[0][0], "r0c0");
+        assert!(!ricevuto.contains('\u{202E}') && !ricevuto.contains('\u{200B}'));
+        assert!(schede.iter().flat_map(|s| s.righe.iter().flatten()).all(|c| c.chars().count() <= CELLA_MASSIMA));
         g.chiudi();
         assert_eq!(rx.recv_timeout(Duration::from_secs(10)), Ok(Messaggio::Chiusa));
+    }
+
+    #[test]
+    fn ogni_processo_ha_la_sua_generazione_e_la_chiusa_lo_dice() {
+        let dir = tempfile::tempdir().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let tx = Mutex::new(tx);
+        let mut g = Gestione::con_eseguibile(figlio_finto(), dir.path().join("educato"), move |n, m| {
+            let _ = tx.lock().unwrap().send((n, m));
+        });
+        assert_eq!((g.generazione(), g.viva()), (0, false));
+        let schede = [SchedaDati { nome: "S".into(), nota: String::new(), colonne: vec![], righe: vec![], azione_console: "console:spesa".into() }];
+        assert_eq!(g.apri_schede("T", &schede), Ok(1));
+        assert_eq!(rx.recv_timeout(Duration::from_secs(10)), Ok((1, Messaggio::Pronta)));
+        assert!(g.viva());
+        g.chiudi();
+        assert_eq!(g.generazione(), 0, "congedato: non c'è più una finestra corrente");
+        assert!(!g.viva());
+        // Un secondo processo: il suo numero è un altro, e la `chiusa` del primo resta del primo.
+        assert_eq!(g.apri_schede("T", &schede), Ok(2));
+        let mut visti = vec![];
+        while visti.len() < 2 {
+            visti.push(rx.recv_timeout(Duration::from_secs(10)).expect("messaggio"));
+        }
+        assert!(visti.contains(&(1, Messaggio::Chiusa)), "{visti:?}");
+        assert!(visti.contains(&(2, Messaggio::Pronta)), "{visti:?}");
+        g.chiudi();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(10)), Ok((2, Messaggio::Chiusa)));
     }
 
     #[test]

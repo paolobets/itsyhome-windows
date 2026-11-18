@@ -444,6 +444,8 @@ fn riepilogo_completo_dalle_fixture() {
         "solo la coda del suggerimento"
     );
     assert!(r.chiavi[0].creata.is_some());
+    // Le chiamate del mese stanno sulla chiave, per id.
+    assert_eq!((r.chiavi[0].chiamate, r.chiavi[1].chiamate), (Some(90), Some(38)));
     assert_eq!(r.workspace.len(), 1);
     assert_eq!(r.membri[0].email, "membro@example.com");
     assert_eq!(r.limiti.len(), 2);

@@ -38,6 +38,13 @@ fn main() {
             for riga in std::io::stdin().lock().lines() {
                 let Ok(riga) = riga else { break };
                 if riga.contains(r#""tipo":"apri""#) || riga.contains(r#""tipo":"apri_schede""#) {
+                    // Le schede arrivate si salvano accanto al PID (`ultima.json`): chi prova vede
+                    // cosa ha davvero ricevuto il figlio.
+                    if riga.contains(r#""tipo":"apri_schede""#) {
+                        if let Some(su) = dati.parent() {
+                            let _ = std::fs::write(su.join("ultima.json"), &riga);
+                        }
+                    }
                     let _ = writeln!(uscita, r#"{{"tipo":"pronta"}}"#);
                 } else if riga.contains(r#""tipo":"chiudi""#) {
                     let _ = writeln!(uscita, r#"{{"tipo":"chiusa"}}"#);

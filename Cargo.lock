@@ -1954,6 +1954,7 @@ name = "gestione"
 version = "0.1.0"
 dependencies = [
  "gestione-protocollo",
+ "i-slint-backend-testing",
  "slint",
  "slint-build",
  "webview2-com",

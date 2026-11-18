@@ -3,44 +3,93 @@
 // API (non fidati), ma qui sono solo `Text`: nessun HTML, nessun collegamento, e al più 200 righe
 // per 6 colonne per scheda (lo garantisce `scheda_pulita`, prima di arrivare qui).
 //
-// Tastiera: Tab porta il fuoco dalla riga delle schede alla tabella e ai pulsanti; ←/→/Home/Fine
-// cambiano scheda; nella tabella ↑/↓/PagSu/PagGiù/Home/Fine scorrono. Per Narrator le schede sono
-// `tab`, scelta quella corrente.
+// Tastiera e Narrator (stesso schema di impostazioni.slint e casa.slint): le schede stanno in un
+// `tab-list` e ognuna è un elemento `tab` col fuoco (uno solo raggiungibile con Tab, quello scelto);
+// ←/→/Home/Fine spostano insieme fuoco e scelta. La tabella è una `list` e ogni riga un `list-item`
+// col fuoco, la cui etichetta legge le celle con il nome della colonna («Nome: …, Stato: …»);
+// ↑/↓/PagSu/PagGiù/Home/Fine spostano il fuoco da una riga all'altra e la riga si porta in vista.
 import { Tema } from "../../assistente/ui/tema.slint";
 import { Anello, Etichetta, Pulsante, TipoPulsante } from "../../assistente/ui/componenti.slint";
+
+// Una riga della tabella: le celle da mostrare e, per Narrator, il testo che le legge tutte.
+export struct RigaUi {
+    celle: [string],
+    testo: string,
+}
 
 export struct SchedaUi {
     nome: string,
     nota: string,
     colonne: [string],
-    righe: [[string]],
+    righe: [RigaUi],
     azione-console: string,
 }
 
-// Una scheda della riga in alto.
-component Linguetta inherits Rectangle {
+// Una scheda della riga in alto: un elemento `tab` col fuoco.
+component Linguetta inherits FocusScope {
     in property <string> testo;
     in property <bool> scelta;
-    in property <bool> anello;
+    in property <int> indice;
+    in property <int> quante;
+    // Il contatore sale ogni volta che il fuoco deve tornare sulla scheda scelta.
+    in property <int> tocco;
+    callback scelta-da-tasti(int);
     callback scelta-da-clic();
+
+    changed tocco => {
+        if (self.scelta) {
+            self.focus();
+        }
+    }
 
     height: 28px;
     width: etichetta.preferred-width + 24px;
-    border-radius: Tema.raggio-s;
-    background: scelta ? Tema.scheda-attiva : area.has-hover ? Tema.scheda-sopra : transparent;
+    // Con Tab si raggiunge solo la scheda scelta; le altre si raggiungono con le frecce.
+    focus-on-tab-navigation: scelta;
+    focus-on-click: false;
     accessible-role: tab;
     accessible-label: testo;
     accessible-item-selectable: true;
     accessible-item-selected: scelta;
+    accessible-item-index: indice;
+    accessible-item-count: quante;
     accessible-action-default => { root.scelta-da-clic(); }
+    key-pressed(evento) => {
+        if (evento.modifiers.alt || evento.modifiers.control || evento.modifiers.meta) {
+            return reject;
+        }
+        if (evento.text == Key.LeftArrow) {
+            root.scelta-da-tasti(indice - 1);
+            return accept;
+        }
+        if (evento.text == Key.RightArrow) {
+            root.scelta-da-tasti(indice + 1);
+            return accept;
+        }
+        if (evento.text == Key.Home) {
+            root.scelta-da-tasti(0);
+            return accept;
+        }
+        if (evento.text == Key.End) {
+            root.scelta-da-tasti(quante - 1);
+            return accept;
+        }
+        return reject;
+    }
 
-    etichetta := Text {
-        text: root.testo;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-        font-size: Tema.testo-corpo;
-        font-weight: scelta ? 500 : 400;
-        color: scelta ? Tema.testo : Tema.testo-tenue;
+    Rectangle {
+        border-radius: Tema.raggio-s;
+        background: scelta ? Tema.scheda-attiva : area.has-hover ? Tema.scheda-sopra : transparent;
+
+        etichetta := Text {
+            text: root.testo;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            font-size: Tema.testo-corpo;
+            font-weight: scelta ? 500 : 400;
+            color: scelta ? Tema.testo : Tema.testo-tenue;
+            accessible-role: none;
+        }
     }
 
     area := TouchArea {
@@ -48,7 +97,90 @@ component Linguetta inherits Rectangle {
         clicked => { root.scelta-da-clic(); }
     }
 
-    if root.anello: Anello { raggio: Tema.raggio-s; distanza: 1px; }
+    if root.has-focus: Anello { raggio: Tema.raggio-s; distanza: 1px; }
+}
+
+// Una riga della tabella: un elemento `list-item` col fuoco che legge tutte le sue celle.
+component RigaTabella inherits FocusScope {
+    in property <RigaUi> riga;
+    in property <int> indice;
+    in property <int> quante;
+    in property <bool> ultima;
+    in property <length> unita;
+    in property <int> tocco;
+    in property <int> richiesta;
+    callback spostata(int);
+    callback in-vista();
+
+    changed tocco => {
+        if (self.indice == self.richiesta) {
+            self.focus();
+        }
+    }
+    changed has-focus => {
+        if (self.has-focus) {
+            root.in-vista();
+        }
+    }
+
+    focus-on-tab-navigation: ultima;
+    focus-on-click: false;
+    accessible-role: list-item;
+    accessible-label: riga.testo;
+    accessible-item-index: indice;
+    accessible-item-count: quante;
+    key-pressed(evento) => {
+        if (evento.modifiers.alt || evento.modifiers.control || evento.modifiers.meta) {
+            return reject;
+        }
+        if (evento.text == Key.DownArrow) {
+            root.spostata(indice + 1);
+            return accept;
+        }
+        if (evento.text == Key.UpArrow) {
+            root.spostata(indice - 1);
+            return accept;
+        }
+        if (evento.text == Key.PageDown) {
+            root.spostata(indice + 8);
+            return accept;
+        }
+        if (evento.text == Key.PageUp) {
+            root.spostata(indice - 8);
+            return accept;
+        }
+        if (evento.text == Key.Home) {
+            root.spostata(0);
+            return accept;
+        }
+        if (evento.text == Key.End) {
+            root.spostata(quante - 1);
+            return accept;
+        }
+        return reject;
+    }
+
+    Rectangle {
+        background: root.has-focus ? Tema.scheda-attiva : mod(indice, 2) == 1 ? Tema.card-fondo : transparent;
+    }
+
+    for cella[ci] in riga.celle: Text {
+        x: 12px + (ci == 0 ? 0px : (ci + 0.6) * unita);
+        width: (ci == 0 ? 1.6 : 1.0) * unita - 8px;
+        height: parent.height;
+        text: cella;
+        vertical-alignment: center;
+        overflow: elide;
+        font-size: Tema.testo-corpo;
+        color: ci == 0 ? Tema.testo : Tema.testo-ora;
+        accessible-role: none;
+    }
+
+    if root.has-focus: Rectangle {
+        border-width: 1px;
+        border-color: Tema.anello;
+        border-radius: Tema.raggio-s;
+    }
 }
 
 export component Schede inherits Rectangle {
@@ -59,7 +191,6 @@ export component Schede inherits Rectangle {
     callback apri-console(string);
     callback aggiorna();
 
-    property <int> n: max(1, min(schede.length, 5));
     property <int> scelta: min(max(0, corrente), max(0, schede.length - 1));
     property <SchedaUi> attiva: schede[scelta];
     property <length> alto-riga: 28px;
@@ -68,13 +199,23 @@ export component Schede inherits Rectangle {
     property <int> colonne: max(1, attiva.colonne.length);
     // La prima colonna (il nome) pesa un po' di più.
     property <length> unita: (self.width - 24px) / (colonne + 0.6);
+    // Il fuoco delle schede e quello delle righe si chiedono con un contatore e un indice.
+    property <int> tocco-schede: 0;
+    property <int> tocco-righe: 0;
+    property <int> riga-richiesta: 0;
+    // L'ultima riga che ha avuto il fuoco: quella che Tab raggiunge.
+    property <int> riga-ultima: 0;
+    property <int> n-righe: attiva.righe.length;
 
     public function focus-linguette() {
-        linguette.focus();
+        tocco-schede += 1;
     }
 
     public function focus-tabella() {
-        tabella.focus();
+        if (n-righe > 0) {
+            riga-richiesta = min(riga-ultima, n-righe - 1);
+            tocco-righe += 1;
+        }
     }
 
     function vai(i: int) {
@@ -82,33 +223,34 @@ export component Schede inherits Rectangle {
             corrente = max(0, min(schede.length - 1, i));
         }
         flick.content-y = 0;
+        riga-ultima = 0;
+    }
+
+    function riga-a(i: int) {
+        if (n-righe > 0) {
+            riga-richiesta = max(0, min(n-righe - 1, i));
+            tocco-righe += 1;
+        }
+    }
+
+    // Porta in vista la riga col fuoco.
+    function mostra(i: int) {
+        riga-ultima = i;
+        if (i * alto-riga < -flick.content-y) {
+            flick.content-y = -i * alto-riga;
+        } else if ((i + 1) * alto-riga > -flick.content-y + flick.height) {
+            flick.content-y = flick.height - (i + 1) * alto-riga;
+        }
     }
 
     // La riga delle schede.
-    linguette := FocusScope {
+    Rectangle {
         x: 0;
         y: 0;
         width: root.width;
         height: alto-testa;
-        key-pressed(evento) => {
-            if (evento.text == Key.LeftArrow) {
-                root.vai(scelta - 1);
-                return accept;
-            }
-            if (evento.text == Key.RightArrow) {
-                root.vai(scelta + 1);
-                return accept;
-            }
-            if (evento.text == Key.Home) {
-                root.vai(0);
-                return accept;
-            }
-            if (evento.text == Key.End) {
-                root.vai(schede.length - 1);
-                return accept;
-            }
-            return reject;
-        }
+        accessible-role: tab-list;
+        accessible-label: "Schede del dettaglio delle API";
 
         HorizontalLayout {
             alignment: start;
@@ -119,10 +261,16 @@ export component Schede inherits Rectangle {
             for s[i] in schede: Linguetta {
                 testo: s.nome;
                 scelta: i == root.scelta;
-                anello: linguette.has-focus && i == root.scelta;
+                indice: i;
+                quante: schede.length;
+                tocco: root.tocco-schede;
+                scelta-da-tasti(j) => {
+                    root.vai(j);
+                    root.tocco-schede += 1;
+                }
                 scelta-da-clic => {
                     root.vai(i);
-                    linguette.focus();
+                    root.tocco-schede += 1;
                 }
             }
         }
@@ -149,6 +297,7 @@ export component Schede inherits Rectangle {
         height: 20px;
         text: c;
         overflow: elide;
+        accessible-role: none;
     }
 
     Rectangle {
@@ -159,43 +308,14 @@ export component Schede inherits Rectangle {
         background: Tema.vetro-bordo;
     }
 
-    // Il corpo: scorrevole, con la tastiera.
-    tabella := FocusScope {
+    // Il corpo: scorrevole; le righe hanno il fuoco una alla volta.
+    Rectangle {
         x: 0;
         y: alto-testa + 54px;
         width: root.width;
         height: root.height - self.y - alto-pie - 12px;
-        accessible-role: table;
+        accessible-role: list;
         accessible-label: attiva.nome;
-        key-pressed(evento) => {
-            if (!(evento.modifiers.alt || evento.modifiers.control || evento.modifiers.meta)) {
-                if (evento.text == Key.DownArrow) {
-                    flick.content-y = max(min(0px, flick.height - flick.content-height), flick.content-y - alto-riga);
-                    return accept;
-                }
-                if (evento.text == Key.UpArrow) {
-                    flick.content-y = min(0px, flick.content-y + alto-riga);
-                    return accept;
-                }
-                if (evento.text == Key.PageDown) {
-                    flick.content-y = max(min(0px, flick.height - flick.content-height), flick.content-y - flick.height);
-                    return accept;
-                }
-                if (evento.text == Key.PageUp) {
-                    flick.content-y = min(0px, flick.content-y + flick.height);
-                    return accept;
-                }
-                if (evento.text == Key.Home) {
-                    flick.content-y = 0px;
-                    return accept;
-                }
-                if (evento.text == Key.End) {
-                    flick.content-y = min(0px, flick.height - flick.content-height);
-                    return accept;
-                }
-            }
-            return reject;
-        }
 
         flick := Flickable {
             x: 0;
@@ -205,30 +325,21 @@ export component Schede inherits Rectangle {
             content-width: self.width;
             content-height: max(self.height, attiva.righe.length * alto-riga);
 
-            for riga[ri] in attiva.righe: Rectangle {
+            for riga[ri] in attiva.righe: RigaTabella {
                 x: 0;
                 y: ri * alto-riga;
                 width: flick.content-width;
                 height: alto-riga;
-                background: mod(ri, 2) == 1 ? Tema.card-fondo : transparent;
-
-                for cella[ci] in riga: Text {
-                    x: 12px + (ci == 0 ? 0px : (ci + 0.6) * unita);
-                    width: (ci == 0 ? 1.6 : 1.0) * unita - 8px;
-                    height: alto-riga;
-                    text: cella;
-                    vertical-alignment: center;
-                    overflow: elide;
-                    font-size: Tema.testo-corpo;
-                    color: ci == 0 ? Tema.testo : Tema.testo-ora;
-                }
+                riga: riga;
+                indice: ri;
+                quante: n-righe;
+                ultima: ri == riga-ultima;
+                unita: root.unita;
+                tocco: root.tocco-righe;
+                richiesta: root.riga-richiesta;
+                spostata(j) => { root.riga-a(j); }
+                in-vista => { root.mostra(ri); }
             }
-        }
-
-        if tabella.has-focus: Rectangle {
-            border-width: 1px;
-            border-color: Tema.anello;
-            border-radius: Tema.raggio-s;
         }
 
         if attiva.righe.length == 0: Text {

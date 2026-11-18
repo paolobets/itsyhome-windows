@@ -39,6 +39,9 @@ pub struct InfoChiave {
     pub creata: Option<DateTime<Utc>>,
     /// Solo la coda del suggerimento dell'API («0001»): mai il prefisso né il valore.
     pub suggerimento: String,
+    /// Le chiamate del mese di questa chiave (per id, mai per nome: due chiavi possono chiamarsi
+    /// uguale); `None` se l'API non le dà.
+    pub chiamate: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -270,6 +273,7 @@ pub fn aggiorna(c: &ClientApi, adesso: DateTime<Utc>) -> Riepilogo {
                     scadenza: k.expires_at,
                     creata: k.created_at,
                     suggerimento: modello::coda_suggerimento(&k.partial_key_hint),
+                    chiamate: None,
                 })
                 .collect();
         }
@@ -423,6 +427,11 @@ pub fn aggiorna(c: &ClientApi, adesso: DateTime<Utc>) -> Riepilogo {
             }
             Err(_) => r.non_disponibili.push(Scheda::Token),
         }
+    }
+
+    // Le chiamate del mese stanno anche sulla chiave, per id.
+    for k in &mut r.chiavi {
+        k.chiamate = chiamate_chiave.get(&k.id).copied();
     }
 
     // Per chiave: nome (o id se l'elenco delle chiavi non c'è), spesa, chiamate.

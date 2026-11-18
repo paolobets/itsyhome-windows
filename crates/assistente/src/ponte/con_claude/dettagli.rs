@@ -15,11 +15,16 @@ use crate::gestione::Gestione;
 use crate::ponte::{ponte, Ponte};
 use crate::sistema::browser::PaginaConsole;
 use gestione_protocollo::{Messaggio, SchedaDati};
+use std::sync::atomic::Ordering;
+use std::time::{Duration, Instant};
 
 /// Il titolo della finestra delle schede.
 const TITOLO: &str = "API Claude";
 /// L'azione «Aggiorna» della finestra.
 const AZIONE_AGGIORNA: &str = "aggiorna";
+/// Fra due «Aggiorna» dell'utente passa almeno tanto: i dati arrivano con 4–24 ore di ritardo,
+/// leggere più spesso non dà nulla e le API hanno i loro limiti.
+const INTERVALLO_AGGIORNA: Duration = Duration::from_secs(60);
 
 #[cfg(test)]
 thread_local! {
@@ -36,43 +41,67 @@ impl Ponte {
         if self.api_ultimo.borrow().is_none() {
             self.dettagli_chiedi_lettura();
         }
-        self.mostra_dettagli();
+        self.mostra_dettagli(false);
     }
 
-    /// Le schede di adesso: dall'ultima lettura, o la frase del perché non ci sono.
+    /// Le schede di adesso: dall'ultima lettura, o la frase del perché non ci sono. Un avviso di
+    /// «Aggiorna» (una volta sola) o, se una lettura è in corso, «Lettura in corso…» precede la nota.
     pub(crate) fn schede_da_mostrare(&self) -> Vec<SchedaDati> {
-        match &*self.api_ultimo.borrow() {
+        let mut schede = match &*self.api_ultimo.borrow() {
             None => claude::schede_vuote("Nessuna lettura ancora: la prima sta partendo"),
-            Some((ora, Err(e))) => {
-                claude::schede_vuote(&format!("Lettura delle {ora} non riuscita: {e}"))
-            }
+            Some((ora, Err(e))) => claude::schede_vuote(&format!("Lettura delle {ora} non riuscita: {e}")),
             Some((ora, Ok(r))) => claude::schede(r, ora),
+        };
+        let avviso = self
+            .dettagli_avviso
+            .borrow_mut()
+            .take()
+            .or_else(|| self.api_in_corso.borrow().load(Ordering::SeqCst).then(|| "Lettura in corso…".to_owned()));
+        if let Some(avviso) = avviso {
+            for s in &mut schede {
+                s.nota = format!("{avviso} · {}", s.nota);
+            }
         }
+        schede
     }
 
-    fn mostra_dettagli(&self) {
+    /// Manda le schede alla finestra. `solo_se_viva`: è un aggiornamento che nessuno ha chiesto
+    /// (una lettura è finita, o un avviso): va solo a una finestra ancora aperta e non ne fa mai
+    /// partire una.
+    fn mostra_dettagli(&self, solo_se_viva: bool) {
         let schede = self.schede_da_mostrare();
         let mut gestione = self.gestione.borrow_mut();
+        if solo_se_viva && !gestione.as_ref().is_some_and(Gestione::viva) {
+            return;
+        }
         let gestione = gestione.get_or_insert_with(|| {
-            let (cartella, _) =
-                crate::avvio::cartelle(std::env::var_os(crate::avvio::VAR_CARTELLA));
-            // Il guardiano gira su un suo thread: ogni messaggio passa all'interfaccia.
-            Gestione::new(&cartella, |m| {
+            let (cartella, _) = crate::avvio::cartelle(std::env::var_os(crate::avvio::VAR_CARTELLA));
+            // Il guardiano gira su un suo thread: ogni messaggio passa all'interfaccia, col numero
+            // del processo che l'ha mandato.
+            Gestione::new(&cartella, |numero, m| {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(p) = ponte() {
-                        p.dettagli_messaggio(m);
+                        p.dettagli_messaggio(numero, m);
                     }
                 });
             })
         });
-        match gestione.apri_schede(TITOLO, schede) {
-            Ok(()) => self.dettagli_aperti.set(true),
+        match gestione.apri_schede(TITOLO, &schede) {
+            Ok(numero) => {
+                self.dettagli_gen.set(numero);
+                self.dettagli_aperti.set(true);
+            }
             Err(e) => eprintln!("dettagli delle API: {e}"),
         }
     }
 
-    /// Un messaggio della finestra (sul thread dell'interfaccia).
-    pub(crate) fn dettagli_messaggio(&self, m: Messaggio) {
+    /// Un messaggio della finestra (sul thread dell'interfaccia). `numero` è la generazione del
+    /// processo che l'ha mandato: un messaggio di un processo che non è più la finestra di adesso
+    /// (una `chiusa` tardiva della vecchia) non conta.
+    pub(crate) fn dettagli_messaggio(&self, numero: u64, m: Messaggio) {
+        if numero != self.dettagli_gen.get() {
+            return;
+        }
         match m {
             Messaggio::Azione { id } => self.dettagli_azione(&id),
             Messaggio::Chiusa => self.dettagli_aperti.set(false),
@@ -83,28 +112,49 @@ impl Ponte {
     /// Un'azione della finestra: «Aggiorna» o una pagina della Console; il resto si ignora.
     pub(crate) fn dettagli_azione(&self, id: &str) {
         if id == AZIONE_AGGIORNA {
-            self.dettagli_chiedi_lettura();
+            self.dettagli_aggiorna(Instant::now());
         } else if let Some(pagina) = PaginaConsole::da_id(id) {
             apri_console(pagina);
         }
     }
 
+    /// «Aggiorna» dell'utente a `ora`: una lettura per la strada di sempre, ma non prima di
+    /// `INTERVALLO_AGGIORNA` dall'ultima chiesta così; nel frattempo la finestra lo dice.
+    pub(crate) fn dettagli_aggiorna(&self, ora: Instant) {
+        if let Some(prima) = self.dettagli_ultimo_aggiorna.get() {
+            let passato = ora.saturating_duration_since(prima);
+            if passato < INTERVALLO_AGGIORNA {
+                let mancano = (INTERVALLO_AGGIORNA - passato).as_secs() + 1;
+                *self.dettagli_avviso.borrow_mut() = Some(format!("Appena aggiornato: riprova fra {mancano} s"));
+                self.dettagli_dati_nuovi();
+                return;
+            }
+        }
+        if self.dettagli_chiedi_lettura() {
+            self.dettagli_ultimo_aggiorna.set(Some(ora));
+        }
+        // La finestra mostra subito «Lettura in corso…».
+        self.dettagli_dati_nuovi();
+    }
+
     /// Una lettura per la strada di sempre (un solo giro alla volta); senza la chiave non c'è nulla
-    /// da leggere.
-    fn dettagli_chiedi_lettura(&self) {
+    /// da leggere. Vero se è stata chiesta.
+    fn dettagli_chiedi_lettura(&self) -> bool {
         if !self.sveglia_api.running() {
-            return;
+            return false;
         }
         #[cfg(test)]
         LETTURE_CHIESTE.with(|c| c.set(c.get() + 1));
         #[cfg(not(test))]
         self.api_leggi();
+        true
     }
 
-    /// Una lettura nuova è arrivata: a finestra aperta rimpiazza i dati.
+    /// Una lettura nuova è arrivata (o va mostrato un avviso): a una finestra ancora aperta
+    /// rimpiazza i dati; una finestra chiusa non si riapre mai da sé.
     pub(crate) fn dettagli_dati_nuovi(&self) {
         if self.dettagli_aperti.get() {
-            self.mostra_dettagli();
+            self.mostra_dettagli(true);
         }
     }
 
@@ -174,11 +224,11 @@ mod test {
         }
         assert!(aperte().is_empty(), "ogni altro id si ignora");
         // Anche per il filo del protocollo: solo `azione` conta.
-        p.dettagli_messaggio(Messaggio::Azione {
+        p.dettagli_messaggio(0, Messaggio::Azione {
             id: "console:uso".into(),
         });
-        p.dettagli_messaggio(Messaggio::Pronta);
-        p.dettagli_messaggio(Messaggio::Apri {
+        p.dettagli_messaggio(0, Messaggio::Pronta);
+        p.dettagli_messaggio(0, Messaggio::Apri {
             titolo: "x".into(),
             html: "<p>".into(),
         });
@@ -234,5 +284,65 @@ mod test {
         p.dettagli_dati_nuovi();
         p.dettagli_chiudi();
         p.dettagli_spegni();
+    }
+
+    #[test]
+    fn aggiorna_ha_un_intervallo_minimo_e_lo_dice() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        p.api_salva_ui("sk-ant-admin01-di-prova-1a2b");
+        letture();
+        let t0 = Instant::now();
+        p.dettagli_aggiorna(t0);
+        assert_eq!(letture(), 1);
+        // Dopo 10 s: niente lettura, e l'avviso si legge una volta sola nella nota.
+        p.dettagli_aggiorna(t0 + Duration::from_secs(10));
+        assert_eq!(letture(), 0, "troppo presto");
+        let s = p.schede_da_mostrare();
+        assert!(s.iter().all(|x| x.nota.starts_with("Appena aggiornato: riprova fra 51 s · ")), "{:?}", s[0].nota);
+        assert!(!p.schede_da_mostrare()[0].nota.contains("Appena aggiornato"), "una volta sola");
+        // Allo scadere dei 60 s si legge di nuovo.
+        p.dettagli_aggiorna(t0 + Duration::from_secs(60));
+        assert_eq!(letture(), 1);
+        p.dettagli_aggiorna(t0 + Duration::from_secs(61));
+        assert_eq!(letture(), 0, "l'intervallo riparte dall'ultima richiesta");
+    }
+
+    #[test]
+    fn con_una_lettura_in_corso_la_nota_lo_dice() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        assert!(!p.schede_da_mostrare()[0].nota.starts_with("Lettura in corso"));
+        p.api_in_corso.borrow().store(true, Ordering::SeqCst);
+        assert!(p.schede_da_mostrare().iter().all(|x| x.nota.starts_with("Lettura in corso… · ")));
+        p.api_in_corso.borrow().store(false, Ordering::SeqCst);
+        assert!(!p.schede_da_mostrare()[0].nota.starts_with("Lettura in corso"));
+    }
+
+    #[test]
+    fn una_chiusa_tardiva_di_un_processo_vecchio_non_chiude_la_finestra_nuova() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        // La finestra di adesso è il processo 2; la `chiusa` del processo 1 arriva dopo.
+        p.dettagli_gen.set(2);
+        p.dettagli_aperti.set(true);
+        p.dettagli_messaggio(1, Messaggio::Chiusa);
+        assert!(p.dettagli_aperti.get(), "la chiusa del processo vecchio non conta");
+        aperte();
+        p.dettagli_messaggio(1, Messaggio::Azione { id: "console:spesa".into() });
+        assert!(aperte().is_empty(), "nemmeno le sue azioni");
+        p.dettagli_messaggio(2, Messaggio::Chiusa);
+        assert!(!p.dettagli_aperti.get());
+    }
+
+    #[test]
+    fn una_lettura_non_riapre_mai_la_finestra() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        // Finestra aperta secondo il ponte ma senza nessun processo vivo (chiusa dall'utente, la
+        // `chiusa` ancora in coda): i dati nuovi non ne fanno partire uno.
+        p.dettagli_aperti.set(true);
+        p.dettagli_dati_nuovi();
+        assert!(p.gestione.borrow().is_none(), "nessun processo avviato");
+        // E con la finestra chiusa non si manda nulla nemmeno a un `Gestione` che c'è.
+        p.dettagli_aperti.set(false);
+        p.dettagli_dati_nuovi();
+        assert!(p.gestione.borrow().is_none());
     }
 }

@@ -44,22 +44,52 @@ pub struct SchedaDati {
 pub const RIGHE_MASSIME: usize = 200;
 /// Al più tante colonne per scheda.
 pub const COLONNE_MASSIME: usize = 6;
+/// Al più tante schede in un messaggio.
+pub const SCHEDE_MASSIME: usize = 8;
+/// Al più tanti caratteri in una cella (puntini compresi).
+pub const CELLA_MASSIMA: usize = 500;
 
-/// La scheda con i testi ripuliti (`testo_pulito`) e le misure limitate: `RIGHE_MASSIME` righe di
-/// al più `COLONNE_MASSIME` celle. `azione_console` è un id interno, non si tocca.
+/// Ciò che sostituisce una cella che porterebbe il prefisso di una chiave da amministratore o API.
+const SEGNO_VUOTO: &str = "—";
+
+/// Un testo della scheda pulito (`testo_pulito`), tagliato a `massimo` caratteri e, solo dopo la
+/// pulizia (un `sk-` + carattere invisibile + `ant-` si ricompone), senza il prefisso di una chiave:
+/// un testo che lo contiene diventa «—». Mai il valore di una chiave nella finestra, qualunque
+/// cosa dica chi scrive.
+fn testo_scheda(testo: &str, massimo: usize) -> String {
+    let pulito = testo_pulito(testo);
+    if pulito.to_ascii_lowercase().contains("sk-ant-") {
+        return SEGNO_VUOTO.to_owned();
+    }
+    if pulito.chars().count() <= massimo {
+        return pulito;
+    }
+    let mut corto: String = pulito.chars().take(massimo - 1).collect();
+    corto.push('…');
+    corto
+}
+
+/// La scheda con i testi ripuliti (`testo_scheda`) e le misure limitate: `RIGHE_MASSIME` righe di
+/// al più `COLONNE_MASSIME` celle di al più `CELLA_MASSIMA` caratteri. `azione_console` è un id
+/// interno, non si tocca.
 pub fn scheda_pulita(s: &SchedaDati) -> SchedaDati {
     SchedaDati {
-        nome: testo_pulito(&s.nome),
-        nota: testo_pulito(&s.nota),
-        colonne: s.colonne.iter().take(COLONNE_MASSIME).map(|c| testo_pulito(c)).collect(),
+        nome: testo_scheda(&s.nome, CELLA_MASSIMA),
+        nota: testo_scheda(&s.nota, CELLA_MASSIMA),
+        colonne: s.colonne.iter().take(COLONNE_MASSIME).map(|c| testo_scheda(c, CELLA_MASSIMA)).collect(),
         righe: s
             .righe
             .iter()
             .take(RIGHE_MASSIME)
-            .map(|r| r.iter().take(COLONNE_MASSIME).map(|c| testo_pulito(c)).collect())
+            .map(|r| r.iter().take(COLONNE_MASSIME).map(|c| testo_scheda(c, CELLA_MASSIMA)).collect())
             .collect(),
         azione_console: s.azione_console.clone(),
     }
+}
+
+/// Le schede di un messaggio, al più `SCHEDE_MASSIME`, ognuna ripulita.
+pub fn schede_pulite(schede: &[SchedaDati]) -> Vec<SchedaDati> {
+    schede.iter().take(SCHEDE_MASSIME).map(scheda_pulita).collect()
 }
 
 /// Legge una riga del protocollo (senza il ritorno a capo finale, che comunque si tollera; si
@@ -236,6 +266,33 @@ mod test {
         // Una riga più corta resta com'è (non si riempie).
         let corta = SchedaDati { righe: vec![vec!["solo".into()]], ..scheda("X") };
         assert_eq!(scheda_pulita(&corta).righe, vec![vec!["solo".to_owned()]]);
+    }
+
+    #[test]
+    fn nessuna_chiave_nelle_celle_nemmeno_con_invisibili() {
+        let mut s = scheda("Spesa");
+        s.nome = "sk-\u{200B}ant-api03-X".into();
+        s.nota = "SK-ANT-admin01-Y".into();
+        s.colonne = vec!["sk-\u{202E}ant-".into()];
+        s.righe = vec![vec!["sk\u{200B}-ant-api03-ABC".into(), "ok sk-ant- dopo".into(), "sk-ant".into()]];
+        let p = scheda_pulita(&s);
+        assert_eq!((p.nome.as_str(), p.nota.as_str(), p.colonne[0].as_str()), ("—", "—", "—"));
+        assert_eq!(p.righe[0], ["—", "—", "sk-ant"], "senza il trattino finale non è un prefisso di chiave");
+    }
+
+    #[test]
+    fn celle_e_schede_hanno_un_tetto() {
+        let mut s = scheda("Spesa");
+        s.righe = vec![vec!["x".repeat(600), "y".repeat(CELLA_MASSIMA), "è".repeat(CELLA_MASSIMA + 1)]];
+        let p = scheda_pulita(&s);
+        assert_eq!(p.righe[0][0].chars().count(), CELLA_MASSIMA);
+        assert!(p.righe[0][0].ends_with('…'));
+        assert_eq!(p.righe[0][1], "y".repeat(CELLA_MASSIMA), "500 interi");
+        assert_eq!(p.righe[0][2].chars().count(), CELLA_MASSIMA);
+        let molte: Vec<SchedaDati> = (0..12).map(|i| scheda(&format!("S{i}"))).collect();
+        let pulite = schede_pulite(&molte);
+        assert_eq!(pulite.len(), SCHEDE_MASSIME);
+        assert_eq!(pulite[7].nome, "S7");
     }
 
     #[test]

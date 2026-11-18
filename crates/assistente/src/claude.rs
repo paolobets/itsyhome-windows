@@ -559,7 +559,7 @@ where
         .chiavi
         .iter()
         .map(|k| {
-            let chiamate = r.per_chiave.iter().find(|(n, _, _)| *n == k.nome).and_then(|(_, _, c)| *c);
+            let chiamate = k.chiamate;
             riga([
                 k.nome.clone(),
                 stato_chiave(&k.stato),
@@ -976,6 +976,7 @@ mod test {
                     scadenza: Some(Utc.with_ymd_and_hms(2027, 1, 10, 9, 0, 0).unwrap()),
                     creata: Some(Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap()),
                     suggerimento: "0001".into(),
+                    chiamate: Some(90),
                 },
                 InfoChiave {
                     id: "apikey_FAKE0002".into(),
@@ -985,6 +986,7 @@ mod test {
                     creata: None,
                     // Un suggerimento ostile: il prefisso non deve uscire comunque.
                     suggerimento: "sk-ant-api03-SEGRETO".into(),
+                    chiamate: None,
                 },
             ],
             workspace: vec![InfoWorkspace { id: "w1".into(), nome: "Workspace di prova".into() }],
@@ -1023,6 +1025,17 @@ mod test {
                 assert!(!cella.contains("sk-ant-"), "{}: {cella}", scheda.nome);
             }
         }
+    }
+
+    #[test]
+    fn le_chiamate_sono_per_chiave_e_non_per_nome() {
+        let mut r = riepilogo_completo();
+        // Due chiavi con lo stesso nome ma chiamate diverse: ognuna ha le sue.
+        r.chiavi[1].nome = r.chiavi[0].nome.clone();
+        r.chiavi[1].chiamate = Some(38);
+        r.per_chiave = vec![(r.chiavi[0].nome.clone(), api_claude::importo_da("1").unwrap(), Some(90))];
+        let s = schede_in(&r, "14:05", &chrono::Utc);
+        assert_eq!((s[2].righe[0][5].as_str(), s[2].righe[1][5].as_str()), ("90", "38"));
     }
 
     #[test]

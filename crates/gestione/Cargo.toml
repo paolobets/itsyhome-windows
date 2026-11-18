@@ -28,3 +28,7 @@ windows-sys = { version = "0.52", features = [
     "Win32_UI_HiDpi",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+[dev-dependencies]
+# Controlli sull'interfaccia (ruoli, nomi e scelta delle schede) col backend di prova di Slint: stessa versione dell'assistente.
+i-slint-backend-testing = "=1.18.1"

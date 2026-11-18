@@ -1619,11 +1619,11 @@ mod accessibilita {
     fn dettagli_da_tastiera_e_da_narrator() {
         use slint::platform::Key;
         let (p, eventi) = pannello_claude(true, tre_righe_claude());
-        assert!(ElementHandle::find_by_accessible_label(&p, "Dettagli").next().is_none(), "senza la chiave non c'è");
+        assert!(ElementHandle::find_by_accessible_label(&p, "Dettagli delle API").next().is_none(), "senza la chiave non c'è");
         let e = eventi.clone();
         p.on_apri_dettagli_claude(move || e.borrow_mut().push("dettagli".into()));
         p.set_claude_dettagli(true);
-        let pulsante = elemento(&p, "Dettagli");
+        let pulsante = elemento(&p, "Dettagli delle API");
         assert_eq!(pulsante.accessible_role(), Some(AccessibleRole::Button));
         // ↓ fino all'ultima riga e poi su «Dettagli»; Invio apre le schede.
         for _ in 0..3 {

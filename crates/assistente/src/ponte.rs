@@ -761,6 +761,13 @@ pub struct Ponte {
     gestione: RefCell<Option<crate::gestione::Gestione>>,
     /// La finestra delle schede è aperta: una lettura nuova la rimpiazza.
     dettagli_aperti: Cell<bool>,
+    /// La generazione del processo della finestra delle schede (`Gestione::generazione`): i messaggi
+    /// di un altro processo si ignorano.
+    dettagli_gen: Cell<u64>,
+    /// Quando l'utente ha chiesto l'ultimo «Aggiorna» (per l'intervallo minimo).
+    dettagli_ultimo_aggiorna: Cell<Option<std::time::Instant>>,
+    /// Un avviso per la nota delle schede (una volta sola), come «Appena aggiornato…».
+    dettagli_avviso: RefCell<Option<String>>,
     /// La vista su cui deve aprirsi il prossimo pannello (una volta sola): chi apre il pannello da
     /// fuori (fuori da Windows, un pulsante di una voce di Claude) la chiede qui.
     #[cfg(any(not(windows), test))]
@@ -959,6 +966,9 @@ pub fn collega(
         pannello: RefCell::new(slint::Weak::default()),
         gestione: RefCell::new(None),
         dettagli_aperti: Cell::new(false),
+        dettagli_gen: Cell::new(0),
+        dettagli_ultimo_aggiorna: Cell::new(None),
+        dettagli_avviso: RefCell::new(None),
         #[cfg(any(not(windows), test))]
         vista_richiesta: Cell::new(None),
         cervello,

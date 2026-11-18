@@ -23,7 +23,7 @@ mod misure;
 mod sicurezza;
 mod testo;
 
-use gestione_protocollo::{messaggio_da_riga, riga_da_messaggio, scheda_pulita, titolo_pulito, Messaggio, SchedaDati};
+use gestione_protocollo::{messaggio_da_riga, riga_da_messaggio, schede_pulite, titolo_pulito, Messaggio, SchedaDati};
 use slint::winit_030::WinitWindowAccessor;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use std::cell::{Cell, RefCell};
@@ -230,7 +230,7 @@ fn apri_schede(titolo: String, schede: Vec<SchedaDati>) {
     STATO.with_borrow_mut(|s| {
         let Some(stato) = s.as_mut() else { return };
         stato.cornice.set_titolo(titolo_pulito(&titolo).into());
-        let modello: Vec<SchedaUi> = schede.iter().map(|s| a_slint(&scheda_pulita(s))).collect();
+        let modello: Vec<SchedaUi> = schede_pulite(&schede).iter().map(a_slint).collect();
         stato.cornice.set_schede(ModelRc::new(VecModel::from(modello)));
         stato.cornice.set_con_schede(true);
         stato.cornice.set_piano_b(false);
@@ -250,13 +250,29 @@ fn apri_schede(titolo: String, schede: Vec<SchedaDati>) {
 /// Una scheda (già ripulita) come la vuole l'interfaccia.
 fn a_slint(s: &SchedaDati) -> SchedaUi {
     let testi = |v: &[String]| ModelRc::new(VecModel::from(v.iter().map(|t| SharedString::from(t.as_str())).collect::<Vec<_>>()));
+    let righe: Vec<RigaUi> = s.righe.iter().map(|r| RigaUi { celle: testi(r), testo: testo_riga(&s.colonne, r).into() }).collect();
     SchedaUi {
         nome: s.nome.as_str().into(),
         nota: s.nota.as_str().into(),
         colonne: testi(&s.colonne),
-        righe: ModelRc::new(VecModel::from(s.righe.iter().map(|r| testi(r)).collect::<Vec<_>>())),
+        righe: ModelRc::new(VecModel::from(righe)),
         azione_console: s.azione_console.as_str().into(),
     }
+}
+
+/// Ciò che Narrator legge di una riga: «Nome: Chiave di prova A, Stato: Attiva…», senza le celle
+/// vuote («—» compreso, che non dice nulla).
+fn testo_riga(colonne: &[String], celle: &[String]) -> String {
+    let parti: Vec<String> = celle
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| !c.is_empty())
+        .map(|(i, c)| match colonne.get(i) {
+            Some(nome) if !nome.is_empty() => format!("{nome}: {c}"),
+            _ => c.clone(),
+        })
+        .collect();
+    parti.join(", ")
 }
 
 /// Prima di mostrarla la prima volta: al più 780 × 680 logici, ridotta se l'area di lavoro del
@@ -602,6 +618,86 @@ fn esc_chiude(web: &WebView) -> Result<(), String> {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    /// Una scheda di prova con `n` righe «Nome … · Stato …».
+    fn scheda_di_prova(nome: &str, n: usize) -> SchedaDati {
+        SchedaDati {
+            nome: nome.into(),
+            nota: "Letto alle 14:05".into(),
+            colonne: vec!["Nome".into(), "Stato".into()],
+            righe: (0..n).map(|i| vec![format!("{nome} {i}"), "Attiva".into()]).collect(),
+            azione_console: "console:spesa".into(),
+        }
+    }
+
+    fn tasto(c: &Cornice, tasto: slint::platform::Key) {
+        let testo: slint::SharedString = tasto.into();
+        c.window().dispatch_event(slint::platform::WindowEvent::KeyPressed { text: testo.clone() });
+        c.window().dispatch_event(slint::platform::WindowEvent::KeyReleased { text: testo });
+    }
+
+    /// Le schede come le vede Narrator: un `tab-list` con le schede `tab` (la scelta è selezionata,
+    /// con posizione e numero), una `list` con le righe `list-item` che si leggono per intero; ←/→
+    /// spostano la scelta, ↑/↓ le righe.
+    #[test]
+    fn le_schede_sono_accessibili_e_la_selezione_segue_i_tasti() {
+        use i_slint_backend_testing::{AccessibleRole, ElementHandle};
+        use slint::platform::Key;
+        i_slint_backend_testing::init_no_event_loop();
+        let c = Cornice::new().expect("cornice");
+        c.show().expect("mostrata nel backend di prova");
+        c.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        let dati = [scheda_di_prova("Spesa", 3), scheda_di_prova("Token", 2), scheda_di_prova("Chiavi", 40)];
+        c.set_schede(ModelRc::new(VecModel::from(dati.iter().map(a_slint).collect::<Vec<_>>())));
+        c.set_con_schede(true);
+
+        let con_ruolo = |ruolo: AccessibleRole| -> Vec<ElementHandle> {
+            ElementHandle::find_by_element_type_name(&c, "Linguetta").chain(ElementHandle::find_by_element_type_name(&c, "RigaTabella")).filter(|e| e.accessible_role() == Some(ruolo)).collect()
+        };
+        let lista = ElementHandle::find_by_accessible_label(&c, "Schede del dettaglio delle API").next().expect("tab-list");
+        assert_eq!(lista.accessible_role(), Some(AccessibleRole::TabList));
+        let tab = con_ruolo(AccessibleRole::Tab);
+        assert_eq!(tab.iter().map(|t| t.accessible_label().unwrap().to_string()).collect::<Vec<_>>(), ["Spesa", "Token", "Chiavi"]);
+        assert_eq!(tab.iter().map(|t| t.accessible_item_index()).collect::<Vec<_>>(), [Some(0), Some(1), Some(2)]);
+        assert!(tab.iter().all(|t| t.accessible_item_count() == Some(3) && t.accessible_item_selectable() == Some(true)));
+        let scelta = |tab: &[ElementHandle]| tab.iter().map(|t| t.accessible_item_selected().unwrap()).collect::<Vec<_>>();
+        assert_eq!(scelta(&tab), [true, false, false]);
+        // Le righe: `list-item` che leggono le celle coi nomi delle colonne.
+        let righe = con_ruolo(AccessibleRole::ListItem);
+        assert_eq!(righe.len(), 3);
+        assert_eq!(righe[1].accessible_label().unwrap().as_str(), "Nome: Spesa 1, Stato: Attiva");
+        assert_eq!((righe[1].accessible_item_index(), righe[1].accessible_item_count()), (Some(1), Some(3)));
+        let elenco = ElementHandle::find_by_accessible_label(&c, "Spesa").find(|e| e.accessible_role() == Some(AccessibleRole::List));
+        assert!(elenco.is_some(), "la tabella è una `list` col nome della scheda");
+
+        // ←/→/Fine/Inizio: la scelta segue i tasti (il fuoco è sulla scheda scelta).
+        tasto(&c, Key::RightArrow);
+        assert_eq!(scelta(&con_ruolo(AccessibleRole::Tab)), [false, true, false]);
+        tasto(&c, Key::RightArrow);
+        tasto(&c, Key::RightArrow);
+        assert_eq!(scelta(&con_ruolo(AccessibleRole::Tab)), [false, false, true], "ai bordi si resta");
+        tasto(&c, Key::Home);
+        assert_eq!(scelta(&con_ruolo(AccessibleRole::Tab)), [true, false, false]);
+        tasto(&c, Key::End);
+        assert_eq!(scelta(&con_ruolo(AccessibleRole::Tab)), [false, false, true]);
+        // Con la scheda «Chiavi» le righe sono 40 (Slint ne crea solo quelle in vista, ma ognuna sa
+        // di essere «di 40»).
+        let viste = con_ruolo(AccessibleRole::ListItem);
+        assert!(!viste.is_empty() && viste.iter().all(|r| r.accessible_item_count() == Some(40)));
+        assert_eq!(viste[0].accessible_label().unwrap().as_str(), "Nome: Chiavi 0, Stato: Attiva");
+        // Una scheda tocca di nuovo: Narrator rilegge la scelta (cambia `selected`, non i nomi).
+        tasto(&c, Key::LeftArrow);
+        assert_eq!(scelta(&con_ruolo(AccessibleRole::Tab)), [false, true, false]);
+        assert_eq!(con_ruolo(AccessibleRole::ListItem).len(), 2);
+    }
+
+    #[test]
+    fn la_riga_si_legge_con_i_nomi_delle_colonne() {
+        let colonne = ["Nome".to_owned(), "Stato".to_owned(), "Scade".to_owned()];
+        let celle = ["Chiave di prova A".to_owned(), "Attiva".to_owned(), String::new()];
+        assert_eq!(testo_riga(&colonne, &celle), "Nome: Chiave di prova A, Stato: Attiva");
+        assert_eq!(testo_riga(&[], &["solo".to_owned()]), "solo");
+    }
 
     #[test]
     fn apri_schede_non_chiede_il_web() {
