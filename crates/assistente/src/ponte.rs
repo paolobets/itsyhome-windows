@@ -846,6 +846,10 @@ pub struct Ponte {
     /// attività (acceso solo mentre serve: `attivita_serve`).
     claude_sessioni: RefCell<Sessioni>,
     claude_ascolto: RefCell<Option<claude_hook::Ascoltatore>>,
+    /// Limiti dell'abbonamento (5 ore, 7 giorni) dall'ultima barra che li portava (M3, Task 6) e
+    /// contesto per sessione; mai scaduti per chi li legge (`limiti`).
+    claude_limiti: RefCell<Option<(Option<claude_hook::Limite>, Option<claude_hook::Limite>)>>,
+    claude_contesto: RefCell<HashMap<String, f32>>,
     /// I permessi che Claude Code ha chiesto e aspettano una risposta (M3, Task 5): numero del
     /// permesso → chi l'ha chiesto e dove mandare la decisione. Al più 16.
     claude_permessi: RefCell<HashMap<u64, con_claude::Pendente>>,
@@ -957,6 +961,8 @@ pub fn collega(
         pillola_mostrata: Cell::new(true),
         claude_sessioni: RefCell::new(Sessioni::new()),
         claude_ascolto: RefCell::new(None),
+        claude_limiti: RefCell::new(None),
+        claude_contesto: RefCell::new(HashMap::new()),
         claude_permessi: RefCell::new(HashMap::new()),
         claude_armamento: RefCell::new(con_claude::Armamento::nuovo()),
         sveglia_claude: slint::Timer::default(),

@@ -4,6 +4,7 @@
 //! intestazione CORS, limiti stretti su intestazioni e corpo.
 
 pub mod ascoltatore;
+pub mod barra;
 pub mod codice;
 pub mod evento;
 pub mod mittente;
@@ -13,6 +14,7 @@ pub use ascoltatore::{
     avvia, Arrivo, Ascoltatore, AttesaPermesso, ConfigAscolto, Decisione, ErroreAvvio, Gestore,
     Percorso, ATTESA_MASSIMA,
 };
+pub use barra::{DatiBarra, Limite};
 pub use codice::CodiceHook;
 
 /// Percorso a cui Claude Code manda gli eventi degli hook.

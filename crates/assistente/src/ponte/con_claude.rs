@@ -14,6 +14,7 @@ use casa_core::diagnosi::{Contatore, Diagnosi};
 use casa_core::segreti::Segreti;
 use claude_hook::evento::{evento_da_json, EventoHook, TipoEvento};
 use claude_hook::sessioni::Cambio;
+use claude_hook::{DatiBarra, Limite};
 use claude_hook::{
     avvia, Arrivo, AttesaPermesso, CodiceHook, ConfigAscolto, Decisione, ErroreAvvio, Gestore, ATTESA_MASSIMA,
 };
@@ -236,11 +237,75 @@ impl Gestore for GestoreIsola {
         self.diagnosi.conta(Contatore::claude_rifiutate);
     }
 
-    /// I dati della barra di stato arrivano col Task 6.
-    fn barra(&self, _a: Arrivo) {}
+    /// La barra di stato: sul thread della connessione si riconvalida il corpo inoltrato (stesse
+    /// regole del comando; ciò che non vale si scarta) e al thread dell'interfaccia va solo
+    /// `DatiBarra`.
+    fn barra(&self, a: Arrivo) {
+        let Ok(d) = DatiBarra::da_corpo_inoltrato(&a.corpo) else { return };
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(p) = ponte() {
+                p.claude_barra(d);
+            }
+        });
+    }
 }
 
+/// Voci di contesto tenute al più (una per sessione, come le sessioni).
+const MASSIMO_CONTESTI: usize = 16;
+
 impl Ponte {
+    /// I dati della barra di stato, sul thread dell'interfaccia. I limiti sono dell'account: le
+    /// finestre presenti sostituiscono quelle note, una per una; una barra senza `rate_limits` (o
+    /// senza una finestra) non cancella ciò che si sa. Il contesto è per sessione.
+    pub(super) fn claude_barra(&self, d: DatiBarra) {
+        self.casa.diagnosi().conta(Contatore::claude_barre);
+        {
+            let mut l = self.claude_limiti.borrow_mut();
+            let (cinque, sette) = l.get_or_insert((None, None));
+            if d.cinque_ore.is_some() {
+                *cinque = d.cinque_ore;
+            }
+            if d.sette_giorni.is_some() {
+                *sette = d.sette_giorni;
+            }
+        }
+        let mut contesto = self.claude_contesto.borrow_mut();
+        match d.contesto {
+            None => {
+                contesto.remove(&d.sessione);
+            }
+            Some(c) => {
+                if !contesto.contains_key(&d.sessione) && contesto.len() >= MASSIMO_CONTESTI {
+                    // Pieno: si lasciano solo le sessioni che gli eventi conoscono ancora.
+                    let note: Vec<String> =
+                        self.claude_sessioni.borrow().elenco().iter().map(|s| s.id.clone()).collect();
+                    contesto.retain(|id, _| note.contains(id));
+                }
+                if contesto.contains_key(&d.sessione) || contesto.len() < MASSIMO_CONTESTI {
+                    contesto.insert(d.sessione, c);
+                }
+            }
+        }
+    }
+
+    /// I limiti dell'abbonamento (5 ore, 7 giorni) a un'ora data (secondi dall'epoca): un limite
+    /// già azzerato (`azzera_alle <= ora`) vale come assente. Senza abbonamento niente anelli.
+    #[allow(dead_code)] // lo leggono le viste dei task successivi
+    pub fn limiti_a(&self, ora: i64) -> (Option<Limite>, Option<Limite>) {
+        let (c, s) = self.claude_limiti.borrow().unwrap_or((None, None));
+        (c.filter(|l| l.azzera_alle > ora), s.filter(|l| l.azzera_alle > ora))
+    }
+
+    /// Come `limiti_a`, all'ora di adesso.
+    #[allow(dead_code)] // lo leggono le viste dei task successivi
+    pub fn limiti(&self) -> (Option<Limite>, Option<Limite>) {
+        let ora = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        self.limiti_a(ora)
+    }
+
     /// Un evento di Claude Code, sul thread dell'interfaccia. `pid`: il processo del terminale,
     /// trovato alla prima richiesta di una sessione.
     /// `sequenza`: l'ordine di arrivo della connessione (`Arrivo::sequenza`).
@@ -420,6 +485,7 @@ impl Ponte {
     }
 
     fn togli_voci_sessione(&self, id: &str) {
+        self.claude_contesto.borrow_mut().remove(id);
         for voce in claude::id_voci(id) {
             self.togli_voce(&voce);
         }
@@ -1181,5 +1247,75 @@ mod test {
         p.claude_scadute(Instant::now() + Duration::from_secs(31 * 60));
         assert!(voci_claude(&p).is_empty());
         assert!(p.claude_sessioni.borrow().elenco().is_empty());
+    }
+
+    fn barra(sessione: &str, cinque: Option<(f32, i64)>, sette: Option<(f32, i64)>) -> DatiBarra {
+        let l = |x: Option<(f32, i64)>| x.map(|(percentuale, azzera_alle)| Limite { percentuale, azzera_alle });
+        DatiBarra { sessione: sessione.into(), modello: Some("Opus 5.5".into()), contesto: Some(40.0), cinque_ore: l(cinque), sette_giorni: l(sette) }
+    }
+
+    const FUTURO: i64 = 4_000_000_000;
+
+    #[test]
+    fn limiti_dall_ultimo_arrivo_con_limiti() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        assert_eq!(p.limiti(), (None, None), "senza barre niente anelli");
+        p.claude_barra(barra("a", Some((10.0, FUTURO)), Some((20.0, FUTURO))));
+        p.claude_barra(barra("b", Some((30.0, FUTURO + 1)), Some((40.0, FUTURO + 2))));
+        let (c, s) = p.limiti();
+        assert_eq!((c.unwrap().percentuale, c.unwrap().azzera_alle), (30.0, FUTURO + 1));
+        assert_eq!((s.unwrap().percentuale, s.unwrap().azzera_alle), (40.0, FUTURO + 2));
+        // Una barra senza rate_limits non cancella ciò che si sa.
+        p.claude_barra(barra("a", None, None));
+        assert_eq!(p.limiti(), (c, s));
+        // Una finestra alla volta: solo quella presente cambia.
+        p.claude_barra(barra("a", None, Some((50.0, FUTURO + 3))));
+        let (c2, s2) = p.limiti();
+        assert_eq!(c2, c);
+        assert_eq!(s2.unwrap().percentuale, 50.0);
+    }
+
+    #[test]
+    fn mai_barre_con_limiti_niente_anelli_e_scaduti_assenti() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        p.claude_barra(barra("a", None, None));
+        assert_eq!(p.limiti(), (None, None));
+        p.claude_barra(barra("a", Some((10.0, 1000)), Some((20.0, 2000))));
+        assert_eq!(p.limiti_a(999).0.map(|l| l.percentuale), Some(10.0));
+        assert_eq!(p.limiti_a(1000).0, None, "azzera_alle <= ora vale come assente");
+        assert_eq!(p.limiti_a(1000).1.map(|l| l.percentuale), Some(20.0));
+        assert_eq!(p.limiti_a(2000), (None, None));
+        assert_eq!(p.limiti(), (None, None), "con l'ora vera sono già scaduti");
+    }
+
+    #[test]
+    fn contesto_per_sessione_con_tetto_e_pulizia() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        manda(&p, ev("a", TipoEvento::UserPromptSubmit));
+        p.claude_barra(barra("a", None, None));
+        assert_eq!(p.claude_contesto.borrow().get("a"), Some(&40.0));
+        // Sparisce con la sessione (SessionEnd) e con la scadenza.
+        manda(&p, ev("a", TipoEvento::SessionEnd));
+        assert!(p.claude_contesto.borrow().is_empty());
+        manda(&p, ev("b", TipoEvento::UserPromptSubmit));
+        p.claude_barra(barra("b", None, None));
+        p.claude_scadute(Instant::now() + Duration::from_secs(31 * 60));
+        assert!(p.claude_contesto.borrow().is_empty());
+        // Al più 16 voci, anche con sessioni mai viste dagli eventi.
+        for i in 0..40 {
+            p.claude_barra(barra(&format!("x{i}"), None, None));
+        }
+        assert!(p.claude_contesto.borrow().len() <= 16);
+    }
+
+    #[test]
+    fn il_gestore_scarta_una_barra_non_valida() {
+        // Il gestore riconvalida sul thread della connessione: sessione strana o testo che non
+        // è un `DatiBarra` non arrivano mai all'interfaccia.
+        assert!(DatiBarra::da_corpo_inoltrato(br#"{"sessione":"a b"}"#).is_err());
+        assert!(DatiBarra::da_corpo_inoltrato(b"non json").is_err());
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        p.claude_barra(barra("a", None, None));
+        assert_eq!(p.limiti(), (None, None));
     }
 }
