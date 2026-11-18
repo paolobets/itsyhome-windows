@@ -50,6 +50,8 @@ guarda le API.
 
 ## 3. Approcci considerati
 
+> *Superato dal §10 (18/11): l'approccio 1 (hook HTTP su 127.0.0.1) non è mai stato rilasciato; ora si usa l'aiutante `isola-hook.exe` (hook `command`) e un tubo con nome riservato all'utente. Il «✔» di questa tabella è storico.*
+
 | | Approccio | Pro | Contro |
 |---|---|---|---|
 | **1 ✔** | **Hook HTTP locali** (`"type": "http"`) verso un piccolo ascoltatore dell'assistente su 127.0.0.1 + barra di stato che richiama per un attimo l'assistente | Per eventi, nessun processo in più; Claude Code va avanti se l'assistente è spento (errore non bloccante, documentato); è il modo di TwoCode | Serve un ascoltatore locale da blindare |
@@ -61,6 +63,8 @@ lettura periodica con la chiave da amministratore, solo in lettura (Paolo ha sce
 solo guardare / qualche azione sicura / gestione completa).
 
 ## 4. Fatti verificati sulla documentazione (17/11)
+
+> *Superato dal §10 (18/11) per i fatti sull'hook `http`: non lo si usa più (nessun TLS né verifica del server); valgono i fatti sull'hook `command` e sulla risposta di `PermissionRequest`.*
 
 - **Hook HTTP** (`code.claude.com/docs/en/hooks`): `{"type":"http","url":…,"headers":{…},"allowedEnvVars":[…],"timeout":…}`;
   il corpo è il JSON dell'evento in POST. Le intestazioni possono usare `$VAR` solo se elencate in `allowedEnvVars`.
@@ -82,6 +86,8 @@ solo guardare / qualche azione sicura / gestione completa).
 
 ## 5. Modello delle minacce (cosa proteggiamo, da chi)
 
+> *Superato dal §10 (18/11) per tutte le righe sul trasporto HTTP (porta, codice segreto, `Origin`/`Host`, porta occupata); le minacce vigenti sono nella tabella «Minacce aggiornate» del §10. Restano valide le righe su permessi, contenuti, chiave da amministratore e malware locale.*
+
 | Minaccia | Difesa |
 |---|---|
 | Altre macchine in rete | Ascolto **solo su 127.0.0.1**, mai 0.0.0.0 né IPv6 globale |
@@ -94,6 +100,8 @@ solo guardare / qualche azione sicura / gestione completa).
 | Furto della chiave da amministratore | Solo nel **portachiavi del sistema** (`keyring`, come il token HA); campo mascherato nelle Impostazioni, dopo il salvataggio si vedono solo le ultime 4 cifre; mai nei log, mai nei messaggi d'errore; trasmessa solo a `https://api.anthropic.com` con verifica del certificato (rustls) |
 | Chiave da amministratore usata per modificare | Il client API dell'assistente ha un **elenco chiuso** di percorsi, tutti `GET`; un test verifica che non esista nessun altro metodo/percorso. Se la Console permette una chiave con permessi ridotti (sola lettura / analytics), la guida dice di usare quella — **da verificare** sulla doc al momento del piano |
 | Malware che gira come Paolo | Fuori portata: può già leggere `~/.claude` e il portachiavi dell'utente. Non lo dichiariamo protetto |
+
+> *Superato dal §10 (18/11): non esistono più il codice segreto, la variabile `ISOLA_HOOK_TOKEN`, «Rigenera il codice» né il «compromesso dichiarato» qui sotto; il canale è un tubo riservato all'utente, verificato in entrambi i sensi.*
 
 Il **codice segreto degli hook** (256 bit casuali) sta nel portachiavi; Claude Code lo legge da una variabile
 d'ambiente utente (`ISOLA_HOOK_TOKEN`, impostata in HKCU\Environment su Windows) tramite `allowedEnvVars`, così
@@ -110,6 +118,8 @@ in chat o nel repo». La barra di stato prende il codice dalla stessa variabile.
 ## 6. Come funziona
 
 ### 6.1 Collegamento a Claude Code (installazione)
+
+> *Superato dal §10 (18/11): niente indirizzo `http://127.0.0.1:<porta>/…` né variabile d'ambiente; le voci sono hook `command` che lanciano `isola-hook.exe` e «Scollega» toglie solo le voci di `settings.json`. Resta valido l'anteprima prima di scrivere, la copia di riserva e la scrittura atomica.*
 - Impostazioni › nuova sezione **«Claude»** › «Collega Claude Code». Prima di scrivere, l'assistente **mostra
   esattamente cosa aggiunge** a `~/.claude/settings.json` e chiede conferma. Miglioria rispetto a TwoCode, che
   scrive da solo all'avvio.
@@ -123,6 +133,8 @@ in chat o nel repo». La barra di stato prende il codice dalla stessa variabile.
   (vedi §6.3). Nessun `onFailure`.
 
 ### 6.2 Ascoltatore
+
+> *Superato dal §10 (18/11): niente porta fissa né `accept` su TCP; un thread attende sul tubo con nome (`WaitForMultipleObjects`), solo con il collegamento attivo.*
 - Un thread che dorme su `accept` (nessun polling), avviato solo se il collegamento è attivo. Porta fissa scelta
   all'installazione e salvata in configurazione *(scelta mia: una porta che cambia a ogni avvio costringerebbe a
   riscrivere `settings.json`)*.
@@ -130,6 +142,8 @@ in chat o nel repo». La barra di stato prende il codice dalla stessa variabile.
   risposta, così Claude Code non aspetta mai l'interfaccia.
 
 ### 6.3 Permessi
+
+> *Superato dal §10 (18/11) solo nel trasporto: «la connessione HTTP» è ora la connessione sul tubo con l'aiutante (attesa dell'aiutante ≤ 115 s, del tubo 2 s meno); niente `503` ma connessione chiusa oltre 16. Il resto (voce bloccante, armamento, chiusura al primo evento) vale.*
 - `PermissionRequest` → voce **bloccante** «Claude chiede: <strumento> <riassunto>» con Nega / Consenti
   (pillola larga 440, pulsanti 78×28 come da analisi TwoCode). La pillola esce dalla ritirata.
 - La connessione HTTP resta aperta finché Paolo risponde; timeout del hook **120 s** *(scelta mia)*: allo scadere
@@ -178,6 +192,8 @@ in chat o nel repo». La barra di stato prende il codice dalla stessa variabile.
 - *ti aspetta* = voce **attenzione** in «In attesa»; *errore* = **attenzione**; *fatto* = **informazione**.
 
 ### 6.5 Limiti dell'abbonamento (barra di stato)
+
+> *Superato dal §10 (18/11): la barra di stato è `isola-hook.exe barra`, non più `assistente --barra-stato`; l'aiutante stampa la riga e manda i dati per il tubo.*
 - `assistente --barra-stato`: legge stdin (max 64 KB), estrae solo i campi di §4, li manda all'ascoltatore
   (stesso codice segreto, letto dall'ambiente), stampa una riga utile e esce. Deve chiudere in **< 50 ms** e non
   inizializzare né finestre né istanza unica. Se l'assistente è spento stampa comunque la riga.
@@ -186,6 +202,8 @@ in chat o nel repo». La barra di stato prende il codice dalla stessa variabile.
   **attenzione** alla soglia (predefinita 80%, cambiabile), una volta per finestra di limite.
 
 ### 6.6 Porta davanti il terminale
+
+> *Superato dal §10 (18/11): il PID c'è, è quello dell'aiutante, e il terminale si trova risalendo i processi genitori (`claude.exe` → terminale).*
 - Clic su una sessione *fatto* o *ti aspetta* → porta davanti la finestra del terminale. Gli hook HTTP non danno il
   PID: il costruttore trova il modo più affidabile (es. titolo della finestra che Claude Code imposta, cartella
   della sessione, processo `claude` figlio del terminale). Se non è affidabile, si porta davanti l'ultima finestra
@@ -213,6 +231,8 @@ in chat o nel repo». La barra di stato prende il codice dalla stessa variabile.
 
 ## 7. Vincoli
 
+> *Superato dal §10 (18/11): l'ascoltatore non è più multipiattaforma né su `accept`/TCP (è un tubo con nome, solo Windows) e non c'è variabile d'ambiente; il resto dei vincoli vale.*
+
 - Budget §4 della spec generale: a riposo l'ascoltatore è un thread fermo su `accept`; **a riposo** nessun timer
   nuovo oltre alla lettura API ogni 3 ore. Timer accesi solo quando c'è qualcosa (precisazione del 17/11 dal
   piano): durata del lavoro al secondo solo mentre una sessione lavora e la pillola o la vista Claude si vedono;
@@ -233,6 +253,8 @@ in chat o nel repo». La barra di stato prende il codice dalla stessa variabile.
 - Disegno fine della vista Claude e delle schede della finestra di gestione, nello stile esistente.
 
 ## 9. Scelte mie da controllare (riassunto)
+
+> *Superato dal §10 (18/11): «porta fissa» e «codice segreto via variabile d'ambiente» non esistono più; le altre scelte valgono.*
 
 Porta fissa; codice segreto via variabile d'ambiente invece che in `settings.json`; timeout del permesso 120 s;
 sessione silenziosa sparisce dopo 30 min; lettura API ogni 3 ore; soglie spesa 80/100% e «spesa insolita» 3×;

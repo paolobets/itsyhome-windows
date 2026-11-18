@@ -37,13 +37,13 @@ Scorciatoie: **Ctrl+Alt+Maiusc+Spazio** apre il pannello, **Ctrl+Alt+Maiusc+I** 
 
 ### Claude Code e API Claude
 
-L'isola può dirti che cosa fanno le tue sessioni di Claude Code (lavora, ti aspetta, ha finito), farti rispondere ai permessi dalla pillola e mostrarti i limiti dell'abbonamento e la spesa delle API. Tutto è facoltativo e spento finché non lo colleghi. Disponibile **solo su Windows**.
+L'isola può dirti che cosa fanno le tue sessioni di Claude Code (lavora, ti aspetta, ha finito), farti rispondere ai permessi dalla pillola e mostrarti i limiti dell'abbonamento e la spesa delle API. Tutto è facoltativo e spento finché non lo colleghi. Il collegamento con le sessioni è **solo per Windows**; la lettura di spesa e consumi via API funziona anche altrove (vedi sotto).
 
 **Collegare Claude Code**
 1. Apri Impostazioni › Claude e scegli «Collega Claude Code».
 2. Prima di cambiare qualcosa l'isola ti mostra un'**anteprima** di ciò che scriverà nel file delle impostazioni di Claude Code (`settings.json`): leggila e conferma.
-3. Se confermi, l'isola salva una copia del file com'era (`settings.json.isola-bak`) e aggiunge solo le sue voci, lasciando intatte le tue. Non serve riaprire i terminali già aperti né impostare variabili.
-4. «Scollega» toglie le voci dell'isola e **ripristina il file com'era** (puoi sempre confrontarlo con la copia `.isola-bak`).
+3. Se confermi, l'isola salva una copia del file com'era (`settings.json.isola-bak`) e aggiunge solo le sue voci, lasciando intatte le tue. Nessuna variabile da impostare: le sessioni di Claude Code avviate dopo il collegamento usano le nuove voci.
+4. «Scollega» **toglie le voci dell'isola e lascia il resto com'era** (la copia `.isola-bak` resta lì, se vuoi confrontare).
 
 **Che cosa garantisce il canale protetto.** Claude Code e l'isola si parlano tramite un piccolo programma accanto all'isola (`isola-hook.exe`) e un canale interno di Windows riservato al tuo utente: nessuna porta di rete aperta, nessun codice o password da custodire, nessuna pagina web che possa raggiungerlo. Il programma controlla che dall'altra parte ci sia davvero l'isola, e l'isola controlla che arrivi davvero il programma; se qualcosa non torna, non viene inviato nulla. Il programma può rispondere a Claude Code in un solo caso: una tua decisione su un permesso, presa dalla pillola. Non può dare altri ordini né aggiungere istruzioni.
 
@@ -57,7 +57,7 @@ L'isola può dirti che cosa fanno le tue sessioni di Claude Code (lavora, ti asp
 
 **Quadranti e soglie.** Nella Panoramica puoi mettere tre quadranti: «Limite 5 ore», «Limite settimanale» e «Spesa API del mese». In Impostazioni › Claude › Avvisi scegli la soglia dei limiti (da 50 a 100 %, di serie 80 %) e, se vuoi, una soglia di spesa mensile in dollari: l'isola avvisa una volta per finestra o per gradino, e segnala una spesa insolita (ieri più di tre volte la media). Lasciando vuota la soglia di spesa non ci sono avvisi di spesa.
 
-**Solo su Windows:** il canale protetto e il collegamento con Claude Code, e il «porta davanti» del terminale di una sessione. Su macOS e Linux la sezione di collegamento dice «Disponibile solo su Windows».
+**Solo su Windows:** il canale protetto e il collegamento con Claude Code (hook, barra di stato, permessi dalla pillola) e il «porta davanti» del terminale di una sessione. Su macOS e Linux la sezione di collegamento dice «Disponibile solo su Windows»; la chiave da amministratore, i dettagli delle API, i quadranti e le soglie funzionano ovunque.
 
 ---
 
