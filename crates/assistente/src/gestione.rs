@@ -538,6 +538,7 @@ mod test {
             colonne: (0..9).map(|i| format!("c{i}")).collect(),
             righe: (0..300).map(|i| (0..9).map(|j| format!("r{i}\u{200B}c{j}")).collect()).collect(),
             azione_console: "console:spesa".into(),
+            ..Default::default()
         };
         let mut lunga = sporca("Lunga");
         lunga.righe = vec![vec!["x".repeat(900)]];
@@ -570,7 +571,7 @@ mod test {
             let _ = tx.lock().unwrap().send((n, m));
         });
         assert_eq!((g.generazione(), g.viva()), (0, false));
-        let schede = [SchedaDati { nome: "S".into(), nota: String::new(), colonne: vec![], righe: vec![], azione_console: "console:spesa".into() }];
+        let schede = [SchedaDati { nome: "S".into(), azione_console: "console:spesa".into(), ..Default::default() }];
         assert_eq!(g.apri_schede("T", &schede), Ok(1));
         assert_eq!(rx.recv_timeout(Duration::from_secs(10)), Ok((1, Messaggio::Pronta)));
         assert!(g.viva());

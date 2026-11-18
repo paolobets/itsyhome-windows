@@ -2,7 +2,7 @@
 //!
 //! Le difese stanno a più livelli: JavaScript spento e devtools spenti nel motore web,
 //! navigazione bloccata (`consenti_navigazione`), nuove finestre e scaricamenti negati, e in più
-//! una Content-Security-Policy messa in testa al documento (`con_csp`) che chiude anche ciò che il
+//! una Content-Security-Policy messa in testa al documento (`con_testa_fidata`) che chiude anche ciò che il
 //! gestore della navigazione non vede: riquadri (`<iframe>`), moduli, file locali e ogni risorsa
 //! remota (immagini, stili, caratteri).
 
@@ -22,11 +22,19 @@ pub fn consenti_navigazione(url: &str, gia_caricato: bool) -> bool {
 pub const CSP: &str = "default-src 'none'; img-src data: cid:; style-src 'unsafe-inline'; font-src data:; \
 form-action 'none'; frame-src 'none'; base-uri 'none'";
 
-/// Mette la politica come primo elemento del documento: subito dopo un eventuale `<!doctype>`
-/// iniziale (così la pagina resta in modalità standard), altrimenti in cima. Un `<head>` cercato
-/// nel testo si potrebbe nascondere in un commento: la cima del documento no.
-pub fn con_csp(html: &str) -> String {
-    let meta = format!(r#"<meta http-equiv="Content-Security-Policy" content="{CSP}">"#);
+/// R1-24: la barra di scorrimento della pagina, scura come la cornice (cursore viola grigio sul
+/// fondo della cornice, `Tema.fondo-basso` #0a0015), al posto di quella chiara del motore web. Tocca solo la barra: la
+/// mail resta fedele al mittente (fondo, colori, caratteri), e una mail che sceglie la sua barra
+/// vince (la regola è la prima del documento, senza `!important`). Niente `color-scheme`: farebbe
+/// passare al tema scuro anche il testo delle mail che non hanno un fondo.
+pub const STILE_BARRA: &str = "<style>:root{scrollbar-color:#5c5370 #0a0015}</style>";
+
+/// La testa fidata del documento: la politica (`CSP`) come primo elemento e poi lo stile della
+/// barra (`STILE_BARRA`). Va subito dopo un eventuale `<!doctype>` iniziale (così la pagina resta
+/// in modalità standard), altrimenti in cima. Un `<head>` cercato nel testo si potrebbe
+/// nascondere in un commento: la cima del documento no.
+pub fn con_testa_fidata(html: &str) -> String {
+    let meta = format!(r#"<meta http-equiv="Content-Security-Policy" content="{CSP}">{STILE_BARRA}"#);
     let corpo = html.trim_start_matches('\u{feff}');
     let inizio = corpo.len() - corpo.trim_start().len();
     let resto = &corpo[inizio..];
@@ -66,14 +74,26 @@ mod test {
 
     #[test]
     fn la_politica_e_il_primo_elemento_del_documento() {
-        let meta = format!(r#"<meta http-equiv="Content-Security-Policy" content="{CSP}">"#);
+        let testa = format!(r#"<meta http-equiv="Content-Security-Policy" content="{CSP}">{STILE_BARRA}"#);
         assert_eq!(
-            con_csp("<!DOCTYPE html><html><head><title>x</title>"),
-            format!("<!DOCTYPE html>{meta}<html><head><title>x</title>")
+            con_testa_fidata("<!DOCTYPE html><html><head><title>x</title>"),
+            format!("<!DOCTYPE html>{testa}<html><head><title>x</title>")
         );
-        assert_eq!(con_csp("\n  <!doctype html>\n<p>a</p>"), format!("\n  <!doctype html>{meta}\n<p>a</p>"));
+        assert_eq!(con_testa_fidata("\n  <!doctype html>\n<p>a</p>"), format!("\n  <!doctype html>{testa}\n<p>a</p>"));
         // Senza doctype (o con un commento davanti) va in cima: mai dentro un commento.
-        assert_eq!(con_csp("<!-- <head> --><p>a</p>"), format!("{meta}<!-- <head> --><p>a</p>"));
-        assert_eq!(con_csp(""), meta);
+        assert_eq!(con_testa_fidata("<!-- <head> --><p>a</p>"), format!("{testa}<!-- <head> --><p>a</p>"));
+        assert_eq!(con_testa_fidata(""), testa);
+    }
+
+    /// R1-24: la mail resta com'è (fondo, colori e caratteri del mittente); cambia solo la barra di
+    /// scorrimento della pagina, scura come la cornice. Nessuna regola sul contenuto, nessuna
+    /// risorsa esterna, e la politica resta il primo elemento (lo stile viene dopo).
+    #[test]
+    fn la_barra_di_scorrimento_e_scura_e_la_mail_no() {
+        assert!(STILE_BARRA.starts_with("<style>:root{scrollbar-color:") && STILE_BARRA.ends_with("}</style>"));
+        for vietato in ["background", "color-scheme", "body", "url(", "@import", "!important", "http"] {
+            assert!(!STILE_BARRA.contains(vietato), "{vietato} in {STILE_BARRA}");
+        }
+        assert!(con_testa_fidata("<p>a</p>").starts_with("<meta http-equiv=\"Content-Security-Policy\""));
     }
 }

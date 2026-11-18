@@ -10,7 +10,7 @@ use casa_core::config::LimiteVisto;
 use chrono::{DateTime, Datelike, Local, NaiveDate, TimeZone, Weekday};
 use claude_hook::sessioni::{Sessione, Sessioni, Stato};
 use claude_hook::Limite;
-use gestione_protocollo::{testo_pulito, SchedaDati};
+use gestione_protocollo::{testo_pulito, GruppoDati, SchedaDati};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -769,7 +769,17 @@ fn nome_limite(t: &str) -> String {
     }
 }
 
-/// Il suggerimento della chiave: solo le ultime cifre, mai il prefisso né il valore.
+/// Il nome di un gruppo di limiti (RC-45): senza un nome dato dall'API resta il tipo, che arriva in
+/// minuscolo («batch»); qui comincia con la maiuscola come gli altri nomi della scheda.
+fn nome_gruppo_limiti(n: &str) -> String {
+    let mut lettere = n.chars();
+    match lettere.next() {
+        Some(prima) => prima.to_uppercase().chain(lettere).collect(),
+        None => NESSUN_VALORE.to_owned(),
+    }
+}
+
+/// Le ultime cifre della chiave («Finisce con»): mai il prefisso né il valore.
 fn suggerimento(s: &str) -> String {
     if s.is_empty() || s.contains("sk-ant") {
         NESSUN_VALORE.to_owned()
@@ -782,8 +792,13 @@ fn riga<const N: usize>(celle: [String; N]) -> Vec<String> {
     celle.into()
 }
 
-fn colonne(nomi: &[&str]) -> Vec<String> {
-    nomi.iter().map(|n| (*n).to_owned()).collect()
+/// Una colonna di una scheda: nome e se è di numeri o importi (RC-43: allineata a destra).
+const TESTO: bool = false;
+const NUMERI: bool = true;
+
+/// I nomi delle colonne e, per ciascuna, se è numerica.
+fn colonne(nomi: &[(&str, bool)]) -> (Vec<String>, Vec<bool>) {
+    nomi.iter().map(|(n, numerica)| ((*n).to_owned(), *numerica)).unzip()
 }
 
 /// Nome e azione della Console delle cinque schede, nell'ordine in cui si mostrano.
@@ -796,7 +811,14 @@ const SCHEDE: [(&str, &str); 5] = [
 ];
 
 fn scheda_di(i: usize, nota: &str, colonne: Vec<String>, righe: Vec<Vec<String>>) -> SchedaDati {
-    SchedaDati { nome: SCHEDE[i].0.into(), nota: nota.into(), colonne, righe, azione_console: SCHEDE[i].1.into() }
+    SchedaDati {
+        nome: SCHEDE[i].0.into(),
+        nota: nota.into(),
+        colonne,
+        righe,
+        azione_console: SCHEDE[i].1.into(),
+        ..Default::default()
+    }
 }
 
 /// Le cinque schede senza dati, tutte con la stessa nota (nessuna lettura ancora, o non riuscita).
@@ -809,11 +831,37 @@ pub fn schede_vuote(nota: &str) -> Vec<SchedaDati> {
 /// legge ha la sua nota e nessuna riga; un riepilogo senza nessuna lettura riuscita dice perché.
 /// Mai il valore di una chiave: solo il nome e le ultime cifre del suggerimento.
 pub fn schede(r: &Riepilogo, adesso_locale: &str) -> Vec<SchedaDati> {
-    schede_in(r, adesso_locale, &Local)
+    schede_in(r, adesso_locale, &Local, chrono::Utc::now())
 }
 
-/// `schede` nel fuso `tz` (i test ne passano uno fisso).
-pub fn schede_in<Tz: TimeZone>(r: &Riepilogo, adesso_locale: &str, tz: &Tz) -> Vec<SchedaDati>
+/// Le righe della Spesa a gruppi (RC-54): in testa il riepilogo (mese in corso e ieri), poi un
+/// gruppo per modello, per chiave, per workspace e per gli ultimi giorni (dal più recente), ognuno
+/// con la sua intestazione. Un gruppo senza righe non c'è. I totali di gruppo sommano ciascuno la
+/// spesa del mese: con l'intestazione non sembrano voci da sommare fra loro.
+fn spesa_a_gruppi(r: &Riepilogo) -> (Vec<Vec<String>>, Vec<GruppoDati>) {
+    let dollari = |i: Option<api_claude::Importo>| i.map_or_else(|| SPESA_NESSUN_DATO.to_owned(), |i| i.in_dollari());
+    let mut righe = vec![riga(["Mese in corso".into(), dollari(r.spesa_mese)]), riga(["Ieri".into(), dollari(r.spesa_ieri)])];
+    let mut gruppi = Vec::new();
+    let mut gruppo = |titolo: &str, nuove: Vec<Vec<String>>, righe: &mut Vec<Vec<String>>| {
+        if !nuove.is_empty() {
+            gruppi.push(GruppoDati { riga: righe.len(), titolo: titolo.into() });
+            righe.extend(nuove);
+        }
+    };
+    gruppo("Per modello", r.per_modello.iter().map(|(n, i)| riga([n.clone(), i.in_dollari()])).collect(), &mut righe);
+    gruppo("Per chiave", r.per_chiave.iter().map(|(n, i, _)| riga([n.clone(), i.in_dollari()])).collect(), &mut righe);
+    gruppo("Per workspace", r.per_workspace.iter().map(|(n, i)| riga([n.clone(), i.in_dollari()])).collect(), &mut righe);
+    gruppo(
+        "Ultimi giorni",
+        r.giorni.iter().rev().map(|(d, i)| riga([d.format("%d/%m").to_string(), i.in_dollari()])).collect(),
+        &mut righe,
+    );
+    (righe, gruppi)
+}
+
+/// `schede` nel fuso `tz` e a `adesso` (i test ne passano di fissi). RC-45: la nota dei dati con
+/// ritardo dice il giorno con `quando_alle` («Aggiornato ieri alle 14:02»), come la vista Claude.
+pub fn schede_in<Tz: TimeZone>(r: &Riepilogo, adesso_locale: &str, tz: &Tz, adesso: DateTime<chrono::Utc>) -> Vec<SchedaDati>
 where
     Tz::Offset: std::fmt::Display,
 {
@@ -822,23 +870,12 @@ where
         return schede_vuote(&format!("Lettura delle {adesso_locale} non riuscita: {e}"));
     }
     let nota_ritardo = match r.aggiornato_a {
-        Some(a) => {
-            let a = a.with_timezone(tz);
-            format!("Aggiornato al {} alle {} · {RITARDO_DATI}", a.format("%d/%m"), a.format("%H:%M"))
-        }
+        Some(a) => format!("Aggiornato {} · {RITARDO_DATI}", quando_alle(a, adesso, tz)),
         None => format!("Letto alle {adesso_locale} · {RITARDO_DATI}"),
     };
     let nota_diretta = format!("Letto alle {adesso_locale}");
-    let dollari = |i: Option<api_claude::Importo>| i.map_or_else(|| SPESA_NESSUN_DATO.to_owned(), |i| i.in_dollari());
 
-    let mut spesa = vec![
-        riga(["Mese in corso".into(), String::new(), dollari(r.spesa_mese)]),
-        riga(["Ieri".into(), String::new(), dollari(r.spesa_ieri)]),
-    ];
-    spesa.extend(r.per_modello.iter().map(|(n, i)| riga(["Modello".into(), n.clone(), i.in_dollari()])));
-    spesa.extend(r.per_chiave.iter().map(|(n, i, _)| riga(["Chiave".into(), n.clone(), i.in_dollari()])));
-    spesa.extend(r.per_workspace.iter().map(|(n, i)| riga(["Workspace".into(), n.clone(), i.in_dollari()])));
-    spesa.extend(r.giorni.iter().rev().map(|(d, i)| riga(["Giorno".into(), d.format("%d/%m").to_string(), i.in_dollari()])));
+    let (spesa, gruppi_spesa) = spesa_a_gruppi(r);
 
     let token = r.token.map_or_else(Vec::new, |t| {
         vec![
@@ -875,24 +912,44 @@ where
     let limiti = r
         .limiti
         .iter()
-        .flat_map(|g| g.limiti.iter().map(|(t, v)| riga([g.nome.clone(), nome_limite(t), numero(*v)])))
+        .flat_map(|g| g.limiti.iter().map(|(t, v)| riga([nome_gruppo_limiti(&g.nome), nome_limite(t), numero(*v)])))
         .collect();
 
     let dati = [
-        (Scheda::Spesa, &nota_ritardo, colonne(&["Voce", "Dettaglio", "Spesa"]), spesa),
-        (Scheda::Token, &nota_ritardo, colonne(&["Voce", "Token"]), token),
+        (Scheda::Spesa, &nota_ritardo, colonne(&[("Voce", TESTO), ("Spesa", NUMERI)]), spesa, gruppi_spesa),
+        (Scheda::Token, &nota_ritardo, colonne(&[("Voce", TESTO), ("Token", NUMERI)]), token, Vec::new()),
         (
             Scheda::Chiavi,
             &nota_diretta,
-            colonne(&["Nome", "Stato", "Creata", "Scade", "Suggerimento", "Chiamate"]),
+            colonne(&[
+                ("Nome", TESTO),
+                ("Stato", TESTO),
+                ("Creata", TESTO),
+                ("Scade", TESTO),
+                ("Finisce con", TESTO),
+                ("Chiamate", NUMERI),
+            ]),
             chiavi,
+            Vec::new(),
         ),
-        (Scheda::WorkspaceMembri, &nota_diretta, colonne(&["Tipo", "Nome", "Email", "Ruolo"]), membri),
-        (Scheda::Limiti, &nota_diretta, colonne(&["Gruppo", "Limite", "Valore"]), limiti),
+        (
+            Scheda::WorkspaceMembri,
+            &nota_diretta,
+            colonne(&[("Tipo", TESTO), ("Nome", TESTO), ("Email", TESTO), ("Ruolo", TESTO)]),
+            membri,
+            Vec::new(),
+        ),
+        (
+            Scheda::Limiti,
+            &nota_diretta,
+            colonne(&[("Gruppo", TESTO), ("Limite", TESTO), ("Valore", NUMERI)]),
+            limiti,
+            Vec::new(),
+        ),
     ];
     dati.into_iter()
         .enumerate()
-        .map(|(i, (quale, nota, colonne, mut righe))| {
+        .map(|(i, (quale, nota, (colonne, numeriche), mut righe, gruppi))| {
             if r.non_disponibili.contains(&quale) {
                 return scheda_di(i, SCHEDA_NON_DISPONIBILE, Vec::new(), Vec::new());
             }
@@ -902,7 +959,7 @@ where
                     *cella = NESSUN_VALORE.to_owned();
                 }
             }
-            scheda_di(i, nota, colonne, righe)
+            SchedaDati { numeriche, gruppi, ..scheda_di(i, nota, colonne, righe) }
         })
         .collect()
 }
@@ -1514,7 +1571,7 @@ mod test {
     #[test]
     fn schede_dal_riepilogo() {
         let r = Riepilogo { non_disponibili: vec![api_claude::Scheda::Token], token: None, chiamate_mese: None, ..riepilogo_completo() };
-        let s = schede_in(&r, "14:05", &chrono::Utc);
+        let s = schede_in(&r, "14:05", &chrono::Utc, utc(19, 9, 0));
         let nomi: Vec<_> = s.iter().map(|x| x.nome.as_str()).collect();
         assert_eq!(nomi, ["Spesa", "Token", "Chiavi", "Workspace e membri", "Limiti"]);
         let console: Vec<_> = s.iter().map(|x| x.azione_console.as_str()).collect();
@@ -1522,11 +1579,12 @@ mod test {
         // La scheda non disponibile lo dice e non ha righe.
         assert_eq!(s[1].nota, "Non disponibile con questa chiave");
         assert!(s[1].righe.is_empty());
-        // La spesa dice da quando sono i dati e che arrivano in ritardo.
-        assert_eq!(s[0].nota, "Aggiornato al 18/11 alle 14:02 · dati con 4–24 ore di ritardo");
-        assert!(s[0].righe.contains(&vec!["Mese in corso".to_owned(), String::new(), "412,80 $".to_owned()]));
-        // Le chiavi: nome, stato, creata, scade, suggerimento, chiamate del mese; mai il valore.
-        assert_eq!(s[2].colonne, ["Nome", "Stato", "Creata", "Scade", "Suggerimento", "Chiamate"]);
+        // La spesa dice da quando sono i dati (RC-45: con la stessa forma della vista Claude,
+        // «ieri alle…») e che arrivano in ritardo.
+        assert_eq!(s[0].nota, "Aggiornato ieri alle 14:02 · dati con 4–24 ore di ritardo");
+        assert_eq!(s[0].righe[0], ["Mese in corso", "412,80 $"]);
+        // Le chiavi: nome, stato, creata, scade, ultime cifre, chiamate del mese; mai il valore.
+        assert_eq!(s[2].colonne, ["Nome", "Stato", "Creata", "Scade", "Finisce con", "Chiamate"]);
         assert_eq!(s[2].righe[0], ["Chiave di prova A", "Attiva", "10/01/2026", "10/01/2027", "…0001", "90"]);
         assert_eq!(s[2].righe[1], ["Chiave di prova B", "Disattivata", "—", "—", "—", "—"]);
         assert_eq!(s[3].righe[1][3], "Amministratore");
@@ -1539,6 +1597,75 @@ mod test {
         }
     }
 
+    /// RC-54: la Spesa a gruppi. In testa il riepilogo (mese e ieri), poi «Per modello», «Per
+    /// chiave», «Per workspace» e «Ultimi giorni» con la loro intestazione; nessuna colonna «Voce»
+    /// che ripete «Modello, Modello, Giorno…». Un gruppo senza righe non ha intestazione.
+    #[test]
+    fn la_spesa_e_a_gruppi_con_intestazione() {
+        use gestione_protocollo::GruppoDati;
+        let mut r = riepilogo_completo();
+        r.per_modello.push(("claude-opus-5-5".into(), api_claude::importo_da("16280").unwrap()));
+        // I giorni arrivano dal più vecchio: si mostrano dal più recente.
+        r.giorni.insert(0, (chrono::NaiveDate::from_ymd_opt(2026, 11, 16).unwrap(), api_claude::importo_da("1000").unwrap()));
+        let s = schede_in(&r, "14:05", &chrono::Utc, utc(19, 9, 0));
+        let spesa = &s[0];
+        assert_eq!(spesa.colonne, ["Voce", "Spesa"]);
+        let righe: Vec<[&str; 2]> = spesa.righe.iter().map(|r| [r[0].as_str(), r[1].as_str()]).collect();
+        assert_eq!(
+            righe,
+            [
+                ["Mese in corso", "412,80 $"],
+                ["Ieri", "40,00 $"],
+                ["claude-sonnet-5-5", "250,00 $"],
+                ["claude-opus-5-5", "162,80 $"],
+                ["Chiave di prova A", "250,00 $"],
+                ["Workspace di prova", "412,80 $"],
+                ["17/11", "40,00 $"],
+                ["16/11", "10,00 $"],
+            ]
+        );
+        let gruppo = |riga: usize, titolo: &str| GruppoDati { riga, titolo: titolo.into() };
+        assert_eq!(
+            spesa.gruppi,
+            [gruppo(2, "Per modello"), gruppo(4, "Per chiave"), gruppo(5, "Per workspace"), gruppo(6, "Ultimi giorni")]
+        );
+        // Senza modelli né chiavi i loro gruppi non ci sono.
+        r.per_modello.clear();
+        r.per_chiave.clear();
+        let s = schede_in(&r, "14:05", &chrono::Utc, utc(19, 9, 0));
+        let titoli: Vec<(usize, &str)> = s[0].gruppi.iter().map(|g| (g.riga, g.titolo.as_str())).collect();
+        assert_eq!(titoli, [(2, "Per workspace"), (3, "Ultimi giorni")]);
+    }
+
+    /// RC-43: le colonne dei numeri e degli importi sono marcate (la finestra le allinea a destra).
+    #[test]
+    fn le_colonne_numeriche_sono_marcate() {
+        let s = schede_in(&riepilogo_completo(), "14:05", &chrono::Utc, utc(19, 9, 0));
+        let numeriche: Vec<Vec<&str>> = s
+            .iter()
+            .map(|x| x.colonne.iter().zip(&x.numeriche).filter(|(_, n)| **n).map(|(c, _)| c.as_str()).collect())
+            .collect();
+        assert_eq!(numeriche, [vec!["Spesa"], vec!["Token"], vec!["Chiamate"], vec![], vec!["Valore"]]);
+        assert!(s.iter().all(|x| x.numeriche.len() == x.colonne.len()), "una marca per colonna");
+    }
+
+    /// RC-45: le parole delle schede. La nota dei dati letti adesso ha la stessa forma («Letto alle
+    /// 14:05»); quella dei dati di oggi dice solo l'ora; i gruppi dei limiti senza nome non restano
+    /// in minuscolo da API («batch» → «Batch»).
+    #[test]
+    fn le_parole_delle_schede() {
+        let mut r = riepilogo_completo();
+        r.aggiornato_a = Some(utc(19, 7, 30));
+        r.limiti.push(api_claude::GruppoLimiti { nome: "batch".into(), limiti: vec![("requests_per_minute".into(), 4000)] });
+        let s = schede_in(&r, "14:05", &chrono::Utc, utc(19, 9, 0));
+        assert_eq!(s[0].nota, "Aggiornato alle 07:30 · dati con 4–24 ore di ritardo");
+        assert_eq!(s[2].nota, "Letto alle 14:05");
+        assert_eq!(s[4].righe[2][0], "Batch");
+        r.aggiornato_a = Some(utc(16, 23, 10));
+        let s = schede_in(&r, "14:05", &chrono::Utc, utc(19, 9, 0));
+        assert_eq!(s[0].nota, "Aggiornato il 16/11 alle 23:10 · dati con 4–24 ore di ritardo");
+    }
+
     #[test]
     fn le_chiamate_sono_per_chiave_e_non_per_nome() {
         let mut r = riepilogo_completo();
@@ -1546,7 +1673,7 @@ mod test {
         r.chiavi[1].nome = r.chiavi[0].nome.clone();
         r.chiavi[1].chiamate = Some(38);
         r.per_chiave = vec![(r.chiavi[0].nome.clone(), api_claude::importo_da("1").unwrap(), Some(90))];
-        let s = schede_in(&r, "14:05", &chrono::Utc);
+        let s = schede_in(&r, "14:05", &chrono::Utc, utc(19, 9, 0));
         assert_eq!((s[2].righe[0][5].as_str(), s[2].righe[1][5].as_str()), ("90", "38"));
     }
 
@@ -1556,7 +1683,7 @@ mod test {
         assert_eq!(s.len(), 5);
         assert!(s.iter().all(|x| x.righe.is_empty() && x.nota == "Nessuna lettura ancora: premi Aggiorna"));
         let r = Riepilogo { errore: Some(api_claude::ErroreApi::ChiaveNonValida), ..Default::default() };
-        let s = schede_in(&r, "14:05", &chrono::Utc);
+        let s = schede_in(&r, "14:05", &chrono::Utc, utc(19, 9, 0));
         assert!(s.iter().all(|x| x.righe.is_empty() && x.nota.starts_with("Lettura delle 14:05 non riuscita")), "{:?}", s[0].nota);
     }
 

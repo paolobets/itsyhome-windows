@@ -1955,6 +1955,7 @@ version = "0.1.0"
 dependencies = [
  "gestione-protocollo",
  "i-slint-backend-testing",
+ "i-slint-core",
  "slint",
  "slint-build",
  "webview2-com",

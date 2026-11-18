@@ -1,79 +1,34 @@
 // Cornice fidata della finestra di gestione (spec §3bis): la disegna l'assistente, non il
-// contenuto. Fondo scuro, bordo coi colori dei petali, titolo e pulsante chiudi; sotto la testata
-// l'area del contenuto ostile, coperta dal riquadro web (wry, figlio di questa finestra) o, se il
-// motore web manca, dal testo semplice del piano B.
+// contenuto. Sotto la barra del titolo di Windows (R1-19, decisioni §14: Snap, ridimensiona, riduci
+// e chiudi sono quelli di sistema) il filo coi colori dei petali, come il pannello, poi la testata
+// fidata e sotto l'area del contenuto ostile, coperta dal riquadro web (wry, figlio di questa
+// finestra) o, se il motore web manca, dal testo semplice del piano B.
 //
-// Tastiera: Esc chiude (anche col fuoco nel riquadro web: lo intercetta Rust); Tab raggiunge il
-// pulsante chiudi, Invio o Spazio lo premono; Tab da «Chiudi», o PagSu/PagGiù/frecce sulla
-// cornice, portano il fuoco nel contenuto, che allora si scorre da tastiera.
+// Tastiera: Esc chiude (anche col fuoco nel riquadro web: lo intercetta Rust), come la croce della
+// barra; Tab, PagSu/PagGiù/frecce sulla cornice portano il fuoco nel contenuto, che allora si
+// scorre da tastiera.
 //
 // Separazione fidata: il contenuto ostile non tocca mai la testata. Sta rientrato di `rientro`
 // sotto una linea di separazione disegnata qui, con un filo intorno: appare come una scheda
-// dentro la cornice, e tutto ciò che sta fuori da quel rettangolo è dell'assistente. REGOLA: i
+// dentro la cornice, e tutto ciò che sta fuori da quel rettangolo è dell'assistente. La barra di
+// Windows sta sopra a tutto, fuori dalla finestra di Slint e dal riquadro web: la disegna il
+// sistema e il riquadro (finestra figlia, ritagliata sul suo rettangolo) non ci arriva. REGOLA: i
 // futuri pulsanti d'azione (Archivia, Rispondi…) stanno solo in una barra fidata della cornice,
 // fuori dal riquadro web, mai nell'HTML.
 //
 // I token del tema sono quelli dell'assistente (un solo file: stessi colori e caratteri).
 import { Tema } from "../../assistente/ui/tema.slint";
 export { Tema }
-import { Anello, Etichetta } from "../../assistente/ui/componenti.slint";
+import { Etichetta } from "../../assistente/ui/componenti.slint";
 import { Schede, SchedaUi, RigaUi } from "schede.slint";
 export { SchedaUi, RigaUi }
-
-// Pulsante chiudi della testata: icona a croce nel colore delle icone, rosso tenue al passaggio.
-component Chiudi inherits FocusScope {
-    callback premuto();
-    // Tab (senza Maiusc) dal pulsante: il fuoco va nel contenuto.
-    callback avanti();
-
-    width: 40px;
-    height: 30px;
-    focus-on-click: false;
-    accessible-role: button;
-    accessible-label: "Chiudi";
-    accessible-action-default => { root.premuto(); }
-    key-pressed(evento) => {
-        if (evento.text == Key.Return || evento.text == Key.Space) {
-            root.premuto();
-            return accept;
-        }
-        if (evento.text == Key.Tab && !evento.modifiers.shift) {
-            root.avanti();
-            return accept;
-        }
-        return reject;
-    }
-
-    Rectangle {
-        border-radius: Tema.raggio-s;
-        background: area.pressed ? Tema.pericolo-premuto
-            : area.has-hover ? Tema.chiudi-sopra : transparent;
-    }
-
-    Path {
-        width: 11px;
-        height: 11px;
-        viewbox-width: 11;
-        viewbox-height: 11;
-        commands: "M 0.8 0.8 L 10.2 10.2 M 10.2 0.8 L 0.8 10.2";
-        stroke: area.has-hover ? Tema.icona-attiva : Tema.icona;
-        stroke-width: 1.55px;
-    }
-
-    area := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.premuto(); }
-    }
-
-    if root.has-focus: Anello { raggio: Tema.raggio-s; distanza: 1px; }
-}
 
 export component Cornice inherits Window {
     // Titolo NON fidato: con la Mail sarà l'oggetto della mail, cioè testo ostile. Arriva già
     // ripulito dall'assistente (controlli, direzione, larghezza zero, al più 200 caratteri); si
     // mostra solo in un `Text` e nel titolo della finestra di sistema (mai in HTML). Contro
     // l'imitazione della cornice (un oggetto «Reinserisci il token») sta dopo un'etichetta fidata
-    // fissa, in uno stile diverso.
+    // fissa, in uno stile diverso; e nella barra di sistema dopo la stessa parte fidata.
     in property <string> titolo;
     // UX23 (milestone Mail): mittente e data, anche loro NON fidati. Il protocollo oggi non li
     // porta: restano vuoti e non occupano spazio; quando ci saranno stanno a destra del titolo,
@@ -88,16 +43,24 @@ export component Cornice inherits Window {
     in property <bool> con-schede;
     in property <[SchedaUi]> schede;
 
+    // Il titolo della barra di Windows (e della barra delle applicazioni, di Alt+Tab): prima la
+    // parte fidata, poi il titolo non fidato. Un oggetto «Impostazioni» non dà la barra delle
+    // Impostazioni vere («ItsyHome — Impostazioni»).
+    out property <string> titolo-finestra: "ItsyHome · " + (con-schede ? "Dettaglio" : "Contenuto esterno")
+        + (titolo == "" ? "" : " — " + titolo);
+
     // Geometria dell'area del contenuto: Rust ci appoggia il riquadro web, rientrato di `rientro`
-    // dai bordi e `sotto-linea` sotto la linea di separazione (1 px a `alto-testata`).
-    out property <length> bordo: 2px;
-    out property <length> alto-testata: 46px;
+    // dai bordi e `sotto-linea` sotto la linea di separazione (1 px a `alto-testata`). Le misure
+    // partono dalla cima del contenuto della finestra, sotto la barra di Windows.
+    out property <length> alto-testata: 40px;
     out property <length> rientro: 8px;
     out property <length> sotto-linea: 7px;
-    property <length> contenuto-x: bordo + rientro;
+    // Il filo dei petali, come il bordo del pannello: 1,5 px arrotondato al pixel fisico.
+    property <length> filo: Tema.sul-pixel(1.5px);
+    property <length> contenuto-x: rientro;
     property <length> contenuto-y: alto-testata + sotto-linea;
     property <length> contenuto-l: root.width - 2 * contenuto-x;
-    property <length> contenuto-a: root.height - contenuto-y - bordo - rientro;
+    property <length> contenuto-a: root.height - contenuto-y - rientro;
 
     // Appena le schede compaiono il fuoco va alla loro riga (←/→ cambiano scheda, Tab prosegue).
     changed con-schede => {
@@ -107,42 +70,32 @@ export component Cornice inherits Window {
     }
 
     callback chiudi();
-    // Pressione sulla testata: Rust avvia lo spostamento della finestra.
-    callback trascina();
     // Il fuoco va nel contenuto (riquadro web): da lì si scorre con la tastiera.
     callback al-contenuto();
     // «Apri la Console» (con l'id della pagina) e «Aggiorna» delle schede: vanno all'assistente.
     callback apri-console(string);
     callback aggiorna();
 
-    title: titolo == "" ? "ItsyHome" : "ItsyHome — " + titolo;
-    no-frame: true;
-    // Rust la adatta all'area di lavoro del monitor (al più 780 × 680, vedi misure.rs).
+    title: titolo-finestra;
+    // Rust la adatta all'area di lavoro del monitor (al più 780 × 680 più la barra, vedi misure.rs).
     preferred-width: 780px;
     preferred-height: 680px;
     min-width: 480px;
     min-height: 360px;
     default-font-family: Tema.carattere;
-    background: Tema.fondo-basso;
+    background: Tema.fondo-finestra;
     forward-focus: radice;
-
-    // Bordo: i sei petali in fila, sotto il fondo.
-    Rectangle {
-        background: Tema.petali;
-    }
-
-    Rectangle {
-        x: bordo;
-        y: bordo;
-        width: root.width - 2 * bordo;
-        height: root.height - 2 * bordo;
-        background: Tema.fondo-finestra;
-    }
 
     radice := FocusScope {
         key-pressed(evento) => {
             if (evento.text == Key.Escape) {
                 root.chiudi();
+                return accept;
+            }
+            // Tab sulla cornice (il fuoco è qui, non su una scheda): al contenuto. Con le schede ci
+            // pensa la navigazione di Slint (la linguetta scelta è raggiungibile con Tab).
+            if (evento.text == Key.Tab && !evento.modifiers.shift && self.has-focus && !con-schede) {
+                root.al-contenuto();
                 return accept;
             }
             // Tasti di scorrimento sulla cornice: il fuoco passa al contenuto (il tasto dopo scorre).
@@ -158,23 +111,19 @@ export component Cornice inherits Window {
             return reject;
         }
 
-        // Testata: si trascina per spostare la finestra.
-        TouchArea {
-            x: bordo;
-            y: bordo;
-            width: root.width - 2 * bordo;
-            height: alto-testata - bordo;
-            pointer-event(evento) => {
-                if (evento.kind == PointerEventKind.down && evento.button == PointerEventButton.left) {
-                    root.trascina();
-                }
-            }
+        // Il filo dei petali sotto la barra di Windows.
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: filo;
+            background: Tema.petali;
         }
 
         // Segno dell'assistente: un puntino coi colori dei petali.
         Rectangle {
-            x: 18px;
-            y: (alto-testata - self.height) / 2 + bordo / 2;
+            x: 16px;
+            y: filo + (alto-testata - filo - self.height) / 2;
             width: 10px;
             height: 10px;
             border-radius: self.height / 2;
@@ -183,17 +132,17 @@ export component Cornice inherits Window {
 
         // Etichetta fidata (fissa, dell'assistente) e poi il titolo non fidato, in un altro stile.
         etichetta := Etichetta {
-            x: 38px;
-            y: bordo;
-            height: alto-testata - bordo;
-            text: con-schede ? "DETTAGLIO API" : "CONTENUTO ESTERNO";
+            x: 36px;
+            y: filo;
+            height: alto-testata - filo;
+            text: con-schede ? "DETTAGLIO" : "CONTENUTO ESTERNO";
         }
 
         titolo-testo := Text {
             x: etichetta.x + etichetta.width + 12px;
-            y: bordo;
-            width: max(0px, (mittente-e-data == "" ? pulsante-chiudi.x : meta.x) - self.x - 14px);
-            height: alto-testata - bordo;
+            y: filo;
+            width: max(0px, (mittente-e-data == "" ? root.width : meta.x) - self.x - 14px);
+            height: alto-testata - filo;
             text: titolo;
             overflow: elide;
             vertical-alignment: center;
@@ -205,10 +154,10 @@ export component Cornice inherits Window {
         // Mittente · data (vuoti finché il protocollo non li porta): larghi al più un terzo.
         meta := Text {
             visible: mittente-e-data != "";
-            x: pulsante-chiudi.x - self.width - 14px;
-            y: bordo;
+            x: root.width - self.width - 14px;
+            y: filo;
             width: mittente-e-data == "" ? 0px : min(self.preferred-width, root.width / 3);
-            height: alto-testata - bordo;
+            height: alto-testata - filo;
             text: mittente-e-data;
             overflow: elide;
             vertical-alignment: center;
@@ -216,24 +165,11 @@ export component Cornice inherits Window {
             color: Tema.testo-tenue;
         }
 
-        pulsante-chiudi := Chiudi {
-            x: root.width - self.width - 10px;
-            y: bordo + (alto-testata - bordo - self.height) / 2;
-            premuto => { root.chiudi(); }
-            avanti => {
-                if (con-schede) {
-                    elenco-schede.focus-linguette();
-                } else {
-                    root.al-contenuto();
-                }
-            }
-        }
-
         // Linea di separazione fidata fra testata e contenuto.
         Rectangle {
-            x: bordo;
+            x: 0;
             y: alto-testata;
-            width: root.width - 2 * bordo;
+            width: root.width;
             height: 1px;
             background: Tema.vetro-bordo;
         }

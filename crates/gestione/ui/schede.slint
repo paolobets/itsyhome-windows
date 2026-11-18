@@ -8,19 +8,34 @@
 // ←/→/Home/Fine spostano insieme fuoco e scelta. La tabella è una `list` e ogni riga un `list-item`
 // col fuoco, la cui etichetta legge le celle con il nome della colonna («Nome: …, Stato: …»);
 // ↑/↓/PagSu/PagGiù/Home/Fine spostano il fuoco da una riga all'altra e la riga si porta in vista.
+// Il fuoco non sparisce mai (RC-41): se la riga che lo ha esce con un aggiornamento passa subito
+// alla riga più vicina, o alla scheda scelta se la tabella resta vuota. Un solo anello in tutta la
+// finestra (RC-42): righe e linguette usano `Anello`.
+//
+// Gruppi (RC-54): una riga può portare sopra di sé l'intestazione del suo gruppo («Per modello»);
+// l'intestazione non è una riga (il fuoco la salta) ma Narrator la legge davanti a ogni riga del
+// gruppo. Le righe prima del primo gruppo sono il riepilogo, in evidenza. Le colonne numeriche
+// (RC-43) si allineano a destra, intestazione compresa.
 import { Tema } from "../../assistente/ui/tema.slint";
 import { Anello, Etichetta, Pulsante, TipoPulsante } from "../../assistente/ui/componenti.slint";
 
 // Una riga della tabella: le celle da mostrare e, per Narrator, il testo che le legge tutte.
+// `gruppo`: l'intestazione che sta sopra questa riga ("" = nessuna); `prima`: quante intestazioni
+// stanno sopra le righe precedenti (per la posizione); `evidenza`: riga del riepilogo in testa.
 export struct RigaUi {
     celle: [string],
     testo: string,
+    gruppo: string,
+    prima: int,
+    evidenza: bool,
 }
 
 export struct SchedaUi {
     nome: string,
     nota: string,
     colonne: [string],
+    // Per colonna: vero = numeri o importi, allineati a destra (mancante = testo).
+    numeriche: [bool],
     righe: [RigaUi],
     azione-console: string,
 }
@@ -103,10 +118,13 @@ component Linguetta inherits FocusScope {
 // Una riga della tabella: un elemento `list-item` col fuoco che legge tutte le sue celle.
 component RigaTabella inherits FocusScope {
     in property <RigaUi> riga;
+    in property <[bool]> numeriche;
     in property <int> indice;
     in property <int> quante;
     in property <bool> ultima;
     in property <length> unita;
+    in property <length> alto-riga;
+    in property <length> alto-gruppo;
     in property <int> tocco;
     in property <int> richiesta;
     // Il fuoco è stato chiesto a una riga che forse non c'era ancora (le righe fuori vista nascono
@@ -114,6 +132,10 @@ component RigaTabella inherits FocusScope {
     in property <bool> pendente;
     callback spostata(int);
     callback in-vista();
+    // Il fuoco è andato altrove (non per la finestra che passa in secondo piano).
+    callback lasciata();
+    // L'intestazione del gruppo, se c'è, sta sopra la riga vera.
+    property <length> testa: riga.gruppo != "" ? alto-gruppo : 0px;
 
     init => {
         if (self.pendente && self.indice == self.richiesta) {
@@ -129,6 +151,11 @@ component RigaTabella inherits FocusScope {
     changed has-focus => {
         if (self.has-focus) {
             root.in-vista();
+        }
+    }
+    focus-lost(motivo) => {
+        if (motivo != FocusReason.window-activation) {
+            root.lasciata();
         }
     }
 
@@ -169,26 +196,48 @@ component RigaTabella inherits FocusScope {
         return reject;
     }
 
+    if riga.gruppo != "": Etichetta {
+        x: 12px;
+        y: 0;
+        width: root.width - 24px;
+        height: alto-gruppo - 6px;
+        vertical-alignment: bottom;
+        text: riga.gruppo;
+        overflow: elide;
+        accessible-role: none;
+    }
+
     Rectangle {
+        y: testa;
+        height: alto-riga;
+        border-radius: Tema.raggio-s;
         background: root.has-focus ? Tema.scheda-attiva : mod(indice, 2) == 1 ? Tema.card-fondo : transparent;
     }
 
     for cella[ci] in riga.celle: Text {
         x: 12px + (ci == 0 ? 0px : (ci + 0.6) * unita);
+        y: testa;
         width: (ci == 0 ? 1.6 : 1.0) * unita - 8px;
-        height: parent.height;
+        height: alto-riga;
         text: cella;
+        horizontal-alignment: numeriche[ci] ? TextHorizontalAlignment.right : TextHorizontalAlignment.left;
         vertical-alignment: center;
         overflow: elide;
         font-size: Tema.testo-corpo;
-        color: ci == 0 ? Tema.testo : Tema.testo-ora;
+        font-weight: riga.evidenza ? 500 : 400;
+        color: ci == 0 || riga.evidenza ? Tema.testo : Tema.testo-ora;
         accessible-role: none;
     }
 
-    if root.has-focus: Rectangle {
-        border-width: 1px;
-        border-color: Tema.anello;
-        border-radius: Tema.raggio-s;
+    // Lo stesso anello delle linguette, dentro la riga (le righe si toccano e la tabella taglia
+    // ai lati).
+    if root.has-focus: Anello {
+        x: 0;
+        y: testa;
+        width: root.width;
+        height: alto-riga;
+        raggio: Tema.raggio-s;
+        distanza: -Tema.sul-pixel(2px);
     }
 }
 
@@ -203,6 +252,8 @@ export component Schede inherits Rectangle {
     property <int> scelta: min(max(0, corrente), max(0, schede.length - 1));
     property <SchedaUi> attiva: schede[scelta];
     property <length> alto-riga: 28px;
+    // L'intestazione di un gruppo (RC-54): un po' d'aria sopra e l'etichetta.
+    property <length> alto-gruppo: 32px;
     property <length> alto-pie: 30px;
     property <length> alto-testa: 32px;
     property <int> colonne: max(1, attiva.colonne.length);
@@ -216,6 +267,30 @@ export component Schede inherits Rectangle {
     property <int> riga-ultima: 0;
     property <bool> riga-pendente: false;
     property <int> n-righe: attiva.righe.length;
+    // Le intestazioni di gruppo di tutta la tabella (quelle prima dell'ultima riga più la sua).
+    property <int> n-gruppi: n-righe == 0 ? 0
+        : attiva.righe[n-righe - 1].prima + (attiva.righe[n-righe - 1].gruppo != "" ? 1 : 0);
+    // Una riga ha il fuoco (o l'aveva quando è sparsa con un aggiornamento): nessun altro elemento
+    // l'ha preso dopo. Una riga distrutta non dice di averlo perso, quindi resta vero.
+    property <bool> fuoco-in-tabella: false;
+
+    // RC-41: le righe calano (un aggiornamento, non un cambio di scheda: lì il fuoco è sulla
+    // linguetta). Col fuoco in tabella va subito alla riga rimasta più vicina, o alla scheda scelta
+    // se non ne resta nessuna; il primo tasto dopo sposta davvero. Senza fuoco in tabella, la riga
+    // che Tab raggiunge rientra fra quelle che ci sono.
+    changed n-righe => {
+        if (fuoco-in-tabella) {
+            if (n-righe > 0) {
+                riga-a(min(riga-ultima, n-righe - 1));
+            } else {
+                fuoco-in-tabella = false;
+                riga-ultima = 0;
+                focus-linguette();
+            }
+        } else if (riga-ultima >= n-righe) {
+            riga-ultima = max(0, n-righe - 1);
+        }
+    }
 
     public function focus-linguette() {
         tocco-schede += 1;
@@ -244,11 +319,18 @@ export component Schede inherits Rectangle {
         }
     }
 
+    // La cima della riga `i` (con la sua intestazione, se ne ha una) nella tabella.
+    function cima(i: int) -> length {
+        i * alto-riga + attiva.righe[i].prima * alto-gruppo
+    }
+
     function scorri-a(i: int) {
-        if (i * alto-riga < -flick.content-y) {
-            flick.content-y = -i * alto-riga;
-        } else if ((i + 1) * alto-riga > -flick.content-y + flick.height) {
-            flick.content-y = flick.height - (i + 1) * alto-riga;
+        let alto = cima(i);
+        let basso = alto + alto-riga + (attiva.righe[i].gruppo != "" ? alto-gruppo : 0px);
+        if (alto < -flick.content-y) {
+            flick.content-y = -alto;
+        } else if (basso > -flick.content-y + flick.height) {
+            flick.content-y = flick.height - basso;
         }
     }
 
@@ -256,6 +338,7 @@ export component Schede inherits Rectangle {
     function mostra(i: int) {
         riga-ultima = i;
         riga-pendente = false;
+        fuoco-in-tabella = true;
         scorri-a(i);
     }
 
@@ -312,6 +395,7 @@ export component Schede inherits Rectangle {
         width: (ci == 0 ? 1.6 : 1.0) * unita - 8px;
         height: 20px;
         text: c;
+        horizontal-alignment: attiva.numeriche[ci] ? TextHorizontalAlignment.right : TextHorizontalAlignment.left;
         overflow: elide;
         accessible-role: none;
     }
@@ -339,23 +423,27 @@ export component Schede inherits Rectangle {
             width: parent.width;
             height: parent.height;
             content-width: self.width;
-            content-height: max(self.height, attiva.righe.length * alto-riga);
+            content-height: max(self.height, n-righe * alto-riga + n-gruppi * alto-gruppo);
 
             for riga[ri] in attiva.righe: RigaTabella {
                 x: 0;
-                y: ri * alto-riga;
+                y: ri * alto-riga + riga.prima * alto-gruppo;
                 width: flick.content-width;
-                height: alto-riga;
+                height: alto-riga + (riga.gruppo != "" ? alto-gruppo : 0px);
                 riga: riga;
+                numeriche: attiva.numeriche;
                 indice: ri;
                 quante: n-righe;
                 ultima: ri == riga-ultima;
                 unita: root.unita;
+                alto-riga: root.alto-riga;
+                alto-gruppo: root.alto-gruppo;
                 tocco: root.tocco-righe;
                 richiesta: root.riga-richiesta;
                 pendente: root.riga-pendente;
                 spostata(j) => { root.riga-a(j); }
                 in-vista => { root.mostra(ri); }
+                lasciata => { root.fuoco-in-tabella = false; }
             }
         }
 

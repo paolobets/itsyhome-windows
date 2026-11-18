@@ -22,7 +22,7 @@ export global Tema {
     out property <color> petalo-4: #22d3ee;
     out property <color> petalo-5: #2dd4bf;
     out property <color> petalo-6: #e879f9;
-    // I petali in fila (bordo del pannello, filo delle Impostazioni, bordo della cornice).
+    // I petali in fila (bordo del pannello, filo delle Impostazioni e della cornice).
     out property <brush> petali: @linear-gradient(90deg, petalo-1 0%, petalo-2 20%, petalo-3 40%, petalo-4 60%, petalo-5 80%, petalo-6 100%);
 
     // Aura calda di "ti cerca".
@@ -79,13 +79,10 @@ export global Tema {
     out property <color> azione-bordo: petalo-5.with-alpha(0.45);
     out property <color> pericolo-fondo: bloccante.with-alpha(0.22);
     out property <color> pericolo-sopra: bloccante.with-alpha(0.34);
-    out property <color> pericolo-premuto: bloccante.with-alpha(0.40);
     out property <color> pericolo-bordo: bloccante.with-alpha(0.55);
     // Riga in attesa di conferma della rimozione (Impostazioni).
     out property <color> pericolo-velo: bloccante.with-alpha(0.08);
     out property <color> pericolo-filo: bloccante.with-alpha(0.35);
-    // Pulsante chiudi della cornice al passaggio del mouse.
-    out property <color> chiudi-sopra: bloccante.with-alpha(0.26);
     // Interruttore delle Impostazioni.
     out property <color> interruttore-acceso: petalo-5.with-alpha(0.55);
     out property <color> interruttore-spento: rgba(255, 255, 255, 0.14);

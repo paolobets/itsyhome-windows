@@ -5,13 +5,15 @@
 //! si chiude (l'assistente è uscito o è morto) esce da sola. Non riceve token né configurazione:
 //! solo la cartella dei dati del motore web (`--dati <cartella>`).
 //!
-//! Cornice disegnata in Slint (stesso stile dell'assistente); il contenuto (HTML ostile)
+//! Cornice disegnata in Slint (stesso stile dell'assistente) sotto la barra del titolo di Windows
+//! (R1-19: Snap, ridimensiona, riduci e chiudi di sistema); il contenuto (HTML ostile)
 //! sta in un riquadro wry figlio della finestra Slint: JavaScript spento, devtools spenti,
 //! navigazione bloccata, nuove finestre, scaricamenti e permessi negati, menu contestuale e
 //! scorciatoie del browser spenti. Esc chiude anche col fuoco nel riquadro web. Se il motore web
 //! manca (o con `--senza-web`, per prova), piano B: il contenuto come testo semplice.
 //!
-//! Il titolo della cornice è testo NON fidato (con la Mail, l'oggetto): va solo in un `Text`.
+//! Il titolo della cornice è testo NON fidato (con la Mail, l'oggetto): va solo in un `Text` e nel
+//! titolo della barra di Windows, sempre dopo la parte fidata («ItsyHome · Contenuto esterno — …»).
 //!
 //! Legami tra i crate: la cornice importa `../../assistente/ui/tema.slint` (una sola fonte per
 //! colori e caratteri) e l'assistente include `assets/prova-mail.html` di questo crate; un
@@ -99,12 +101,7 @@ fn avvia(dati: PathBuf, senza_web: bool) -> Result<(), slint::PlatformError> {
     cornice.on_apri_console(|id| invia(&Messaggio::Azione { id: id.to_string() }));
     cornice.on_aggiorna(|| invia(&Messaggio::Azione { id: ID_AGGIORNA.into() }));
     segui_la_scala(&cornice);
-    let debole = cornice.as_weak();
-    cornice.on_trascina(move || {
-        if let Some(c) = debole.upgrade() {
-            let _ = c.window().with_winit_window(|w| w.drag_window());
-        }
-    });
+    chiusura_dalla_barra(&cornice);
     // Tab da «Chiudi» o un tasto di scorrimento sulla cornice: il fuoco nel riquadro web, che
     // allora scorre la mail con PagSu/PagGiù/frecce (Esc continua a chiudere, vedi `esc_chiude`).
     cornice.on_al_contenuto(|| {
@@ -165,6 +162,18 @@ fn avvia(dati: PathBuf, senza_web: bool) -> Result<(), slint::PlatformError> {
     esito
 }
 
+/// R1-19: la croce della barra di Windows (e Alt+F4) chiude come Esc. Senza, Slint nasconderebbe
+/// soltanto la finestra e il processo resterebbe vivo (il ciclo gira fino a `quit_event_loop`).
+fn chiusura_dalla_barra(cornice: &Cornice) {
+    let debole = cornice.as_weak();
+    cornice.window().on_close_requested(move || {
+        if let Some(c) = debole.upgrade() {
+            c.invoke_chiudi();
+        }
+        slint::CloseRequestResponse::HideWindow
+    });
+}
+
 /// L'azione «Aggiorna» delle schede (le altre sono `console:…`, decise dall'assistente).
 const ID_AGGIORNA: &str = "aggiorna";
 
@@ -216,7 +225,7 @@ fn apri(titolo: String, html: String) {
             mostra_piano_b(stato, &html);
         } else if let Some(web) = &stato.web {
             stato.caricato.set(false);
-            if let Err(e) = web.load_html(&sicurezza::con_csp(&html)) {
+            if let Err(e) = web.load_html(&sicurezza::con_testa_fidata(&html)) {
                 eprintln!("gestione: contenuto non caricato: {e}");
                 mostra_piano_b(stato, &html);
             }
@@ -262,8 +271,29 @@ fn apri_schede(titolo: String, schede: Vec<SchedaDati>) {
 struct ModelloSchede {
     schede: Rc<VecModel<SchedaUi>>,
     righe: Vec<Rc<VecModel<RigaUi>>>,
-    /// Ciò che c'è adesso nei modelli, per confrontarlo con ciò che arriva.
-    dati: Vec<SchedaDati>,
+    /// Ciò che c'è adesso nei modelli, per confrontarlo con ciò che arriva: la testa di ogni
+    /// scheda e le sue righe come si mostrano (celle, gruppo, posizione, testo per Narrator).
+    dati: Vec<(Testa, Vec<Riga>)>,
+}
+
+/// La parte di una scheda che non sono le righe.
+#[derive(PartialEq)]
+struct Testa {
+    nome: String,
+    nota: String,
+    colonne: Vec<String>,
+    numeriche: Vec<bool>,
+    azione_console: String,
+}
+
+/// Una riga come si mostra: il confronto con la riga di prima decide se riscriverla.
+#[derive(PartialEq)]
+struct Riga {
+    celle: Vec<String>,
+    testo: String,
+    gruppo: String,
+    prima: i32,
+    evidenza: bool,
 }
 
 impl ModelloSchede {
@@ -281,21 +311,20 @@ impl ModelloSchede {
         while self.righe.len() < nuovi.len() {
             self.righe.push(Rc::new(VecModel::default()));
         }
-        for (i, n) in nuovi.iter().enumerate() {
+        let nuovi: Vec<(Testa, Vec<Riga>)> = nuovi.into_iter().map(|s| (testa_di(&s), righe_di(&s))).collect();
+        for (i, (testa, righe)) in nuovi.iter().enumerate() {
             let prima = self.dati.get(i);
-            let colonne_uguali = prima.is_some_and(|p| p.colonne == n.colonne);
-            let vecchie = prima.filter(|_| colonne_uguali).map(|p| p.righe.as_slice());
-            sincronizza_righe(&self.righe[i], vecchie, n);
-            let testa_uguale = prima.is_some_and(|p| p.nome == n.nome && p.nota == n.nota && colonne_uguali && p.azione_console == n.azione_console);
-            if testa_uguale {
+            sincronizza_righe(&self.righe[i], prima.map(|p| p.1.as_slice()), righe);
+            if prima.is_some_and(|p| p.0 == *testa) {
                 continue;
             }
             let ui = SchedaUi {
-                nome: n.nome.as_str().into(),
-                nota: n.nota.as_str().into(),
-                colonne: testi(&n.colonne),
+                nome: testa.nome.as_str().into(),
+                nota: testa.nota.as_str().into(),
+                colonne: testi(&testa.colonne),
+                numeriche: ModelRc::new(VecModel::from(testa.numeriche.clone())),
                 righe: ModelRc::from(self.righe[i].clone()),
-                azione_console: n.azione_console.as_str().into(),
+                azione_console: testa.azione_console.as_str().into(),
             };
             if i < self.schede.row_count() {
                 self.schede.set_row_data(i, ui);
@@ -311,30 +340,77 @@ impl ModelloSchede {
     }
 }
 
+fn testa_di(s: &SchedaDati) -> Testa {
+    Testa {
+        nome: s.nome.clone(),
+        nota: s.nota.clone(),
+        colonne: s.colonne.clone(),
+        numeriche: s.numeriche.clone(),
+        azione_console: s.azione_console.clone(),
+    }
+}
+
+/// Le righe di una scheda come si mostrano (RC-54): ognuna sa l'intestazione che porta sopra di
+/// sé, quante ce ne sono prima e se è del riepilogo in testa (le righe prima del primo gruppo,
+/// solo se un gruppo c'è). Narrator legge il gruppo davanti a ogni riga che ne fa parte.
+fn righe_di(s: &SchedaDati) -> Vec<Riga> {
+    let primo_gruppo = s.gruppi.iter().map(|g| g.riga).min();
+    let mut gruppo_corrente: Option<&str> = None;
+    let mut prima = 0;
+    s.righe
+        .iter()
+        .enumerate()
+        .map(|(j, celle)| {
+            let suo = s.gruppi.iter().find(|g| g.riga == j).map(|g| g.titolo.as_str());
+            if suo.is_some() {
+                gruppo_corrente = suo;
+            }
+            let testo = testo_riga(&s.colonne, celle);
+            let riga = Riga {
+                celle: celle.clone(),
+                testo: gruppo_corrente.map_or_else(|| testo.clone(), |g| format!("{g} · {testo}")),
+                gruppo: suo.unwrap_or_default().to_owned(),
+                prima,
+                evidenza: primo_gruppo.is_some_and(|p| j < p),
+            };
+            if suo.is_some() {
+                prima += 1;
+            }
+            riga
+        })
+        .collect()
+}
+
 fn testi(v: &[String]) -> ModelRc<SharedString> {
     ModelRc::new(VecModel::from(v.iter().map(|t| SharedString::from(t.as_str())).collect::<Vec<_>>()))
 }
 
-/// Porta le righe del modello a quelle di `n`: una riga uguale a prima (stesse colonne e stesse
-/// celle) non si tocca; una cambiata si riscrive sul posto; le righe in più si aggiungono o si
-/// tolgono in coda. `vecchie` è `None` se le colonne sono cambiate (allora tutte si riscrivono).
-fn sincronizza_righe(modello: &VecModel<RigaUi>, vecchie: Option<&[Vec<String>]>, n: &SchedaDati) {
-    for (j, celle) in n.righe.iter().enumerate() {
+/// Porta le righe del modello a `nuove`: una riga uguale a prima non si tocca; una cambiata si
+/// riscrive sul posto; le righe in più si aggiungono o si tolgono in coda. Le colonne cambiate
+/// cambiano il testo per Narrator, quindi quelle righe si riscrivono comunque.
+fn sincronizza_righe(modello: &VecModel<RigaUi>, vecchie: Option<&[Riga]>, nuove: &[Riga]) {
+    for (j, riga) in nuove.iter().enumerate() {
         if j < modello.row_count() {
-            if vecchie.and_then(|v| v.get(j)) != Some(celle) {
-                modello.set_row_data(j, riga_ui(&n.colonne, celle));
+            if vecchie.and_then(|v| v.get(j)) != Some(riga) {
+                modello.set_row_data(j, riga_ui(riga));
             }
         } else {
-            modello.push(riga_ui(&n.colonne, celle));
+            modello.push(riga_ui(riga));
         }
     }
-    while modello.row_count() > n.righe.len() {
+    while modello.row_count() > nuove.len() {
         modello.remove(modello.row_count() - 1);
     }
 }
 
-fn riga_ui(colonne: &[String], celle: &[String]) -> RigaUi {
-    RigaUi { celle: testi(celle), testo: testo_riga(colonne, celle).into() }
+fn riga_ui(r: &Riga) -> RigaUi {
+    RigaUi {
+        celle: testi(&r.celle),
+        testo: r.testo.as_str().into(),
+        gruppo: r.gruppo.as_str().into(),
+        prima: r.prima,
+        evidenza: r.evidenza,
+    }
 }
 
 /// Ciò che Narrator legge di una riga: «Nome: Chiave di prova A, Stato: Attiva…», senza le celle
@@ -444,7 +520,7 @@ fn costruisci_web(debole: slint::Weak<Cornice>) {
                     // Contenuto arrivato durante la costruzione: sostituisce il primo.
                     if let Some(nuovo) = stato.in_attesa.take() {
                         stato.caricato.set(false);
-                        if let Err(e) = web.load_html(&sicurezza::con_csp(&nuovo)) {
+                        if let Err(e) = web.load_html(&sicurezza::con_testa_fidata(&nuovo)) {
                             eprintln!("gestione: contenuto non caricato: {e}");
                         }
                     }
@@ -473,7 +549,7 @@ fn area_da(cornice: &Cornice) -> Rect {
 
 /// L'area del riquadro web per una finestra di `finestra` pixel fisici a scala `scala`.
 fn area_per(cornice: &Cornice, finestra: (u32, u32), scala: f32) -> Rect {
-    let lato = cornice.get_bordo() + cornice.get_rientro();
+    let lato = cornice.get_rientro();
     let alto = cornice.get_alto_testata() + cornice.get_sotto_linea();
     let (x, y, larghezza, altezza) = misure::area_web(finestra, scala, lato, alto);
     Rect { position: PhysicalPosition::new(x, y).into(), size: PhysicalSize::new(larghezza, altezza).into() }
@@ -545,7 +621,7 @@ fn crea_web(cornice: &Cornice, contesto: &mut WebContext, caricato: Rc<Cell<bool
         // Le mail si leggono su fondo bianco, come in ogni client di posta (il fondo predefinito
         // del motore segue il tema scuro di Windows e il testo nero sparirebbe).
         .with_background_color((255, 255, 255, 255))
-        .with_html(sicurezza::con_csp(html))
+        .with_html(sicurezza::con_testa_fidata(html))
         .with_javascript_disabled()
         .with_devtools(false)
         .with_focused(false)
@@ -704,6 +780,7 @@ mod test {
             colonne: vec!["Nome".into(), "Stato".into()],
             righe: (0..n).map(|i| vec![format!("{nome} {i}"), "Attiva".into()]).collect(),
             azione_console: "console:spesa".into(),
+            ..Default::default()
         }
     }
 
@@ -817,12 +894,10 @@ mod test {
         modello.aggiorna(ancora);
         assert!(righe()[0].contains("Spesa cambiata"));
         assert_eq!(righe().len(), 4);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&c), "Nome: Spesa cambiata, Stato: Attiva", "la stessa riga, riscritta sul posto");
         tasto(&c, Key::Escape);
         assert_eq!(chiuso.get(), 1, "Esc arriva a `chiudi` anche dopo l'aggiornamento");
-        // Senza l'aggiornamento sul posto (un `set_schede` con un modello nuovo) il fuoco sparirebbe.
-        c.set_schede(ModelRc::new(VecModel::from(vec![SchedaUi::default()])));
-        tasto(&c, Key::Escape);
-        assert_eq!(chiuso.get(), 1, "con un modello nuovo il fuoco è perso: è ciò che si evita");
     }
 
     /// Le righe fuori vista non esistono finché non ci si scorre: Fine e PagGiù le mettono in vista
@@ -853,6 +928,239 @@ mod test {
         tasto(&c, Key::PageDown);
         tasto(&c, Key::Escape);
         assert_eq!(chiuso.get(), 2, "anche dopo Inizio e PagGiù");
+    }
+
+    /// L'etichetta per Narrator dell'elemento col fuoco vero (o del primo antenato che ne ha una).
+    fn etichetta_col_fuoco(c: &Cornice) -> String {
+        use i_slint_core::accessibility::AccessibleStringProperty;
+        use i_slint_core::item_tree::ParentItemTraversalMode;
+        let mut corrente = i_slint_core::window::WindowInner::from_pub(c.window()).focus_item.borrow().upgrade();
+        while let Some(item) = corrente {
+            if let Some(e) = item.accessible_string_property(AccessibleStringProperty::Label).filter(|e| !e.is_empty()) {
+                return e.to_string();
+            }
+            corrente = item.parent_item(ParentItemTraversalMode::StopAtPopups);
+        }
+        String::new()
+    }
+
+    /// Una cornice di prova con le schede `dati` e il fuoco sulle linguette.
+    fn cornice_con(dati: Vec<SchedaDati>) -> (Cornice, ModelloSchede) {
+        i_slint_backend_testing::init_no_event_loop();
+        let c = Cornice::new().expect("cornice");
+        c.show().expect("mostrata nel backend di prova");
+        c.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        let mut modello = ModelloSchede::nuovo();
+        c.set_schede(modello.modello());
+        modello.aggiorna(dati);
+        c.set_con_schede(true);
+        slint::platform::update_timers_and_animations();
+        (c, modello)
+    }
+
+    /// RC-41: il fuoco non sparisce mai. Sull'ultima riga, un aggiornamento con una riga in meno lo
+    /// porta subito sulla nuova ultima (senza tasti di mezzo); con la tabella vuota va alla scheda
+    /// scelta. Il primo tasto dopo l'aggiornamento sposta davvero.
+    #[test]
+    fn il_fuoco_passa_alla_riga_piu_vicina_se_la_sua_sparisce() {
+        use slint::platform::Key;
+        let (c, mut modello) = cornice_con(vec![scheda_di_prova("Spesa", 4)]);
+        tasto(&c, Key::DownArrow);
+        tasto(&c, Key::End);
+        assert_eq!(etichetta_col_fuoco(&c), "Nome: Spesa 3, Stato: Attiva");
+        modello.aggiorna(vec![scheda_di_prova("Spesa", 3)]);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&c), "Nome: Spesa 2, Stato: Attiva", "il fuoco è sulla nuova ultima");
+        tasto(&c, Key::UpArrow);
+        assert_eq!(etichetta_col_fuoco(&c), "Nome: Spesa 1, Stato: Attiva", "il primo tasto sposta, non «ritrova»");
+        // La riga col fuoco resta: il fuoco non si muove.
+        modello.aggiorna(vec![scheda_di_prova("Spesa", 2)]);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&c), "Nome: Spesa 1, Stato: Attiva");
+        // Tabella vuota: il fuoco va alla scheda scelta.
+        modello.aggiorna(vec![scheda_di_prova("Spesa", 0)]);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&c), "Spesa", "a tabella vuota, la linguetta");
+    }
+
+    /// RC-41 (foto 46–48): «Aggiorna» premuto col fuoco sull'ultima riga (azione predefinita, come
+    /// il clic, che non dà il fuoco al pulsante) e i dati che tornano uguali: il fuoco resta sulla
+    /// riga e il primo ↑ la sposta davvero.
+    #[test]
+    fn aggiorna_non_toglie_il_fuoco_alla_riga() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::Key;
+        let (c, mut modello) = cornice_con(vec![scheda_di_prova("Spesa", 4)]);
+        let chieste = Rc::new(Cell::new(0));
+        let k = chieste.clone();
+        c.on_aggiorna(move || k.set(k.get() + 1));
+        tasto(&c, Key::DownArrow);
+        tasto(&c, Key::End);
+        let aggiorna = ElementHandle::find_by_accessible_label(&c, "Aggiorna").next().expect("pulsante");
+        aggiorna.invoke_accessible_default_action();
+        assert_eq!(chieste.get(), 1);
+        let mut nuova = scheda_di_prova("Spesa", 4);
+        nuova.nota = "Lettura in corso… · Letto alle 14:05".into();
+        modello.aggiorna(vec![nuova]);
+        modello.aggiorna(vec![scheda_di_prova("Spesa", 4)]);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&c), "Nome: Spesa 3, Stato: Attiva");
+        tasto(&c, Key::UpArrow);
+        assert_eq!(etichetta_col_fuoco(&c), "Nome: Spesa 2, Stato: Attiva");
+    }
+
+    /// RC-41: col fuoco sulle linguette un aggiornamento che toglie righe non glielo ruba, e Tab
+    /// raggiunge ancora la tabella (la riga «ultima» rientra fra quelle che ci sono).
+    #[test]
+    fn senza_fuoco_in_tabella_l_aggiornamento_non_lo_sposta() {
+        use slint::platform::Key;
+        let (c, mut modello) = cornice_con(vec![scheda_di_prova("Spesa", 5)]);
+        tasto(&c, Key::DownArrow);
+        tasto(&c, Key::End);
+        // Il fuoco torna alla linguetta (Maiusc+Tab), poi la tabella cala sotto la riga di prima.
+        c.window().dispatch_event(slint::platform::WindowEvent::KeyPressed { text: Key::Shift.into() });
+        tasto(&c, Key::Tab);
+        c.window().dispatch_event(slint::platform::WindowEvent::KeyReleased { text: Key::Shift.into() });
+        assert_eq!(etichetta_col_fuoco(&c), "Spesa");
+        modello.aggiorna(vec![scheda_di_prova("Spesa", 2)]);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&c), "Spesa", "il fuoco resta sulla linguetta");
+        tasto(&c, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&c), "Nome: Spesa 1, Stato: Attiva", "Tab arriva alla riga rimasta più vicina");
+    }
+
+    /// RC-42: un solo anello nella finestra. La riga col fuoco ha lo stesso `Anello` delle linguette
+    /// (non più un filo da 1 px), dentro la riga.
+    #[test]
+    fn la_riga_col_fuoco_ha_l_anello_delle_linguette() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::Key;
+        let (c, _modello) = cornice_con(vec![scheda_di_prova("Spesa", 3)]);
+        let anelli = || ElementHandle::find_by_element_type_name(&c, "Anello").collect::<Vec<_>>();
+        let riga = || {
+            ElementHandle::find_by_element_type_name(&c, "RigaTabella")
+                .find(|r| r.accessible_label().unwrap().contains("Spesa 0"))
+                .expect("prima riga")
+        };
+        let dentro = |a: &ElementHandle, r: &ElementHandle| {
+            let (pa, pr) = (a.absolute_position(), r.absolute_position());
+            pa.x >= pr.x
+                && pa.y >= pr.y
+                && pa.x + a.size().width <= pr.x + r.size().width + 0.5
+                && pa.y + a.size().height <= pr.y + r.size().height + 0.5
+        };
+        tasto(&c, Key::DownArrow);
+        assert_eq!(etichetta_col_fuoco(&c), "Nome: Spesa 0, Stato: Attiva");
+        let sulla_riga = anelli();
+        assert_eq!(sulla_riga.len(), 1, "uno solo: quello della riga");
+        assert!(dentro(&sulla_riga[0], &riga()), "l'anello sta nella riga");
+        // Il fuoco torna alla linguetta: sempre un anello solo, ed è il suo.
+        c.window().dispatch_event(slint::platform::WindowEvent::KeyPressed { text: Key::Shift.into() });
+        tasto(&c, Key::Tab);
+        c.window().dispatch_event(slint::platform::WindowEvent::KeyReleased { text: Key::Shift.into() });
+        assert_eq!(etichetta_col_fuoco(&c), "Spesa");
+        let sulla_linguetta = anelli();
+        assert_eq!(sulla_linguetta.len(), 1);
+        assert!(!dentro(&sulla_linguetta[0], &riga()));
+    }
+
+    /// RC-43 e RC-54: le colonne numeriche arrivano marcate alla scheda; i gruppi diventano
+    /// un'intestazione sulla loro prima riga, con quante intestazioni stanno prima (per l'altezza)
+    /// e il riepilogo in testa in evidenza. Narrator legge il gruppo davanti alla riga.
+    #[test]
+    fn gruppi_e_colonne_numeriche_dal_modello() {
+        let spesa = SchedaDati {
+            colonne: vec!["Voce".into(), "Spesa".into()],
+            righe: [["Mese in corso", "412,80 $"], ["opus", "300,00 $"], ["sonnet", "112,80 $"], ["16/11", "40,00 $"]]
+                .iter()
+                .map(|r| r.iter().map(|c| (*c).to_owned()).collect())
+                .collect(),
+            numeriche: vec![false, true],
+            gruppi: vec![
+                gestione_protocollo::GruppoDati { riga: 1, titolo: "Per modello".into() },
+                gestione_protocollo::GruppoDati { riga: 3, titolo: "Ultimi giorni".into() },
+            ],
+            ..scheda_di_prova("Spesa", 0)
+        };
+        let mut modello = ModelloSchede::nuovo();
+        modello.aggiorna(vec![spesa, scheda_di_prova("Token", 1)]);
+        let schede = modello.modello();
+        let s = schede.row_data(0).unwrap();
+        assert_eq!(s.numeriche.iter().collect::<Vec<_>>(), [false, true]);
+        let righe: Vec<(String, i32, bool, String)> =
+            s.righe.iter().map(|r| (r.gruppo.to_string(), r.prima, r.evidenza, r.testo.to_string())).collect();
+        assert_eq!(
+            righe,
+            [
+                (String::new(), 0, true, "Voce: Mese in corso, Spesa: 412,80 $".to_owned()),
+                ("Per modello".to_owned(), 0, false, "Per modello · Voce: opus, Spesa: 300,00 $".to_owned()),
+                (String::new(), 1, false, "Per modello · Voce: sonnet, Spesa: 112,80 $".to_owned()),
+                ("Ultimi giorni".to_owned(), 1, false, "Ultimi giorni · Voce: 16/11, Spesa: 40,00 $".to_owned()),
+            ]
+        );
+        // Senza gruppi nessuna riga è «in evidenza»: è il riepilogo solo se dopo ci sono gruppi.
+        let t = schede.row_data(1).unwrap();
+        assert!(t.righe.iter().all(|r| !r.evidenza && r.gruppo.is_empty() && r.prima == 0));
+        assert!(t.numeriche.iter().next().is_none());
+    }
+
+    /// RC-54 nella finestra: l'intestazione sta sopra la sua riga e le righe dopo scendono; il
+    /// fuoco con ↓ salta le intestazioni (non sono righe) e Fine porta in vista l'ultima.
+    #[test]
+    fn le_intestazioni_spingono_giu_le_righe() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::Key;
+        let mut spesa = scheda_di_prova("Spesa", 40);
+        spesa.gruppi = vec![
+            gestione_protocollo::GruppoDati { riga: 1, titolo: "Per modello".into() },
+            gestione_protocollo::GruppoDati { riga: 2, titolo: "Ultimi giorni".into() },
+        ];
+        let (c, _modello) = cornice_con(vec![spesa]);
+        let y = |testo: &str| {
+            ElementHandle::find_by_element_type_name(&c, "RigaTabella")
+                .find(|r| r.accessible_label().unwrap().ends_with(&format!("Nome: {testo}, Stato: Attiva")))
+                .map(|r| (r.absolute_position().y, r.size().height))
+                .unwrap_or_else(|| panic!("riga {testo}"))
+        };
+        let (y0, a0) = y("Spesa 0");
+        let (y1, a1) = y("Spesa 1");
+        let (y2, a2) = y("Spesa 2");
+        let (y3, _) = y("Spesa 3");
+        assert!(a1 > a0 && (a1 - a2).abs() < 0.5, "la riga con l'intestazione è più alta: {a0} {a1} {a2}");
+        assert!((y1 - (y0 + a0)).abs() < 0.5 && (y2 - (y1 + a1)).abs() < 0.5 && (y3 - (y2 + a2)).abs() < 0.5);
+        tasto(&c, Key::DownArrow);
+        tasto(&c, Key::DownArrow);
+        assert_eq!(etichetta_col_fuoco(&c), "Per modello · Nome: Spesa 1, Stato: Attiva");
+        tasto(&c, Key::End);
+        assert_eq!(etichetta_col_fuoco(&c), "Ultimi giorni · Nome: Spesa 39, Stato: Attiva");
+    }
+
+    /// R1-19: con la barra di Windows la croce di sistema chiude come Esc (il processo esce, non
+    /// resta una finestra nascosta).
+    #[test]
+    fn la_croce_della_barra_chiude() {
+        let (c, _modello) = cornice_con(vec![scheda_di_prova("Spesa", 1)]);
+        let chiuso = Rc::new(Cell::new(0));
+        let k = chiuso.clone();
+        c.on_chiudi(move || k.set(k.get() + 1));
+        chiusura_dalla_barra(&c);
+        c.window().dispatch_event(slint::platform::WindowEvent::CloseRequested);
+        assert_eq!(chiuso.get(), 1);
+    }
+
+    /// Il titolo della finestra di sistema (barra, barra delle applicazioni, Alt+Tab) comincia con
+    /// la parte fidata: un oggetto «Impostazioni» non dà la stessa barra delle Impostazioni vere.
+    #[test]
+    fn il_titolo_di_sistema_comincia_con_la_parte_fidata() {
+        i_slint_backend_testing::init_no_event_loop();
+        let c = Cornice::new().expect("cornice");
+        c.set_titolo("Impostazioni".into());
+        assert_eq!(c.get_titolo_finestra(), "ItsyHome · Contenuto esterno — Impostazioni");
+        c.set_con_schede(true);
+        c.set_titolo("API Claude".into());
+        assert_eq!(c.get_titolo_finestra(), "ItsyHome · Dettaglio — API Claude");
+        c.set_titolo("".into());
+        assert_eq!(c.get_titolo_finestra(), "ItsyHome · Dettaglio");
     }
 
     #[test]

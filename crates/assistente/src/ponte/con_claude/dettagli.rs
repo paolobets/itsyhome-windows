@@ -274,7 +274,7 @@ mod test {
         };
         *p.api_ultimo.borrow_mut() = Some(("14:05".into(), Ok(r)));
         let s = p.schede_da_mostrare();
-        assert_eq!(s[0].righe[0], ["Mese in corso", "", "412,80 $"]);
+        assert_eq!(s[0].righe[0], ["Mese in corso", "412,80 $"]);
     }
 
     #[test]

@@ -32,3 +32,6 @@ windows-sys = { version = "0.52", features = [
 [dev-dependencies]
 # Controlli sull'interfaccia (ruoli, nomi e scelta delle schede) col backend di prova di Slint: stessa versione dell'assistente.
 i-slint-backend-testing = "=1.18.1"
+# Solo per leggere nei test quale elemento ha il fuoco (`WindowInner::focus_item`, RC-41): stessa
+# versione di Slint, nessuna funzione in più.
+i-slint-core = { version = "=1.18.1", default-features = false }

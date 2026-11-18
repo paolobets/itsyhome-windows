@@ -31,13 +31,30 @@ pub enum Messaggio {
 
 /// Una scheda del dettaglio: nome, nota (da quando sono i dati), tabella e la pagina della Console
 /// dove si cambia qualcosa (`azione_console`, un id che torna indietro in `azione`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `numeriche` (RC-43) dice, colonna per colonna, quali sono numeri o importi: la finestra le
+/// allinea a destra (mancante = testo). `gruppi` (RC-54) mette un'intestazione sopra alcune righe
+/// («Per modello», «Ultimi giorni»…): le righe prima del primo gruppo sono il riepilogo, in
+/// evidenza. Entrambi mancano nelle righe di prima e valgono vuoti.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SchedaDati {
     pub nome: String,
     pub nota: String,
     pub colonne: Vec<String>,
     pub righe: Vec<Vec<String>>,
     pub azione_console: String,
+    #[serde(default)]
+    pub numeriche: Vec<bool>,
+    #[serde(default)]
+    pub gruppi: Vec<GruppoDati>,
+}
+
+/// Un'intestazione di gruppo: sta sopra la riga `riga` (indice in `righe`). Il titolo è un testo
+/// della scheda come gli altri (non fidato, ripulito da `scheda_pulita`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GruppoDati {
+    pub riga: usize,
+    pub titolo: String,
 }
 
 /// Al più tante righe per scheda.
@@ -71,8 +88,19 @@ fn testo_scheda(testo: &str, massimo: usize) -> String {
 
 /// La scheda con i testi ripuliti (`testo_scheda`) e le misure limitate: `RIGHE_MASSIME` righe di
 /// al più `COLONNE_MASSIME` celle di al più `CELLA_MASSIMA` caratteri. `azione_console` è un id
-/// interno, non si tocca.
+/// interno, non si tocca. I gruppi tengono solo quelli che stanno sopra una riga rimasta, in ordine
+/// di riga, uno per riga (il primo); le colonne numeriche al più `COLONNE_MASSIME`.
 pub fn scheda_pulita(s: &SchedaDati) -> SchedaDati {
+    let righe = s.righe.len().min(RIGHE_MASSIME);
+    let mut gruppi: Vec<GruppoDati> = Vec::new();
+    let mut ordinati: Vec<&GruppoDati> = s.gruppi.iter().filter(|g| g.riga < righe).collect();
+    // Stabile: a parità di riga resta il primo arrivato.
+    ordinati.sort_by_key(|g| g.riga);
+    for g in ordinati {
+        if gruppi.last().is_none_or(|u| u.riga != g.riga) {
+            gruppi.push(GruppoDati { riga: g.riga, titolo: testo_scheda(&g.titolo, CELLA_MASSIMA) });
+        }
+    }
     SchedaDati {
         nome: testo_scheda(&s.nome, CELLA_MASSIMA),
         nota: testo_scheda(&s.nota, CELLA_MASSIMA),
@@ -84,6 +112,8 @@ pub fn scheda_pulita(s: &SchedaDati) -> SchedaDati {
             .map(|r| r.iter().take(COLONNE_MASSIME).map(|c| testo_scheda(c, CELLA_MASSIMA)).collect())
             .collect(),
         azione_console: s.azione_console.clone(),
+        numeriche: s.numeriche.iter().take(COLONNE_MASSIME).copied().collect(),
+        gruppi,
     }
 }
 
@@ -233,6 +263,7 @@ mod test {
             colonne: vec!["Voce".into(), "Valore".into()],
             righe: vec![vec!["Mese".into(), "412,80 $".into()]],
             azione_console: "console:spesa".into(),
+            ..Default::default()
         }
     }
 
@@ -254,6 +285,7 @@ mod test {
             colonne: (0..9).map(|i| format!("c\u{202E}{i}")).collect(),
             righe: (0..300).map(|i| (0..9).map(|j| format!("r{i}\u{200B}c{j}\n")).collect()).collect(),
             azione_console: "console:spesa".into(),
+            ..Default::default()
         };
         let p = scheda_pulita(&sporca);
         assert_eq!((p.nome.as_str(), p.nota.as_str()), ("Spesa", "nota lunga"));
@@ -293,6 +325,45 @@ mod test {
         let pulite = schede_pulite(&molte);
         assert_eq!(pulite.len(), SCHEDE_MASSIME);
         assert_eq!(pulite[7].nome, "S7");
+    }
+
+    /// RC-43 e RC-54: colonne numeriche e intestazioni di gruppo viaggiano sul filo; una riga di
+    /// prima (senza i due campi) si legge ancora, con nessuna colonna numerica e nessun gruppo.
+    #[test]
+    fn numeriche_e_gruppi_andata_e_ritorno() {
+        let s = SchedaDati {
+            numeriche: vec![false, true],
+            gruppi: vec![GruppoDati { riga: 1, titolo: "Per modello".into() }],
+            ..scheda("Spesa")
+        };
+        let m = Messaggio::ApriSchede { titolo: "API Claude".into(), schede: vec![s] };
+        assert_eq!(messaggio_da_riga(&riga_da_messaggio(&m)), Ok(m));
+        let vecchia = r#"{"tipo":"apri_schede","titolo":"T","schede":[{"nome":"S","nota":"","colonne":[],"righe":[],"azione_console":"console:spesa"}]}"#;
+        let Ok(Messaggio::ApriSchede { schede, .. }) = messaggio_da_riga(vecchia) else { panic!("riga di prima non letta") };
+        assert!(schede[0].numeriche.is_empty() && schede[0].gruppi.is_empty());
+    }
+
+    /// I gruppi si ripuliscono come le celle e non indicano righe che non ci sono: un gruppo oltre
+    /// l'ultima riga (anche dopo il taglio a `RIGHE_MASSIME`) sparisce, l'ordine si tiene e due
+    /// gruppi sulla stessa riga diventano uno (il primo). Le colonne numeriche al più `COLONNE_MASSIME`.
+    #[test]
+    fn i_gruppi_si_ripuliscono_e_restano_nelle_righe() {
+        let s = SchedaDati {
+            righe: (0..300).map(|i| vec![format!("r{i}")]).collect(),
+            numeriche: vec![true; 9],
+            gruppi: vec![
+                GruppoDati { riga: 5, titolo: "Ultimi\u{202E} giorni\n".into() },
+                GruppoDati { riga: 0, titolo: "Per modello".into() },
+                GruppoDati { riga: 5, titolo: "Doppio".into() },
+                GruppoDati { riga: 199, titolo: "sk-ant-api03-X".into() },
+                GruppoDati { riga: 200, titolo: "Fuori".into() },
+            ],
+            ..scheda("Spesa")
+        };
+        let p = scheda_pulita(&s);
+        assert_eq!(p.numeriche.len(), COLONNE_MASSIME);
+        let gruppi: Vec<(usize, &str)> = p.gruppi.iter().map(|g| (g.riga, g.titolo.as_str())).collect();
+        assert_eq!(gruppi, [(0, "Per modello"), (5, "Ultimi giorni"), (199, "—")]);
     }
 
     #[test]

@@ -1,6 +1,7 @@
-//! Misure della finestra di gestione: grande al più 780 × 680 logici, ridotta se l'area di lavoro
-//! del monitor non basta (a 1920 × 1080 con scala 150% l'area utile è di circa 1280 × 688
-//! logici), con 24 px di respiro per lato; mai sotto 480 × 360. Centrata sull'area di lavoro.
+//! Misure della finestra di gestione: contenuto grande al più 780 × 680 logici, più la barra di
+//! Windows sopra, ridotto se l'area di lavoro del monitor non basta (a 1920 × 1080 con scala 150%
+//! l'area utile è di circa 1280 × 688 logici), con 24 px di respiro per lato; mai sotto 480 × 360.
+//! Centrata sull'area di lavoro, barra compresa.
 
 /// Rettangolo in pixel fisici: x, y, larghezza, altezza.
 pub type Rettangolo = (i32, i32, i32, i32);
@@ -11,16 +12,19 @@ pub const LARGHEZZA_MINIMA: f32 = 480.0;
 pub const ALTEZZA_MINIMA: f32 = 360.0;
 /// Respiro totale (24 px per lato) fra la finestra e i bordi dell'area di lavoro.
 pub const RESPIRO: f32 = 48.0;
+/// R1-19: la barra del titolo di Windows sopra il contenuto (circa 31 logici con il bordo, a
+/// ogni scala): le misure della finestra sono del contenuto, la barra si aggiunge sopra.
+pub const BARRA_DI_SISTEMA: f32 = 32.0;
 
-/// Dimensione logica e posizione fisica (angolo in alto a sinistra) sull'area di lavoro `area`
-/// con scala `scala`.
+/// Dimensione logica del contenuto e posizione fisica (angolo in alto a sinistra della finestra,
+/// barra compresa) sull'area di lavoro `area` con scala `scala`.
 pub fn misura(area: Rettangolo, scala: f32) -> ((f32, f32), (i32, i32)) {
     let scala = if scala > 0.0 { scala } else { 1.0 };
     let (ax, ay, al, aa) = area;
     let larghezza = (al as f32 / scala - RESPIRO).clamp(LARGHEZZA_MINIMA, LARGHEZZA_MASSIMA);
-    let altezza = (aa as f32 / scala - RESPIRO).clamp(ALTEZZA_MINIMA, ALTEZZA_MASSIMA);
+    let altezza = (aa as f32 / scala - RESPIRO - BARRA_DI_SISTEMA).clamp(ALTEZZA_MINIMA, ALTEZZA_MASSIMA);
     let x = ax + (al - (larghezza * scala).round() as i32) / 2;
-    let y = ay + (aa - (altezza * scala).round() as i32) / 2;
+    let y = ay + (aa - ((altezza + BARRA_DI_SISTEMA) * scala).round() as i32) / 2;
     ((larghezza, altezza), (x, y))
 }
 
@@ -44,34 +48,36 @@ mod test {
 
     #[test]
     fn area_web_segue_la_scala() {
-        // Cornice: bordo 2 + rientro 8 ai lati e sotto, testata 46 + 7 sotto la linea.
-        assert_eq!(area_web((780, 680), 1.0, 10.0, 53.0), (10, 53, 760, 617));
+        // Cornice (R1-19, sotto la barra di Windows): rientro 8 ai lati e sotto, testata 40 + 7
+        // sotto la linea.
+        assert_eq!(area_web((780, 680), 1.0, 8.0, 47.0), (8, 47, 764, 625));
         // La stessa finestra logica a 175%: 1365 × 1190 fisici.
-        assert_eq!(area_web((1365, 1190), 1.75, 10.0, 53.0), (18, 93, 1329, 1079));
+        assert_eq!(area_web((1365, 1190), 1.75, 8.0, 47.0), (14, 82, 1337, 1094));
         // Passata a un monitor al 125% (WM_DPICHANGED): finestra 975 × 850, l'area si ricalcola.
-        assert_eq!(area_web((975, 850), 1.25, 10.0, 53.0), (13, 66, 949, 771));
+        assert_eq!(area_web((975, 850), 1.25, 8.0, 47.0), (10, 59, 955, 781));
         // Finestra minuscola: mai misure negative.
-        assert_eq!(area_web((10, 10), 1.0, 10.0, 53.0), (10, 53, 0, 0));
+        assert_eq!(area_web((10, 10), 1.0, 8.0, 47.0), (8, 47, 0, 0));
     }
 
     #[test]
     fn a_1080p_con_scala_150_e_175_la_finestra_entra() {
-        // 1920 × 1080, barra delle applicazioni da 48 px fisici in basso.
+        // 1920 × 1080, barra delle applicazioni da 48 px fisici in basso. R1-19: sopra il
+        // contenuto c'è la barra di Windows (32 logici), che entra anche lei nell'area.
         let area = (0, 0, 1920, 1032);
         let ((l, a), (x, y)) = misura(area, 1.5);
-        assert_eq!((l, a), (780.0, 640.0), "1280 × 688 logici: alta 688 − 48");
-        assert_eq!((x, y), (375, 36), "centrata: (1920 − 1170) / 2, (1032 − 960) / 2");
+        assert_eq!((l, a), (780.0, 608.0), "1280 × 688 logici: alta 688 − 48 − 32");
+        assert_eq!((x, y), (375, 36), "centrata con la barra: (1920 − 1170) / 2, (1032 − 960) / 2");
         let ((l, a), _) = misura(area, 1.75);
         assert_eq!(l, 780.0);
-        assert!((a - (1032.0 / 1.75 - 48.0)).abs() < 0.01, "{a}");
+        assert!((a - (1032.0 / 1.75 - 48.0 - BARRA_DI_SISTEMA)).abs() < 0.01, "{a}");
     }
 
     #[test]
     fn su_un_monitor_grande_resta_780_per_680() {
-        // 4K al 175%, area su un secondo monitor a destra.
+        // 4K al 175%, area su un secondo monitor a destra: contenuto 780 × 680 più la barra.
         let ((l, a), (x, y)) = misura((3840, 0, 3840, 2112), 1.75);
         assert_eq!((l, a), (780.0, 680.0));
-        assert_eq!((x, y), (3840 + (3840 - 1365) / 2, (2112 - 1190) / 2));
+        assert_eq!((x, y), (3840 + (3840 - 1365) / 2, (2112 - 1246) / 2));
     }
 
     #[test]
