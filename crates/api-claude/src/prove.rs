@@ -143,6 +143,42 @@ fn risultato_vuoto_non_e_zero() {
     assert!(!spesa_insolita(&r, oggi()));
 }
 
+/// PF18: un mese ancora senza spesa è «0,00 $» solo se i dati arrivano fino alla fine del periodo
+/// letto; se sono più vecchi, o senza data, non si sa e resta «nessun dato».
+#[test]
+fn mese_vuoto_e_zero_solo_con_dati_aggiornati_alla_fine_del_periodo() {
+    let gestore = |aggiornato: &'static str| {
+        move |r: &crate::server_finto::Richiesta| {
+            if r.percorso.contains("/analytics/cost") && r.parametro("group_by[]") == Some("model")
+            {
+                (
+                    200,
+                    format!(
+                        r#"{{"data":[],"data_refreshed_at":{aggiornato},"has_more":false,"next_page":null}}"#
+                    ),
+                )
+            } else {
+                gestore_fixture(r)
+            }
+        }
+    };
+    // Fine del periodo letto: le 10:00 del 17/11 (l'ora intera prima di `adesso`).
+    let s = ServerFinto::avvia(gestore(r#""2026-11-17T10:00:00Z""#));
+    let r = aggiorna(&client(&s), adesso());
+    assert_eq!(
+        r.spesa_mese.map(|i| i.in_dollari()).as_deref(),
+        Some("0,00 $")
+    );
+    // Dati fermi a prima della fine del periodo: non si sa.
+    let s = ServerFinto::avvia(gestore(r#""2026-11-17T08:02:11Z""#));
+    let r = aggiorna(&client(&s), adesso());
+    assert_eq!(r.spesa_mese, None);
+    // Senza data: nessun dato.
+    let s = ServerFinto::avvia(gestore("null"));
+    let r = aggiorna(&client(&s), adesso());
+    assert_eq!(r.spesa_mese, None);
+}
+
 #[test]
 fn dati_con_data_refreshed_at_nullo_sono_nessun_dato() {
     let s = ServerFinto::avvia(|r| match fixture(r) {

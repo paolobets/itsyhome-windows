@@ -13,7 +13,7 @@ use crate::attenzione::{Fonte, Livello, Pulsante, Voce, PULSANTE_IMPOSTAZIONI};
 use crate::claude::{self, ID_AGGIORNA, ID_COLLEGAMENTO, PERMESSI_RISOLVIBILI, PULSANTE_CONSENTI, PULSANTE_NEGA};
 use crate::pillola;
 use crate::umore::Umore;
-use crate::LivelloUi;
+use crate::{LimiteClaudeUi, LivelloUi, RigaSessioneUi};
 use casa_core::diagnosi::{Contatore, Diagnosi};
 use claude_hook::evento::{EventoHook, TipoEvento};
 use claude_hook::sessioni::Cambio;
@@ -333,35 +333,37 @@ impl Ponte {
                 *sette = d.sette_giorni;
             }
         }
-        let mut contesto = self.claude_contesto.borrow_mut();
-        match d.contesto {
-            None => {
-                contesto.remove(&d.sessione);
-            }
-            Some(c) => {
-                if !contesto.contains_key(&d.sessione) && contesto.len() >= MASSIMO_CONTESTI {
-                    // Pieno: si lasciano solo le sessioni che gli eventi conoscono ancora.
-                    let note: Vec<String> =
-                        self.claude_sessioni.borrow().elenco().iter().map(|s| s.id.clone()).collect();
-                    contesto.retain(|id, _| note.contains(id));
+        {
+            let mut contesto = self.claude_contesto.borrow_mut();
+            match d.contesto {
+                None => {
+                    contesto.remove(&d.sessione);
                 }
-                if contesto.contains_key(&d.sessione) || contesto.len() < MASSIMO_CONTESTI {
-                    contesto.insert(d.sessione, c);
+                Some(c) => {
+                    if !contesto.contains_key(&d.sessione) && contesto.len() >= MASSIMO_CONTESTI {
+                        // Pieno: si lasciano solo le sessioni che gli eventi conoscono ancora.
+                        let note: Vec<String> =
+                            self.claude_sessioni.borrow().elenco().iter().map(|s| s.id.clone()).collect();
+                        contesto.retain(|id, _| note.contains(id));
+                    }
+                    if contesto.contains_key(&d.sessione) || contesto.len() < MASSIMO_CONTESTI {
+                        contesto.insert(d.sessione, c);
+                    }
                 }
             }
         }
+        // Limiti e contesto cambiati: la vista Claude (se aperta) li riscrive.
+        self.aggiorna_vista_claude();
     }
 
     /// I limiti dell'abbonamento (5 ore, 7 giorni) a un'ora data (secondi dall'epoca): un limite
     /// già azzerato (`azzera_alle <= ora`) vale come assente. Senza abbonamento niente anelli.
-    #[allow(dead_code)] // lo leggono le viste dei task successivi
     pub fn limiti_a(&self, ora: i64) -> (Option<Limite>, Option<Limite>) {
         let (c, s) = self.claude_limiti.borrow().unwrap_or((None, None));
         (c.filter(|l| l.azzera_alle > ora), s.filter(|l| l.azzera_alle > ora))
     }
 
     /// Come `limiti_a`, all'ora di adesso.
-    #[allow(dead_code)] // lo leggono le viste dei task successivi
     pub fn limiti(&self) -> (Option<Limite>, Option<Limite>) {
         let ora = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -618,11 +620,69 @@ impl Ponte {
         self.aggiorna_claude_pillola();
     }
 
-    /// Il timer da un secondo del testo di attività serve solo se almeno una sessione lavora, la
-    /// pillola si vede e non dorme. Una condizione sola, per estenderla (Task 9: «o la vista
-    /// Claude è aperta»).
+    /// Il timer da un secondo serve solo se almeno una sessione lavora **e** qualcosa mostra la
+    /// durata: la pillola (si vede e non dorme) oppure la vista Claude aperta (a pannello aperto la
+    /// pillola è nascosta, e la vista deve scorrere lo stesso). Una condizione sola, qui.
     pub(super) fn attivita_serve(&self) -> bool {
-        self.claude_sessioni.borrow().lavorano() > 0 && self.pillola_mostrata.get() && !self.pillola_dorme()
+        self.claude_sessioni.borrow().lavorano() > 0
+            && (self.vista_claude.get() || (self.pillola_mostrata.get() && !self.pillola_dorme()))
+    }
+
+    /// La vista Claude si apre o si chiude (il pannello cambia vista o si chiude). Aperta scrive i
+    /// suoi dati e, se serve, accende il timer da un secondo; chiusa non lavora più.
+    pub fn vista_claude(&self, si: bool) {
+        if self.vista_claude.replace(si) == si {
+            return;
+        }
+        self.aggiorna_claude_pillola();
+    }
+
+    /// I dati della vista Claude, scritti solo se la vista è aperta e solo ciò che è cambiato: le
+    /// righe (tre al più), i limiti dell'abbonamento (un limite assente o azzerato non ha anello),
+    /// la spesa del mese e se Claude Code è collegato.
+    fn aggiorna_vista_claude(&self) {
+        if !self.vista_claude.get() {
+            return;
+        }
+        let Some(p) = self.pannello.borrow().upgrade() else { return };
+        let collegato = self.casa.con_config(|c| c.claude.collegato);
+        if p.get_claude_collegato() != collegato {
+            p.set_claude_collegato(collegato);
+        }
+        // Scollegato non ci sono sessioni da mostrare: lo stato vuoto parla da sé.
+        let (righe, altre) = if collegato {
+            claude::righe_sessioni(&self.claude_sessioni.borrow(), &self.claude_contesto.borrow(), Instant::now())
+        } else {
+            (Vec::new(), 0)
+        };
+        let voci = righe.into_iter().map(riga_ui).collect();
+        let n = super::aggiorna_modello(&self.claude_righe, voci);
+        self.casa.diagnosi().conta_n(Contatore::ui_righe, n);
+        let altre = altre as i32;
+        if p.get_claude_altre() != altre {
+            p.set_claude_altre(altre);
+        }
+        let adesso = chrono::Local::now();
+        let (cinque, sette) = self.limiti();
+        let (cinque, sette) = (limite_ui(cinque, adesso), limite_ui(sette, adesso));
+        if p.get_claude_cinque_ore() != cinque {
+            p.set_claude_cinque_ore(cinque);
+        }
+        if p.get_claude_sette_giorni() != sette {
+            p.set_claude_sette_giorni(sette);
+        }
+        // Il timer della lettura esiste solo con la chiave da amministratore.
+        let con_chiave = self.sveglia_api.running();
+        let (spesa, nota) = {
+            let ultimo = self.api_ultimo.borrow();
+            claude::testo_spesa(ultimo.as_ref().and_then(|(_, esito)| esito.as_ref().ok()), con_chiave)
+        };
+        if p.get_claude_spesa() != spesa.as_str() {
+            p.set_claude_spesa(spesa.as_str().into());
+        }
+        if p.get_claude_spesa_nota() != nota.as_str() {
+            p.set_claude_spesa_nota(nota.as_str().into());
+        }
     }
 
     fn pillola_dorme(&self) -> bool {
@@ -646,6 +706,9 @@ impl Ponte {
         } else if self.timer_attivita.running() {
             self.timer_attivita.stop();
         }
+        // La vista Claude (se aperta) segue le sessioni: a pannello aperto la pillola è nascosta e
+        // più sotto si esce, ma la vista deve scorrere comunque.
+        self.aggiorna_vista_claude();
         let Some(ui) = self.pillola.upgrade().filter(|p| p.get_attiva()) else { return };
         let (tinta, parti, nome) = {
             let s = self.claude_sessioni.borrow();
@@ -679,6 +742,30 @@ impl Ponte {
         // La pillola si allarga o si stringe: il ritaglio della finestra la segue.
         if cambiato {
             pillola::lati_cambiati(&ui);
+        }
+    }
+}
+
+/// Una riga della vista Claude come la vuole l'interfaccia.
+fn riga_ui(r: claude::RigaSessione) -> RigaSessioneUi {
+    RigaSessioneUi {
+        id: r.id.into(),
+        cartella: r.cartella.into(),
+        stato: r.stato_testo.into(),
+        livello: r.livello.map_or(LivelloUi::Nessuno, pillola::livello_ui),
+        strumento: r.strumento.into(),
+        durata: r.durata.into(),
+        contesto: r.contesto.unwrap_or_default().into(),
+    }
+}
+
+/// Un limite dell'abbonamento per l'anello; assente (o azzerato) = nessun anello.
+fn limite_ui(l: Option<Limite>, ora: chrono::DateTime<chrono::Local>) -> LimiteClaudeUi {
+    match l {
+        None => LimiteClaudeUi::default(),
+        Some(l) => {
+            let t = claude::testo_limite(&l, ora);
+            LimiteClaudeUi { presente: true, frazione: t.frazione, testo: t.testo.into(), azzera: t.azzera.into() }
         }
     }
 }
@@ -1416,5 +1503,149 @@ mod test {
             p.claude_barra(barra(&format!("x{i}"), None, None));
         }
         assert!(p.claude_contesto.borrow().len() <= 16);
+    }
+
+    // ─── Vista Claude (Task 9) ───────────────────────────────────────────────
+
+    /// Un pannello aperto sul ponte, come lo apre `pannello.rs`: modelli e callback collegati.
+    fn con_pannello(p: &Ponte) -> crate::Pannello {
+        let pannello = crate::Pannello::new().unwrap();
+        p.pannello_aperto(&pannello);
+        p.riempi(&pannello);
+        pannello
+    }
+
+    use slint::Model;
+
+    #[test]
+    fn il_timer_della_vista_claude_serve_solo_con_chi_lavora() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        // La vista aperta senza nessuno al lavoro non accende nulla.
+        p.vista_claude(true);
+        assert!(!p.timer_attivita.running(), "vista aperta ma nessuno lavora");
+        manda(&p, ev("a", TipoEvento::UserPromptSubmit));
+        assert!(p.timer_attivita.running());
+        // A pannello aperto la pillola è nascosta: la vista deve comunque scorrere.
+        p.pillola_visibile(false);
+        assert!(p.timer_attivita.running(), "vista aperta: il timer gira anche con la pillola nascosta");
+        assert!(p.attivita_serve());
+        // Vista chiusa e pillola nascosta: niente.
+        p.vista_claude(false);
+        assert!(!p.timer_attivita.running() && !p.attivita_serve());
+        p.vista_claude(true);
+        assert!(p.timer_attivita.running());
+        // Chi smette di lavorare ferma il timer anche a vista aperta.
+        manda(&p, ev("a", TipoEvento::Stop));
+        assert!(!p.timer_attivita.running());
+        // E la pillola visibile resta una ragione sufficiente, come prima.
+        p.vista_claude(false);
+        p.pillola_visibile(true);
+        manda(&p, ev("a", TipoEvento::UserPromptSubmit));
+        assert!(p.timer_attivita.running());
+    }
+
+    #[test]
+    fn la_vista_claude_si_scrive_solo_aperta() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let pannello = con_pannello(&p);
+        p.casa().aggiorna_config(|c| c.claude.collegato = true);
+        // Vista chiusa: gli eventi non scrivono nulla nel pannello.
+        manda(&p, ev("a", TipoEvento::UserPromptSubmit));
+        assert_eq!(pannello.get_claude_righe().row_count(), 0, "vista chiusa: nessun lavoro");
+        // Si apre: le righe ci sono, di colpo.
+        p.vista_claude(true);
+        let righe = pannello.get_claude_righe();
+        assert_eq!(righe.row_count(), 1);
+        let r = righe.row_data(0).unwrap();
+        assert_eq!((r.cartella.as_str(), r.stato.as_str(), r.durata.as_str()), ("progetto-a", "Lavora", "0:00"));
+        assert_eq!(r.id.as_str(), claude::id_sessione("a"));
+        assert_eq!(pannello.get_claude_altre(), 0);
+        // Un'altra sessione, poi chi chiede qualcosa: l'ordine è quello dell'urgenza.
+        manda(&p, ev("b", TipoEvento::PermissionRequest));
+        let righe = pannello.get_claude_righe();
+        assert_eq!(righe.row_count(), 2);
+        assert_eq!(righe.row_data(0).unwrap().stato.as_str(), "Ti aspetta");
+        assert_eq!(righe.row_data(0).unwrap().livello, LivelloUi::Attenzione);
+        // Cinque sessioni: tre righe e «+2».
+        for id in ["c", "d", "e"] {
+            manda(&p, ev(id, TipoEvento::UserPromptSubmit));
+        }
+        assert_eq!((pannello.get_claude_righe().row_count(), pannello.get_claude_altre()), (3, 2));
+        // Il tick di un secondo riscrive solo la durata di chi lavora.
+        let prima: Vec<String> = (0..3).map(|i| pannello.get_claude_righe().row_data(i).unwrap().durata.to_string()).collect();
+        assert_eq!(prima.iter().filter(|d| !d.is_empty()).count(), 2);
+        // Chiusa di nuovo: gli eventi non scrivono più.
+        p.vista_claude(false);
+        manda(&p, ev("e", TipoEvento::SessionEnd));
+        assert_eq!(pannello.get_claude_righe().row_count(), 3);
+        // Riaperta: la lista è quella vera.
+        p.vista_claude(true);
+        assert_eq!(pannello.get_claude_altre(), 1);
+        // Il pannello chiuso del tutto: la vista si chiude da sé.
+        p.pannello_chiuso();
+        assert!(!p.vista_claude.get());
+    }
+
+    #[test]
+    fn il_collegamento_si_dice_alla_vista() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let pannello = con_pannello(&p);
+        p.vista_claude(true);
+        assert!(!pannello.get_claude_collegato(), "di serie non è collegato");
+        p.casa().aggiorna_config(|c| c.claude.collegato = true);
+        p.vista_claude(false);
+        p.vista_claude(true);
+        assert!(pannello.get_claude_collegato());
+    }
+
+    #[test]
+    fn anelli_dai_limiti_senza_zeri_inventati() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let pannello = con_pannello(&p);
+        p.vista_claude(true);
+        // PF9: nessuna barra, nessun anello.
+        assert!(!pannello.get_claude_cinque_ore().presente && !pannello.get_claude_sette_giorni().presente);
+        // Una barra con la sola finestra delle 5 ore: solo quell'anello.
+        p.claude_barra(barra("a", Some((36.6, FUTURO)), None));
+        let c = pannello.get_claude_cinque_ore();
+        assert!(c.presente && !pannello.get_claude_sette_giorni().presente);
+        assert_eq!(c.testo.as_str(), "37%");
+        assert!((c.frazione - 0.366).abs() < 1e-5);
+        // Le due finestre.
+        p.claude_barra(barra("a", None, Some((61.0, FUTURO + 5))));
+        assert!(pannello.get_claude_cinque_ore().presente);
+        assert_eq!(pannello.get_claude_sette_giorni().testo.as_str(), "61%");
+        // Un limite già azzerato è assente, mai «0%».
+        p.claude_barra(barra("a", Some((10.0, 1000)), Some((20.0, 2000))));
+        assert!(!pannello.get_claude_cinque_ore().presente && !pannello.get_claude_sette_giorni().presente);
+    }
+
+    #[test]
+    fn spesa_nella_vista_con_e_senza_chiave() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let pannello = con_pannello(&p);
+        p.vista_claude(true);
+        assert_eq!(pannello.get_claude_spesa_nota().as_str(), "Aggiungi una chiave da amministratore nelle Impostazioni");
+        assert_eq!(pannello.get_claude_spesa().as_str(), "");
+        // Con la chiave ma senza lettura: nessun dato.
+        p.api_salva_ui("sk-ant-admin01-di-prova-1a2b");
+        p.vista_claude(false);
+        p.vista_claude(true);
+        assert_eq!(pannello.get_claude_spesa_nota().as_str(), "nessun dato");
+        // Arriva una lettura a vista aperta: la vista si aggiorna da sé.
+        let r = api_claude::Riepilogo {
+            spesa_mese: api_claude::importo_da("41280"),
+            aggiornato_a: Some(chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2026, 11, 18, 14, 2, 0).unwrap()),
+            ..Default::default()
+        };
+        p.api_arrivato(p.api_generazione.get(), "14:05".into(), Ok(r));
+        assert_eq!(pannello.get_claude_spesa().as_str(), "412,80 $");
+        assert_eq!(pannello.get_claude_spesa_nota().as_str(), "aggiornato alle 14:02 UTC");
+        // La chiave tolta: torna la frase.
+        p.api_togli_ui();
+        p.vista_claude(false);
+        p.vista_claude(true);
+        assert_eq!(pannello.get_claude_spesa().as_str(), "");
+        assert!(pannello.get_claude_spesa_nota().as_str().starts_with("Aggiungi una chiave"));
     }
 }

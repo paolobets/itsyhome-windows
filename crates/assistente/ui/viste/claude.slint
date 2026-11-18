@@ -1,0 +1,465 @@
+// Vista Claude (M3, Task 9): Claude Code in un colpo d'occhio, nel pannello 800 × 300. A sinistra
+// le sessioni (al più tre righe: cartella, stato col colore del suo livello, strumento, durata,
+// contesto; «+N altre» se ce ne sono di più); a destra i due limiti dell'abbonamento ad anello
+// («Limite 5 ore», «Limite settimanale», con quando si azzerano) e sotto la spesa delle API del
+// mese. Un limite assente o già azzerato non ha l'anello (mai «0%»); senza nessuno la card dice
+// «Limiti non disponibili». Stati vuoti: scollegato («Collega Claude Code dalle Impostazioni» con
+// «Impostazioni» sotto) e nessuna sessione («Nessuna sessione aperta»).
+// Da tastiera (in pannello.slint): ↑/↓ fra le righe, Invio apre la sessione (`apri-sessione`).
+// La vista non ha timer: i dati li scrive Rust, e solo mentre la vista è aperta.
+import { Tema } from "../tema.slint";
+import { Icone, Icona } from "../icone.slint";
+import { LivelloUi, RigaSessioneUi, LimiteClaudeUi } from "../voci.slint";
+import { Anello, Fuoco, Pulsante, TipoPulsante, Etichetta } from "../componenti.slint";
+
+// Una sessione: due righe in una card alta 48. La durata e il contesto stanno a destra.
+component RigaClaude inherits Rectangle {
+    in property <RigaSessioneUi> riga;
+    in property <bool> anello;
+    callback apri();
+
+    // Chi lavora ha la tinta del lavoro; gli altri quella del loro livello (la parola c'è sempre).
+    property <color> tinta-stato: riga.livello == LivelloUi.nessuno ? Tema.petalo-5 : Tema.colore-livello(riga.livello);
+
+    border-radius: Tema.raggio-l;
+    border-width: 1px;
+    border-color: Tema.vetro-bordo;
+    background: area.has-hover ? Tema.card-vetro-sopra : Tema.card-vetro;
+    accessible-role: button;
+    accessible-label: riga.cartella + ", " + riga.stato;
+    // Senza la durata: cambia ogni secondo e Narrator non deve ripeterla.
+    accessible-description: riga.strumento != "" && riga.contesto != "" ? riga.strumento + ", contesto " + riga.contesto
+        : riga.strumento != "" ? riga.strumento : riga.contesto != "" ? "contesto " + riga.contesto : "";
+    accessible-action-default => { root.apri(); }
+
+    Fuoco { chiede: anello; }
+
+    HorizontalLayout {
+        x: 12px;
+        y: 6px;
+        width: parent.width - 24px;
+        height: 20px;
+        spacing: 8px;
+
+        Text {
+            horizontal-stretch: 1;
+            preferred-width: 0px;
+            text: riga.cartella;
+            vertical-alignment: center;
+            overflow: elide;
+            font-weight: 500;
+            font-size: Tema.testo-medio;
+            color: Tema.testo;
+            accessible-role: none;
+        }
+
+        Text {
+            text: riga.durata;
+            vertical-alignment: center;
+            font-size: Tema.testo-corpo;
+            color: Tema.testo-tenue;
+            accessible-role: none;
+        }
+    }
+
+    HorizontalLayout {
+        x: 12px;
+        y: 26px;
+        width: parent.width - 24px;
+        height: 16px;
+        spacing: 6px;
+
+        Text {
+            text: riga.stato;
+            vertical-alignment: center;
+            font-weight: 500;
+            font-size: Tema.testo-piccolo;
+            color: tinta-stato;
+            accessible-role: none;
+        }
+
+        Text {
+            text: riga.strumento != "" ? "· " + riga.strumento : "";
+            vertical-alignment: center;
+            font-size: Tema.testo-piccolo;
+            color: Tema.testo-tenue;
+            accessible-role: none;
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+
+        Text {
+            text: riga.contesto != "" ? "Contesto " + riga.contesto : "";
+            vertical-alignment: center;
+            font-size: Tema.testo-piccolo;
+            color: Tema.testo-tenue;
+            accessible-role: none;
+        }
+    }
+
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.apri(); }
+    }
+
+    if anello: Anello { raggio: parent.border-radius; }
+}
+
+// Un limite: l'anello (arco di 270° aperto in basso, come nei quadranti) con la percentuale, il
+// nome e quando si azzera. Alta 56.
+component CardLimite inherits Rectangle {
+    in property <string> titolo;
+    in property <LimiteClaudeUi> limite;
+
+    property <length> arco: 48px;
+    // Come nei quadranti: parte da 135° e gira in senso orario.
+    property <angle> fine: 135deg + 270deg * min(limite.frazione, 1);
+    property <bool> acceso: limite.frazione >= 0.01;
+
+    border-radius: Tema.raggio-xl;
+    border-width: 1px;
+    border-color: Tema.vetro-bordo;
+    background: Tema.card-vetro;
+    accessible-role: progress-indicator;
+    accessible-label: titolo;
+    accessible-value: limite.testo;
+    accessible-description: limite.azzera;
+
+    Rectangle {
+        x: 8px;
+        y: (parent.height - arco) / 2;
+        width: arco;
+        height: arco;
+
+        Path {
+            width: parent.width;
+            height: parent.height;
+            viewbox-width: 110;
+            viewbox-height: 110;
+            commands: "M 23.89 86.11 A 44 44 0 1 1 86.11 86.11";
+            stroke: Tema.traccia;
+            stroke-width: 4px;
+            stroke-line-cap: round;
+        }
+
+        if acceso: Path {
+            width: parent.width;
+            height: parent.height;
+            viewbox-width: 110;
+            viewbox-height: 110;
+            commands: "M 23.89 86.11 A 44 44 0 " + (limite.frazione > 0.6667 ? 1 : 0) + " 1 " + (55 + 44 * cos(fine)) + " " + (55 + 44 * sin(fine));
+            stroke: limite.frazione > 0.85 ? Tema.caldo-2 : Tema.petalo-2;
+            stroke-width: 4px;
+            stroke-line-cap: round;
+        }
+
+        Text {
+            x: (parent.width - self.width) / 2;
+            width: parent.width - 8px;
+            height: parent.height;
+            text: limite.testo;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            font-weight: 500;
+            font-size: Tema.testo-piccolo;
+            color: Tema.testo;
+            accessible-role: none;
+        }
+    }
+
+    Text {
+        x: 66px;
+        y: 9px;
+        width: parent.width - self.x - 12px;
+        height: 18px;
+        text: titolo;
+        vertical-alignment: center;
+        font-weight: 500;
+        font-size: Tema.testo-corpo;
+        color: Tema.testo;
+        accessible-role: none;
+    }
+
+    Text {
+        x: 66px;
+        y: 29px;
+        width: parent.width - self.x - 12px;
+        height: 16px;
+        text: limite.azzera;
+        vertical-alignment: center;
+        font-size: Tema.testo-piccolo;
+        color: Tema.testo-tenue;
+        accessible-role: none;
+    }
+}
+
+// Il posto di un limite che non c'è: lo dice, senza anello né numeri.
+component CardLimiteAssente inherits Rectangle {
+    in property <string> testo;
+    in property <string> dettaglio;
+
+    border-radius: Tema.raggio-xl;
+    border-width: 1px;
+    border-color: Tema.vetro-bordo;
+    background: Tema.card-fondo;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 2px;
+        padding-left: 12px;
+        padding-right: 12px;
+
+        Text {
+            text: testo;
+            horizontal-alignment: center;
+            font-weight: 500;
+            font-size: Tema.testo-corpo;
+            color: Tema.testo-tenue;
+            wrap: word-wrap;
+        }
+
+        if dettaglio != "": Text {
+            text: dettaglio;
+            horizontal-alignment: center;
+            font-size: Tema.testo-piccolo;
+            color: Tema.testo-tenue;
+            wrap: word-wrap;
+        }
+    }
+}
+
+export component VistaClaude inherits Rectangle {
+    // Claude Code è collegato (Impostazioni › Claude).
+    in property <bool> collegato;
+    in property <[RigaSessioneUi]> righe;
+    // Quante sessioni non entrano nelle tre righe.
+    in property <int> altre;
+    in property <LimiteClaudeUi> cinque-ore;
+    in property <LimiteClaudeUi> sette-giorni;
+    // La spesa API del mese («412,80 $», vuoto se non c'è) e la sua nota («aggiornato alle 14:02
+    // UTC», «nessun dato» o la frase per aggiungere la chiave).
+    in property <string> spesa;
+    in property <string> spesa-nota;
+    // Riga col fuoco da tastiera (-1 = nessuna) e fuoco su «Impostazioni» (stato scollegato).
+    in property <int> fuoco: -1;
+    in property <bool> fuoco-impostazioni;
+    callback apri-sessione(string);
+    // Le Impostazioni sulla scheda Claude.
+    callback gestisci();
+
+    property <length> alto-riga: 48px;
+    property <length> spazio: 8px;
+    property <length> larghezza-sinistra: floor(root.width / 1px * 0.56) * 1px;
+    property <length> x-destra: larghezza-sinistra + 16px;
+    property <length> larghezza-destra: root.width - x-destra;
+    property <length> alto-card-limite: 56px;
+    property <length> alto-spesa: 60px;
+    property <bool> con-righe: collegato && righe.length > 0;
+
+    // Sinistra: le sessioni.
+    for riga[i] in righe: RigaClaude {
+        visible: collegato;
+        x: 0;
+        y: i * (alto-riga + spazio);
+        width: larghezza-sinistra;
+        height: alto-riga;
+        riga: riga;
+        anello: i == root.fuoco;
+        apri => { root.apri-sessione(riga.id); }
+    }
+
+    if con-righe && altre > 0: Text {
+        x: 4px;
+        y: righe.length * (alto-riga + spazio) + 2px;
+        width: larghezza-sinistra - 8px;
+        height: 18px;
+        text: "+" + altre + " altre";
+        vertical-alignment: center;
+        font-size: Tema.testo-piccolo;
+        color: Tema.testo-tenue;
+        accessible-label: "e altre " + altre + " sessioni";
+    }
+
+    // Nessuna sessione (collegato).
+    if collegato && righe.length == 0: VerticalLayout {
+        x: 0;
+        width: larghezza-sinistra;
+        height: root.height;
+        alignment: center;
+        spacing: 8px;
+
+        HorizontalLayout {
+            alignment: center;
+
+            Icona {
+                source: Icone.claude;
+                width: 34px;
+                height: 34px;
+            }
+        }
+
+        Text {
+            text: "Nessuna sessione aperta";
+            horizontal-alignment: center;
+            font-weight: 500;
+            font-size: Tema.testo-titolo;
+            color: Tema.testo;
+        }
+
+        Text {
+            text: "Le sessioni di Claude Code compaiono qui mentre lavorano.";
+            horizontal-alignment: center;
+            font-size: Tema.testo-piccolo;
+            color: Tema.testo-tenue;
+            wrap: word-wrap;
+        }
+    }
+
+    // Scollegato: come si collega, col pulsante sotto il messaggio.
+    if !collegato: VerticalLayout {
+        x: 0;
+        width: larghezza-sinistra;
+        height: root.height;
+        alignment: center;
+        spacing: 8px;
+
+        HorizontalLayout {
+            alignment: center;
+
+            Icona {
+                source: Icone.claude;
+                width: 34px;
+                height: 34px;
+            }
+        }
+
+        Text {
+            text: "Collega Claude Code dalle Impostazioni";
+            horizontal-alignment: center;
+            font-weight: 500;
+            font-size: Tema.testo-titolo;
+            color: Tema.testo;
+            wrap: word-wrap;
+        }
+
+        Text {
+            text: "Qui vedrai le sessioni al lavoro, i limiti e la spesa.";
+            horizontal-alignment: center;
+            font-size: Tema.testo-piccolo;
+            color: Tema.testo-tenue;
+            wrap: word-wrap;
+        }
+
+        HorizontalLayout {
+            alignment: center;
+            padding-top: 4px;
+
+            Pulsante {
+                testo: "Impostazioni";
+                tipo: TipoPulsante.neutro;
+                anello: fuoco-impostazioni;
+                chiede-fuoco: fuoco-impostazioni;
+                tasti-propri: false;
+                premuto => { root.gestisci(); }
+            }
+        }
+    }
+
+    // Destra: i due limiti, poi la spesa.
+    if cinque-ore.presente: CardLimite {
+        x: x-destra;
+        y: 0;
+        width: larghezza-destra;
+        height: alto-card-limite;
+        titolo: "Limite 5 ore";
+        limite: cinque-ore;
+    }
+
+    if sette-giorni.presente: CardLimite {
+        x: x-destra;
+        y: alto-card-limite + spazio;
+        width: larghezza-destra;
+        height: alto-card-limite;
+        titolo: "Limite settimanale";
+        limite: sette-giorni;
+    }
+
+    // Un solo limite c'è: l'altro posto lo dice. Nessuno: una card sola.
+    if !cinque-ore.presente && sette-giorni.presente: CardLimiteAssente {
+        x: x-destra;
+        y: 0;
+        width: larghezza-destra;
+        height: alto-card-limite;
+        testo: "Limite 5 ore non disponibile";
+    }
+
+    if cinque-ore.presente && !sette-giorni.presente: CardLimiteAssente {
+        x: x-destra;
+        y: alto-card-limite + spazio;
+        width: larghezza-destra;
+        height: alto-card-limite;
+        testo: "Limite settimanale non disponibile";
+    }
+
+    if !cinque-ore.presente && !sette-giorni.presente: CardLimiteAssente {
+        x: x-destra;
+        y: 0;
+        width: larghezza-destra;
+        height: 2 * alto-card-limite + spazio;
+        testo: "Limiti non disponibili";
+        dettaglio: "Servono un abbonamento Claude e una sessione al lavoro.";
+    }
+
+    // La spesa API del mese: il valore e, sotto, da quando sono i dati (o perché non c'è).
+    Rectangle {
+        x: x-destra;
+        y: root.height - alto-spesa;
+        width: larghezza-destra;
+        height: alto-spesa;
+        border-radius: Tema.raggio-xl;
+        border-width: 1px;
+        border-color: Tema.vetro-bordo;
+        background: Tema.card-vetro;
+        accessible-role: progress-indicator;
+        accessible-label: "Spesa API del mese";
+        accessible-value: spesa != "" ? spesa : spesa-nota;
+        accessible-description: spesa != "" ? spesa-nota : "";
+
+        Etichetta {
+            x: 12px;
+            y: 4px;
+            width: parent.width - 24px;
+            height: 16px;
+            text: "SPESA API DEL MESE";
+            accessible-role: none;
+        }
+
+        if spesa != "": Text {
+            x: 12px;
+            y: 20px;
+            width: parent.width - 24px;
+            height: 22px;
+            text: spesa;
+            vertical-alignment: center;
+            font-weight: 500;
+            font-size: Tema.testo-vuoto;
+            color: Tema.testo;
+            accessible-role: none;
+        }
+
+        Text {
+            x: 12px;
+            y: spesa != "" ? 42px : 22px;
+            width: parent.width - 24px;
+            height: spesa != "" ? 15px : 32px;
+            text: spesa-nota;
+            vertical-alignment: top;
+            wrap: word-wrap;
+            font-size: Tema.testo-piccolo;
+            color: Tema.testo-tenue;
+            accessible-role: none;
+        }
+    }
+}

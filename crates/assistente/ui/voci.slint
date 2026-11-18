@@ -202,3 +202,26 @@ export struct SceltaQuadranteUi {
     massimo: string,
     predefinito: string,
 }
+
+// Una sessione di Claude Code nella vista Claude (M3, Task 9). `id`: l'impronta della sessione
+// (`claude::id_sessione`). `stato`: «Lavora», «Ti aspetta», «Fatto», «Errore»; `livello` ne dà il
+// colore (`nessuno` per chi lavora). `strumento` e `durata` solo per chi lavora; `contesto` «42%»,
+// vuoto se non si sa.
+export struct RigaSessioneUi {
+    id: string,
+    cartella: string,
+    stato: string,
+    livello: LivelloUi,
+    strumento: string,
+    durata: string,
+    contesto: string,
+}
+
+// Un limite dell'abbonamento (5 ore o 7 giorni): `presente` falso = niente anello (limite assente
+// o già azzerato). `frazione` 0..1 dell'arco, `testo` «37%», `azzera` «si azzera alle 14:30».
+export struct LimiteClaudeUi {
+    presente: bool,
+    frazione: float,
+    testo: string,
+    azzera: string,
+}

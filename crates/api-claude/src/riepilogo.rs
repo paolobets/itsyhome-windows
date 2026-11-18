@@ -198,10 +198,13 @@ fn mezzanotte(d: NaiveDate) -> DateTime<Utc> {
     d.and_time(NaiveTime::MIN).and_utc()
 }
 
-/// Somma delle righe di costo; `None` se non c'è nessuna riga o i dati non hanno data.
-fn somma(righe: &Righe<RigaCosto>) -> Option<Importo> {
-    if righe.righe.is_empty() || righe.aggiornato.is_none() {
-        return None;
+/// Somma delle righe di costo; `None` se i dati non hanno data o, senza righe, non arrivano alla
+/// fine del periodo letto (`fine`): un mese ancora senza spesa è zero solo se i dati sono aggiornati
+/// fino a lì, altrimenti non si sa.
+fn somma(righe: &Righe<RigaCosto>, fine: DateTime<Utc>) -> Option<Importo> {
+    let aggiornato = righe.aggiornato?;
+    if righe.righe.is_empty() {
+        return (aggiornato >= fine).then(Importo::default);
     }
     Some(
         righe
@@ -321,7 +324,7 @@ pub fn aggiorna(c: &ClientApi, adesso: DateTime<Utc>) -> Riepilogo {
     match spesa {
         Ok((modello, chiave, area, giorni)) => {
             if let Some(m) = &modello {
-                r.spesa_mese = somma(m);
+                r.spesa_mese = somma(m, a_mese);
                 r.per_modello = per_etichetta(m, |x| x.group.model.as_ref())
                     .into_iter()
                     .map(|(n, i)| (n.unwrap_or_else(|| SENZA_NOME.to_owned()), i))

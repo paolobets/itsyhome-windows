@@ -26,7 +26,7 @@ use crate::dispositivi::{self, Riga, TipoRiga};
 use crate::collegamenti;
 use crate::{
     AmbienteUi, CollegamentoUi, FinestraImpostazioni, FonteQuadranteUi, GenereUi, Pannello, Pillola, PreferitoUi, QuadranteUi,
-    RigaDispositivoUi, SceltaQuadranteUi, SensoreUi, StanzaUi, TipoRigaUi, TonoUi, VoceAttesaUi,
+    RigaDispositivoUi, RigaSessioneUi, SceltaQuadranteUi, SensoreUi, StanzaUi, TipoRigaUi, TonoUi, VoceAttesaUi,
 };
 use casa_core::config::Config;
 use casa_core::diagnosi::Contatore;
@@ -850,6 +850,10 @@ pub struct Ponte {
     /// contesto per sessione; mai scaduti per chi li legge (`limiti`).
     claude_limiti: RefCell<Option<(Option<claude_hook::Limite>, Option<claude_hook::Limite>)>>,
     claude_contesto: RefCell<HashMap<String, f32>>,
+    /// La vista Claude del pannello (Task 9): si vede (pannello aperto su di lei) e il modello delle
+    /// sue righe. Chiusa, niente si calcola né si scrive.
+    vista_claude: Cell<bool>,
+    claude_righe: Rc<VecModel<RigaSessioneUi>>,
     /// I permessi che Claude Code ha chiesto e aspettano una risposta (M3, Task 5): numero del
     /// permesso → chi l'ha chiesto e dove mandare la decisione. Al più 16.
     claude_permessi: RefCell<HashMap<u64, con_claude::Pendente>>,
@@ -979,6 +983,8 @@ pub fn collega(
         claude_ascolto: RefCell::new(None),
         claude_limiti: RefCell::new(None),
         claude_contesto: RefCell::new(HashMap::new()),
+        vista_claude: Cell::new(false),
+        claude_righe: Rc::new(VecModel::default()),
         claude_permessi: RefCell::new(HashMap::new()),
         claude_armamento: RefCell::new(con_claude::Armamento::nuovo()),
         claude_preparato: RefCell::new(None),
@@ -2042,6 +2048,7 @@ impl Ponte {
         p.set_stanze(ModelRc::from(self.stanze.clone()));
         p.set_dispositivi(ModelRc::from(self.dispositivi.clone()));
         p.set_collegamenti(ModelRc::from(self.collegamenti.clone()));
+        p.set_claude_righe(ModelRc::from(self.claude_righe.clone()));
         p.on_apri_stanza(|area| {
             if let Some(ponte) = ponte() {
                 ponte.stanza(Some(area.to_string()));
@@ -2126,6 +2133,8 @@ impl Ponte {
     pub fn pannello_chiuso(&self) {
         // Le radio si liberano e la rete torna a seguire solo la pillola.
         self.vista_pc(false);
+        // La vista Claude non c'è più: il timer torna a seguire solo la pillola.
+        self.vista_claude(false);
         *self.pannello.borrow_mut() = slint::Weak::default();
         self.modelli_vivi.set(false);
         self.collegamento_aperto.set(false);

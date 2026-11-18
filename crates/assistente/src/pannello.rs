@@ -344,6 +344,8 @@ impl Apertura {
                 a.aggiorna_fonti(&p);
                 // Wi-Fi e Bluetooth (M2, Task 8) si seguono solo a vista PC aperta.
                 a.ponte.vista_pc(p.get_vista() == "pc");
+                // La vista Claude (M3, Task 9) scrive e conta il tempo solo a vista aperta.
+                a.ponte.vista_claude(p.get_vista() == "claude");
             }
         });
         let a = self.io.clone();
@@ -392,6 +394,15 @@ impl Apertura {
             if a.upgrade().is_some_and(|ap| ap.ponte.apri_collegamento(&id)) {
                 dopo(&a, Apertura::chiudi);
             }
+        });
+        // «Impostazioni» della vista Claude scollegata: le Impostazioni sulla scheda Claude.
+        let a = self.io.clone();
+        pannello.on_gestisci_claude(move || {
+            let a = a.clone();
+            finestra_impostazioni::apri_alla_sezione(finestra_impostazioni::SEZIONE_CLAUDE, move || {
+                dopo(&a, Apertura::apri_impostazioni);
+                true
+            });
         });
         // «Modifica» e «Aggiungi un collegamento»: le Impostazioni sulla scheda Collegamenti.
         let a = self.io.clone();

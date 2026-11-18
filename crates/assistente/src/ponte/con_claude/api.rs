@@ -217,6 +217,8 @@ impl Ponte {
         }
         *self.api_ultimo.borrow_mut() = Some((ora, esito));
         self.con_finestra_claude(|f| self.mostra_api_stato(f));
+        // La spesa del mese nella vista Claude, se è aperta.
+        self.aggiorna_vista_claude();
     }
 
     fn mostra_api_stato(&self, f: &FinestraImpostazioni) {

@@ -13,6 +13,8 @@ pub fn app_disponibili() -> Vec<VoceApp> {
     vec![
         VoceApp { id: "panoramica", nome: "Panoramica", icona: "panoramica" },
         VoceApp { id: "casa", nome: "Casa", icona: "casa" },
+        // Claude Code (M3, Task 9): le sessioni, i limiti dell'abbonamento e la spesa delle API.
+        VoceApp { id: "claude", nome: "Claude", icona: "claude" },
         VoceApp { id: "pc", nome: "PC", icona: "pc" },
         // I collegamenti veloci (Task 14f): pagine web aperte nel browser predefinito.
         VoceApp { id: "collegamenti", nome: "Collegamenti", icona: "collegamenti" },
@@ -24,18 +26,18 @@ mod test {
     use super::*;
 
     #[test]
-    fn app_disponibili_con_panoramica() {
+    fn app_disponibili_con_claude() {
         let ids: Vec<_> = app_disponibili().iter().map(|a| a.id).collect();
-        assert_eq!(ids, ["panoramica", "casa", "pc", "collegamenti"]);
+        assert_eq!(ids, ["panoramica", "casa", "claude", "pc", "collegamenti"]);
     }
 
     #[test]
     fn app_disponibili_solo_quelle_vere() {
         let v = app_disponibili();
         let ids: Vec<_> = v.iter().map(|a| a.id).collect();
-        assert_eq!(ids, ["panoramica", "casa", "pc", "collegamenti"]);
+        assert_eq!(ids, ["panoramica", "casa", "claude", "pc", "collegamenti"]);
         let nomi: Vec<_> = v.iter().map(|a| a.nome).collect();
-        assert_eq!(nomi, ["Panoramica", "Casa", "PC", "Collegamenti"]);
+        assert_eq!(nomi, ["Panoramica", "Casa", "Claude", "PC", "Collegamenti"]);
         // Task 14i: le Impostazioni non sono un'app del dock (stanno nel menu «⋯» della riga alta).
         assert!(v.iter().all(|a| a.id != "impostazioni"));
     }

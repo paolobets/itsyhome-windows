@@ -5,8 +5,12 @@
 
 use crate::attenzione::{Fonte, Livello, Pulsante, Voce};
 use claude_hook::evento::EventoHook;
+use api_claude::Riepilogo;
+use chrono::{DateTime, Datelike, Local, TimeZone, Weekday};
 use claude_hook::sessioni::{Sessione, Sessioni, Stato};
+use claude_hook::Limite;
 use gestione_protocollo::testo_pulito;
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 /// Il prefisso degli id di tutte le voci di Claude Code.
@@ -236,6 +240,123 @@ pub fn tinta_occhi(s: &Sessioni) -> Option<Livello> {
     }
 }
 
+// ─── La vista Claude del pannello (Task 9) ─────────────────────────────────────────────────
+
+/// Quante sessioni mostra la vista (le altre si contano in «+N altre»).
+pub const RIGHE_MASSIME: usize = 3;
+/// La frase della spesa senza la chiave da amministratore.
+pub const SPESA_SENZA_CHIAVE: &str = "Aggiungi una chiave da amministratore nelle Impostazioni";
+/// La nota della spesa quando non c'è un dato da mostrare.
+pub const SPESA_NESSUN_DATO: &str = "nessun dato";
+
+/// Una riga della vista: una sessione come si legge. L'`id` è l'impronta (`id_sessione`), mai il
+/// `session_id` di Claude Code; chi non lavora non ha strumento né durata (non cambierebbero a ogni
+/// secondo: il timer della vista parte solo per chi lavora).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RigaSessione {
+    pub id: String,
+    pub cartella: String,
+    pub stato_testo: &'static str,
+    /// Il livello che dà il colore allo stato; `None` per chi lavora.
+    pub livello: Option<Livello>,
+    pub strumento: String,
+    pub durata: String,
+    /// «42%», se la barra di stato l'ha detto.
+    pub contesto: Option<String>,
+}
+
+/// Le righe della vista (al più `RIGHE_MASSIME`, nell'ordine di urgenza) e quante sessioni restano
+/// fuori. `contesto` è per `session_id`, in percentuale.
+pub fn righe_sessioni(s: &Sessioni, contesto: &HashMap<String, f32>, ora: Instant) -> (Vec<RigaSessione>, usize) {
+    let elenco = s.elenco();
+    let altre = elenco.len().saturating_sub(RIGHE_MASSIME);
+    let righe = elenco
+        .into_iter()
+        .take(RIGHE_MASSIME)
+        .map(|x| {
+            let cartella = testo_pulito(&x.cartella);
+            let cartella = if cartella.is_empty() { SENZA_CARTELLA.to_owned() } else { cartella };
+            let (stato_testo, livello) = match x.stato {
+                Stato::Lavora => ("Lavora", None),
+                Stato::TiAspetta => ("Ti aspetta", Some(Livello::Attenzione)),
+                Stato::Fatto => ("Fatto", Some(Livello::Informazione)),
+                Stato::Errore => ("Errore", Some(Livello::Attenzione)),
+            };
+            let lavora = x.stato == Stato::Lavora;
+            RigaSessione {
+                id: id_sessione(&x.id),
+                cartella,
+                stato_testo,
+                livello,
+                strumento: if lavora { strumento_italiano(x.strumento.as_deref()) } else { String::new() },
+                durata: if lavora {
+                    durata_breve(x.lavora_da.map_or(Duration::ZERO, |da| ora.saturating_duration_since(da)))
+                } else {
+                    String::new()
+                },
+                contesto: contesto.get(&x.id).map(|c| format!("{}%", c.round().clamp(0.0, 100.0) as u32)),
+            }
+        })
+        .collect();
+    (righe, altre)
+}
+
+/// Il valore e la nota della spesa API del mese. Senza chiave la frase della guida; con la chiave ma
+/// senza un dato (nessuna lettura, lettura fallita, dati senza data) «nessun dato», mai «0 $»; con
+/// la spesa il valore e «aggiornato alle 14:02 UTC» (l'ora dei dati dell'API, non della lettura).
+pub fn testo_spesa(r: Option<&Riepilogo>, chiave: bool) -> (String, String) {
+    if !chiave {
+        return (String::new(), SPESA_SENZA_CHIAVE.to_owned());
+    }
+    match r.and_then(|r| r.spesa_mese.map(|s| (s, r.aggiornato_a))) {
+        Some((spesa, aggiornato)) => {
+            let nota = aggiornato.map_or_else(String::new, |a| format!("aggiornato alle {} UTC", a.format("%H:%M")));
+            (spesa.in_dollari(), nota)
+        }
+        None => (String::new(), SPESA_NESSUN_DATO.to_owned()),
+    }
+}
+
+/// Un limite dell'abbonamento com'è nell'anello: la frazione dell'arco (0..1), «37%» e quando si
+/// azzera.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TestoLimite {
+    pub frazione: f32,
+    pub testo: String,
+    pub azzera: String,
+}
+
+fn giorno_della_settimana(g: Weekday) -> &'static str {
+    match g {
+        Weekday::Mon => "lunedì",
+        Weekday::Tue => "martedì",
+        Weekday::Wed => "mercoledì",
+        Weekday::Thu => "giovedì",
+        Weekday::Fri => "venerdì",
+        Weekday::Sat => "sabato",
+        Weekday::Sun => "domenica",
+    }
+}
+
+/// Il testo di un limite a `ora` (ora locale): «si azzera alle 14:30», «si azzera domani alle 09:05»
+/// o col giorno della settimana per le finestre più lunghe. L'ora è un parametro: nessun orologio.
+pub fn testo_limite(l: &Limite, ora: DateTime<Local>) -> TestoLimite {
+    let pct = if l.percentuale.is_finite() { l.percentuale.clamp(0.0, 100.0) } else { 0.0 };
+    let azzera = match Local.timestamp_opt(l.azzera_alle, 0).single() {
+        None => String::new(),
+        Some(quando) => {
+            let giorni = quando.date_naive().signed_duration_since(ora.date_naive()).num_days();
+            let alle = quando.format("%H:%M");
+            match giorni {
+                ..=0 => format!("si azzera alle {alle}"),
+                1 => format!("si azzera domani alle {alle}"),
+                _ => format!("si azzera {} alle {alle}", giorno_della_settimana(quando.weekday())),
+            }
+        }
+    };
+    TestoLimite { frazione: pct / 100.0, testo: format!("{}%", pct.round() as u32), azzera }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -430,6 +551,131 @@ mod test {
         assert_eq!(frase_errore_claude("server_error"), "Servizio non disponibile");
         assert_eq!(frase_errore_claude("max_output_tokens"), "Risposta troppo lunga");
         assert_eq!(frase_errore_claude("qualcosa"), "Errore dell'API");
+    }
+
+    // ─── Vista Claude (Task 9) ───────────────────────────────────────────────
+
+    fn cinque_sessioni(t: Instant) -> Sessioni {
+        let mut s = Sessioni::new();
+        // Dalla più vecchia: lavora, fatto, errore, ti aspetta, lavora.
+        con(&mut s, EventoHook { cartella: "uno".into(), ..ev("a", TipoEvento::UserPromptSubmit) }, t);
+        con(&mut s, EventoHook { cartella: "due".into(), ..ev("b", TipoEvento::Stop) }, t);
+        let errore = EventoHook { cartella: "tre".into(), errore: Some("rate_limit".into()), ..ev("c", TipoEvento::StopFailure) };
+        con(&mut s, errore, t);
+        con(&mut s, EventoHook { cartella: "quattro".into(), ..ev("d", TipoEvento::PermissionRequest) }, t);
+        con(&mut s, EventoHook { cartella: "cinque".into(), ..ev("e", TipoEvento::UserPromptSubmit) }, t);
+        s
+    }
+
+    #[test]
+    fn al_massimo_tre_righe() {
+        let t = Instant::now();
+        let s = cinque_sessioni(t);
+        let (righe, altre) = righe_sessioni(&s, &HashMap::new(), t);
+        assert_eq!(righe.len(), 3);
+        assert_eq!(altre, 2);
+        // Nell'ordine di urgenza dell'elenco: chi aspetta, chi si è fermato, chi ha finito.
+        let attesi: Vec<_> = s.elenco().iter().take(3).map(|x| id_sessione(&x.id)).collect();
+        assert_eq!(righe.iter().map(|r| r.id.clone()).collect::<Vec<_>>(), attesi);
+        assert_eq!(righe[0].stato_testo, "Ti aspetta");
+        assert_eq!(righe[1].stato_testo, "Errore");
+        assert_eq!(righe[2].stato_testo, "Fatto");
+        // Meno di tre: nessuna «altra».
+        let mut poche = Sessioni::new();
+        con(&mut poche, ev("a", TipoEvento::Stop), t);
+        assert_eq!(righe_sessioni(&poche, &HashMap::new(), t).1, 0);
+        assert_eq!(righe_sessioni(&Sessioni::new(), &HashMap::new(), t), (vec![], 0));
+    }
+
+    #[test]
+    fn riga_con_livello_strumento_durata_e_contesto() {
+        let t = Instant::now();
+        let mut s = Sessioni::new();
+        con(&mut s, ev("a", TipoEvento::UserPromptSubmit), t);
+        let pre = EventoHook { strumento: Some("Edit".into()), ..ev("a", TipoEvento::PreToolUse) };
+        con(&mut s, pre, t);
+        let contesto: HashMap<String, f32> = [("a".to_owned(), 41.6)].into();
+        let (righe, _) = righe_sessioni(&s, &contesto, t + Duration::from_secs(192));
+        let r = &righe[0];
+        assert_eq!((r.stato_testo, r.livello), ("Lavora", None));
+        assert_eq!((r.cartella.as_str(), r.strumento.as_str(), r.durata.as_str()), ("progetto-a", "Modifica", "3:12"));
+        assert_eq!(r.contesto.as_deref(), Some("42%"));
+        assert_eq!(r.id, id_sessione("a"), "l'impronta, mai il session_id");
+        // Chi non lavora: niente strumento né durata (non cambierebbe a ogni secondo), e il livello.
+        con(&mut s, ev("a", TipoEvento::PermissionRequest), t);
+        let (righe, _) = righe_sessioni(&s, &HashMap::new(), t + Duration::from_secs(300));
+        let r = &righe[0];
+        assert_eq!(
+            (r.livello, r.strumento.as_str(), r.durata.as_str(), r.contesto.clone()),
+            (Some(Livello::Attenzione), "", "", None)
+        );
+        con(&mut s, ev("a", TipoEvento::Stop), t);
+        assert_eq!(righe_sessioni(&s, &HashMap::new(), t).0[0].livello, Some(Livello::Informazione));
+    }
+
+    #[test]
+    fn riga_senza_cartella_si_dice_claude() {
+        let t = Instant::now();
+        let mut s = Sessioni::new();
+        con(&mut s, EventoHook { cartella: String::new(), ..ev("a", TipoEvento::Stop) }, t);
+        con(&mut s, EventoHook { cartella: "\u{202e}\n".into(), ..ev("b", TipoEvento::Stop) }, t);
+        let (righe, _) = righe_sessioni(&s, &HashMap::new(), t);
+        assert!(righe.iter().all(|r| r.cartella == "Claude"), "{righe:?}");
+        let mut s = Sessioni::new();
+        con(&mut s, EventoHook { cartella: "pro\u{202e}getto".into(), ..ev("a", TipoEvento::Stop) }, t);
+        assert_eq!(righe_sessioni(&s, &HashMap::new(), t).0[0].cartella, "progetto");
+    }
+
+    fn riepilogo_con_spesa(micro: Option<&str>, aggiornato: Option<(u32, u32)>) -> Riepilogo {
+        use chrono::TimeZone;
+        Riepilogo {
+            spesa_mese: micro.and_then(api_claude::importo_da),
+            aggiornato_a: aggiornato.map(|(h, m)| chrono::Utc.with_ymd_and_hms(2026, 11, 18, h, m, 0).unwrap()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn spesa_senza_dati_e_senza_chiave() {
+        // Con la chiave ma senza riepilogo: nessun dato.
+        assert_eq!(testo_spesa(None, true), ("".to_owned(), "nessun dato".to_owned()));
+        // Senza la chiave: la frase della guida, qualunque cosa ci fosse.
+        let frase = "Aggiungi una chiave da amministratore nelle Impostazioni".to_owned();
+        assert_eq!(testo_spesa(None, false), ("".to_owned(), frase.clone()));
+        let r = riepilogo_con_spesa(Some("41280"), Some((14, 2)));
+        assert_eq!(testo_spesa(Some(&r), false), ("".to_owned(), frase));
+        // Letto ma senza spesa (dati senza data, mese non letto): nessun dato, mai «0».
+        let vuoto = riepilogo_con_spesa(None, None);
+        assert_eq!(testo_spesa(Some(&vuoto), true), ("".to_owned(), "nessun dato".to_owned()));
+    }
+
+    #[test]
+    fn spesa_con_dati_e_ora_dell_aggiornamento() {
+        let r = riepilogo_con_spesa(Some("41280"), Some((14, 2)));
+        assert_eq!(testo_spesa(Some(&r), true), ("412,80 $".to_owned(), "aggiornato alle 14:02 UTC".to_owned()));
+        // PF18: un mese ancora a zero ma con dati aggiornati fino a fine periodo è «0,00 $».
+        let zero = riepilogo_con_spesa(Some("0"), Some((10, 0)));
+        assert_eq!(testo_spesa(Some(&zero), true).0, "0,00 $");
+    }
+
+    fn locale(g: u32, h: u32, m: u32) -> chrono::DateTime<chrono::Local> {
+        use chrono::TimeZone;
+        chrono::Local.with_ymd_and_hms(2026, 11, g, h, m, 0).unwrap()
+    }
+
+    #[test]
+    fn testo_del_limite() {
+        let ora = locale(18, 12, 0); // mercoledì
+        let l = |g, h, m, p| Limite { percentuale: p, azzera_alle: locale(g, h, m).timestamp() };
+        let t = testo_limite(&l(18, 14, 30, 36.6), ora);
+        assert_eq!((t.testo.as_str(), t.azzera.as_str()), ("37%", "si azzera alle 14:30"));
+        assert!((t.frazione - 0.366).abs() < 1e-6);
+        assert_eq!(testo_limite(&l(19, 9, 5, 5.0), ora).azzera, "si azzera domani alle 09:05");
+        assert_eq!(testo_limite(&l(21, 14, 30, 61.0), ora).azzera, "si azzera sabato alle 14:30");
+        // Oltre il cento o sotto lo zero: l'arco resta nel suo giro e il testo nei limiti.
+        let t = testo_limite(&l(18, 14, 30, 130.0), ora);
+        assert_eq!((t.frazione, t.testo.as_str()), (1.0, "100%"));
+        assert_eq!(testo_limite(&l(18, 14, 30, -3.0), ora).testo, "0%");
     }
 
     #[test]

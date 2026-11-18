@@ -190,6 +190,7 @@ mod accessibilita {
         ModelRc::new(VecModel::from(vec![
             voce("panoramica", "Panoramica"),
             voce("casa", "Casa"),
+            voce("claude", "Claude"),
             voce("pc", "PC"),
             voce("collegamenti", "Collegamenti"),
         ]))
@@ -203,7 +204,7 @@ mod accessibilita {
         let panoramica = elemento(&p, "Panoramica");
         assert_eq!(panoramica.accessible_role(), Some(AccessibleRole::Tab));
         assert_eq!(panoramica.accessible_item_selected(), Some(true));
-        assert_eq!((panoramica.accessible_item_index(), panoramica.accessible_item_count()), (Some(0), Some(4)));
+        assert_eq!((panoramica.accessible_item_index(), panoramica.accessible_item_count()), (Some(0), Some(5)));
         let casa = elemento(&p, "Casa");
         assert_eq!(casa.accessible_item_selected(), Some(false));
         assert_eq!(casa.accessible_item_index(), Some(1));
@@ -893,7 +894,7 @@ mod accessibilita {
     #[test]
     fn nessun_indietro_nelle_viste() {
         let (p, _) = pannello_casa();
-        for vista in ["casa", "pc", "collegamenti", "panoramica"] {
+        for vista in ["casa", "claude", "pc", "collegamenti", "panoramica"] {
             p.set_vista(vista.into());
             assert!(ElementHandle::find_by_accessible_label(&p, "Indietro").next().is_none(), "«Indietro» in {vista}");
         }
@@ -1347,7 +1348,7 @@ mod accessibilita {
     fn vista_collegamenti_card_accessibili() {
         let (p, eventi) = pannello_collegamenti(quattro_collegamenti());
         let scheda = elemento(&p, "Collegamenti");
-        assert_eq!((scheda.accessible_role(), scheda.accessible_item_index()), (Some(AccessibleRole::Tab), Some(3)));
+        assert_eq!((scheda.accessible_role(), scheda.accessible_item_index()), (Some(AccessibleRole::Tab), Some(4)));
         scheda.invoke_accessible_default_action();
         assert_eq!(p.get_vista(), "collegamenti");
         let proxmox = elemento(&p, "Proxmox, esempio.lan:8006");
@@ -1376,7 +1377,7 @@ mod accessibilita {
         let (p, eventi) = pannello_collegamenti(quattro_collegamenti());
         // Dal dock: Tab, → fino a «Collegamenti», Invio.
         tasto(&p, Key::Tab);
-        for _ in 0..3 {
+        for _ in 0..4 {
             tasto(&p, Key::RightArrow);
         }
         tasto(&p, Key::Return);
@@ -1426,6 +1427,185 @@ mod accessibilita {
         assert!(ElementHandle::find_by_accessible_label(&p, "Si aprono nel browser").next().is_some());
         p.set_errore_collegamenti("«NAS» non si è aperto".into());
         assert!(ElementHandle::find_by_accessible_label(&p, "«NAS» non si è aperto").next().is_some());
+    }
+
+    // ─── Task 9: vista Claude ───────────────────────────────────────────────
+
+    fn riga_claude(id: &str, cartella: &str, stato: &str, livello: crate::LivelloUi) -> crate::RigaSessioneUi {
+        crate::RigaSessioneUi {
+            id: id.into(),
+            cartella: cartella.into(),
+            stato: stato.into(),
+            livello,
+            strumento: Default::default(),
+            durata: Default::default(),
+            contesto: Default::default(),
+        }
+    }
+
+    fn tre_righe_claude() -> ModelRc<crate::RigaSessioneUi> {
+        ModelRc::new(VecModel::from(vec![
+            riga_claude("aaaa", "uno", "Ti aspetta", crate::LivelloUi::Attenzione),
+            riga_claude("bbbb", "due", "Fatto", crate::LivelloUi::Informazione),
+            riga_claude("cccc", "tre", "Lavora", crate::LivelloUi::Nessuno),
+        ]))
+    }
+
+    fn limite_claude(testo: &str, frazione: f32, azzera: &str) -> crate::LimiteClaudeUi {
+        crate::LimiteClaudeUi { presente: true, frazione, testo: testo.into(), azzera: azzera.into() }
+    }
+
+    /// Un pannello sulla vista Claude; restituisce gli eventi («apri <id>», «gestisci»).
+    fn pannello_claude(
+        collegato: bool,
+        righe: ModelRc<crate::RigaSessioneUi>,
+    ) -> (Pannello, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
+        piattaforma_di_prova();
+        let p = pannello();
+        p.set_app(app());
+        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        p.global::<crate::Fuochi>().set_pronti(true);
+        p.set_claude_collegato(collegato);
+        p.set_claude_righe(righe);
+        let eventi = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let (e1, e2) = (eventi.clone(), eventi.clone());
+        p.on_apri_sessione(move |id| e1.borrow_mut().push(format!("apri {id}")));
+        p.on_gestisci_claude(move || e2.borrow_mut().push("gestisci".into()));
+        p.set_vista("claude".into());
+        (p, eventi)
+    }
+
+    /// Scollegato: la frase e «Impostazioni» (col mouse, con Narrator e con Invio); collegato ma
+    /// senza sessioni: «Nessuna sessione aperta», senza pulsanti.
+    #[test]
+    fn vista_claude_stati_vuoti() {
+        use slint::platform::Key;
+        let (p, eventi) = pannello_claude(false, ModelRc::new(VecModel::from(Vec::<crate::RigaSessioneUi>::new())));
+        assert!(ElementHandle::find_by_accessible_label(&p, "Collega Claude Code dalle Impostazioni").next().is_some());
+        assert!(ElementHandle::find_by_accessible_label(&p, "Nessuna sessione aperta").next().is_none());
+        let impostazioni = elemento(&p, "Impostazioni");
+        assert_eq!(impostazioni.accessible_role(), Some(AccessibleRole::Button));
+        impostazioni.invoke_accessible_default_action();
+        tasto(&p, Key::Return);
+        assert_eq!(*eventi.borrow(), ["gestisci", "gestisci"]);
+
+        p.set_claude_collegato(true);
+        assert!(ElementHandle::find_by_accessible_label(&p, "Nessuna sessione aperta").next().is_some());
+        assert!(ElementHandle::find_by_accessible_label(&p, "Collega Claude Code dalle Impostazioni").next().is_none());
+        assert!(ElementHandle::find_by_accessible_label(&p, "Impostazioni").next().is_none(), "niente pulsante");
+        // Invio senza righe non fa nulla.
+        tasto(&p, Key::Return);
+        assert_eq!(eventi.borrow().len(), 2);
+    }
+
+    /// PF9: un limite assente non ha l'anello (mai «0%»); senza nessuno dei due la card dice
+    /// «Limiti non disponibili»; con i dati gli anelli hanno nome, valore e quando si azzerano.
+    #[test]
+    fn anelli_nascosti_senza_abbonamento() {
+        let (p, _) = pannello_claude(true, tre_righe_claude());
+        let ha = |nome: &str| ElementHandle::find_by_accessible_label(&p, nome).next().is_some();
+        assert!(!ha("Limite 5 ore") && !ha("Limite settimanale"), "senza limiti nessun anello");
+        assert!(ha("Limiti non disponibili"));
+
+        p.set_claude_cinque_ore(limite_claude("37%", 0.37, "si azzera alle 14:30"));
+        assert!(ha("Limite 5 ore") && !ha("Limite settimanale"), "solo la finestra che c'è");
+        assert!(!ha("Limiti non disponibili"));
+        let anello = elemento(&p, "Limite 5 ore");
+        assert_eq!(anello.accessible_role(), Some(AccessibleRole::ProgressIndicator));
+        assert_eq!(anello.accessible_value().as_deref(), Some("37%"));
+        assert_eq!(anello.accessible_description().as_deref(), Some("si azzera alle 14:30"));
+
+        p.set_claude_sette_giorni(limite_claude("61%", 0.61, "si azzera sabato alle 09:00"));
+        assert_eq!(elemento(&p, "Limite settimanale").accessible_value().as_deref(), Some("61%"));
+        // Un limite scaduto torna assente: l'anello sparisce.
+        p.set_claude_cinque_ore(Default::default());
+        assert!(!ha("Limite 5 ore") && ha("Limite settimanale"));
+    }
+
+    /// La spesa del mese: il valore e la nota; senza valore solo la nota (nessuno «0»).
+    #[test]
+    fn vista_claude_spesa_del_mese() {
+        let (p, _) = pannello_claude(true, tre_righe_claude());
+        let nota = "Aggiungi una chiave da amministratore nelle Impostazioni";
+        p.set_claude_spesa("".into());
+        p.set_claude_spesa_nota(nota.into());
+        assert_eq!(elemento(&p, "Spesa API del mese").accessible_value().as_deref(), Some(nota));
+        p.set_claude_spesa("412,80 $".into());
+        p.set_claude_spesa_nota("aggiornato alle 14:02 UTC".into());
+        let spesa = elemento(&p, "Spesa API del mese");
+        assert_eq!(spesa.accessible_value().as_deref(), Some("412,80 $"));
+        assert_eq!(spesa.accessible_description().as_deref(), Some("aggiornato alle 14:02 UTC"));
+    }
+
+    /// ↓ due volte e Invio: `apri-sessione` con l'id della terza riga; ↑ risale, e i bordi tengono.
+    #[test]
+    fn righe_da_tastiera() {
+        use slint::platform::Key;
+        let (p, eventi) = pannello_claude(true, tre_righe_claude());
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::Return);
+        assert_eq!(*eventi.borrow(), ["apri cccc"]);
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::Return);
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("apri cccc"), "in fondo resta lì");
+        tasto(&p, Key::UpArrow);
+        tasto(&p, Key::Return);
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("apri bbbb"));
+        tasto(&p, Key::UpArrow);
+        tasto(&p, Key::UpArrow);
+        tasto(&p, Key::Return);
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("apri aaaa"));
+        // Narrator e il mouse: la riga è un pulsante col nome e lo stato.
+        let riga = elemento(&p, "tre, Lavora");
+        assert_eq!(riga.accessible_role(), Some(AccessibleRole::Button));
+        riga.invoke_accessible_default_action();
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("apri cccc"));
+        // Esc chiude il pannello come altrove.
+        let chiuso = std::rc::Rc::new(std::cell::Cell::new(false));
+        let c = chiuso.clone();
+        p.on_chiudi(move || c.set(true));
+        tasto(&p, Key::Escape);
+        assert!(chiuso.get());
+    }
+
+    /// Il caso più pieno (tre righe con tutto, «+N altre», due anelli, spesa con la nota più lunga):
+    /// nulla esce dalla vista e la vista sta nel pannello.
+    #[test]
+    fn vista_claude_entra_nel_pannello() {
+        let mut righe = Vec::new();
+        for (i, stato) in ["Ti aspetta", "Fatto", "Lavora"].iter().enumerate() {
+            righe.push(crate::RigaSessioneUi {
+                strumento: "Modifica".into(),
+                durata: "1:02:05".into(),
+                contesto: "100%".into(),
+                ..riga_claude(&format!("id{i}"), "una-cartella-dal-nome-davvero-molto-lungo", stato, crate::LivelloUi::Attenzione)
+            });
+        }
+        let (p, _) = pannello_claude(true, ModelRc::new(VecModel::from(righe)));
+        p.set_claude_altre(12);
+        p.set_claude_cinque_ore(limite_claude("100%", 1.0, "si azzera domani alle 14:30"));
+        p.set_claude_sette_giorni(limite_claude("100%", 1.0, "si azzera mercoledì alle 14:30"));
+        p.set_claude_spesa_nota("Aggiungi una chiave da amministratore nelle Impostazioni".into());
+        let vista = ElementHandle::find_by_element_type_name(&p, "VistaClaude").next().expect("vista Claude");
+        let (cp, cs) = (vista.absolute_position(), vista.size());
+        for e in vista.query_descendants().find_all() {
+            let (pos, lato) = (e.absolute_position(), e.size());
+            if lato.width <= 0.0 || lato.height <= 0.0 {
+                continue;
+            }
+            assert!(
+                pos.x >= cp.x - 0.5
+                    && pos.y >= cp.y - 0.5
+                    && pos.x + lato.width <= cp.x + cs.width + 0.5
+                    && pos.y + lato.height <= cp.y + cs.height + 0.5,
+                "{:?} «{}» esce dalla vista: {pos:?} {lato:?} fuori da {cp:?} {cs:?}",
+                e.type_name(),
+                e.accessible_label().unwrap_or_default()
+            );
+        }
+        assert!(cp.x >= 0.0 && cp.y >= 0.0 && cp.x + cs.width <= 800.0 && cp.y + cs.height <= 300.0);
+        assert!(ElementHandle::find_by_accessible_label(&p, "e altre 12 sessioni").next().is_some(), "«+12 altre»");
     }
 
     /// Impostazioni › Claude (M3, Task 7 e 7B): l'anteprima si apre col fuoco su «Annulla» (Invio per

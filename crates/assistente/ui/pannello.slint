@@ -13,6 +13,8 @@
 // card: ↑/↓ fra «Preferiti» e le stanze e → alle card, le frecce fra le card, ← dalla prima colonna all'elenco
 // e ↑ dalla prima riga a «Riprova» quando c'è; Casa vuota e non connessa: «Apri Impostazioni»);
 // In Collegamenti le frecce fra le card, ↑ dalla prima riga a «Modifica»; Invio apre la pagina.
+// Nella vista Claude ↑/↓ fra le righe delle sessioni, Invio le apre (`apri-sessione`); scollegato Invio
+// apre le Impostazioni sulla scheda Claude.
 // Nella vista PC il contenuto sono il cursore del volume e, su Windows, i riquadri Wi-Fi e
 // Bluetooth e le righe «Reti Wi-Fi ›» e «Dispositivi Bluetooth ›» (M2, Task 8): Tab e Maiusc+Tab
 // passano dall'uno all'altro prima di lasciare la vista; sul cursore ←/→ ±2 punti, Home/Fine
@@ -29,15 +31,16 @@ import { Tema, Movimento } from "tema.slint";
 import { Faccia, Occhi } from "faccia.slint";
 import { Anello, Fuoco, Fuochi } from "componenti.slint";
 import { Icone } from "icone.slint";
-import { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, UmoreUi, StanzaUi, CollegamentoUi, QuadranteUi, FonteQuadranteUi, TipoReteUi, TintaBatteriaUi } from "voci.slint";
+import { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, UmoreUi, StanzaUi, CollegamentoUi, QuadranteUi, FonteQuadranteUi, TipoReteUi, TintaBatteriaUi, RigaSessioneUi, LimiteClaudeUi } from "voci.slint";
 import { RigaAttesa, VoceEspansa } from "attesa.slint";
 import { VistaPc } from "viste/pc.slint";
+import { VistaClaude } from "viste/claude.slint";
 import { VistaCasa } from "viste/casa.slint";
 import { VistaCollegamenti } from "viste/collegamenti.slint";
 import { LayoutOrologio } from "layout/orologio.slint";
 import { LayoutQuadranti } from "layout/quadranti.slint";
 
-export { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, StanzaUi }
+export { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, StanzaUi, RigaSessioneUi, LimiteClaudeUi }
 
 // Una scheda del dock: solo l'icona (bersaglio 36 × 32, icona 20); quella attiva sta in una
 // capsula "vetro" e diventa bianca. Il nome compare in un suggerimento dopo una breve sosta del
@@ -133,11 +136,21 @@ export component Pannello inherits Window {
     // L'app aperta per ultima dal dock (indice in `app`) e se non ha una vista sua (oggi nessuna:
     // le Impostazioni hanno una finestra loro).
     property <int> indice-vista: 0;
-    property <bool> vista-vuota: vista != "panoramica" && vista != "casa" && vista != "pc" && vista != "collegamenti"
+    property <bool> vista-vuota: vista != "panoramica" && vista != "casa" && vista != "claude" && vista != "pc" && vista != "collegamenti"
         && indice-vista >= 0 && indice-vista < app.length && app[indice-vista].id == vista;
     in property <[VoceAppUi]> app;
     // Statistiche del PC, aggiornate ogni 2 s solo a pannello aperto.
     in property <StatPcUi> pc;
+    // La vista Claude (M3, Task 9): i dati li scrive Rust, e solo mentre la vista è aperta.
+    // `claude-collegato`: Claude Code è collegato; le righe sono al più tre sessioni, `claude-altre`
+    // quante restano fuori; i due limiti (`presente` falso = senza anello) e la spesa API del mese.
+    in property <bool> claude-collegato;
+    in property <[RigaSessioneUi]> claude-righe;
+    in property <int> claude-altre;
+    in property <LimiteClaudeUi> claude-cinque-ore;
+    in property <LimiteClaudeUi> claude-sette-giorni;
+    in property <string> claude-spesa;
+    in property <string> claude-spesa-nota;
     // Il volume del PC nella vista PC (M2, Task 7): `volume-disponibile` solo su Windows con
     // un'uscita audio (altrimenti la riga non c'è); `volume` 0..1 lo scrive Rust (stato letto) e
     // il cursore (subito, senza aspettare Windows).
@@ -227,6 +240,10 @@ export component Pannello inherits Window {
     // Una stanza della vista Casa aperta (area) o chiusa.
     callback apri-stanza(string);
     callback chiudi-stanza();
+    // Una sessione di Claude Code scelta (l'impronta): la porta davanti (Task 10).
+    callback apri-sessione(string);
+    // «Impostazioni» nello stato scollegato della vista Claude: le Impostazioni sulla scheda Claude.
+    callback gestisci-claude();
     // Un collegamento scelto (id): Rust lo apre nel browser e chiude il pannello.
     callback apri-collegamento(string);
     // «Modifica» o «Aggiungi un collegamento»: le Impostazioni sulla scheda Collegamenti.
@@ -312,6 +329,9 @@ export component Pannello inherits Window {
     // Voce dell'elenco della vista Casa col fuoco: -1 = «Preferiti», poi l'indice della stanza.
     property <int> fuoco-stanza: -1;
     property <int> fuoco-stanza-valido: max(-1, min(fuoco-stanza, stanze.length - 1));
+    // Vista Claude: riga col fuoco (↑/↓), sempre dentro le righe che ci sono.
+    property <int> fuoco-sessione: 0;
+    property <int> fuoco-sessione-valido: max(0, min(fuoco-sessione, claude-righe.length - 1));
     // Collegamenti: card col fuoco (-1 = «Modifica» nella testata), 3 colonne.
     property <int> fuoco-collegamento: 0;
     property <int> fuoco-collegamento-valido: min(fuoco-collegamento, collegamenti.length - 1);
@@ -386,7 +406,9 @@ export component Pannello inherits Window {
             // Casa vuota e non connessa: il fuoco va su «Apri Impostazioni». Collegamenti: le card,
             // o «Aggiungi un collegamento» se non ce ne sono.
             // PC: il cursore del volume, i riquadri e le righe delle connessioni, se ci sono.
+            // Claude: «Impostazioni» se non è collegato, altrimenti le righe (se ce ne sono).
             return vista == "panoramica" || vista == "collegamenti" || (vista == "casa" && (griglia.length > 0 || !casa-pronta))
+                || (vista == "claude" && (!claude-collegato || claude-righe.length > 0))
                 || (vista == "pc" && pc-successivo(-1) >= 0);
         }
         return true;
@@ -675,6 +697,13 @@ export component Pannello inherits Window {
             } else if (k == Key.UpArrow && fuoco-pc-valido >= 3) {
                 fuoco-pc = pc-ha(fuoco-pc-valido - 2) ? fuoco-pc-valido - 2 : pc-precedente(fuoco-pc-valido);
             }
+        } else if (zona == Zona.contenuto && vista == "claude" && claude-collegato && claude-righe.length > 0) {
+            // ↑/↓ fra le righe, ai bordi si resta.
+            if (k == Key.UpArrow) {
+                fuoco-sessione = max(0, fuoco-sessione-valido - 1);
+            } else if (k == Key.DownArrow) {
+                fuoco-sessione = min(claude-righe.length - 1, fuoco-sessione-valido + 1);
+            }
         } else if (zona == Zona.contenuto && vista == "collegamenti" && collegamenti.length > 0) {
             // -1 = «Modifica» nella testata: ↑ dalla prima riga, ↓ torna alle card.
             if (fuoco-collegamento < 0) {
@@ -747,6 +776,12 @@ export component Pannello inherits Window {
             scegli-stanza(fuoco-stanza-valido, true);
         } else if (vista == "panoramica") {
             root.scorri-layout(1);
+        } else if (vista == "claude") {
+            if (!claude-collegato) {
+                root.gestisci-claude();
+            } else if (claude-righe.length > 0) {
+                root.apri-sessione(claude-righe[fuoco-sessione-valido].id);
+            }
         } else if (vista == "collegamenti") {
             if (collegamenti.length == 0 || fuoco-collegamento < 0) {
                 root.gestisci-collegamenti();
@@ -1119,6 +1154,30 @@ export component Pannello inherits Window {
                     }
                 }
 
+                if vista == "claude": VistaClaude {
+                    width: parent.width;
+                    height: parent.height;
+                    collegato: root.claude-collegato;
+                    righe: root.claude-righe;
+                    altre: root.claude-altre;
+                    cinque-ore: root.claude-cinque-ore;
+                    sette-giorni: root.claude-sette-giorni;
+                    spesa: root.claude-spesa;
+                    spesa-nota: root.claude-spesa-nota;
+                    // Come nelle altre viste, il fuoco chiede anche la vista (lasciandola non si
+                    // accende su un elemento che sta sparendo).
+                    fuoco: da-tastiera && zona == Zona.contenuto && vista == "claude" && claude-collegato ? fuoco-sessione-valido : -1;
+                    fuoco-impostazioni: da-tastiera && zona == Zona.contenuto && vista == "claude" && !claude-collegato;
+                    apri-sessione(id) => {
+                        da-tastiera = false;
+                        root.apri-sessione(id);
+                    }
+                    gestisci => {
+                        da-tastiera = false;
+                        root.gestisci-claude();
+                    }
+                }
+
                 if vista == "collegamenti": VistaCollegamenti {
                     width: parent.width;
                     height: parent.height;
@@ -1362,7 +1421,7 @@ export component Pannello inherits Window {
     // sparita, Casa svuotata) il fuoco torna a `tasti`, che tiene comunque la tastiera.
     property <bool> bersaglio: zona == Zona.attesa ? (espansa || (con-attese && (fuoco-attesa < min(3, attese.length) || (fuoco-attesa == 3 && attese.length > 3))))
         : zona == Zona.stanze ? ha-zona(Zona.stanze)
-        : zona == Zona.contenuto ? ha-zona(Zona.contenuto) && (vista == "panoramica" || vista == "collegamenti" || vista == "pc"
+        : zona == Zona.contenuto ? ha-zona(Zona.contenuto) && (vista == "panoramica" || vista == "collegamenti" || vista == "claude" || vista == "pc"
             || (griglia.length > 0 ? (fuoco-casa >= 0 || riprova-visibile) : !casa-pronta))
         : true;
     property <bool> fuoco-su-elemento: da-tastiera && bersaglio;
