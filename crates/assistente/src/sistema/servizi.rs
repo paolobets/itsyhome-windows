@@ -9,7 +9,7 @@
 //!   lascia passare i clic, quindi non riceve eventi del mouse).
 
 #[cfg(windows)]
-use super::menu::{schermi_del_menu, Comando, MenuIsola};
+use super::menu::{comando, schermi_del_menu, Comando, MenuIsola, Voce};
 use super::ritirata::{self, Ritirata, SONDAGGIO_MOUSE};
 use super::scorciatoie::{self, Scorciatoia, Scorciatoie};
 #[cfg(windows)]
@@ -45,7 +45,8 @@ pub struct Servizi {
     mouse: slint::Timer,
     /// Zona sensibile della linea (pixel fisici), presa entrando nella ritirata e a ogni controllo.
     zona: Cell<Option<RettangoloFisico>>,
-    /// Il menu dell'isola (icona nella barra e, senza «Apri», il «⋯» del pannello).
+    /// Il menu dell'isola: quello nativo dell'icona nella barra e, per il «⋯» del pannello (che è
+    /// Slint), l'elenco dei monitor da cui nascono le sue voci.
     #[cfg(windows)]
     menu: RefCell<Option<MenuIsola>>,
     /// L'icona nella barra, solo se l'utente l'ha accesa.
@@ -167,26 +168,27 @@ pub fn mostra_icona(si: bool) {
     let _ = si;
 }
 
-/// «⋯» in alto a destra del pannello (Task 14i): il menu dell'isola senza «Apri», sotto il
-/// pulsante e allineato al suo bordo destro (`destra`, `basso`: pixel logici della finestra del
-/// pannello). Il pannello resta in primo piano mentre il menu è aperto: chiuso senza scelta (Esc,
-/// clic altrove) il fuoco resta su «⋯». La scelta si esegue al giro dopo, fuori dal callback del
-/// pannello: Impostazioni, Informazioni, la ritirata ed Esci lo chiudono. `tastiera`: aperto da
-/// tasto o da Narrator, la prima voce parte evidenziata.
+/// «⋯» in alto a destra del pannello (RC-58, Task 8): le voci del menu dell'isola senza «Apri»,
+/// che il pannello disegna da sé (Slint, dentro la sua finestra: il pannello resta in primo piano
+/// e non perde il fuoco). Sono le stesse del menu della tray (`voci_pannello`), lette a ogni
+/// apertura del menu: la ritirata dice «Ritira» o «Mostra» secondo lo stato, i monitor sono
+/// quelli di adesso (cambiati dall'ultimo giro da 5 s: il menu si rifà un attimo prima).
 #[cfg(windows)]
-pub fn menu_dal_pannello(finestra: &slint::Window, destra: f32, basso: f32, tastiera: bool) {
-    let Some(s) = servizi() else { return };
-    let Some(hwnd) = finestre::maniglia(finestra) else { return };
-    // I monitor possono essere cambiati dall'ultimo giro da 5 s: il menu si rifà un attimo prima.
+pub fn voci_del_menu(finestra: &slint::Window) -> Vec<Voce> {
+    let Some(s) = servizi() else { return Vec::new() };
     s.schermi_nel_menu(finestre::elenco_monitor(finestra));
-    let punto = super::menu::punto_pannello(destra, basso, finestra.scale_factor());
-    let scelta = {
-        let menu = s.menu.borrow();
-        menu.as_ref().and_then(|m| m.mostra_dal_pannello(hwnd, punto, tastiera))
-    };
-    if let Some(c) = scelta {
-        slint::Timer::single_shot(Duration::ZERO, move || al_comando_dal_pannello(c));
-    }
+    let ritirata = s.ritirata.borrow().attiva();
+    let menu = s.menu.borrow();
+    menu.as_ref().map(|m| m.voci_pannello(ritirata)).unwrap_or_default()
+}
+
+/// Una voce del menu del pannello scelta (`id`: quello che Slint ha ricevuto da `voci_del_menu`).
+/// Si esegue al giro dopo, fuori dal callback del pannello: Impostazioni, Informazioni, la
+/// ritirata ed Esci lo chiudono.
+#[cfg(windows)]
+pub fn comando_dal_pannello(id: &str) {
+    let Some(c) = comando(id) else { return };
+    slint::Timer::single_shot(Duration::ZERO, move || al_comando_dal_pannello(c));
 }
 
 /// Una voce del menu del pannello. La ritirata vale per la pillola: il pannello si chiude e la

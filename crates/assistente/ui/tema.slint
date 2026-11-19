@@ -112,6 +112,10 @@ export global Tema {
     out property <color> anello: #f5efff;
     // Suggerimento (tooltip) delle icone del dock.
     out property <color> suggerimento: #1b1428;
+    // Menu «⋯» del pannello (Task 8): fondo pieno come i suggerimenti (si legge sopra qualunque
+    // vista) e ombra che lo stacca dal corpo, quasi nero.
+    out property <color> menu-fondo: suggerimento;
+    out property <color> menu-ombra: rgba(0, 0, 0, 0.55);
 
     // Livelli dell'attenzione (riga «In attesa», puntino e bordo della pillola). Il colore è
     // sempre accompagnato dalla parola del livello o dalla forma (bloccante: pillola ferma).

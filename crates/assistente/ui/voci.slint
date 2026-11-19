@@ -23,6 +23,23 @@ export struct VoceAppUi {
     icona: image,
 }
 
+// Una riga del menu «⋯» del pannello (Task 8), nell'ordine di `voci_pannello`. `id` è quello che
+// Rust ritraduce nel suo comando (`menu::comando`); `sotto`: apre il sottomenu «Schermo» (nessun
+// comando suo); `separatore`: il filo sta sopra la riga (prima di «Esci»).
+export struct VoceMenuUi {
+    id: string,
+    testo: string,
+    separatore: bool,
+    sotto: bool,
+}
+
+// Una riga del sottomenu «Schermo»: `scelto` = la spunta (il monitor dove stanno pillola e pannello).
+export struct SchermoMenuUi {
+    id: string,
+    testo: string,
+    scelto: bool,
+}
+
 // Tinta del glifo della batteria; `normale` per prima: è il valore predefinito di uno struct nuovo.
 export enum TintaBatteriaUi { normale, carica, informazione, attenzione }
 

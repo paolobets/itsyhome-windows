@@ -7,7 +7,8 @@
 // con i puntini, le frecce e la rotella) o la vista di un'app. In basso il dock di sole app, solo icone.
 //
 // Tastiera: Tab / Maiusc+Tab fra «In attesa», contenuto, dock e «⋯» (in giro: da «⋯» Tab torna in
-// cima; Invio o Spazio lì aprono il menu); frecce dentro la zona
+// cima; Invio o Spazio lì aprono il menu, che è in Slint dentro il pannello — `menu.slint`, RC-58: con
+// il menu aperto i tasti sono suoi e Esc chiude solo lui); frecce dentro la zona
 // (in «In attesa» ←/→ fra le voci e, a voce espansa, ↓ ai pulsanti e ↑ di nuovo alla voce; nella
 // Panoramica ←/→ cambiano layout, nel dock cambiano icona; in Casa Tab passa dall'elenco alle
 // card: ↑/↓ fra «Preferiti» e le stanze e → alle card, le frecce fra le card, ← dalla prima colonna all'elenco
@@ -31,8 +32,9 @@ import { Tema, Movimento } from "tema.slint";
 import { Faccia, Occhi } from "faccia.slint";
 import { Anello, Fuoco, Fuochi } from "componenti.slint";
 import { Icone } from "icone.slint";
-import { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, UmoreUi, StanzaUi, CollegamentoUi, QuadranteUi, FonteQuadranteUi, TipoReteUi, TintaBatteriaUi, RigaSessioneUi, LimiteClaudeUi } from "voci.slint";
+import { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, UmoreUi, StanzaUi, CollegamentoUi, QuadranteUi, FonteQuadranteUi, TipoReteUi, TintaBatteriaUi, RigaSessioneUi, LimiteClaudeUi, VoceMenuUi, SchermoMenuUi } from "voci.slint";
 import { Attesa, RigaAttesa, VoceEspansa } from "attesa.slint";
+import { MenuScuro } from "menu.slint";
 import { VistaPc } from "viste/pc.slint";
 import { VistaClaude } from "viste/claude.slint";
 import { VistaCasa } from "viste/casa.slint";
@@ -269,11 +271,17 @@ export component Pannello inherits Window {
     callback apri-collegamento(string);
     // «Modifica» o «Aggiungi un collegamento»: le Impostazioni sulla scheda Collegamenti.
     callback gestisci-collegamenti();
-    // «⋯»: il menu dell'isola (nativo, lo apre Rust), sotto il pulsante e allineato al suo bordo
-    // destro: (bordo destro, bordo basso) del pulsante in coordinate logiche della finestra, e se
-    // viene da tastiera o da Narrator (allora la prima voce parte evidenziata). Fuori da Windows,
-    // dove il menu nativo non c'è, Rust apre direttamente le Impostazioni.
-    callback menu(length, length, bool);
+    // «⋯»: il menu dell'isola (RC-58: Slint, dentro il pannello, sotto il pulsante e allineato al suo
+    // bordo destro). Prima di aprirlo `menu()` chiede a Rust le voci di adesso (`voci-menu`,
+    // `schermi-menu`, `menu-schermo-scelto`: le stesse di `voci_pannello`, quindi anche la ritirata
+    // e i monitor del momento); se Rust non ne dà (fuori da Windows, dove il menu non c'è e Rust apre
+    // direttamente le Impostazioni) il menu non si apre. `scelta-menu(id)`: la voce scelta, che Rust
+    // ritraduce nel suo comando.
+    callback menu();
+    callback scelta-menu(string);
+    in property <[VoceMenuUi]> voci-menu;
+    in property <[SchermoMenuUi]> schermi-menu;
+    in property <int> menu-schermo-scelto: -1;
 
     // Geometria (logica). La riga alta è alta quanto la pillola a riposo, così gli occhi cadono dove
     // stavano i suoi (vedi `posizione_pannello` in finestre.rs). Pannello 800 × 300: zona
@@ -709,10 +717,14 @@ export component Pannello inherits Window {
     }
 
     // «⋯»: il menu sotto il pulsante, al suo bordo destro. Chiuso il menu senza scelta il fuoco
-    // resta qui (la zona è «⋯»).
+    // torna qui (la zona è «⋯»). Senza voci (Rust non le ha date) non si apre.
     function apri-menu(tastiera: bool) {
         zona = Zona.menu;
-        root.menu(piu.absolute-position.x + piu.width, piu.absolute-position.y + piu.height, tastiera);
+        da-tastiera = tastiera;
+        root.menu();
+        if (voci-menu.length > 0) {
+            menu-scuro.apri(tastiera);
+        }
     }
 
     function scegli(i: int) {
@@ -953,6 +965,16 @@ export component Pannello inherits Window {
         accessible-role: groupbox;
         accessible-label: "Pannello di ItsyHome";
         capture-key-pressed(evento) => {
+            // Menu «⋯» aperto: i tasti sono suoi (Esc chiude solo lui, un livello alla volta). Le
+            // combinazioni con Alt, Ctrl o Win restano al sistema.
+            if (menu-scuro.aperto) {
+                if (evento.modifiers.alt || evento.modifiers.control || evento.modifiers.meta) {
+                    return reject;
+                }
+                da-tastiera = true;
+                menu-scuro.tasto(evento.text, evento.modifiers.shift);
+                return accept;
+            }
             // Un livello alla volta: con una voce espansa il primo Esc la riduce; con una stanza
             // aperta torna a «Preferiti»; poi chiude il pannello.
             if (evento.text == Key.Escape) {
@@ -1554,6 +1576,30 @@ export component Pannello inherits Window {
                                 apri(i, voce.id);
                             }
                         }
+                    }
+                }
+            }
+
+            // Il menu «⋯» sopra tutto il resto (ultimo figlio): sotto il pulsante, a filo del suo
+            // bordo destro. Un clic fuori lo chiude e basta; un tasto qualunque è suo (`tasti`).
+            menu-scuro := MenuScuro {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: parent.height;
+                voci: root.voci-menu;
+                schermi: root.schermi-menu;
+                schermo-scelto: root.menu-schermo-scelto;
+                destra: piu.x + piu.width;
+                alto: piu.y + piu.height + 4px;
+                anello: da-tastiera;
+                scelta(id) => { root.scelta-menu(id); }
+                usato-mouse => { da-tastiera = false; }
+                rilascia-fuoco => {
+                    if (da-tastiera) {
+                        fuoco-menu.focus();
+                    } else {
+                        tasti.focus();
                     }
                 }
             }

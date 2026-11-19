@@ -13,10 +13,11 @@ use crate::pc_stats::{formatta_usato_totale, formatta_velocita, tinta_batteria, 
 #[cfg(test)]
 use crate::pc_stats::{LetturaBatteria, StatoBatteria};
 use crate::ponte::{DallaPillola, Ponte};
+use crate::sistema::menu::{self, Voce};
 use crate::sistema::servizi;
 use crate::{
-    finestra_impostazioni, finestre, orologio, scelte, Movimento, Pannello, Pillola, StatPcUi, TintaBatteriaUi,
-    VoceAppUi,
+    finestra_impostazioni, finestre, orologio, scelte, Movimento, Pannello, Pillola, SchermoMenuUi, StatPcUi,
+    TintaBatteriaUi, VoceAppUi, VoceMenuUi,
 };
 use slint::winit_030::{winit, EventResult, WinitWindowAccessor};
 use slint::{ComponentHandle, Image, ModelRc, VecModel};
@@ -184,9 +185,10 @@ fn fonti_della_vista(vista: &str, layout: Layout, quadranti: impl FnOnce() -> Fo
 /// Cosa fa «⋯» in alto a destra del pannello.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AltreOpzioni {
-    /// Il menu nativo dell'isola (Windows).
+    /// Il menu dell'isola (Slint, dentro il pannello; per ora solo Windows: le voci agiscono su
+    /// ritirata, schermo ed uscita, che fuori da Windows non ci sono).
     Menu,
-    /// Le Impostazioni, direttamente: fuori da Windows il menu nativo non c'è ancora, e senza
+    /// Le Impostazioni, direttamente: fuori da Windows il menu non c'è ancora, e senza
     /// l'ingranaggio nel dock «⋯» è l'unico accesso alle Impostazioni dal pannello.
     Impostazioni,
 }
@@ -197,6 +199,44 @@ fn azione_altre_opzioni(menu_nativo: bool) -> AltreOpzioni {
     } else {
         AltreOpzioni::Impostazioni
     }
+}
+
+/// Le voci del menu «⋯» come le vede l'interfaccia (`voci_pannello`, unica fonte con la tray): le
+/// righe del primo livello e quelle del sottomenu «Schermo» (se c'è) e la posizione dello schermo
+/// spuntato (-1 nessuno). Gli id sono quelli del menu nativo (`menu::id`): Slint li rimanda e
+/// `menu::comando` li ritraduce.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn modelli_menu(voci: &[Voce]) -> (Vec<VoceMenuUi>, Vec<SchermoMenuUi>, i32) {
+    let mut principali = Vec::with_capacity(voci.len());
+    let mut schermi = Vec::new();
+    for v in voci {
+        match v {
+            Voce::Semplice(c, testo) => principali.push(VoceMenuUi {
+                id: menu::id(*c).into(),
+                testo: testo.as_str().into(),
+                separatore: menu::separatore_prima(v),
+                sotto: false,
+            }),
+            Voce::Schermo(righe) => {
+                principali.push(VoceMenuUi { id: "schermo".into(), testo: "Schermo".into(), separatore: false, sotto: true });
+                schermi = righe
+                    .iter()
+                    .map(|r| SchermoMenuUi { id: menu::id(r.comando).into(), testo: r.testo.as_str().into(), scelto: r.scelto })
+                    .collect();
+            }
+        }
+    }
+    let scelto = schermi.iter().position(|s| s.scelto).map_or(-1, |i| i as i32);
+    (principali, schermi, scelto)
+}
+
+/// Scrive nel pannello le voci del menu «⋯» (a ogni apertura del menu).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn riempi_menu(p: &Pannello, voci: &[Voce]) {
+    let (principali, schermi, scelto) = modelli_menu(voci);
+    p.set_voci_menu(ModelRc::new(VecModel::from(principali)));
+    p.set_schermi_menu(ModelRc::new(VecModel::from(schermi)));
+    p.set_menu_schermo_scelto(scelto);
 }
 
 /// Rimanda `f` al giro successivo del ciclo eventi (fuori dal gestore in corso: la chiusura
@@ -372,20 +412,28 @@ impl Apertura {
                 dopo(&a, Apertura::apri_impostazioni);
             }
         });
-        // «⋯» in alto a destra: il menu dell'isola senza «Apri» (fuori da Windows niente menu
-        // nativo: apre le Impostazioni).
+        // «⋯» in alto a destra: il menu dell'isola senza «Apri», dentro il pannello (Slint, RC-58).
+        // Rust gli dà le voci di adesso un attimo prima che si apra (fuori da Windows non ce ne
+        // sono, il menu non si apre e «⋯» apre le Impostazioni).
         let a = self.io.clone();
         let debole = pannello.as_weak();
-        pannello.on_menu(move |destra, basso, tastiera| match azione_altre_opzioni(cfg!(windows)) {
+        pannello.on_menu(move || match azione_altre_opzioni(cfg!(windows)) {
             AltreOpzioni::Menu => {
                 #[cfg(windows)]
                 if let Some(p) = debole.upgrade() {
-                    servizi::menu_dal_pannello(p.window(), destra, basso, tastiera);
+                    riempi_menu(&p, &servizi::voci_del_menu(p.window()));
                 }
                 #[cfg(not(windows))]
-                let _ = (&debole, destra, basso, tastiera);
+                let _ = &debole;
             }
             AltreOpzioni::Impostazioni => dopo(&a, Apertura::apri_impostazioni),
+        });
+        // Una voce del menu scelta: l'azione di sempre, al giro dopo (fuori da questo callback).
+        pannello.on_scelta_menu(|id| {
+            #[cfg(windows)]
+            servizi::comando_dal_pannello(&id);
+            #[cfg(not(windows))]
+            let _ = id;
         });
         // Un collegamento: il browser predefinito e, se è partito, il pannello si chiude (fuori da
         // questo callback). Se non è partito il pannello resta aperto e lo dice.
@@ -704,10 +752,36 @@ mod test {
 
     #[test]
     fn altre_opzioni_apre_il_menu_o_le_impostazioni() {
-        // Task 14i, giro 1: dove c'è il menu nativo «⋯» lo apre; altrove (macOS, Linux) apre
+        // Task 14i, giro 1: dove c'è il menu «⋯» lo apre; altrove (macOS, Linux) apre
         // direttamente le Impostazioni, l'unico accesso dal pannello.
         assert_eq!(azione_altre_opzioni(true), AltreOpzioni::Menu);
         assert_eq!(azione_altre_opzioni(false), AltreOpzioni::Impostazioni);
+    }
+
+    #[test]
+    fn i_modelli_del_menu_vengono_da_voci_pannello() {
+        // Task 8 (RC-58): stesse voci e ordine di `voci_pannello`, id che tornano al `Comando`, il
+        // filo prima di «Esci», le righe e la spunta di «Schermo».
+        use crate::sistema::menu::{comando, voci_pannello, Comando};
+        let schermi = vec![("Schermo principale".to_owned(), false), ("Schermo 2 · 2560×1440".to_owned(), true)];
+        let (voci, righe, scelto) = modelli_menu(&voci_pannello(false, &schermi));
+        let testi: Vec<_> = voci.iter().map(|v| v.testo.to_string()).collect();
+        assert_eq!(testi, ["Impostazioni", "Informazioni", "Schermo", "Ritira l'isola", "Esci"]);
+        let con_filo: Vec<_> = voci.iter().filter(|v| v.separatore).map(|v| v.testo.to_string()).collect();
+        assert_eq!(con_filo, ["Esci"]);
+        assert_eq!(voci.iter().filter(|v| v.sotto).count(), 1);
+        assert!(voci[2].sotto);
+        assert_eq!(comando(&voci[0].id), Some(Comando::Impostazioni));
+        assert_eq!(comando(&voci[3].id), Some(Comando::Ritirata));
+        assert_eq!(comando(&voci[4].id), Some(Comando::Esci));
+        assert_eq!(comando(&voci[2].id), None, "«Schermo» apre il sottomenu, non è un comando");
+        assert_eq!(righe.iter().map(|r| comando(&r.id)).collect::<Vec<_>>(), [Some(Comando::Schermo(0)), Some(Comando::Schermo(1))]);
+        assert_eq!(righe.iter().map(|r| r.scelto).collect::<Vec<_>>(), [false, true]);
+        assert_eq!(scelto, 1);
+        // Un monitor solo: niente «Schermo» e nessuna riga.
+        let (voci, righe, scelto) = modelli_menu(&voci_pannello(true, &[("Schermo principale".to_owned(), true)]));
+        assert_eq!(voci.iter().map(|v| v.testo.to_string()).collect::<Vec<_>>(), ["Impostazioni", "Informazioni", "Mostra l'isola", "Esci"]);
+        assert!(righe.is_empty() && scelto == -1);
     }
 
     #[test]

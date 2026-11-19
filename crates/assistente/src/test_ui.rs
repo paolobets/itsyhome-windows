@@ -1095,9 +1095,9 @@ mod accessibilita {
         piattaforma_di_prova();
         let p = pannello();
         p.set_app(crate::pannello::voci_app());
-        let menu = std::rc::Rc::new(std::cell::RefCell::new(Vec::<(f32, f32, bool)>::new()));
+        let menu = std::rc::Rc::new(std::cell::Cell::new(0u32));
         let m = menu.clone();
-        p.on_menu(move |x, y, tastiera| m.borrow_mut().push((x, y, tastiera)));
+        p.on_menu(move || m.set(m.get() + 1));
         let piu = elemento(&p, "Altre opzioni");
         assert_eq!(piu.accessible_role(), Some(AccessibleRole::Button));
         let (pos, lato) = (piu.absolute_position(), piu.size());
@@ -1107,12 +1107,9 @@ mod accessibilita {
         assert!(ElementHandle::find_by_accessible_label(&p, "Impostazioni").next().is_none(), "niente Impostazioni nel dock");
 
         piu.invoke_accessible_default_action();
-        assert_eq!(menu.borrow().len(), 1, "Narrator lo preme");
-        // Il menu si apre sotto il pulsante, al suo bordo destro (coordinate logiche della finestra);
-        // con Narrator come da tastiera: prima voce evidenziata.
-        let (x, y, tastiera) = menu.borrow()[0];
-        assert_eq!((x, y), (pos.x + lato.width, pos.y + lato.height));
-        assert!(tastiera, "da Narrator la prima voce è evidenziata");
+        assert_eq!(menu.get(), 1, "Narrator lo preme: Rust è chiesto delle voci");
+        // Dove, come e con quale tastiera si apre il menu lo provano i test del menu scuro
+        // (`il_menu_sta_dentro_il_pannello_sotto_il_pulsante` e gli altri): qui Rust non dà voci.
 
         let centro = slint::LogicalPosition::new(pos.x + lato.width / 2.0, pos.y + lato.height / 2.0);
         let clic = || {
@@ -1121,8 +1118,7 @@ mod accessibilita {
             p.window().dispatch_event(WindowEvent::PointerReleased { position: centro, button: PointerEventButton::Left });
         };
         clic();
-        assert_eq!(menu.borrow().len(), 2, "il clic lo apre");
-        assert!(!menu.borrow()[1].2, "col mouse nessuna voce evidenziata");
+        assert_eq!(menu.get(), 2, "il clic lo chiede di nuovo");
     }
 
     /// Task 14i: Tab dal dock arriva a «⋯» (e Maiusc+Tab dalla Panoramica senza voci in attesa);
@@ -1137,7 +1133,7 @@ mod accessibilita {
         p.global::<crate::Fuochi>().set_pronti(true);
         let eventi = std::rc::Rc::new(std::cell::RefCell::new(Vec::<&str>::new()));
         let (e1, e2) = (eventi.clone(), eventi.clone());
-        p.on_menu(move |_, _, tastiera| e1.borrow_mut().push(if tastiera { "menu" } else { "menu col mouse" }));
+        p.on_menu(move || e1.borrow_mut().push("menu"));
         p.on_chiudi(move || e2.borrow_mut().push("chiudi"));
         let e3 = eventi.clone();
         p.on_scorri_layout(move |_| e3.borrow_mut().push("layout"));
@@ -3980,5 +3976,300 @@ mod accessibilita {
         assert!(ElementHandle::find_by_accessible_label(&p, "ItsyHome").next().is_some(), "Narrator non legge la rete ferma");
         assert_eq!(p.get_ingombro_lato_destro(), 16.0, "il posto resta");
         assert_eq!(p.get_larghezza_pillola(), larghezza, "stessa larghezza");
+    }
+
+    // ─── Menu «⋯» scuro in Slint (RC-58, Task 8) ───
+
+    /// Due monitor: il secondo con la spunta.
+    fn due_schermi_di_prova() -> Vec<(String, bool)> {
+        vec![("Schermo principale".into(), false), ("Schermo 2 · 2560×1440".into(), true)]
+    }
+
+    type IdScelti = std::rc::Rc<std::cell::RefCell<Vec<String>>>;
+    type ChiusureChieste = std::rc::Rc<std::cell::Cell<u32>>;
+
+    /// Un pannello con il menu pronto (come lo riempie Rust a ogni apertura), il fuoco attivo e
+    /// due contatori: gli id delle voci scelte e quante volte il pannello ha chiesto di chiudersi.
+    fn pannello_con_menu(ritirata: bool, schermi: &[(String, bool)]) -> (Pannello, IdScelti, ChiusureChieste) {
+        piattaforma_di_prova();
+        let p = pannello();
+        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        p.global::<crate::Fuochi>().set_pronti(true);
+        crate::pannello::riempi_menu(&p, &crate::sistema::menu::voci_pannello(ritirata, schermi));
+        let scelte = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let s = scelte.clone();
+        p.on_scelta_menu(move |id| s.borrow_mut().push(id.to_string()));
+        let chiusure = std::rc::Rc::new(std::cell::Cell::new(0));
+        let c = chiusure.clone();
+        p.on_chiudi(move || c.set(c.get() + 1));
+        (p, scelte, chiusure)
+    }
+
+    /// «⋯» attivato come da Narrator o da tastiera (la prima voce parte evidenziata).
+    fn apri_menu(p: &Pannello) {
+        elemento(p, "Altre opzioni").invoke_accessible_default_action();
+    }
+
+    fn riga_menu(p: &Pannello, testo: &str) -> Option<ElementHandle> {
+        ElementHandle::find_by_accessible_label(p, testo).next()
+    }
+
+    /// RC-58: stesse voci e stesso ordine di `voci_pannello` (unica fonte, anche per la tray),
+    /// il filo prima di «Esci», il sottomenu «Schermo» solo con più monitor.
+    #[test]
+    fn il_menu_del_pannello_ha_le_voci_di_voci_pannello_nello_stesso_ordine() {
+        use crate::sistema::menu::{voci_pannello, Voce};
+        for schermi in [Vec::new(), vec![("Schermo principale".to_owned(), true)], due_schermi_di_prova()] {
+            for ritirata in [false, true] {
+                let (p, _, _) = pannello_con_menu(ritirata, &schermi);
+                assert!(riga_menu(&p, "Impostazioni").is_none(), "chiuso: nessuna voce");
+                apri_menu(&p);
+                let attese: Vec<String> = voci_pannello(ritirata, &schermi)
+                    .iter()
+                    .map(|v| match v {
+                        Voce::Semplice(_, t) => t.clone(),
+                        Voce::Schermo(_) => "Schermo".to_owned(),
+                    })
+                    .collect();
+                let y: Vec<f32> = attese
+                    .iter()
+                    .map(|t| riga_menu(&p, t).unwrap_or_else(|| panic!("manca la voce «{t}»")).absolute_position().y)
+                    .collect();
+                assert!(y.windows(2).all(|w| w[0] < w[1]), "{attese:?} nello stesso ordine: {y:?}");
+                // Il filo prima di «Esci»: lo scarto con la voce prima è più grande degli altri.
+                let n = y.len();
+                let passo = y[1] - y[0];
+                assert!((y[n - 1] - y[n - 2]) > passo + 4.0, "il filo sta prima di «Esci»: {y:?}");
+                assert!(y.windows(2).take(n - 2).all(|w| (w[1] - w[0] - passo).abs() < 0.5), "le altre voci a passo fermo: {y:?}");
+                assert_eq!(attese.contains(&"Schermo".to_owned()), schermi.len() > 1);
+                assert_eq!(attese.contains(&"Mostra l'isola".to_owned()), ritirata);
+                assert!(riga_menu(&p, "Apri").is_none(), "«Apri» non c'è nel pannello (è già aperto)");
+            }
+        }
+    }
+
+    /// Ogni voce chiama la stessa azione di prima: l'id che Slint passa a Rust torna al `Comando`
+    /// della voce, per ogni voce e per ogni riga del sottomenu.
+    #[test]
+    fn ogni_voce_del_menu_porta_al_suo_comando() {
+        use crate::sistema::menu::{comando, Comando};
+        let schermi = due_schermi_di_prova();
+        let attese = [
+            ("Impostazioni", Comando::Impostazioni),
+            ("Informazioni", Comando::Informazioni),
+            ("Ritira l'isola", Comando::Ritirata),
+            ("Esci", Comando::Esci),
+            ("Schermo principale", Comando::Schermo(0)),
+            ("Schermo 2 · 2560×1440", Comando::Schermo(1)),
+        ];
+        for (testo, atteso) in attese {
+            let (p, scelte, chiusure) = pannello_con_menu(false, &schermi);
+            apri_menu(&p);
+            if matches!(atteso, Comando::Schermo(_)) {
+                riga_menu(&p, "Schermo").expect("il sottomenu").invoke_accessible_default_action();
+            }
+            riga_menu(&p, testo).unwrap_or_else(|| panic!("manca «{testo}»")).invoke_accessible_default_action();
+            assert_eq!(scelte.borrow().len(), 1, "{testo}: una scelta sola");
+            assert_eq!(comando(&scelte.borrow()[0]), Some(atteso), "{testo}");
+            assert!(riga_menu(&p, "Impostazioni").is_none(), "{testo}: scelta fatta il menu si chiude");
+            assert_eq!(chiusure.get(), 0, "{testo}: il pannello lo chiude Rust, non il menu");
+            assert_eq!(etichetta_col_fuoco(&p), "Altre opzioni", "{testo}: il fuoco torna su «⋯»");
+        }
+        // «Mostra l'isola» è la stessa azione della ritirata.
+        let (p, scelte, _) = pannello_con_menu(true, &[]);
+        apri_menu(&p);
+        riga_menu(&p, "Mostra l'isola").expect("la voce").invoke_accessible_default_action();
+        assert_eq!(comando(&scelte.borrow()[0]), Some(Comando::Ritirata));
+    }
+
+    /// Da tastiera: Invio e Spazio attivano la voce col fuoco, che parte dalla prima.
+    #[test]
+    fn invio_e_spazio_attivano_la_voce_col_fuoco() {
+        use crate::sistema::menu::{comando, Comando};
+        use slint::platform::Key;
+        for (tasto_scelta, giu, atteso) in [
+            (Key::Return, 0, Comando::Impostazioni),
+            (Key::Space, 1, Comando::Informazioni),
+            (Key::Return, 2, Comando::Ritirata),
+            (Key::Space, 3, Comando::Esci),
+        ] {
+            let (p, scelte, _) = pannello_con_menu(false, &[]);
+            apri_menu(&p);
+            // Le righe nascono al primo ridisegno (qui: alla prima ricerca): allora prendono il fuoco.
+            assert!(riga_menu(&p, "Impostazioni").is_some());
+            assert_eq!(etichetta_col_fuoco(&p), "Impostazioni", "aperto da tastiera: la prima voce");
+            for _ in 0..giu {
+                tasto(&p, Key::DownArrow);
+            }
+            tasto(&p, tasto_scelta);
+            assert_eq!(comando(&scelte.borrow()[0]), Some(atteso));
+        }
+        // Con due monitor: → apre «Schermo», ↓ scende, Invio sceglie lo schermo.
+        let (p, scelte, _) = pannello_con_menu(false, &due_schermi_di_prova());
+        apri_menu(&p);
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::DownArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Schermo");
+        tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Schermo 2 · 2560×1440", "il sottomenu parte dallo schermo spuntato");
+        tasto(&p, Key::UpArrow);
+        tasto(&p, Key::Return);
+        assert_eq!(comando(&scelte.borrow()[0]), Some(Comando::Schermo(0)));
+    }
+
+    /// ↑ e ↓ girano intorno: ↑ dalla prima va all'ultima, ↓ dall'ultima torna alla prima (come i
+    /// menu di Windows, che sostituiscono).
+    #[test]
+    fn frecce_nel_menu_girano_intorno() {
+        use slint::platform::Key;
+        let (p, _, _) = pannello_con_menu(false, &[]);
+        apri_menu(&p);
+        tasto(&p, Key::UpArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Esci");
+        tasto(&p, Key::DownArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Impostazioni");
+        tasto(&p, Key::DownArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Informazioni");
+        // Nel sottomenu girano allo stesso modo.
+        let (p, _, _) = pannello_con_menu(false, &due_schermi_di_prova());
+        apri_menu(&p);
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::RightArrow);
+        tasto(&p, Key::DownArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Schermo principale", "dall'ultimo schermo al primo");
+        tasto(&p, Key::UpArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Schermo 2 · 2560×1440");
+    }
+
+    /// Esc chiude SOLO il menu (a un livello per volta: prima il sottomenu), il pannello resta e il
+    /// fuoco torna su «⋯»; un secondo Esc chiude il pannello come sempre.
+    #[test]
+    fn esc_chiude_solo_il_menu_e_il_fuoco_torna_su_altre_opzioni() {
+        use slint::platform::Key;
+        let (p, scelte, chiusure) = pannello_con_menu(false, &due_schermi_di_prova());
+        apri_menu(&p);
+        assert!(riga_menu(&p, "Esci").is_some());
+        tasto(&p, Key::Escape);
+        assert!(riga_menu(&p, "Esci").is_none(), "il menu si è chiuso");
+        assert_eq!(chiusure.get(), 0, "il pannello resta");
+        assert_eq!(etichetta_col_fuoco(&p), "Altre opzioni", "fuoco su «⋯»");
+        assert!(scelte.borrow().is_empty(), "nessuna voce eseguita");
+        // Con il sottomenu aperto: Esc lo chiude, il menu resta, il fuoco torna su «Schermo».
+        apri_menu(&p);
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::RightArrow);
+        assert!(riga_menu(&p, "Schermo principale").is_some());
+        tasto(&p, Key::Escape);
+        assert!(riga_menu(&p, "Schermo principale").is_none(), "il sottomenu si è chiuso");
+        assert!(riga_menu(&p, "Esci").is_some(), "il menu resta");
+        assert_eq!(etichetta_col_fuoco(&p), "Schermo");
+        tasto(&p, Key::Escape);
+        assert!(riga_menu(&p, "Esci").is_none());
+        assert_eq!((chiusure.get(), etichetta_col_fuoco(&p).as_str()), (0, "Altre opzioni"));
+        // Chiuso il menu, Esc è di nuovo del pannello.
+        tasto(&p, Key::Escape);
+        assert_eq!(chiusure.get(), 1, "il secondo Esc chiude il pannello");
+    }
+
+    /// ← chiude il sottomenu (e basta), → su una voce senza sottomenu non fa nulla.
+    #[test]
+    fn freccia_sinistra_chiude_il_sottomenu() {
+        use slint::platform::Key;
+        let (p, scelte, chiusure) = pannello_con_menu(false, &due_schermi_di_prova());
+        apri_menu(&p);
+        tasto(&p, Key::RightArrow);
+        assert!(riga_menu(&p, "Schermo principale").is_none(), "→ su «Impostazioni»: niente");
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::RightArrow);
+        assert!(riga_menu(&p, "Schermo principale").is_some());
+        tasto(&p, Key::LeftArrow);
+        assert!(riga_menu(&p, "Schermo principale").is_none());
+        assert_eq!(etichetta_col_fuoco(&p), "Schermo");
+        assert!(riga_menu(&p, "Esci").is_some());
+        assert!((chiusure.get(), scelte.borrow().len()) == (0, 0));
+    }
+
+    /// Lo schermo di adesso ha la spunta (per Narrator e nel disegno), gli altri no.
+    #[test]
+    fn lo_schermo_scelto_ha_la_spunta() {
+        let (p, _, _) = pannello_con_menu(false, &due_schermi_di_prova());
+        apri_menu(&p);
+        riga_menu(&p, "Schermo").expect("il sottomenu").invoke_accessible_default_action();
+        let primo = riga_menu(&p, "Schermo principale").expect("primo schermo");
+        let secondo = riga_menu(&p, "Schermo 2 · 2560×1440").expect("secondo schermo");
+        assert_eq!(primo.accessible_checkable(), Some(true));
+        assert_eq!(primo.accessible_checked(), Some(false));
+        assert_eq!(secondo.accessible_checked(), Some(true));
+        // Le voci semplici non sono a spunta.
+        assert_ne!(riga_menu(&p, "Esci").expect("Esci").accessible_checkable(), Some(true));
+    }
+
+    /// Il clic fuori chiude il menu e non fa altro (il pannello resta); il clic su «⋯» col mouse lo
+    /// apre senza anello sulle voci; un clic su una voce la sceglie.
+    #[test]
+    fn clic_fuori_chiude_il_menu() {
+        use slint::platform::{PointerEventButton, WindowEvent};
+        let (p, scelte, chiusure) = pannello_con_menu(false, &[]);
+        let clic = |x: f32, y: f32| {
+            let position = slint::LogicalPosition::new(x, y);
+            p.window().dispatch_event(WindowEvent::PointerMoved { position });
+            p.window().dispatch_event(WindowEvent::PointerPressed { position, button: PointerEventButton::Left });
+            p.window().dispatch_event(WindowEvent::PointerReleased { position, button: PointerEventButton::Left });
+        };
+        let piu = elemento(&p, "Altre opzioni");
+        let (pos, lato) = (piu.absolute_position(), piu.size());
+        clic(pos.x + lato.width / 2.0, pos.y + lato.height / 2.0);
+        assert!(riga_menu(&p, "Esci").is_some(), "il clic su «⋯» apre il menu");
+        // Un punto del pannello lontano dal menu (in basso a sinistra).
+        clic(40.0, 220.0);
+        assert!(riga_menu(&p, "Esci").is_none(), "il clic fuori lo chiude");
+        assert_eq!(chiusure.get(), 0, "e non chiude il pannello");
+        assert!(scelte.borrow().is_empty());
+        assert_eq!(etichetta_col_fuoco(&p), "Pannello di ItsyHome", "col mouse il fuoco va al pannello");
+        // Chiuso, il clic fuori torna a passare agli elementi sotto (qui: gli occhi chiudono il pannello).
+        let occhi = elemento(&p, "Chiudi il pannello");
+        let (pos, lato) = (occhi.absolute_position(), occhi.size());
+        clic(pos.x + lato.width / 2.0, pos.y + lato.height / 2.0);
+        assert_eq!(chiusure.get(), 1, "a menu chiuso gli elementi sotto rispondono");
+        // Un clic su una voce la sceglie.
+        let (p, scelte, _) = pannello_con_menu(false, &[]);
+        let clic = |x: f32, y: f32| {
+            let position = slint::LogicalPosition::new(x, y);
+            p.window().dispatch_event(WindowEvent::PointerMoved { position });
+            p.window().dispatch_event(WindowEvent::PointerPressed { position, button: PointerEventButton::Left });
+            p.window().dispatch_event(WindowEvent::PointerReleased { position, button: PointerEventButton::Left });
+        };
+        let piu = elemento(&p, "Altre opzioni");
+        let (pos, lato) = (piu.absolute_position(), piu.size());
+        clic(pos.x + lato.width / 2.0, pos.y + lato.height / 2.0);
+        let esci = riga_menu(&p, "Esci").expect("Esci");
+        let (pos, lato) = (esci.absolute_position(), esci.size());
+        clic(pos.x + lato.width / 2.0, pos.y + lato.height / 2.0);
+        assert_eq!(*scelte.borrow(), ["esci"]);
+    }
+
+    /// Il menu sta dentro il pannello (800 × 300, nessuna finestra nuova), sotto «⋯» e a filo del
+    /// suo bordo destro, anche col sottomenu aperto.
+    #[test]
+    fn il_menu_sta_dentro_il_pannello_sotto_il_pulsante() {
+        let (p, _, _) = pannello_con_menu(false, &due_schermi_di_prova());
+        apri_menu(&p);
+        riga_menu(&p, "Schermo").expect("il sottomenu").invoke_accessible_default_action();
+        let piu = elemento(&p, "Altre opzioni");
+        let (pp, pl) = (piu.absolute_position(), piu.size());
+        let esci = riga_menu(&p, "Esci").expect("Esci");
+        let (ep, el) = (esci.absolute_position(), esci.size());
+        assert!(ep.y > pp.y + pl.height, "sotto il pulsante");
+        assert!(ep.x + el.width <= pp.x + pl.width + 0.5, "a filo del bordo destro: {ep:?} {el:?}");
+        for testo in ["Impostazioni", "Esci", "Schermo principale", "Schermo 2 · 2560×1440"] {
+            let r = riga_menu(&p, testo).expect("riga");
+            let (a, l) = (r.absolute_position(), r.size());
+            assert!(a.x >= 0.0 && a.y >= 0.0 && a.x + l.width <= 800.0 && a.y + l.height <= 300.0, "{testo} dentro il pannello: {a:?} {l:?}");
+        }
+        let sotto = riga_menu(&p, "Schermo 2 · 2560×1440").expect("riga");
+        assert!(sotto.absolute_position().x + sotto.size().width <= esci.absolute_position().x, "il sottomenu sta a sinistra del menu");
     }
 }

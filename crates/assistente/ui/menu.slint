@@ -1,0 +1,334 @@
+// Il menu «⋯» del pannello (RC-58, Task 8): scuro, dentro il pannello (nessuna finestra nuova),
+// con le stesse voci e lo stesso ordine di `voci_pannello` di Rust (unica fonte, la usa anche la
+// tray) e il sottomenu «Schermo» come secondo menu accanto al primo, a sinistra (lo schermo
+// scelto ha la spunta). Il menu della tray resta quello nativo di Windows.
+//
+// Da tastiera (i tasti arrivano da `tasti` del pannello, che li passa a `tasto`): ↑/↓ (e Tab,
+// Maiusc+Tab) girano intorno, Invio e Spazio attivano, → apre «Schermo» e ← lo chiude, Esc chiude un
+// livello per volta (prima il sottomenu, poi il menu) e il pannello resta. Il fuoco vero sta sulla
+// riga scelta (Narrator ne legge ruolo e nome) e, chiuso il menu, torna su «⋯». Un clic fuori
+// chiude il menu e basta. Nessun timer: il passaggio del mouse apre «Schermo» e un altro passaggio
+// lo chiude.
+import { Tema } from "tema.slint";
+import { Icone } from "icone.slint";
+import { Anello, Fuoco } from "componenti.slint";
+import { VoceMenuUi, SchermoMenuUi } from "voci.slint";
+
+// Una riga del menu: capsula tenue sotto il mouse, più chiara con il fuoco logico, anello da
+// tastiera, spunta a sinistra (solo gli schermi), freccia a destra (solo «Schermo»).
+component RigaMenu inherits Rectangle {
+    in property <string> testo;
+    // Il filo sopra la riga (prima di «Esci»).
+    in property <bool> separatore;
+    in property <bool> con-sotto;
+    in property <bool> sotto-aperto;
+    in property <bool> e-schermo;
+    in property <bool> scelto;
+    in property <bool> evidenziata;
+    in property <bool> anello;
+    in property <bool> chiede-fuoco;
+    in property <length> altezza: 32px;
+    // Scelta col mouse (vero) o da Narrator (falso).
+    callback premuta(bool);
+    // Il mouse è entrato sulla riga.
+    callback sopra();
+
+    height: altezza + (separatore ? 9px : 0px);
+
+    if separatore: Rectangle {
+        x: 8px;
+        y: 4px;
+        width: parent.width - 16px;
+        height: 1px;
+        background: Tema.vetro-bordo;
+    }
+
+    riga := Rectangle {
+        y: root.separatore ? 9px : 0px;
+        height: root.altezza;
+        border-radius: Tema.raggio-s;
+        background: root.evidenziata ? Tema.scheda-attiva : (area.has-hover || root.sotto-aperto) ? Tema.scheda-sopra : transparent;
+
+        // Il fuoco vero (Narrator): le voci sono pulsanti (quella con il sottomenu si espande), le
+        // righe degli schermi sono a scelta singola, con la spunta sullo schermo di adesso. Il
+        // ruolo non può cambiare a runtime: due Fuoco, uno solo c'è (e-schermo non cambia mai).
+        if !root.e-schermo: Fuoco {
+            chiede: root.chiede-fuoco;
+            accessible-role: button;
+            accessible-label: root.testo;
+            accessible-expandable: root.con-sotto;
+            accessible-expanded: root.sotto-aperto;
+            accessible-action-default => { root.premuta(false); }
+        }
+        if root.e-schermo: Fuoco {
+            chiede: root.chiede-fuoco;
+            accessible-role: radio-button;
+            accessible-label: root.testo;
+            accessible-checkable: true;
+            accessible-checked: root.scelto;
+            accessible-action-default => { root.premuta(false); }
+        }
+
+        if root.e-schermo && root.scelto: Image {
+            source: Icone.spunta;
+            x: 10px;
+            y: (parent.height - self.height) / 2;
+            width: 14px;
+            height: 14px;
+            accessible-role: none;
+            colorize: Tema.icona-attiva;
+            image-rendering: smooth;
+        }
+
+        Text {
+            x: root.e-schermo ? 32px : 12px;
+            width: parent.width - self.x - (root.con-sotto ? 30px : 12px);
+            height: parent.height;
+            text: root.testo;
+            overflow: elide;
+            vertical-alignment: center;
+            font-size: Tema.testo-corpo;
+            color: Tema.testo;
+        }
+
+        if root.con-sotto: Image {
+            source: Icone.destra;
+            x: parent.width - self.width - 10px;
+            y: (parent.height - self.height) / 2;
+            width: 14px;
+            height: 14px;
+            accessible-role: none;
+            colorize: Tema.icona;
+            image-rendering: smooth;
+        }
+
+        area := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.premuta(true); }
+            changed has-hover => {
+                if (self.has-hover) {
+                    root.sopra();
+                }
+            }
+        }
+
+        if root.anello && root.evidenziata: Anello {
+            raggio: parent.border-radius;
+            distanza: -2px;
+        }
+    }
+}
+
+export component MenuScuro inherits Rectangle {
+    // Le voci nell'ordine di `voci_pannello` e le righe di «Schermo» (le riempie Rust a ogni apertura).
+    in property <[VoceMenuUi]> voci;
+    in property <[SchermoMenuUi]> schermi;
+    // Il monitor con la spunta (posizione in `schermi`, -1 nessuno): il sottomenu aperto da tastiera
+    // parte da lui.
+    in property <int> schermo-scelto: -1;
+    // Il bordo destro e il bordo alto del menu, nelle coordinate di questo elemento (sotto «⋯»).
+    in property <length> destra;
+    in property <length> alto;
+    // L'anello del fuoco si vede solo da tastiera.
+    in property <bool> anello;
+    in-out property <bool> aperto: false;
+    // Riga del menu (-1 nessuna: aperto col mouse) e del sottomenu col fuoco logico.
+    in-out property <int> fuoco: -1;
+    in-out property <int> fuoco-sotto: -1;
+    in-out property <bool> sotto-aperto: false;
+    // La scelta (id di `voci` o di `schermi`, come li ritraduce Rust).
+    callback scelta(string);
+    // Il fuoco vero sta per lasciare le righe (che spariscono): chi contiene il menu lo mette su «⋯»
+    // (da tastiera) o sul pannello (col mouse).
+    callback rilascia-fuoco();
+    // Una scelta o un clic col mouse: l'anello da tastiera si spegne.
+    callback usato-mouse();
+
+    property <length> larghezza-menu: 200px;
+    property <length> larghezza-sotto: 248px;
+    property <length> altezza-riga: 32px;
+    property <length> margine: 6px;
+    // La riga di «Schermo» nel menu: il sottomenu si allinea a lei.
+    property <int> riga-sotto: 0;
+
+    public function apri(tastiera: bool) {
+        sotto-aperto = false;
+        fuoco-sotto = -1;
+        fuoco = tastiera ? 0 : -1;
+        aperto = true;
+    }
+
+    public function chiudi() {
+        root.rilascia-fuoco();
+        sotto-aperto = false;
+        aperto = false;
+        fuoco = -1;
+        fuoco-sotto = -1;
+    }
+
+    function chiudi-sotto() {
+        root.rilascia-fuoco();
+        sotto-aperto = false;
+        fuoco-sotto = -1;
+    }
+
+    function apri-sotto(riga: int, tastiera: bool) {
+        riga-sotto = riga;
+        fuoco = riga;
+        fuoco-sotto = tastiera ? max(0, schermo-scelto) : -1;
+        sotto-aperto = true;
+    }
+
+    function scegli(id: string) {
+        chiudi();
+        root.scelta(id);
+    }
+
+    function muovi(passo: int) {
+        if (sotto-aperto) {
+            fuoco-sotto = fuoco-sotto < 0 ? (passo > 0 ? 0 : schermi.length - 1) : mod(fuoco-sotto + passo + schermi.length, schermi.length);
+        } else {
+            fuoco = fuoco < 0 ? (passo > 0 ? 0 : voci.length - 1) : mod(fuoco + passo + voci.length, voci.length);
+        }
+    }
+
+    function attiva() {
+        if (sotto-aperto && fuoco-sotto >= 0) {
+            scegli(schermi[fuoco-sotto].id);
+        } else if (!sotto-aperto && fuoco >= 0) {
+            if (voci[fuoco].sotto) {
+                apri-sotto(fuoco, true);
+            } else {
+                scegli(voci[fuoco].id);
+            }
+        }
+    }
+
+    // Una riga del menu scelta: «Schermo» apre o chiude il sottomenu, le altre eseguono.
+    function riga-premuta(i: int, mouse: bool) {
+        if (mouse) {
+            root.usato-mouse();
+        }
+        if (!voci[i].sotto) {
+            scegli(voci[i].id);
+        } else if (sotto-aperto) {
+            chiudi-sotto();
+        } else {
+            apri-sotto(i, !mouse);
+        }
+    }
+
+    // Il tasto `t` col menu aperto (lo chiama `tasti` del pannello, che lo dà per preso).
+    public function tasto(t: string, maiusc: bool) {
+        if (t == Key.Escape) {
+            if (sotto-aperto) {
+                chiudi-sotto();
+            } else {
+                chiudi();
+            }
+        } else if (t == Key.DownArrow || (t == Key.Tab && !maiusc)) {
+            muovi(1);
+        } else if (t == Key.UpArrow || t == Key.Backtab || (t == Key.Tab && maiusc)) {
+            muovi(-1);
+        } else if (t == Key.RightArrow) {
+            if (!sotto-aperto && fuoco >= 0 && voci[fuoco].sotto) {
+                apri-sotto(fuoco, true);
+            }
+        } else if (t == Key.LeftArrow) {
+            if (sotto-aperto) {
+                chiudi-sotto();
+            }
+        } else if (t == Key.Return || t == Key.Space) {
+            attiva();
+        }
+    }
+
+    // Il clic fuori chiude il menu (spento a menu chiuso: lascia passare i clic agli elementi sotto).
+    TouchArea {
+        enabled: root.aperto;
+        pointer-event(evento) => {
+            if (evento.kind == PointerEventKind.down) {
+                root.usato-mouse();
+                root.chiudi();
+            }
+        }
+    }
+
+    if root.aperto: Rectangle {
+        x: root.destra - self.width;
+        y: root.alto;
+        width: root.larghezza-menu;
+        // Le righe più il filo di «Esci» (9 px, sempre l'ultima voce) e il margine sopra e sotto.
+        height: root.voci.length * root.altezza-riga + 9px + 2 * root.margine;
+        background: Tema.menu-fondo;
+        border-radius: Tema.raggio-l;
+        border-width: 1px;
+        border-color: Tema.vetro-bordo;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: Tema.menu-ombra;
+        drop-shadow-offset-y: 8px;
+
+        // I clic sul fondo del menu non arrivano al «fuori».
+        TouchArea { }
+
+        colonna := VerticalLayout {
+            padding: root.margine;
+
+            for v[i] in root.voci: RigaMenu {
+                testo: v.testo;
+                separatore: v.separatore;
+                con-sotto: v.sotto;
+                sotto-aperto: v.sotto && root.sotto-aperto;
+                evidenziata: root.fuoco == i && !root.sotto-aperto;
+                anello: root.anello;
+                chiede-fuoco: root.fuoco == i && !root.sotto-aperto;
+                altezza: root.altezza-riga;
+                premuta(mouse) => { root.riga-premuta(i, mouse); }
+                sopra => {
+                    if (v.sotto && !root.sotto-aperto) {
+                        root.apri-sotto(i, false);
+                    } else if (!v.sotto && root.sotto-aperto) {
+                        root.chiudi-sotto();
+                    }
+                }
+            }
+        }
+    }
+
+    // «Schermo»: un secondo menu a sinistra del primo, allineato alla sua riga (e dentro il pannello).
+    if root.aperto && root.sotto-aperto: Rectangle {
+        width: root.larghezza-sotto;
+        height: root.schermi.length * root.altezza-riga + 2 * root.margine;
+        x: root.destra - root.larghezza-menu - 4px - self.width;
+        y: min(root.alto + root.riga-sotto * root.altezza-riga, root.height - 8px - self.height);
+        background: Tema.menu-fondo;
+        border-radius: Tema.raggio-l;
+        border-width: 1px;
+        border-color: Tema.vetro-bordo;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: Tema.menu-ombra;
+        drop-shadow-offset-y: 8px;
+
+        TouchArea { }
+
+        VerticalLayout {
+            padding: root.margine;
+
+            for s[j] in root.schermi: RigaMenu {
+                testo: s.testo;
+                e-schermo: true;
+                scelto: s.scelto;
+                evidenziata: root.fuoco-sotto == j;
+                anello: root.anello;
+                chiede-fuoco: root.fuoco-sotto == j;
+                altezza: root.altezza-riga;
+                premuta(mouse) => {
+                    if (mouse) {
+                        root.usato-mouse();
+                    }
+                    root.scegli(s.id);
+                }
+            }
+        }
+    }
+}
