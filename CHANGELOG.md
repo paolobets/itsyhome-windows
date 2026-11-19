@@ -83,6 +83,7 @@ Condizioni: assistente release in **prova** (`ITSYHOME_ASSISTENTE_DIR`, `claude.
 - Voce espansa: il titolo si legge intero (a capo, fino a 4 righe) e riga sotto e testo scendono. Sotto le voci c'è il nome per l'utente della fonte («PC», «Casa», «Claude Code», «Prova») invece dell'identificativo interno.
 - Vista PC: i dettagli di RAM e disco sono più corti e non si tagliano («10,1 / 15,7 GB»).
 - Impostazioni: via il titolo ripetuto in testa (si recuperano 46 px); stati vuoti di Ambienti e Collegamenti col pulsante sotto il messaggio, al centro, come nel pannello; istruzioni di Dispositivi solo con l'elenco pieno; note «solo su Windows» solo fuori da Windows; «Avvisa quando le cuffie…» nella sezione «AVVISI»; il selettore ha una freccia in giù; «Aggiungi un ambiente» / «Aggiungi un collegamento» ovunque.
+- Parole: per l'utente la casa è sempre «Casa»; «Casa (Home Assistant)» solo in Impostazioni › Casa, dove si sceglie a cosa collegarsi; «Aggiungi una casa» al posto di «Aggiungi un ambiente»; «ambiente» sparisce dai testi (gli identificativi e il file di configurazione restano). Collegamenti: ognuno ha l'iniziale del nome in un cerchio colorato (colore stabile dal nome, nessuna rete); via «COLLEGAMENTI» e «Si aprono nel browser» dalla testata del pannello.
 - «Nega» e «Consenti» sono entrambi neutri (nessuna tinta d'azione), nel pannello e nella pillola; fuoco iniziale su «Nega», Ctrl+Invio e armamento di 600 ms invariati.
 
 ### Changed (M3, Task 7B: «Collega» sul canale protetto, spec M3 §10)

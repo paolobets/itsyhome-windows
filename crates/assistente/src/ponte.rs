@@ -1177,7 +1177,7 @@ fn dettaglio_stato(s: &StatoConnessione) -> Option<String> {
     let testo = match s {
         StatoConnessione::Errore(e) => e.clone(),
         StatoConnessione::TokenNonValido => "token rifiutato da Home Assistant (auth_invalid)".into(),
-        StatoConnessione::TokenMancante => "nessun token nell'archivio sicuro del sistema per l'ambiente attivo".into(),
+        StatoConnessione::TokenMancante => "nessun token nell'archivio sicuro del sistema per la casa attiva".into(),
         _ => return None,
     };
     Some(format!("{} · {testo}", adesso_hh_mm()))
@@ -1731,6 +1731,8 @@ impl Ponte {
                     nome: c.nome.as_str().into(),
                     url: c.url.as_str().into(),
                     corto: collegamenti::indirizzo_corto(&c.url).into(),
+                    iniziale: collegamenti::iniziale(&c.nome).into(),
+                    tono: collegamenti::tono(&c.nome),
                 })
                 .collect()
         });
@@ -2054,7 +2056,7 @@ impl Ponte {
             Err(e) => {
                 *self.errore_connessione.borrow_mut() = Some(format!("{} · cancellazione del token: {e}", adesso_hh_mm()));
                 self.aggiorna_pannello();
-                "Ambiente rimosso, ma il token è rimasto nell'archivio sicuro del sistema".into()
+                "Casa rimossa, ma il token è rimasto nell'archivio sicuro del sistema".into()
             }
         }
     }

@@ -25,6 +25,32 @@ pub fn valida_nome(s: &str) -> Result<String, String> {
     Ok(nome)
 }
 
+/// Quanti colori ha la tavolozza dei cerchi (`Tema.colore-collegamento` in tema.slint; un test
+/// controlla che i due numeri coincidano).
+pub const TONI: usize = 8;
+
+/// L'iniziale del nome, maiuscola, per il cerchio del collegamento: il primo carattere che sia
+/// una lettera o una cifra («#» se il nome non ne ha).
+pub fn iniziale(nome: &str) -> String {
+    nome.chars()
+        .find(|c| c.is_alphanumeric())
+        .and_then(|c| c.to_uppercase().next())
+        .map_or_else(|| "#".into(), String::from)
+}
+
+/// Il colore del cerchio, dal solo nome (senza maiuscole né spazi intorno): sempre lo stesso per lo
+/// stesso nome, a ogni avvio e in ogni posizione dell'elenco. FNV-1a, scritto qui perché
+/// `DefaultHasher` non promette lo stesso risultato fra una versione di Rust e l'altra.
+pub fn tono(nome: &str) -> i32 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in nome.trim().to_lowercase().bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    // `TONI` è piccolo: il resto sta in un `i32`.
+    (h % TONI as u64) as i32
+}
+
 /// Caratteri mai ammessi in un indirizzo: un browser li codificherebbe, ma qui potrebbero uscire
 /// dall'argomento con cui il sistema passa l'indirizzo al browser (le virgolette soprattutto).
 const VIETATI: [char; 9] = ['"', '<', '>', '\\', '^', '`', '{', '}', '|'];
@@ -258,6 +284,28 @@ pub fn da_aprire(config: &Config, id: &str) -> Option<Result<String, String>> {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn iniziale_e_colore_dal_nome() {
+        assert_eq!(iniziale("Proxmox"), "P");
+        assert_eq!(iniziale("  nas di casa"), "N");
+        assert_eq!(iniziale("«router»"), "R");
+        assert_eq!(iniziale("3CX"), "3");
+        assert_eq!(iniziale("època"), "È");
+        assert_eq!(iniziale("···"), "#");
+        // Stesso nome, stesso colore: anche con altre maiuscole o spazi intorno (il colore non
+        // cambia riavviando, riordinando o rinominando di una maiuscola).
+        assert_eq!(tono("Proxmox"), tono("Proxmox"));
+        assert_eq!(tono("Proxmox"), tono("  proxmox "));
+        // Sempre dentro la tavolozza.
+        for nome in ["", "A", "NAS", "Stampante", "Router", "Proxmox", "Nome molto lungo con «virgolette»"] {
+            assert!((0..TONI as i32).contains(&tono(nome)), "{nome}");
+        }
+        // Nomi diversi non finiscono tutti dello stesso colore.
+        let diversi: std::collections::HashSet<i32> =
+            ["Proxmox", "NAS", "Router", "Stampante", "Telecamere", "Domotica", "Backup"].iter().map(|n| tono(n)).collect();
+        assert!(diversi.len() >= 4, "{diversi:?}");
+    }
 
     #[test]
     fn indirizzi_buoni_e_normalizzati() {

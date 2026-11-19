@@ -65,6 +65,118 @@ fn colore_a_mano(codice: &str) -> bool {
     })
 }
 
+/// I pezzi fra virgolette di una riga di codice (Slint o Rust), senza il commento `//`.
+fn stringhe_della_riga(riga: &str) -> Vec<String> {
+    let codice = senza_commento(riga);
+    let mut trovate = Vec::new();
+    let mut corrente: Option<String> = None;
+    let mut prima = ' ';
+    for c in codice.chars() {
+        if c == '"' && prima != '\\' {
+            match corrente.take() {
+                Some(s) => trovate.push(s),
+                None => corrente = Some(String::new()),
+            }
+        } else if let Some(s) = corrente.as_mut() {
+            s.push(c);
+        }
+        prima = c;
+    }
+    trovate
+}
+
+/// Le stringhe per l'utente che nominano un «ambiente»: nei `.slint` ogni stringa (testi ed etichette
+/// per Narrator); nei sorgenti Rust dell'assistente quelle fuori dai test (la parte dopo
+/// `#[cfg(test)]` e `test_ui.rs` non contano). Fanno eccezione solo i due nomi interni elencati.
+fn stringhe_con_ambiente() -> Vec<String> {
+    // Non arrivano all'utente: la base dell'id di una casa senza nome e il nome del tipo nel Debug.
+    const INTERNE: [&str; 2] = ["ambiente", "Ambiente"];
+    let mut trovate = Vec::new();
+    let cerca = |origine: &str, testo: &str, trovate: &mut Vec<String>| {
+        for (n, riga) in testo.lines().enumerate() {
+            for s in stringhe_della_riga(riga) {
+                if s.to_lowercase().contains("ambient") && !INTERNE.contains(&s.as_str()) {
+                    trovate.push(format!("{origine}:{}: «{s}»", n + 1));
+                }
+            }
+        }
+    };
+    for percorso in file_slint() {
+        let testo = std::fs::read_to_string(&percorso).expect("file .slint leggibile");
+        cerca(&percorso.display().to_string(), &testo, &mut trovate);
+    }
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut rust = Vec::new();
+    let mut cartelle = vec![src];
+    while let Some(c) = cartelle.pop() {
+        for voce in std::fs::read_dir(&c).expect("cartella dei sorgenti leggibile") {
+            let p = voce.expect("voce leggibile").path();
+            if p.is_dir() {
+                cartelle.push(p);
+            } else if p.extension().is_some_and(|e| e == "rs") && p.file_name().is_some_and(|n| n != "test_ui.rs") {
+                rust.push(p);
+            }
+        }
+    }
+    for percorso in rust {
+        let testo = std::fs::read_to_string(&percorso).expect("sorgente leggibile");
+        let fuori_dai_test = testo.split("#[cfg(test)]").next().unwrap_or("");
+        cerca(&percorso.display().to_string(), fuori_dai_test, &mut trovate);
+    }
+    trovate
+}
+
+#[test]
+fn riconosce_le_stringhe_con_ambiente() {
+    assert_eq!(stringhe_della_riga(r#"text: "Nessun ambiente"; // un ambiente"#), ["Nessun ambiente"]);
+    assert_eq!(stringhe_della_riga(r#"a("uno", "due \" tre")"#).len(), 2);
+    assert!(stringhe_della_riga("let ambiente = 1; // «ambiente»").is_empty());
+}
+
+#[test]
+fn nessun_testo_per_l_utente_dice_ambiente() {
+    // R1-21: per l'utente la casa si chiama «Casa»; «ambiente» resta solo negli identificativi.
+    let trovate = stringhe_con_ambiente();
+    assert!(trovate.is_empty(), "la parola «ambiente» arriva all'utente:\n{}", trovate.join("\n"));
+}
+
+/// Luminanza relativa WCAG di un colore `#rrggbb`.
+fn luminanza(esadecimale: &str) -> f64 {
+    let c = |i: usize| {
+        let v = f64::from(u8::from_str_radix(&esadecimale[1 + 2 * i..3 + 2 * i], 16).expect("cifre esadecimali")) / 255.0;
+        if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+    };
+    0.2126 * c(0) + 0.7152 * c(1) + 0.0722 * c(2)
+}
+
+fn contrasto(a: &str, b: &str) -> f64 {
+    let (la, lb) = (luminanza(a), luminanza(b));
+    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+}
+
+#[test]
+fn iniziali_dei_collegamenti_leggibili_sul_loro_cerchio() {
+    // R1-23: l'iniziale (Tema.corpo, scura) sul cerchio (tavolozza di `colore-collegamento` in
+    // tema.slint) deve avere almeno 4,5:1 (WCAG AA, testo normale), per ogni colore.
+    let tema = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("ui/tema.slint")).expect("tema.slint leggibile");
+    let colore = |nome: &str| -> String {
+        let cerca = format!("out property <color> {nome}: #");
+        let i = tema.find(&cerca).unwrap_or_else(|| panic!("token {nome} non trovato")) + cerca.len() - 1;
+        tema[i..i + 7].to_string()
+    };
+    let inizio = tema.find("function colore-collegamento").expect("funzione colore-collegamento");
+    let corpo = &tema[inizio..];
+    let corpo = &corpo[..corpo.find("\n    }").expect("fine della funzione")];
+    let toni: Vec<&str> = corpo.split("return ").skip(1).map(|r| r.split(';').next().unwrap().trim()).collect();
+    assert_eq!(toni.len(), crate::collegamenti::TONI, "un colore per ogni tono");
+    let lettera = colore("corpo");
+    for t in toni {
+        let sfondo = colore(t);
+        let c = contrasto(&lettera, &sfondo);
+        assert!(c >= 4.5, "{t} ({sfondo}) con la lettera {lettera}: {c:.2}:1");
+    }
+}
+
 #[test]
 fn riconosce_i_colori_a_mano() {
     assert!(colore_a_mano("background: #fb923c;"));
@@ -704,13 +816,13 @@ mod accessibilita {
     fn sezioni_delle_impostazioni_selezionate() {
         piattaforma_di_prova();
         let f = FinestraImpostazioni::new().expect("impostazioni");
-        let ha = elemento(&f, "Home Assistant");
+        let ha = elemento(&f, "Casa");
         assert_eq!(ha.accessible_role(), Some(AccessibleRole::Tab));
         assert_eq!((ha.accessible_item_selected(), ha.accessible_item_count()), (Some(true), Some(7)));
         assert_eq!(elemento(&f, "Collegamenti").accessible_item_index(), Some(2));
         f.set_sezione(crate::finestra_impostazioni::SEZIONE_INFORMAZIONI);
         assert_eq!(elemento(&f, "Informazioni").accessible_item_selected(), Some(true));
-        assert_eq!(elemento(&f, "Home Assistant").accessible_item_selected(), Some(false));
+        assert_eq!(elemento(&f, "Casa").accessible_item_selected(), Some(false));
     }
 
     /// Task 14e: Impostazioni › Dispositivi. Ogni pulsante ha il suo nome per Narrator e porta a
@@ -1812,6 +1924,8 @@ mod accessibilita {
             nome: nome.into(),
             url: url.into(),
             corto: crate::collegamenti::indirizzo_corto(url).into(),
+            iniziale: crate::collegamenti::iniziale(nome).into(),
+            tono: crate::collegamenti::tono(nome),
         }
     }
 
@@ -1923,7 +2037,13 @@ mod accessibilita {
     fn vista_collegamenti_dice_se_non_si_e_aperto() {
         let (p, _) = pannello_collegamenti(quattro_collegamenti());
         p.set_vista("collegamenti".into());
-        assert!(ElementHandle::find_by_accessible_label(&p, "Si aprono nel browser").next().is_some());
+        // R1-23: la testata non ripete più «COLLEGAMENTI» né «Si aprono nel browser»; resta il
+        // suggerimento sulla card (per Narrator) e, se serve, l'errore.
+        assert!(ElementHandle::find_by_accessible_label(&p, "Si aprono nel browser").next().is_none());
+        assert!(ElementHandle::find_by_accessible_label(&p, "COLLEGAMENTI").next().is_none());
+        // Il cerchio col nome: l'iniziale (e il colore dal nome, tono 0..).
+        assert!(ElementHandle::find_by_accessible_label(&p, "P").next().is_some(), "iniziale di Proxmox");
+        assert!(ElementHandle::find_by_accessible_label(&p, "S").next().is_some(), "iniziale di Stampante");
         p.set_errore_collegamenti("«NAS» non si è aperto".into());
         assert!(ElementHandle::find_by_accessible_label(&p, "«NAS» non si è aperto").next().is_some());
     }
@@ -2766,13 +2886,13 @@ mod accessibilita {
         let chiusa = std::rc::Rc::new(std::cell::Cell::new(false));
         let c = chiusa.clone();
         f.on_chiudi(move || c.set(true));
-        elemento(&f, "Aggiungi un ambiente").invoke_accessible_default_action();
-        assert!(ElementHandle::find_by_accessible_label(&f, "NUOVO AMBIENTE").next().is_some());
+        elemento(&f, "Aggiungi una casa").invoke_accessible_default_action();
+        assert!(ElementHandle::find_by_accessible_label(&f, "NUOVA CASA").next().is_some());
         scrivi(&f, "Casa");
         tasto_finestra(&f, Key::Escape);
-        assert!(ElementHandle::find_by_accessible_label(&f, "NUOVO AMBIENTE").next().is_some(), "il primo Esc esce dal campo");
+        assert!(ElementHandle::find_by_accessible_label(&f, "NUOVA CASA").next().is_some(), "il primo Esc esce dal campo");
         tasto_finestra(&f, Key::Escape);
-        assert!(ElementHandle::find_by_accessible_label(&f, "NUOVO AMBIENTE").next().is_none(), "il secondo chiude il modulo");
+        assert!(ElementHandle::find_by_accessible_label(&f, "NUOVA CASA").next().is_none(), "il secondo chiude il modulo");
         assert!(!chiusa.get(), "la finestra resta aperta");
         tasto_finestra(&f, Key::Escape);
         assert!(chiusa.get(), "il terzo chiude la finestra");
@@ -2789,7 +2909,7 @@ mod accessibilita {
         f.show().expect("impostazioni mostrate nel backend di prova");
         f.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
         let anelli = || ElementHandle::find_by_element_type_name(&f, "Anello").collect::<Vec<_>>();
-        elemento(&f, "Aggiungi un ambiente").invoke_accessible_default_action();
+        elemento(&f, "Aggiungi una casa").invoke_accessible_default_action();
         let nome = campo(&f, "Nome");
         let a = anelli();
         assert_eq!(a.len(), 1, "un anello sul campo col fuoco");

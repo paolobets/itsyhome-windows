@@ -101,7 +101,7 @@ pub fn prepara(config: &Config, m: &Modulo) -> Result<Ambiente, String> {
         return Ok(Ambiente { id: nuovo_id(config, &nome), nome, url, nuovo: true, token });
     }
     if !config.environments.iter().any(|e| e.id == m.id) {
-        return Err("Questo ambiente non esiste più".into());
+        return Err("Questa casa non esiste più".into());
     }
     Ok(Ambiente { id: m.id.clone(), nome, url, nuovo: false, token })
 }

@@ -1,5 +1,6 @@
 // Vista Collegamenti (Task 14f): le pagine web delle gestioni, nell'ordine salvato, in una griglia
-// di card (nome in evidenza, sotto l'indirizzo accorciato). Un tocco o Invio apre la pagina nel
+// di card (iniziale del nome in un cerchio colorato, nome in evidenza, sotto l'indirizzo
+// accorciato; la testata ha solo «Modifica»). Un tocco o Invio apre la pagina nel
 // browser predefinito del sistema e il pannello si chiude; mai nella finestra di gestione (lì
 // JavaScript è spento). «Modifica» nella testata e «Aggiungi un collegamento» nello stato vuoto
 // aprono le Impostazioni sulla scheda Collegamenti. Da tastiera (in pannello.slint): frecce fra le
@@ -7,9 +8,9 @@
 import { Tema } from "../tema.slint";
 import { Icone, Icona } from "../icone.slint";
 import { CollegamentoUi } from "../voci.slint";
-import { Anello, Fuoco, Pulsante, TipoPulsante, Etichetta } from "../componenti.slint";
+import { Anello, Fuoco, Pulsante, TipoPulsante } from "../componenti.slint";
 
-// Un collegamento: icona, nome e indirizzo accorciato (i puntini se non ci sta).
+// Un collegamento: cerchio con l'iniziale, nome e indirizzo accorciato (i puntini se non ci sta).
 component CardCollegamento inherits Rectangle {
     in property <CollegamentoUi> voce;
     in property <bool> anello;
@@ -26,16 +27,30 @@ component CardCollegamento inherits Rectangle {
 
     Fuoco { chiede: anello; }
 
-    Icona {
-        x: 12px;
+    // Il cerchio: l'iniziale del nome (scura, `Tema.corpo`) su un colore che dipende dal nome.
+    // Nessuna rete: niente icone del sito.
+    Rectangle {
+        x: 10px;
         y: (parent.height - self.height) / 2;
-        width: 18px;
-        height: 18px;
-        source: Icone.collegamento;
+        width: 26px;
+        height: 26px;
+        border-radius: self.width / 2;
+        background: Tema.colore-collegamento(voce.tono);
+
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: voce.iniziale;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            font-weight: 600;
+            font-size: Tema.testo-corpo;
+            color: Tema.corpo;
+        }
     }
 
     Text {
-        x: 40px;
+        x: 46px;
         y: 6px;
         width: parent.width - self.x - 12px;
         height: 18px;
@@ -47,7 +62,7 @@ component CardCollegamento inherits Rectangle {
     }
 
     Text {
-        x: 40px;
+        x: 46px;
         y: 24px;
         width: parent.width - self.x - 12px;
         height: 15px;
@@ -86,25 +101,19 @@ export component VistaCollegamenti inherits Rectangle {
     property <length> passo-riga: alto-card + spazio;
     property <int> righe: ceil(voci.length / colonne);
 
-    if voci.length > 0: Etichetta {
-        x: 2px;
-        y: 0;
-        height: 28px;
-        text: "COLLEGAMENTI";
-    }
-
-    // A destra: l'errore dell'ultima apertura, altrimenti dove si aprono; poi «Modifica».
-    if voci.length > 0: Text {
+    // La testata ha solo «Modifica» (il titolo e «si aprono nel browser» non servono: le card si
+    // spiegano da sole). A sinistra di «Modifica», l'errore dell'ultima apertura, se c'è.
+    if voci.length > 0 && errore != "": Text {
         x: pulsante-modifica.x - 10px - self.width;
         y: 0;
         width: root.width * 0.6;
         height: 28px;
-        text: errore != "" ? errore : "Si aprono nel browser";
+        text: errore;
         horizontal-alignment: right;
         vertical-alignment: center;
         overflow: elide;
         font-size: Tema.testo-piccolo;
-        color: errore != "" ? Tema.caldo-2 : Tema.testo-tenue;
+        color: Tema.caldo-2;
     }
 
     // Alto 28 come la testata.

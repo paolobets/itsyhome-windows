@@ -362,11 +362,11 @@ impl SorveglianzaCasa {
             let (titolo, dettaglio) = match problema {
                 ProblemaToken::NonValido => (
                     "Token di Home Assistant non valido",
-                    "Home Assistant ha rifiutato il token di accesso. Creane uno nuovo nel tuo profilo di Home Assistant e scrivilo in Impostazioni › Home Assistant.",
+                    "Home Assistant ha rifiutato il token di accesso. Creane uno nuovo nel tuo profilo di Home Assistant e scrivilo in Impostazioni › Casa.",
                 ),
                 ProblemaToken::Mancante => (
                     "Token di Home Assistant mancante",
-                    "Per questo ambiente non c'è un token di accesso salvato. Scrivilo in Impostazioni › Home Assistant.",
+                    "Per questa casa non c'è un token di accesso salvato. Scrivilo in Impostazioni › Casa.",
                 ),
             };
             return Some(Voce {

@@ -1,8 +1,9 @@
 // Finestra delle Impostazioni (decisione di Paolo del 13/11: finestra dedicata, non dentro il
 // pannello). Nasce quando la si apre e viene distrutta alla chiusura; si sposta e si ridimensiona,
 // non si chiude perdendo il fuoco.
-// - Home Assistant: elenco degli ambienti (nome, indirizzo, stato) con Connetti/Disconnetti,
-//   Modifica e Rimuovi (conferma sul pulsante stesso per 4 s, che nomina l'ambiente); il modulo
+// - Casa («Casa (Home Assistant)»: qui si sceglie a cosa collegarsi): elenco delle case (nome,
+//   indirizzo, stato) con Connetti/Disconnetti, Modifica e Rimuovi (conferma sul pulsante stesso
+//   per 4 s, che nomina la casa; internamente un «ambiente»: gli identificativi restano); il modulo
 //   aggiungi/modifica (nome, indirizzo, token in un campo password) prende il posto dell'elenco.
 // - Dispositivi: stanze e dispositivi come la scheda «Accessories» della v2 (ordine, icona e
 //   nascoste delle stanze; ordine, nascosti e preferiti dei dispositivi; ordine dei preferiti).
@@ -37,7 +38,7 @@ import { Icone } from "icone.slint";
 
 export { AmbienteUi, TonoUi, RigaDispositivoUi, TipoRigaUi, CollegamentoUi }
 
-// Il contenuto della sezione Home Assistant: l'elenco degli ambienti o il modulo.
+// Il contenuto della sezione Casa: l'elenco delle case (gli «ambienti» della configurazione) o il modulo.
 enum ModoAmbienti { elenco, modulo }
 
 // Pulsante di testo delle Impostazioni: il pulsante comune (componenti.slint), raggiungibile
@@ -984,7 +985,7 @@ export component FinestraImpostazioni inherits Window {
             campo-url = ambienti[i].url;
         } else {
             modulo-id = "";
-            modulo-titolo = "NUOVO AMBIENTE";
+            modulo-titolo = "NUOVA CASA";
             campo-nome = "";
             campo-url = "";
         }
@@ -1239,7 +1240,7 @@ export component FinestraImpostazioni inherits Window {
                 alignment: start;
                 spacing: 6px;
 
-                for nome[i] in ["Home Assistant", "Dispositivi", "Collegamenti", "Isola", "Claude", "Sistema", "Informazioni"]: Sezione {
+                for nome[i] in ["Casa", "Dispositivi", "Collegamenti", "Isola", "Claude", "Sistema", "Informazioni"]: Sezione {
                     nome: nome;
                     attiva: sezione == i;
                     indice: i;
@@ -1269,7 +1270,7 @@ export component FinestraImpostazioni inherits Window {
                         spacing: 12px;
 
                         Etichetta {
-                            text: "AMBIENTI";
+                            text: "CASA (HOME ASSISTANT)";
                         }
 
                         Text {
@@ -1282,7 +1283,7 @@ export component FinestraImpostazioni inherits Window {
                         }
 
                         if ambienti.length > 0: Bottone {
-                            testo: "Aggiungi un ambiente";
+                            testo: "Aggiungi una casa";
                             premuto => { apri-modulo(-1); }
                         }
                     }
@@ -1293,7 +1294,7 @@ export component FinestraImpostazioni inherits Window {
                         spacing: 8px;
 
                         Text {
-                            text: "Nessun ambiente configurato";
+                            text: "Nessuna casa collegata";
                             horizontal-alignment: center;
                             font-weight: 500;
                             font-size: Tema.testo-sottotitolo;
@@ -1313,7 +1314,7 @@ export component FinestraImpostazioni inherits Window {
                             padding-top: 4px;
 
                             Bottone {
-                                testo: "Aggiungi un ambiente";
+                                testo: "Aggiungi una casa";
                                 tipo: TipoPulsante.azione;
                                 premuto => { apri-modulo(-1); }
                             }
@@ -1543,7 +1544,7 @@ export component FinestraImpostazioni inherits Window {
                             }
 
                             Text {
-                                text: "I dispositivi compaiono qui quando la casa è collegata (sezione Home Assistant).";
+                                text: "I dispositivi compaiono qui quando la casa è collegata (sezione Casa).";
                                 horizontal-alignment: center;
                                 wrap: word-wrap;
                                 font-size: Tema.testo-corpo;
