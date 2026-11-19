@@ -604,6 +604,7 @@ pub fn quadranti_ui(q: &[Lato], menu: Option<&MenuData>, massimi: &HashMap<Strin
                         dettaglio: q.dettaglio.into(),
                         genere: GenereUi::Sensore,
                         caldo_da: q.caldo_da,
+                        tenue: q.tenue,
                     }
                 }
                 Lato::Sensore(id) => {

@@ -93,7 +93,7 @@ pub struct ConfigClaude {
     /// ripete finché non collega o scollega di nuovo (la sezione Claude lo dice comunque).
     pub aggiornamento_ignorato: bool,
     /// L'ultimo valore noto del limite delle 5 ore e di quello dei 7 giorni (RC-56): dopo un
-    /// riavvio la vista Claude li mostra attenuati, con «visto alle…», finché non arriva un dato
+    /// riavvio la vista Claude li mostra attenuati, con «dalle…», finché non arriva un dato
     /// nuovo. Scritti solo quando il valore cambia e al massimo una volta al minuto.
     pub ultimo_cinque_ore: Option<LimiteVisto>,
     pub ultimo_sette_giorni: Option<LimiteVisto>,

@@ -11,7 +11,7 @@ use crate::finestre;
 use crate::pc_stats::{tinta_batteria, Fonti, LetturaBatteria, TintaBatteria};
 use crate::sistema::radio::StatoRete;
 use api_claude::Importo;
-use casa_core::config::PREFISSO_SENSORE;
+use casa_core::config::{LimiteVisto, PREFISSO_SENSORE};
 use casa_core::types::{MenuData, SensoreNumerico};
 use chrono::{DateTime, Local};
 use claude_hook::Limite;
@@ -420,6 +420,11 @@ pub struct DatiClaude {
     pub lettura_attesa: bool,
     /// La soglia d'avviso dei limiti dell'utente (frazione 0..1): sopra, l'arco dei limiti è caldo.
     pub soglia_limite: f32,
+    /// I limiti ricordati dal file di stato per le finestre non ancora arrivate (gli stessi della
+    /// vista Claude, `limiti_ricordati`: mai scaduti): il quadrante li mostra tenui (RC-56). Gli
+    /// avvisi non li usano mai.
+    pub ricordato_cinque: Option<LimiteVisto>,
+    pub ricordato_sette: Option<LimiteVisto>,
 }
 
 /// Valore, arco e riga piccola di un quadrante di Claude.
@@ -435,6 +440,8 @@ pub struct QuadranteClaude {
     /// della voce d'avviso (`SOGLIA_AVVISO_SPESA` della soglia di spesa), e senza soglia di spesa
     /// mai (nessuna voce avvisa, l'arco non deve dire altro). Voce e arco usano `>=`.
     pub caldo_da: f32,
+    /// È il limite ricordato da prima del riavvio (RC-56): si mostra tenue, come nella vista Claude.
+    pub tenue: bool,
 }
 
 /// Da quale frazione della soglia di spesa scatta il primo avviso (e l'arco si fa caldo).
@@ -450,17 +457,20 @@ pub fn quadrante_claude(
     massimo_utente: Option<f64>,
     ora: DateTime<Local>,
 ) -> Option<QuadranteClaude> {
-    let senza_dato = || QuadranteClaude { valore: "—".into(), frazione: -1.0, dettaglio: String::new(), caldo_da: MAI_CALDO };
-    let limite = |l: &Option<Limite>| match l.filter(|l| l.percentuale.is_finite()) {
-        Some(l) => {
-            let t = claude::testo_limite(&l, ora);
-            QuadranteClaude { valore: t.testo, frazione: t.frazione, dettaglio: t.azzera, caldo_da: d.soglia_limite }
-        }
-        None => senza_dato(),
+    let senza_dato =
+        || QuadranteClaude { valore: "—".into(), frazione: -1.0, dettaglio: String::new(), caldo_da: MAI_CALDO, tenue: false };
+    // Il dato arrivato; altrimenti quello ricordato, tenue e con «dalle…» (lo stesso testo della vista).
+    let limite = |l: &Option<Limite>, ricordato: &Option<LimiteVisto>| {
+        let (t, tenue) = match (l.filter(|l| l.percentuale.is_finite()), ricordato) {
+            (Some(l), _) => (claude::testo_limite(&l, ora), false),
+            (None, Some(v)) => (claude::testo_limite_ricordato(v, ora), true),
+            (None, None) => return senza_dato(),
+        };
+        QuadranteClaude { valore: t.testo, frazione: t.frazione, dettaglio: t.azzera, caldo_da: d.soglia_limite, tenue }
     };
     Some(match l {
-        Lato::Limite5h => limite(&d.cinque),
-        Lato::Limite7g => limite(&d.sette),
+        Lato::Limite5h => limite(&d.cinque, &d.ricordato_cinque),
+        Lato::Limite7g => limite(&d.sette, &d.ricordato_sette),
         Lato::SpesaApi => match d.spesa {
             None => QuadranteClaude {
                 dettaglio: if d.lettura_attesa { "prima lettura fra poco".into() } else { String::new() },
@@ -478,6 +488,7 @@ pub fn quadrante_claude(
                         .filter(|t| t.is_finite() && *t > 0.0)
                         .map_or_else(String::new, |t| format!("soglia {}", dollari_interi(t))),
                     caldo_da: if d.soglia_spesa.is_some_and(|t| t.is_finite() && t > 0.0) { SOGLIA_AVVISO_SPESA } else { MAI_CALDO },
+                    tenue: false,
                 }
             }
         },
@@ -923,6 +934,30 @@ mod test {
         // Un limite non finito è assente.
         let dati = DatiClaude { cinque: Some(limite(f32::NAN, ora.timestamp() + 600)), ..Default::default() };
         assert_eq!(quadrante_claude(&Lato::Limite5h, &dati, None, ora).unwrap().valore, "—");
+    }
+
+    /// m-2 (revisione finale): dopo un riavvio il quadrante del limite mostra il valore ricordato,
+    /// tenue e con «dalle…», come la vista Claude; il dato fresco lo sostituisce.
+    #[test]
+    fn quadrante_del_limite_mostra_il_ricordato_tenue() {
+        let ora = chrono::Local::now();
+        let visto = casa_core::config::LimiteVisto {
+            percentuale: 87.0,
+            azzera_alle: ora.timestamp() + 3600,
+            visto_alle: ora.timestamp() - 120,
+        };
+        let dati = DatiClaude { ricordato_cinque: Some(visto), soglia_limite: 0.8, ..Default::default() };
+        let q = quadrante_claude(&Lato::Limite5h, &dati, None, ora).unwrap();
+        let atteso = claude::testo_limite_ricordato(&visto, ora);
+        assert_eq!((q.valore.as_str(), q.dettaglio.as_str(), q.tenue), ("87%", atteso.azzera.as_str(), true));
+        assert!(q.dettaglio.starts_with("dal"), "{}", q.dettaglio);
+        assert!((q.frazione - 0.87).abs() < 1e-5);
+        assert_eq!(quadrante_claude(&Lato::Limite7g, &dati, None, ora).unwrap().valore, "—", "solo la sua finestra");
+        // Il dato fresco vince sul ricordato, e non è tenue.
+        let fresco = DatiClaude { cinque: Some(limite(40.0, ora.timestamp() + 600)), ..dati };
+        let q = quadrante_claude(&Lato::Limite5h, &fresco, None, ora).unwrap();
+        assert_eq!((q.valore.as_str(), q.tenue), ("40%", false));
+        assert!(q.dettaglio.starts_with("si azzera"), "{}", q.dettaglio);
     }
 
     #[test]

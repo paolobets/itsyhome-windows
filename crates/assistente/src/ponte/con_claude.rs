@@ -486,10 +486,19 @@ impl Ponte {
         }
     }
 
-    /// Ciò che i quadranti di Claude leggono: i soli limiti validi di `limiti()` (PF9: mai un
-    /// limite scaduto né un numero inventato) e la spesa dell'ultima lettura riuscita.
+    /// Ciò che i quadranti di Claude leggono: i soli limiti validi di `limiti_a` (PF9: mai un
+    /// limite scaduto né un numero inventato), per le finestre non ancora arrivate quelli
+    /// ricordati che mostra anche la vista Claude (RC-56, tenui), e la spesa dell'ultima lettura
+    /// riuscita.
     pub(super) fn dati_claude_quadranti(&self) -> crate::lati::DatiClaude {
-        let (cinque, sette) = self.limiti();
+        let ora = adesso_unix();
+        let (cinque, sette) = self.limiti_a(ora);
+        let (ricordato_cinque, ricordato_sette) = self.limiti_ricordati(ora);
+        if ricordato_cinque.is_some() || ricordato_sette.is_some() {
+            // Un ricordato mostrato scade con la sveglia singola dei limiti (la stessa della vista,
+            // riarmata solo se l'istante cambia), anche se la vista Claude non si apre mai.
+            self.arma_sveglia_limiti(self.prossimo_azzeramento(ora), ora);
+        }
         // Solo dati di questo mese (UTC): dopo il cambio di mese il quadrante dice «—» fino alla lettura nuova.
         let spesa = self.riepilogo_fresco(chrono::Utc::now()).and_then(|r| r.spesa_mese);
         // «Prima lettura fra poco» solo finché nessuna lettura è mai arrivata: dopo un errore (chiave
@@ -503,6 +512,8 @@ impl Ponte {
             soglia_spesa: self.casa.con_config(|c| c.claude.soglia_spesa),
             lettura_attesa,
             soglia_limite,
+            ricordato_cinque,
+            ricordato_sette,
         }
     }
 
@@ -628,7 +639,9 @@ impl Ponte {
         (c.filter(buono), s.filter(buono))
     }
 
-    /// Come `limiti_a`, all'ora di adesso.
+    /// Come `limiti_a`, all'ora di adesso (per i test: il codice legge l'ora una volta sola e la
+    /// passa a `limiti_a` e a `limiti_ricordati`).
+    #[cfg(test)]
     pub fn limiti(&self) -> (Option<Limite>, Option<Limite>) {
         self.limiti_a(adesso_unix())
     }
@@ -1142,7 +1155,7 @@ impl Ponte {
     }
 
     /// I due limiti come li vuole la vista: quelli arrivati, o per la finestra che non è ancora
-    /// arrivata quello ricordato dal file di stato (attenuato, «visto alle…»); assente (o azzerato)
+    /// arrivata quello ricordato dal file di stato (attenuato, «dalle…»); assente (o azzerato)
     /// = nessun anello.
     fn limiti_della_vista(&self, ora: i64) -> (LimiteClaudeUi, LimiteClaudeUi) {
         let adesso = chrono::Local.timestamp_opt(ora, 0).single().unwrap_or_else(chrono::Local::now);
@@ -1321,12 +1334,11 @@ fn limite_ui(l: Option<Limite>, ora: chrono::DateTime<chrono::Local>) -> LimiteC
     }
 }
 
-/// Un limite ricordato dal file di stato (RC-56): la percentuale di quando lo si è visto, «visto
-/// alle 20:29» al posto di «si azzera…», e `vecchio` perché la vista lo attenui.
+/// Un limite ricordato dal file di stato (RC-56): la percentuale di quando lo si è visto, «dalle
+/// 20:29» al posto di «si azzera…», e `vecchio` perché la vista lo attenui.
 fn limite_ricordato_ui(v: &LimiteVisto, adesso: chrono::DateTime<chrono::Local>) -> LimiteClaudeUi {
-    let t = claude::testo_limite(&Limite { percentuale: v.percentuale, azzera_alle: v.azzera_alle }, adesso);
-    let visto = claude::testo_visto(v, adesso.with_timezone(&chrono::Utc), &chrono::Local);
-    LimiteClaudeUi { presente: true, frazione: t.frazione, testo: t.testo.into(), azzera: visto.into(), vecchio: true }
+    let t = claude::testo_limite_ricordato(v, adesso);
+    LimiteClaudeUi { presente: true, frazione: t.frazione, testo: t.testo.into(), azzera: t.azzera.into(), vecchio: true }
 }
 
 #[cfg(test)]
@@ -2553,16 +2565,19 @@ mod test {
         assert_eq!(c.testo.as_str(), "87%");
         assert!((c.frazione - 0.87).abs() < 1e-5);
         assert_eq!(c.azzera.as_str(), claude::testo_visto(&salvato, chrono::Utc::now(), &chrono::Local));
-        assert!(c.azzera.starts_with("visto "), "{}", c.azzera);
+        assert!(c.azzera.starts_with("dal"), "{}", c.azzera);
         let s = pannello.get_claude_sette_giorni();
         assert!(!s.presente && !s.vecchio, "scaduto: non si mostra");
+        // Gli avvisi non usano mai il valore ricordato: 87 % sopra la soglia dell'80 % non fa
+        // nascere la voce delle 5 ore finché non arriva un dato fresco.
+        assert_eq!(p.casa().con_config(|c| c.claude.soglia_limite), 80);
+        p.claude_limiti_a(ora);
+        assert!(p.attese.borrow().voce(claude::ID_LIMITE_5H).is_none(), "nessun avviso dal valore ricordato");
         // Una barra nuova per la sola finestra delle 5 ore la sostituisce: non è più attenuata.
         p.claude_barra(barra("a", Some((40.0, ora + 7200)), None));
         let c = pannello.get_claude_cinque_ore();
         assert!(c.presente && !c.vecchio);
         assert_eq!((c.testo.as_str(), c.azzera.starts_with("si azzera")), ("40%", true));
-        // Gli avvisi e i quadranti non usano mai il valore ricordato.
-        assert_eq!(p.limiti_a(ora).1, None);
     }
 
     /// RC-56: il valore ricordato sparisce da solo quando si azzera, con la sveglia singola dei
@@ -2851,6 +2866,26 @@ mod test {
         // Il limite scaduto torna «—» (la sveglia ripassa di qui).
         p.claude_barra(barra("a", Some((36.6, 1000)), None));
         assert_eq!(quadrante(&p, 0).valore.as_str(), "—");
+    }
+
+    /// m-2 (revisione finale): dopo un riavvio il quadrante mostra il limite ricordato, tenue,
+    /// come la vista Claude (stessa fonte, `limiti_ricordati`); la sveglia singola dei limiti lo
+    /// toglie quando scade anche se la vista Claude non si è mai aperta; il dato fresco lo sostituisce.
+    #[test]
+    fn il_quadrante_mostra_il_limite_ricordato_tenue() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let _pannello = con_pannello(&p);
+        let ora = ora_adesso();
+        p.casa().aggiorna_config(|c| c.claude.ultimo_cinque_ore = Some(visto(87.0, ora + 600, ora - 300)));
+        con_quadranti(&p, &["limite_5h", "limite_7g"]);
+        let q = quadrante(&p, 0);
+        assert_eq!((q.valore.as_str(), q.tenue), ("87%", true));
+        assert!(q.dettaglio.starts_with("dal"), "{}", q.dettaglio);
+        assert_eq!((quadrante(&p, 1).valore.as_str(), quadrante(&p, 1).tenue), ("—", false));
+        assert_eq!(p.limiti_armati.get(), Some(ora + 600), "la sveglia c'è anche senza la vista Claude");
+        // Arriva il dato fresco: lo sostituisce, non più tenue.
+        p.claude_barra(barra("a", Some((40.0, ora + 900)), None));
+        assert_eq!((quadrante(&p, 0).valore.as_str(), quadrante(&p, 0).tenue), ("40%", false));
     }
 
     fn riepilogo_con_spesa(spesa: &str, fresco: bool) -> api_claude::Riepilogo {

@@ -392,23 +392,48 @@ pub fn quando_alle<Tz: TimeZone>(quando: DateTime<chrono::Utc>, adesso: DateTime
 where
     Tz::Offset: std::fmt::Display,
 {
-    let (quando, adesso) = (quando.with_timezone(tz), adesso.with_timezone(tz));
-    let alle = quando.format("%H:%M");
-    match adesso.date_naive().signed_duration_since(quando.date_naive()).num_days() {
-        ..=0 => format!("alle {alle}"),
-        1 => format!("ieri alle {alle}"),
-        _ => format!("il {} alle {alle}", quando.format("%d/%m")),
+    let (giorno, alle) = giorno_e_ora(quando, adesso, tz);
+    match giorno {
+        Giorno::Oggi => format!("alle {alle}"),
+        Giorno::Ieri => format!("ieri alle {alle}"),
+        Giorno::Il(data) => format!("il {data} alle {alle}"),
     }
 }
 
-/// «visto alle 20:29» (o «visto ieri alle…», «visto il 17/11 alle…»): il limite ricordato da prima
-/// del riavvio, finché non arriva un dato nuovo (RC-56).
+/// Di che giorno è un momento rispetto ad `adesso`, per comporre le frasi con l'ora.
+enum Giorno {
+    Oggi,
+    Ieri,
+    Il(String),
+}
+
+/// Il giorno e l'ora «HH:MM» di `quando` nel fuso `tz`, con la regola di `quando_alle`.
+fn giorno_e_ora<Tz: TimeZone>(quando: DateTime<chrono::Utc>, adesso: DateTime<chrono::Utc>, tz: &Tz) -> (Giorno, String)
+where
+    Tz::Offset: std::fmt::Display,
+{
+    let (quando, adesso) = (quando.with_timezone(tz), adesso.with_timezone(tz));
+    let giorno = match adesso.date_naive().signed_duration_since(quando.date_naive()).num_days() {
+        ..=0 => Giorno::Oggi,
+        1 => Giorno::Ieri,
+        _ => Giorno::Il(quando.format("%d/%m").to_string()),
+    };
+    (giorno, quando.format("%H:%M").to_string())
+}
+
+/// «dalle 20:29» (o «da ieri alle…», «dal 17/11 alle…»): il limite ricordato da prima del
+/// riavvio, fermo da quell'ora, finché non arriva un dato nuovo (RC-56, ruling del Task 4).
 pub fn testo_visto<Tz: TimeZone>(l: &LimiteVisto, adesso: DateTime<chrono::Utc>, tz: &Tz) -> String
 where
     Tz::Offset: std::fmt::Display,
 {
     let visto = chrono::Utc.timestamp_opt(l.visto_alle, 0).single().unwrap_or(adesso);
-    format!("visto {}", quando_alle(visto, adesso, tz))
+    let (giorno, alle) = giorno_e_ora(visto, adesso, tz);
+    match giorno {
+        Giorno::Oggi => format!("dalle {alle}"),
+        Giorno::Ieri => format!("da ieri alle {alle}"),
+        Giorno::Il(data) => format!("dal {data} alle {alle}"),
+    }
 }
 
 /// Il limite da scrivere nel file di stato (RC-56), se serve: solo un valore valido e ancora in
@@ -427,7 +452,9 @@ pub fn limite_da_salvare(
     let cambiato = salvato.is_none_or(|v| {
         v.percentuale.round() != fresco.percentuale.round() || !stessa_finestra(v.azzera_alle, fresco.azzera_alle)
     });
-    let presto = ultima_scrittura.is_some_and(|u| ora - u < SCRITTURA_LIMITI_OGNI);
+    // Saturato e solo fra 0 e un minuto: con l'orologio tornato indietro (scrittura «nel futuro»)
+    // il valore nuovo si salva lo stesso, invece di restare bloccato.
+    let presto = ultima_scrittura.is_some_and(|u| (0..SCRITTURA_LIMITI_OGNI).contains(&ora.saturating_sub(u)));
     (cambiato && !presto).then_some(LimiteVisto {
         percentuale: fresco.percentuale,
         azzera_alle: fresco.azzera_alle,
@@ -508,6 +535,14 @@ pub fn testo_limite(l: &Limite, ora: DateTime<Local>) -> TestoLimite {
         }
     };
     TestoLimite { frazione: pct / 100.0, testo: format!("{}%", pct.round() as u32), azzera }
+}
+
+/// Il testo di un limite ricordato dal file di stato (RC-56): la percentuale di quando lo si è
+/// visto e «dalle 20:29» al posto di «si azzera…». Lo usano la vista Claude e i quadranti, che
+/// così dicono la stessa cosa.
+pub fn testo_limite_ricordato(v: &LimiteVisto, ora: DateTime<Local>) -> TestoLimite {
+    let t = testo_limite(&Limite { percentuale: v.percentuale, azzera_alle: v.azzera_alle }, ora);
+    TestoLimite { azzera: testo_visto(v, ora.with_timezone(&chrono::Utc), &Local), ..t }
 }
 
 // ─── Avvisi a soglia: limiti dell'abbonamento e spesa delle API (Task 12) ──────────────────
@@ -1324,14 +1359,26 @@ mod test {
         assert_eq!(limite_da_salvare(&lim(50.0, ora), None, None, ora), None, "già azzerato");
     }
 
-    /// RC-56: «visto alle 20:29», con «ieri»/la data come l'ora dei dati.
+    /// Orologio tornato indietro (l'ultima scrittura «nel futuro») o valori estremi: niente
+    /// overflow, e il valore nuovo si salva invece di restare bloccato per sempre.
+    #[test]
+    fn il_limite_si_salva_anche_con_l_orologio_indietro() {
+        let ora = 1_800_000_000;
+        let fine = ora + 3600;
+        assert_eq!(limite_da_salvare(&lim(88.0, fine), None, Some(ora + 1000), ora), Some(visto(88.0, fine, ora)));
+        assert_eq!(limite_da_salvare(&lim(88.0, fine), None, Some(i64::MIN), ora), Some(visto(88.0, fine, ora)));
+        assert_eq!(limite_da_salvare(&lim(88.0, fine), None, Some(i64::MAX), ora), Some(visto(88.0, fine, ora)));
+    }
+
+    /// RC-56 (ruling del Task 4): «dalle 20:29», con «ieri»/la data come l'ora dei dati. Il valore
+    /// è quello cambiato a quell'ora e da allora non si è mosso.
     #[test]
     fn testo_di_quando_si_e_visto_il_limite() {
         let visto_alle = utc(18, 20, 29).timestamp();
         let v = visto(87.0, utc(19, 1, 0).timestamp(), visto_alle);
-        assert_eq!(testo_visto(&v, utc(18, 21, 0), &chrono::Utc), "visto alle 20:29");
-        assert_eq!(testo_visto(&v, utc(19, 0, 10), &chrono::Utc), "visto ieri alle 20:29");
-        assert_eq!(testo_visto(&v, utc(25, 8, 0), &chrono::Utc), "visto il 18/11 alle 20:29");
+        assert_eq!(testo_visto(&v, utc(18, 21, 0), &chrono::Utc), "dalle 20:29");
+        assert_eq!(testo_visto(&v, utc(19, 0, 10), &chrono::Utc), "da ieri alle 20:29");
+        assert_eq!(testo_visto(&v, utc(25, 8, 0), &chrono::Utc), "dal 18/11 alle 20:29");
     }
 
     #[test]

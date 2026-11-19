@@ -214,6 +214,8 @@ export struct QuadranteUi {
     genere: GenereUi,
     // Solo limiti e spesa di Claude: da quale frazione l'arco è caldo (>=, come la voce d'avviso).
     caldo-da: float,
+    // Solo limiti di Claude: è il valore ricordato da prima del riavvio (RC-56), da mostrare tenue.
+    tenue: bool,
 }
 
 // Una riga «Quadrante n» di Impostazioni › Isola: la scelta (indice in `scelte-quadranti`) e,
@@ -251,7 +253,7 @@ export struct RigaSessioneUi {
 // Un limite dell'abbonamento (5 ore o 7 giorni): `presente` falso = niente anello (limite assente
 // o già azzerato). `frazione` 0..1 dell'arco, `testo` «37%», `azzera` «si azzera alle 14:30».
 // `vecchio`: è l'ultimo valore ricordato da prima del riavvio (RC-56), attenuato, e `azzera` dice
-// «visto alle 20:29».
+// «dalle 20:29».
 export struct LimiteClaudeUi {
     presente: bool,
     frazione: float,

@@ -250,8 +250,9 @@ export component LayoutQuadranti inherits Rectangle {
         for q in quadranti: Quadrante {
             width: root.lato;
             arco: root.arco;
-            // I valori della casa (meteo, sensori) senza connessione sono vecchi: tenui.
-            tenue: (q.fonte == FonteQuadranteUi.meteo || q.fonte == FonteQuadranteUi.sensore) && !casa-pronta;
+            // I valori della casa (meteo, sensori) senza connessione sono vecchi: tenui. Così anche
+            // i limiti di Claude ricordati da prima del riavvio (RC-56).
+            tenue: ((q.fonte == FonteQuadranteUi.meteo || q.fonte == FonteQuadranteUi.sensore) && !casa-pronta) || q.tenue;
             caldo-da: q.fonte == FonteQuadranteUi.limite-5h || q.fonte == FonteQuadranteUi.limite-7g || q.fonte == FonteQuadranteUi.spesa-api ? q.caldo-da : 0.85;
             etichetta: q.etichetta;
             icona: icona-di(q);
