@@ -20,7 +20,7 @@ use crate::{
     TintaBatteriaUi, VoceAppUi, VoceMenuUi,
 };
 use slint::winit_030::{winit, EventResult, WinitWindowAccessor};
-use slint::{ComponentHandle, Image, ModelRc, VecModel};
+use slint::{ComponentHandle, Image, Model, ModelRc, VecModel};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
@@ -230,13 +230,57 @@ pub(crate) fn modelli_menu(voci: &[Voce]) -> (Vec<VoceMenuUi>, Vec<SchermoMenuUi
     (principali, schermi, scelto)
 }
 
-/// Scrive nel pannello le voci del menu «⋯» (a ogni apertura del menu).
+/// Il modello ha già queste righe?
+#[cfg_attr(not(windows), allow(dead_code))]
+fn stesse_righe<T: Clone + PartialEq + 'static>(modello: &ModelRc<T>, righe: &[T]) -> bool {
+    modello.row_count() == righe.len() && righe.iter().enumerate().all(|(i, r)| modello.row_data(i).as_ref() == Some(r))
+}
+
+/// Scrive nel pannello le voci del menu «⋯» (a ogni apertura del menu), ma solo quelle che sono
+/// cambiate (monitor o ritirata).
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn riempi_menu(p: &Pannello, voci: &[Voce]) {
     let (principali, schermi, scelto) = modelli_menu(voci);
-    p.set_voci_menu(ModelRc::new(VecModel::from(principali)));
-    p.set_schermi_menu(ModelRc::new(VecModel::from(schermi)));
-    p.set_menu_schermo_scelto(scelto);
+    if !stesse_righe(&p.get_voci_menu(), &principali) {
+        p.set_voci_menu(ModelRc::new(VecModel::from(principali)));
+    }
+    if !stesse_righe(&p.get_schermi_menu(), &schermi) {
+        p.set_schermi_menu(ModelRc::new(VecModel::from(schermi)));
+    }
+    if p.get_menu_schermo_scelto() != scelto {
+        p.set_menu_schermo_scelto(scelto);
+    }
+}
+
+/// La prossima riga dopo `da` (-1 = nessuna ancora; si riparte dall'inizio) il cui testo comincia
+/// con `lettera` (senza badare alle maiuscole), come i menu nativi; -1 se nessuna o se `lettera`
+/// non è un solo carattere alfanumerico.
+pub(crate) fn prossima_iniziale(testi: &[String], da: i32, lettera: &str) -> i32 {
+    let mut caratteri = lettera.chars();
+    let (Some(c), None) = (caratteri.next(), caratteri.next()) else { return -1 };
+    if !c.is_alphanumeric() {
+        return -1;
+    }
+    let inizia = |t: &String| t.chars().next().is_some_and(|p| p.to_lowercase().eq(c.to_lowercase()));
+    let n = testi.len() as i32;
+    (1..=n)
+        .map(|passo| (da + passo).rem_euclid(n.max(1)))
+        .find(|&i| inizia(&testi[i as usize]))
+        .unwrap_or(-1)
+}
+
+/// Collega la ricerca per iniziale del menu «⋯» (la lettera premuta a menu aperto).
+pub(crate) fn collega_iniziali(p: &Pannello) {
+    let debole = p.as_weak();
+    p.on_cerca_iniziale_menu(move |lettera, sotto, da| {
+        let Some(p) = debole.upgrade() else { return -1 };
+        let testi: Vec<String> = if sotto {
+            p.get_schermi_menu().iter().map(|s| s.testo.to_string()).collect()
+        } else {
+            p.get_voci_menu().iter().map(|v| v.testo.to_string()).collect()
+        };
+        prossima_iniziale(&testi, da, lettera.as_str())
+    });
 }
 
 /// Rimanda `f` al giro successivo del ciclo eventi (fuori dal gestore in corso: la chiusura
@@ -428,6 +472,7 @@ impl Apertura {
             }
             AltreOpzioni::Impostazioni => dopo(&a, Apertura::apri_impostazioni),
         });
+        collega_iniziali(&pannello);
         // Una voce del menu scelta: l'azione di sempre, al giro dopo (fuori da questo callback).
         pannello.on_scelta_menu(|id| {
             #[cfg(windows)]
@@ -756,6 +801,19 @@ mod test {
         // direttamente le Impostazioni, l'unico accesso dal pannello.
         assert_eq!(azione_altre_opzioni(true), AltreOpzioni::Menu);
         assert_eq!(azione_altre_opzioni(false), AltreOpzioni::Impostazioni);
+    }
+
+    #[test]
+    fn la_lettera_salta_alla_prossima_voce_che_comincia_cosi() {
+        let t: Vec<String> = ["Impostazioni", "Informazioni", "Ritira l'isola", "Esci"].map(String::from).into();
+        assert_eq!(prossima_iniziale(&t, -1, "r"), 2);
+        assert_eq!(prossima_iniziale(&t, 2, "R"), 2, "una sola: resta lì");
+        assert_eq!(prossima_iniziale(&t, 0, "i"), 1, "dopo la corrente");
+        assert_eq!(prossima_iniziale(&t, 1, "i"), 0, "si riparte dall'inizio");
+        assert_eq!(prossima_iniziale(&t, 0, "z"), -1);
+        assert_eq!(prossima_iniziale(&t, 0, "ab"), -1, "un solo carattere");
+        assert_eq!(prossima_iniziale(&t, 0, "\n"), -1);
+        assert_eq!(prossima_iniziale(&[], 0, "a"), -1);
     }
 
     #[test]

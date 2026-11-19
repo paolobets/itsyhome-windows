@@ -3996,6 +3996,7 @@ mod accessibilita {
         p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
         p.global::<crate::Fuochi>().set_pronti(true);
         crate::pannello::riempi_menu(&p, &crate::sistema::menu::voci_pannello(ritirata, schermi));
+        crate::pannello::collega_iniziali(&p);
         let scelte = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
         let s = scelte.clone();
         p.on_scelta_menu(move |id| s.borrow_mut().push(id.to_string()));
@@ -4249,6 +4250,118 @@ mod accessibilita {
         let (pos, lato) = (esci.absolute_position(), esci.size());
         clic(pos.x + lato.width / 2.0, pos.y + lato.height / 2.0);
         assert_eq!(*scelte.borrow(), ["esci"]);
+    }
+
+    /// Il mouse sul centro di un elemento (lo «passa sopra») e, con `clicca`, il clic sinistro.
+    fn mouse_su(p: &Pannello, e: &ElementHandle, clicca: bool) {
+        use slint::platform::{PointerEventButton, WindowEvent};
+        let (pos, lato) = (e.absolute_position(), e.size());
+        let position = slint::LogicalPosition::new(pos.x + lato.width / 2.0, pos.y + lato.height / 2.0);
+        p.window().dispatch_event(WindowEvent::PointerMoved { position });
+        if clicca {
+            p.window().dispatch_event(WindowEvent::PointerPressed { position, button: PointerEventButton::Left });
+            p.window().dispatch_event(WindowEvent::PointerReleased { position, button: PointerEventButton::Left });
+        }
+    }
+
+    /// I-1: col mouse «Schermo» si apre al passaggio e il clic (il gesto naturale) NON lo richiude.
+    #[test]
+    fn col_mouse_il_clic_su_schermo_non_chiude_il_sottomenu() {
+        let (p, _, _) = pannello_con_menu(false, &due_schermi_di_prova());
+        apri_menu(&p);
+        let schermo = riga_menu(&p, "Schermo").expect("il sottomenu");
+        mouse_su(&p, &schermo, false);
+        assert!(riga_menu(&p, "Schermo principale").is_some(), "il passaggio lo apre");
+        mouse_su(&p, &schermo, true);
+        assert!(riga_menu(&p, "Schermo principale").is_some(), "il clic non lo richiude");
+        // E si sceglie lo schermo col mouse.
+        let (p, scelte, _) = pannello_con_menu(false, &due_schermi_di_prova());
+        apri_menu(&p);
+        let schermo = riga_menu(&p, "Schermo").expect("il sottomenu");
+        mouse_su(&p, &schermo, true);
+        let primo = riga_menu(&p, "Schermo principale").expect("primo schermo");
+        mouse_su(&p, &primo, true);
+        assert_eq!(*scelte.borrow(), ["schermo:0"]);
+    }
+
+    /// m-6: le voci sotto «Schermo» accanto al sottomenu non lo chiudono (il mouse che scende in
+    /// diagonale le attraversa); una voce sopra, o oltre il sottomenu, sì.
+    #[test]
+    fn il_sottomenu_resta_aperto_mentre_il_mouse_scende_verso_di_lui() {
+        let tre: Vec<(String, bool)> = (0..3).map(|i| (format!("Monitor {i}"), i == 0)).collect();
+        let (p, _, _) = pannello_con_menu(false, &tre);
+        apri_menu(&p);
+        mouse_su(&p, &riga_menu(&p, "Schermo").expect("Schermo"), false);
+        assert!(riga_menu(&p, "Monitor 0").is_some());
+        mouse_su(&p, &riga_menu(&p, "Ritira l'isola").expect("Ritira"), false);
+        assert!(riga_menu(&p, "Monitor 0").is_some(), "accanto al sottomenu: resta");
+        mouse_su(&p, &riga_menu(&p, "Informazioni").expect("Informazioni"), false);
+        assert!(riga_menu(&p, "Monitor 0").is_none(), "una voce sopra lo chiude");
+    }
+
+    /// m-2: aperto col mouse, il primo tasto porta il fuoco vero sulla voce (non su «⋯»).
+    #[test]
+    fn dopo_il_clic_su_altre_opzioni_la_freccia_porta_il_fuoco_sulla_voce() {
+        use slint::platform::Key;
+        let (p, _, _) = pannello_con_menu(false, &[]);
+        let piu = elemento(&p, "Altre opzioni");
+        mouse_su(&p, &piu, true);
+        assert!(riga_menu(&p, "Impostazioni").is_some());
+        tasto(&p, Key::DownArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Impostazioni");
+    }
+
+    /// m-3: il menu è un gruppo con nome e «⋯» dice se è aperto.
+    #[test]
+    fn il_menu_ha_un_nome_e_altre_opzioni_dice_se_e_aperto() {
+        let (p, _, _) = pannello_con_menu(false, &[]);
+        assert_eq!(elemento(&p, "Altre opzioni").accessible_expanded(), Some(false));
+        apri_menu(&p);
+        assert_eq!(elemento(&p, "Altre opzioni").accessible_expanded(), Some(true));
+        assert_eq!(elemento(&p, "Menu Altre opzioni").accessible_role(), Some(AccessibleRole::Groupbox));
+    }
+
+    /// m-4: la lettera salta alla voce che comincia così (anche nel sottomenu).
+    #[test]
+    fn la_lettera_salta_alla_voce_nel_menu() {
+        use slint::platform::Key;
+        let (p, _, _) = pannello_con_menu(false, &due_schermi_di_prova());
+        apri_menu(&p);
+        tasto(&p, "r");
+        assert_eq!(etichetta_col_fuoco(&p), "Ritira l'isola");
+        tasto(&p, "E");
+        assert_eq!(etichetta_col_fuoco(&p), "Esci");
+        tasto(&p, "i");
+        assert_eq!(etichetta_col_fuoco(&p), "Impostazioni");
+        tasto(&p, "i");
+        assert_eq!(etichetta_col_fuoco(&p), "Informazioni");
+        tasto(&p, "s");
+        tasto(&p, Key::RightArrow);
+        tasto(&p, "schermo 2");
+        assert_eq!(etichetta_col_fuoco(&p), "Schermo 2 · 2560×1440", "il nome intero non è una lettera");
+        tasto(&p, "s");
+        assert_eq!(etichetta_col_fuoco(&p), "Schermo principale", "nel sottomenu dopo l'ultima si riparte");
+    }
+
+    /// m-7: con molti monitor il sottomenu sta dentro il pannello e scorre col fuoco.
+    #[test]
+    fn con_molti_monitor_il_sottomenu_scorre_dentro_il_pannello() {
+        use slint::platform::Key;
+        let molti: Vec<(String, bool)> = (0..12).map(|i| (format!("Monitor {i}"), i == 0)).collect();
+        let (p, _, _) = pannello_con_menu(false, &molti);
+        apri_menu(&p);
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::RightArrow);
+        let dentro = |t: &str| {
+            let r = riga_menu(&p, t).unwrap_or_else(|| panic!("manca «{t}»"));
+            let (a, l) = (r.absolute_position(), r.size());
+            a.y >= 0.0 && a.y + l.height <= 300.0
+        };
+        assert!(dentro("Monitor 0"), "la prima si vede all'apertura");
+        tasto(&p, Key::UpArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Monitor 11");
+        assert!(dentro("Monitor 11"), "l'ultima si vede quando ha il fuoco");
     }
 
     /// Il menu sta dentro il pannello (800 × 300, nessuna finestra nuova), sotto «⋯» e a filo del

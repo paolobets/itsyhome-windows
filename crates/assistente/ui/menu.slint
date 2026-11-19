@@ -143,6 +143,9 @@ export component MenuScuro inherits Rectangle {
     callback rilascia-fuoco();
     // Una scelta o un clic col mouse: l'anello da tastiera si spegne.
     callback usato-mouse();
+    // La lettera premuta: la prossima riga (dopo `da`, nel menu o, con `sotto`, nel sottomenu) che
+    // comincia così, -1 nessuna. Lo sa Rust (nessun ciclo in Slint).
+    callback cerca-iniziale(string, bool, int) -> int;
 
     property <length> larghezza-menu: 200px;
     property <length> larghezza-sotto: 248px;
@@ -211,10 +214,16 @@ export component MenuScuro inherits Rectangle {
         }
         if (!voci[i].sotto) {
             scegli(voci[i].id);
+        } else if (mouse) {
+            // Col mouse il passaggio l'ha già aperto: il clic non lo richiude (si chiude con Esc,
+            // un'altra voce o un clic fuori).
+            if (!sotto-aperto) {
+                apri-sotto(i, false);
+            }
         } else if (sotto-aperto) {
             chiudi-sotto();
         } else {
-            apri-sotto(i, !mouse);
+            apri-sotto(i, true);
         }
     }
 
@@ -240,6 +249,17 @@ export component MenuScuro inherits Rectangle {
             }
         } else if (t == Key.Return || t == Key.Space) {
             attiva();
+        } else {
+            // Una lettera: salta alla riga che comincia così (come i menu nativi).
+            let da = sotto-aperto ? fuoco-sotto : fuoco;
+            let trovata = root.cerca-iniziale(t, sotto-aperto, da);
+            if (trovata >= 0) {
+                if (sotto-aperto) {
+                    fuoco-sotto = trovata;
+                } else {
+                    fuoco = trovata;
+                }
+            }
         }
     }
 
@@ -268,6 +288,10 @@ export component MenuScuro inherits Rectangle {
         drop-shadow-color: Tema.menu-ombra;
         drop-shadow-offset-y: 8px;
 
+        // Narrator: un gruppo col nome del pulsante che l'ha aperto.
+        accessible-role: groupbox;
+        accessible-label: "Menu Altre opzioni";
+
         // I clic sul fondo del menu non arrivano al «fuori».
         TouchArea { }
 
@@ -287,7 +311,10 @@ export component MenuScuro inherits Rectangle {
                 sopra => {
                     if (v.sotto && !root.sotto-aperto) {
                         root.apri-sotto(i, false);
-                    } else if (!v.sotto && root.sotto-aperto) {
+                    } else if (!v.sotto && root.sotto-aperto
+                            && (i < root.riga-sotto || i >= root.riga-sotto + root.schermi.length)) {
+                        // Le voci sotto «Schermo» che stanno accanto al sottomenu non lo chiudono:
+                        // il mouse che scende in diagonale verso di lui le attraversa (senza timer).
                         root.chiudi-sotto();
                     }
                 }
@@ -298,9 +325,12 @@ export component MenuScuro inherits Rectangle {
     // «Schermo»: un secondo menu a sinistra del primo, allineato alla sua riga (e dentro il pannello).
     if root.aperto && root.sotto-aperto: Rectangle {
         width: root.larghezza-sotto;
-        height: root.schermi.length * root.altezza-riga + 2 * root.margine;
+        // Con molti monitor sta dentro il pannello e le righe scorrono (il fuoco da tastiera segue).
+        height: min(root.schermi.length * root.altezza-riga + 2 * root.margine, root.height - 16px);
         x: root.destra - root.larghezza-menu - 4px - self.width;
-        y: min(root.alto + root.riga-sotto * root.altezza-riga, root.height - 8px - self.height);
+        y: max(8px, min(root.alto + root.riga-sotto * root.altezza-riga, root.height - 8px - self.height));
+        accessible-role: groupbox;
+        accessible-label: "Menu Schermo";
         background: Tema.menu-fondo;
         border-radius: Tema.raggio-l;
         border-width: 1px;
@@ -311,22 +341,34 @@ export component MenuScuro inherits Rectangle {
 
         TouchArea { }
 
-        VerticalLayout {
-            padding: root.margine;
+        Flickable {
+            x: root.margine;
+            y: root.margine;
+            width: parent.width - 2 * root.margine;
+            height: parent.height - 2 * root.margine;
+            content-width: self.width;
+            content-height: root.schermi.length * root.altezza-riga;
+            // La riga col fuoco al centro, dentro i bordi (a righe che ci stanno tutte: 0).
+            content-y: min(0px, max(self.height - self.content-height,
+                self.height / 2 - ((root.fuoco-sotto < 0 ? 0 : root.fuoco-sotto) + 0.5) * root.altezza-riga));
 
-            for s[j] in root.schermi: RigaMenu {
-                testo: s.testo;
-                e-schermo: true;
-                scelto: s.scelto;
-                evidenziata: root.fuoco-sotto == j;
-                anello: root.anello;
-                chiede-fuoco: root.fuoco-sotto == j;
-                altezza: root.altezza-riga;
-                premuta(mouse) => {
-                    if (mouse) {
-                        root.usato-mouse();
+            VerticalLayout {
+                width: parent.width;
+
+                for s[j] in root.schermi: RigaMenu {
+                    testo: s.testo;
+                    e-schermo: true;
+                    scelto: s.scelto;
+                    evidenziata: root.fuoco-sotto == j;
+                    anello: root.anello;
+                    chiede-fuoco: root.fuoco-sotto == j;
+                    altezza: root.altezza-riga;
+                    premuta(mouse) => {
+                        if (mouse) {
+                            root.usato-mouse();
+                        }
+                        root.scegli(s.id);
                     }
-                    root.scegli(s.id);
                 }
             }
         }

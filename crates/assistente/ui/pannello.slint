@@ -279,6 +279,9 @@ export component Pannello inherits Window {
     // ritraduce nel suo comando.
     callback menu();
     callback scelta-menu(string);
+    // La lettera premuta a menu aperto (come nei menu nativi): Rust dice la prossima riga che
+    // comincia così dopo `da` (-1 = nessuna); `sotto`: nel sottomenu «Schermo».
+    callback cerca-iniziale-menu(string, bool, int) -> int;
     in property <[VoceMenuUi]> voci-menu;
     in property <[SchermoMenuUi]> schermi-menu;
     in property <int> menu-schermo-scelto: -1;
@@ -1154,9 +1157,13 @@ export component Pannello inherits Window {
                 background: area-piu.has-hover ? Tema.scheda-sopra : transparent;
                 accessible-role: button;
                 accessible-label: "Altre opzioni";
+                // Narrator annuncia che il menu si è aperto (o chiuso).
+                accessible-expandable: true;
+                accessible-expanded: menu-scuro.aperto;
                 accessible-action-default => { apri-menu(true); }
 
-                fuoco-menu := Fuoco { chiede: da-tastiera && zona == Zona.menu; }
+                // Col menu aperto il fuoco vero è sulle sue righe e l'anello è il loro.
+                fuoco-menu := Fuoco { chiede: da-tastiera && zona == Zona.menu && !menu-scuro.aperto; }
 
                 Image {
                     source: Icone.altre-opzioni;
@@ -1176,7 +1183,7 @@ export component Pannello inherits Window {
                 }
 
                 // Dentro la riga alta (il corpo ritaglia): l'anello sta a filo del bersaglio.
-                if da-tastiera && zona == Zona.menu: Anello {
+                if da-tastiera && zona == Zona.menu && !menu-scuro.aperto: Anello {
                     raggio: parent.border-radius;
                     distanza: 0px;
                 }
@@ -1595,6 +1602,7 @@ export component Pannello inherits Window {
                 anello: da-tastiera;
                 scelta(id) => { root.scelta-menu(id); }
                 usato-mouse => { da-tastiera = false; }
+                cerca-iniziale(lettera, sotto, da) => { return root.cerca-iniziale-menu(lettera, sotto, da); }
                 rilascia-fuoco => {
                     if (da-tastiera) {
                         fuoco-menu.focus();
