@@ -2,7 +2,7 @@
 // data, a destra una riga di stato per app (Casa, PC). Solo sintesi, nessun comando.
 import { Tema } from "../tema.slint";
 import { Anello } from "../componenti.slint";
-import { StatPcUi } from "../voci.slint";
+import { StatPcUi, Bersaglio } from "../voci.slint";
 
 export component LayoutOrologio inherits Rectangle {
     in property <string> ora;
@@ -18,6 +18,17 @@ export component LayoutOrologio inherits Rectangle {
     in property <bool> casa-invito;
     // Il fuoco da tastiera è sulla riga (anello visibile).
     in property <bool> anello-luci;
+    // Dove sta la riga della casa (il bersaglio del clic), nelle coordinate del layout: il
+    // pannello ci mette il pulsante accessibile e il fuoco da tastiera (`fuoco-luci-el`), così
+    // Narrator evidenzia la riga e non tutta la Panoramica.
+    // Somma delle posizioni dei layout che la contengono (niente `absolute-position`: il pannello
+    // la legge appena il layout nasce, quando la catena degli antenati non è ancora pronta).
+    out property <Bersaglio> bersaglio: {
+        x: fila.x + colonna-stato.x + riga-casa-elemento.x,
+        y: fila.y + colonna-stato.y + riga-casa-elemento.y + (riga-casa-elemento.height - max(24px, riga-casa-elemento.height)) / 2,
+        larghezza: riga-casa-elemento.width,
+        altezza: max(24px, riga-casa-elemento.height),
+    };
     callback apri-luci();
 
     // Con la casa connessa la riga dice solo i fatti ("2 luci accese · 21.5 °C"): le si mette
@@ -45,7 +56,7 @@ export component LayoutOrologio inherits Rectangle {
         font-size: Tema.testo-corpo;
     }
 
-    HorizontalLayout {
+    fila := HorizontalLayout {
         alignment: center;
         spacing: 40px;
 
@@ -69,7 +80,7 @@ export component LayoutOrologio inherits Rectangle {
             }
         }
 
-        VerticalLayout {
+        colonna-stato := VerticalLayout {
             alignment: center;
             spacing: 8px;
 
@@ -111,16 +122,14 @@ export component LayoutOrologio inherits Rectangle {
     }
 
     // Il clic sulla riga della casa, sopra il testo (che sta in un layout: se ne prende il posto
-    // in coordinate assolute). Un bersaglio di 24 px almeno in altezza (WCAG 2.2).
+    // in coordinate assolute). Un bersaglio di 24 px almeno in altezza (WCAG 2.2). Solo mouse: il
+    // pulsante per Narrator è `fuoco-luci-el` del pannello, sullo stesso posto (uno solo).
     if cliccabile: TouchArea {
-        x: riga-casa-elemento.absolute-position.x - root.absolute-position.x;
-        y: riga-casa-elemento.absolute-position.y - root.absolute-position.y + (riga-casa-elemento.height - self.height) / 2;
-        width: riga-casa-elemento.width;
-        height: max(24px, riga-casa-elemento.height);
+        x: bersaglio.x;
+        y: bersaglio.y;
+        width: bersaglio.larghezza;
+        height: bersaglio.altezza;
         mouse-cursor: pointer;
-        accessible-role: button;
-        accessible-label: riga-casa + (casa-invito ? ": apri le Impostazioni" : ": mostra le luci accese");
-        accessible-action-default => { root.apri-luci(); }
         clicked => { root.apri-luci(); }
 
         if anello-luci: Anello { raggio: 6px; distanza: 2px; }

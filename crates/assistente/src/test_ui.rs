@@ -671,8 +671,14 @@ mod accessibilita {
         p.set_stato_casa("Casa non configurata".into());
         assert_eq!(elemento(&p, "CASA, Casa non configurata").accessible_value().as_deref(), Some("—"), "normale: il trattino");
         p.set_casa_da_configurare(true);
-        let q = elemento(&p, "CASA, Collega la casa");
-        assert_eq!(q.accessible_value().as_deref().unwrap_or(""), "", "invito: niente valore vuoto");
+        // T2 (revisione finale): l'invito non è un indicatore senza valore; per Narrator c'è solo
+        // il pulsante, uno.
+        let indicatori = ElementHandle::find_by_accessible_label(&p, "CASA, Collega la casa")
+            .filter(|e| e.accessible_role() == Some(AccessibleRole::ProgressIndicator))
+            .count();
+        assert_eq!(indicatori, 0, "invito: nessun indicatore");
+        let pulsanti = ElementHandle::find_by_accessible_label(&p, "CASA, Collega la casa: apri le Impostazioni").count();
+        assert_eq!(pulsanti, 1, "invito: un pulsante solo");
     }
 
     /// RC-44: il colore caldo dell'arco parte SOPRA la soglia d'avviso dell'utente (70 → caldo a
@@ -1635,13 +1641,73 @@ mod accessibilita {
     /// continua a rispondere ai tasti.
     #[test]
     fn la_riga_luci_perde_il_bersaglio_col_fuoco_addosso() {
+        // Prova strutturale (il backend di prova non riproduce il blocco della tastiera): subito
+        // dopo, l'elemento col fuoco esiste ancora (non era dentro un `if` distrutto); al tasto
+        // dopo il fuoco è tornato a `tasti`, e la tastiera risponde.
+        let fuoco_vivo = |p: &Pannello| i_slint_core::window::WindowInner::from_pub(p.window()).focus_item.borrow().upgrade().is_some();
+        // Il fuoco è tornato a `tasti` o ai puntini dei layout (che lo reclamano appena la riga non vale più).
+        let fuoco_tornato = |p: &Pannello| {
+            let e = etichetta_col_fuoco(p);
+            (e == "Pannello di ItsyHome" || e.starts_with("Layout ")).then_some(()).ok_or(e)
+        };
         for layout in [0, 1] {
             let (p, eventi) = panoramica_col_fuoco_sulle_luci(layout);
             p.set_luci(luci_accese_di_prova(&[]).into());
+            assert!(fuoco_vivo(&p), "layout {layout}: l'elemento col fuoco esiste ancora");
             esc_chiude(&p, &eventi, &format!("layout {layout}, ultima luce spenta"));
+            assert_eq!(fuoco_tornato(&p), Ok(()), "layout {layout}: il fuoco è tornato a `tasti` o ai puntini");
             let (p, eventi) = panoramica_col_fuoco_sulle_luci(layout);
             p.set_casa_pronta(false);
+            assert!(fuoco_vivo(&p), "layout {layout}: l'elemento col fuoco esiste ancora");
             esc_chiude(&p, &eventi, &format!("layout {layout}, casa disconnessa"));
+            assert_eq!(fuoco_tornato(&p), Ok(()), "layout {layout}: il fuoco è tornato a `tasti` o ai puntini");
+        }
+    }
+
+    /// Gli elementi accessibili con ruolo di pulsante e senza nome.
+    fn pulsanti_senza_nome(p: &Pannello) -> usize {
+        i_slint_backend_testing::ElementQuery::from_root(p)
+            .match_descendants()
+            .find_all()
+            .iter()
+            .filter(|e| e.accessible_role() == Some(AccessibleRole::Button) && e.accessible_label().is_none_or(|l| l.is_empty()))
+            .count()
+    }
+
+    /// T1-M1 (revisione finale): la riga «N luci accese» (o il quadrante CASA) è un solo pulsante
+    /// per Narrator, grande quanto la riga o la card e non quanto tutta la Panoramica; nelle altre
+    /// viste, e senza luci accese, non resta un pulsante senza nome.
+    #[test]
+    fn la_riga_luci_e_un_solo_pulsante_al_suo_posto() {
+        for (layout, etichetta) in [
+            (0, "Casa · 2 luci accese: mostra le luci accese"),
+            (1, "CASA, 2 luci accese: mostra le luci accese"),
+        ] {
+            let (p, _) = pannello_casa();
+            p.set_vista("panoramica".into());
+            p.set_layout(layout);
+            p.set_stato_casa("2 luci accese".into());
+            assert_eq!(pulsanti_senza_nome(&p), 0, "layout {layout}: senza luci accese");
+            p.set_luci(luci_accese_di_prova(&["light.a", "light.b"]).into());
+            assert_eq!(ElementHandle::find_by_accessible_label(&p, etichetta).count(), 1, "layout {layout}: un pulsante solo");
+            let riga = elemento(&p, etichetta);
+            let (pos, lato) = (riga.absolute_position(), riga.size());
+            let contenuto = p.window().size().to_logical(p.window().scale_factor());
+            assert!(lato.width > 0.0 && lato.height > 0.0, "layout {layout}: {lato:?}");
+            if layout == 0 {
+                assert!(lato.height <= 32.0, "layout {layout}: alto quanto la riga, non il contenuto: {lato:?}");
+            } else {
+                assert!(lato.width < contenuto.width / 2.0, "layout {layout}: largo quanto la card: {lato:?} su {contenuto:?}");
+            }
+            // Il pulsante sta sul bersaglio del mouse: il clic al suo centro apre la Casa filtrata.
+            use slint::platform::{PointerEventButton, WindowEvent};
+            let position = slint::LogicalPosition::new(pos.x + lato.width / 2.0, pos.y + lato.height / 2.0);
+            p.window().dispatch_event(WindowEvent::PointerMoved { position });
+            p.window().dispatch_event(WindowEvent::PointerPressed { position, button: PointerEventButton::Left });
+            p.window().dispatch_event(WindowEvent::PointerReleased { position, button: PointerEventButton::Left });
+            assert_eq!((p.get_vista().as_str(), p.get_filtro_luci()), ("casa", true), "layout {layout}");
+            assert_eq!(pulsanti_senza_nome(&p), 0, "layout {layout}: nella vista Casa");
+            assert!(ElementHandle::find_by_accessible_label(&p, etichetta).next().is_none(), "layout {layout}: fuori dalla Panoramica");
         }
     }
 
@@ -2625,6 +2691,85 @@ mod accessibilita {
         tasto_finestra(&f, Key::Return);
         assert!(!f.get_api_presente());
         assert!(ha_il_fuoco(&f, &chiave()), "tolta la chiave il fuoco è sul campo, non su «{}»", col_fuoco(&f));
+    }
+
+    /// T6 m-1 (revisione finale): una chiave rifiutata da Rust non lascia acceso il segnale del
+    /// fuoco su «Togli»: se poi la chiave compare per altra via, «Togli» non ruba il fuoco.
+    #[test]
+    fn chiave_rifiutata_non_lascia_il_fuoco_su_togli() {
+        use slint::platform::{Key, WindowEvent};
+        piattaforma_di_prova();
+        let f = FinestraImpostazioni::new().expect("impostazioni");
+        f.set_sezione(crate::finestra_impostazioni::SEZIONE_CLAUDE);
+        f.show().expect("impostazioni mostrate nel backend di prova");
+        f.window().set_size(slint::LogicalSize::new(760.0, 1400.0));
+        f.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
+        // Rust rifiuta: la chiave non si salva.
+        f.on_api_salva(|_| {});
+        let chiave = || campo(&f, "Chiave da amministratore");
+        for _ in 0..30 {
+            if ha_il_fuoco(&f, &chiave()) {
+                break;
+            }
+            tasto_finestra(&f, Key::Tab);
+        }
+        assert!(ha_il_fuoco(&f, &chiave()), "Tab arriva al campo della chiave");
+        scrivi(&f, "sbagliata");
+        tasto_finestra(&f, Key::Return);
+        assert!(!f.get_api_presente());
+        f.set_api_presente(true);
+        // «Togli» nasce (la ricerca fa nascere gli elementi creati con `if`).
+        assert!(ElementHandle::find_by_accessible_label(&f, "Togli").next().is_some());
+        assert!(!col_fuoco(&f).ends_with("togli-chiave"), "«Togli» ha preso il fuoco da un salvataggio rifiutato");
+    }
+
+    /// T6 m-2 (revisione finale): a 720×520, con un errore sotto la soglia di spesa, Tab fino alla
+    /// casella porta in vista anche la riga dell'errore.
+    #[test]
+    fn tab_porta_in_vista_l_errore_della_soglia_di_spesa() {
+        use slint::platform::{Key, WindowEvent};
+        piattaforma_di_prova();
+        let f = FinestraImpostazioni::new().expect("impostazioni");
+        f.set_sezione(crate::finestra_impostazioni::SEZIONE_CLAUDE);
+        f.on_soglia_spesa_scritta(|_| "Scrivi un numero di dollari, per esempio 250.".into());
+        f.show().expect("impostazioni mostrate nel backend di prova");
+        // Prima a finestra alta (niente scorrimento): si scrive un valore sbagliato e Invio, e
+        // compare l'errore. Poi la misura di serie: la sezione è in cima e l'errore sotto il bordo.
+        f.window().set_size(slint::LogicalSize::new(720.0, 1400.0));
+        f.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
+        let spesa = || campo(&f, "Soglia di spesa mensile ($)");
+        for _ in 0..30 {
+            if ha_il_fuoco(&f, &spesa()) {
+                break;
+            }
+            tasto_finestra(&f, Key::Tab);
+        }
+        scrivi(&f, "tanti");
+        tasto_finestra(&f, Key::Return);
+        let errore = || {
+            ElementHandle::find_by_element_id(&f, "FinestraImpostazioni::errore-spesa-testo")
+                .next()
+                .expect("la riga d'errore c'è ed è visibile")
+        };
+        errore();
+        f.window().set_size(slint::LogicalSize::new(720.0, 520.0));
+        assert!(
+            ElementHandle::find_by_element_id(&f, "FinestraImpostazioni::errore-spesa-testo")
+                .next()
+                .is_none_or(|e| e.absolute_position().y + e.size().height > 520.0),
+            "all'apertura l'errore è sotto il bordo (altrimenti il test non prova nulla)"
+        );
+        // Si esce dalla casella e ci si torna con Tab (il giro ricomincia dall'alto).
+        tasto_finestra(&f, Key::Tab);
+        for _ in 0..40 {
+            if ha_il_fuoco(&f, &spesa()) {
+                break;
+            }
+            tasto_finestra(&f, Key::Tab);
+        }
+        assert!(ha_il_fuoco(&f, &spesa()), "Tab arriva alla soglia di spesa");
+        let (y, h) = (errore().absolute_position().y, errore().size().height);
+        assert!(y >= 18.0 && y + h <= 520.0 + 0.5, "la riga d'errore è fuori vista: y {y} + {h}");
     }
 
     /// Fix 1, I-2: alla misura di serie (720×520) Tab fino a «Soglia di spesa mensile» la porta
@@ -4250,6 +4395,32 @@ mod accessibilita {
         let (pos, lato) = (esci.absolute_position(), esci.size());
         clic(pos.x + lato.width / 2.0, pos.y + lato.height / 2.0);
         assert_eq!(*scelte.borrow(), ["esci"]);
+    }
+
+    /// m-1 (revisione finale): a menu aperto la rotella non attraversa il menu (il layout della
+    /// Panoramica non cambia sotto); chiuso, la rotella torna a cambiare layout.
+    #[test]
+    fn la_rotella_non_attraversa_il_menu_aperto() {
+        use slint::platform::WindowEvent;
+        let (p, _, _) = pannello_con_menu(false, &[]);
+        p.set_vista("panoramica".into());
+        let scorsi = std::rc::Rc::new(std::cell::Cell::new(0));
+        let s = scorsi.clone();
+        p.on_scorri_layout(move |_| s.set(s.get() + 1));
+        let rotella = || {
+            let position = slint::LogicalPosition::new(40.0, 220.0);
+            p.window().dispatch_event(WindowEvent::PointerMoved { position });
+            p.window().dispatch_event(WindowEvent::PointerScrolled { position, delta_x: 0.0, delta_y: -60.0 });
+        };
+        apri_menu(&p);
+        assert!(riga_menu(&p, "Esci").is_some());
+        rotella();
+        assert_eq!(scorsi.get(), 0, "a menu aperto il layout non cambia");
+        assert!(riga_menu(&p, "Esci").is_some(), "e il menu resta aperto");
+        tasto(&p, slint::platform::Key::Escape);
+        assert!(riga_menu(&p, "Esci").is_none());
+        rotella();
+        assert_eq!(scorsi.get(), 1, "a menu chiuso la rotella cambia layout");
     }
 
     /// Il mouse sul centro di un elemento (lo «passa sopra») e, con `clicca`, il clic sinistro.

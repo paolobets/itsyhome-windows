@@ -4,7 +4,7 @@
 // Senza dati l'arco è solo la traccia spenta e il valore è "—": nessun numero inventato.
 import { Tema } from "../tema.slint";
 import { Icone, Icona, Vetro } from "../icone.slint";
-import { StatPcUi, SensoreUi, QuadranteUi, FonteQuadranteUi } from "../voci.slint";
+import { StatPcUi, SensoreUi, QuadranteUi, FonteQuadranteUi, Bersaglio } from "../voci.slint";
 import { Anello, Etichetta } from "../componenti.slint";
 
 component Quadrante inherits Vetro {
@@ -143,15 +143,12 @@ component Quadrante inherits Vetro {
         }
     }
 
+    // Solo mouse: il pulsante per Narrator è `fuoco-luci-el` del pannello, sulla card (uno solo).
     if cliccabile: TouchArea {
         width: parent.width;
         height: parent.height;
         mouse-cursor: pointer;
-        accessible-role: button;
-        accessible-label: etichetta + ", " + dettaglio + (invito ? ": apri le Impostazioni" : ": mostra le luci accese");
-        accessible-action-default => { root.clic(); }
         clicked => { root.clic(); }
-
     }
 
     if cliccabile && anello: Anello { raggio: Tema.raggio-xl; distanza: -3px; }
@@ -175,6 +172,15 @@ export component LayoutQuadranti inherits Rectangle {
     callback apri-luci();
 
     property <int> quanti: quadranti.length + max(1, sensori.length);
+    // Dove sta il quadrante CASA cliccabile (l'ultimo, solo senza sensori), nelle coordinate del
+    // layout: il pannello ci mette il pulsante accessibile e il fuoco da tastiera (`fuoco-luci-el`).
+    // Le card sono centrate, larghe `lato` e alte quanto il layout.
+    out property <Bersaglio> bersaglio: {
+        x: (self.width - quanti * lato - (quanti - 1) * spazio) / 2 + (quanti - 1) * (lato + spazio),
+        y: 0px,
+        larghezza: lato,
+        altezza: self.height,
+    };
 
     // Valore, arco e icona di un quadrante configurabile: per il PC e l'ora li legge da qui, per
     // meteo e sensori li ha già scritti Rust.
@@ -272,14 +278,28 @@ export component LayoutQuadranti inherits Rectangle {
             dettaglio: s.voce.nome;
         }
 
-        if sensori.length == 0: Quadrante {
+        if sensori.length == 0 && !casa-invito: Quadrante {
             width: root.lato;
             arco: root.arco;
             etichetta: "CASA";
             icona: Icone.casa;
-            dettaglio: casa-invito ? "Collega la casa" : stato-casa;
-            cliccabile: luci-cliccabili || casa-invito;
-            invito: casa-invito;
+            dettaglio: stato-casa;
+            cliccabile: luci-cliccabili;
+            anello: anello-luci;
+            clic => { root.apri-luci(); }
+        }
+
+        // L'invito non è un indicatore (non ha valore): per Narrator c'è solo il pulsante
+        // «CASA, Collega la casa: apri le Impostazioni» del pannello, sulla card.
+        if sensori.length == 0 && casa-invito: Quadrante {
+            accessible-role: none;
+            width: root.lato;
+            arco: root.arco;
+            etichetta: "CASA";
+            icona: Icone.casa;
+            dettaglio: "Collega la casa";
+            cliccabile: true;
+            invito: true;
             anello: anello-luci;
             clic => { root.apri-luci(); }
         }

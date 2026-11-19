@@ -9,7 +9,7 @@
 //!   lascia passare i clic, quindi non riceve eventi del mouse).
 
 #[cfg(windows)]
-use super::menu::{comando, schermi_del_menu, Comando, MenuIsola, Voce};
+use super::menu::{comando, schermi_del_menu, voci_pannello, Comando, MenuIsola, Voce};
 use super::ritirata::{self, Ritirata, SONDAGGIO_MOUSE};
 use super::scorciatoie::{self, Scorciatoia, Scorciatoie};
 #[cfg(windows)]
@@ -172,12 +172,19 @@ pub fn mostra_icona(si: bool) {
 /// che il pannello disegna da sé (Slint, dentro la sua finestra: il pannello resta in primo piano
 /// e non perde il fuoco). Sono le stesse del menu della tray (`voci_pannello`), lette a ogni
 /// apertura del menu: la ritirata dice «Ritira» o «Mostra» secondo lo stato, i monitor sono
-/// quelli di adesso (cambiati dall'ultimo giro da 5 s: il menu si rifà un attimo prima).
+/// quelli di adesso (cambiati dall'ultimo giro da 5 s: il menu si rifà un attimo prima). Senza il
+/// menu nativo (`MenuIsola::crea` fallito) le voci si calcolano qui dagli stessi monitor: il menu
+/// del pannello è Slint e non ne dipende.
 #[cfg(windows)]
 pub fn voci_del_menu(finestra: &slint::Window) -> Vec<Voce> {
     let Some(s) = servizi() else { return Vec::new() };
-    s.schermi_nel_menu(finestre::elenco_monitor(finestra));
+    let monitor = finestre::elenco_monitor(finestra);
     let ritirata = s.ritirata.borrow().attiva();
+    if s.menu.borrow().is_none() {
+        let schermi = monitor.map(|m| schermi_del_menu(&m, finestre::monitor_in_uso(&m))).unwrap_or_default();
+        return voci_pannello(ritirata, &schermi);
+    }
+    s.schermi_nel_menu(monitor);
     let menu = s.menu.borrow();
     menu.as_ref().map(|m| m.voci_pannello(ritirata)).unwrap_or_default()
 }

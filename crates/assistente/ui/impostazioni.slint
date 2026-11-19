@@ -1155,6 +1155,10 @@ export component FinestraImpostazioni inherits Window {
     function salva-chiave() {
         fuoco-togli = true;
         root.api-salva(api-campo);
+        // Chiave rifiutata (Rust risponde subito): «Togli» non c'è e il segnale non resta acceso.
+        if (!api-presente) {
+            fuoco-togli = false;
+        }
     }
 
     // Lasciando la sezione la conferma non resta in sospeso.
@@ -2776,7 +2780,8 @@ export component FinestraImpostazioni inherits Window {
                                     fuoco-preso => { claude.porta-in-vista(card-avvisi.y + campo-spesa.y, card-avvisi.height - campo-spesa.y); }
                                 }
 
-                                if errore-soglia-spesa != "": Text {
+                                // Nascosta a Narrator (la legge il campo): la trova il test per id.
+                                if errore-soglia-spesa != "": errore-spesa-testo := Text {
                                     text: errore-soglia-spesa;
                                     wrap: word-wrap;
                                     font-size: Tema.testo-corpo;

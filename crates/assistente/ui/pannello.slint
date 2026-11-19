@@ -32,7 +32,7 @@ import { Tema, Movimento } from "tema.slint";
 import { Faccia, Occhi } from "faccia.slint";
 import { Anello, Fuoco, Fuochi } from "componenti.slint";
 import { Icone } from "icone.slint";
-import { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, UmoreUi, StanzaUi, CollegamentoUi, QuadranteUi, FonteQuadranteUi, TipoReteUi, TintaBatteriaUi, RigaSessioneUi, LimiteClaudeUi, VoceMenuUi, SchermoMenuUi } from "voci.slint";
+import { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, UmoreUi, StanzaUi, CollegamentoUi, QuadranteUi, FonteQuadranteUi, TipoReteUi, TintaBatteriaUi, RigaSessioneUi, LimiteClaudeUi, VoceMenuUi, SchermoMenuUi, Bersaglio } from "voci.slint";
 import { Attesa, RigaAttesa, VoceEspansa } from "attesa.slint";
 import { MenuScuro } from "menu.slint";
 import { VistaPc } from "viste/pc.slint";
@@ -383,6 +383,11 @@ export component Pannello inherits Window {
     property <bool> luci-da-tastiera: casa-cliccabile && (layout == 0 || sensori.length == 0);
     property <bool> fuoco-luci: false;
     property <bool> fuoco-luci-valido: fuoco-luci && luci-da-tastiera && vista == "panoramica" && !espansa && zona == Zona.contenuto;
+    // La riga (o il quadrante CASA) si usa adesso: il suo pulsante accessibile si mostra.
+    property <bool> bersaglio-luci: luci-da-tastiera && vista == "panoramica" && !espansa;
+    // Dove sta, nel contenuto: lo dice il layout mostrato (`bersaglio` di Orologio e Quadranti),
+    // alla nascita e a ogni cambio.
+    property <Bersaglio> luci-bersaglio;
     // La testata della Casa filtrata ha i suoi pulsanti solo a casa connessa: altrimenti dice lo
     // stato (e «Riprova») come la Casa completa.
     property <bool> testata-filtro: filtro-luci && casa-pronta;
@@ -1245,15 +1250,22 @@ export component Pannello inherits Window {
 
                 // Il fuoco vero della riga «N luci accese»: un elemento sempre presente (mai dentro un
                 // `if`: distrutto col fuoco addosso, il pannello resterebbe senza tastiera) che i layout
-                // non possiedono. Quando smette di valere il fuoco torna a `tasti`.
+                // non possiedono. Quando smette di valere il fuoco torna a `tasti`. È anche l'unico
+                // pulsante per Narrator della riga (o del quadrante CASA): sta sul loro posto, che i
+                // layout dicono (`bersaglio-*`), e c'è solo dove la riga si usa (altrove è nascosto,
+                // quindi niente pulsante senza nome nelle altre viste).
                 fuoco-luci-el := Fuoco {
-                    width: parent.width;
-                    height: parent.height;
+                    x: luci-bersaglio.x;
+                    y: luci-bersaglio.y;
+                    width: luci-bersaglio.larghezza;
+                    height: luci-bersaglio.altezza;
+                    // Resta visibile finché tiene il fuoco: un elemento nascosto col fuoco addosso
+                    // perde la tastiera al tasto dopo (Slint lo toglie), prima che `changed
+                    // fuoco-luci-valido` riporti il fuoco a `tasti`.
+                    visible: bersaglio-luci || self.has-focus;
                     chiede: fuoco-luci-valido && da-tastiera;
                     accessible-role: button;
-                    accessible-enabled: fuoco-luci-valido;
-                    accessible-label: !fuoco-luci-valido ? ""
-                        : casa-da-configurare ? (layout == 0 ? "Collega la casa: apri le Impostazioni" : "CASA, Collega la casa: apri le Impostazioni")
+                    accessible-label: casa-da-configurare ? (layout == 0 ? "Collega la casa: apri le Impostazioni" : "CASA, Collega la casa: apri le Impostazioni")
                         : layout == 0 ? "Casa · " + stato-casa + ": mostra le luci accese"
                         : "CASA, " + stato-casa + ": mostra le luci accese";
                     accessible-action-default => { mostra-luci(); }
@@ -1290,6 +1302,8 @@ export component Pannello inherits Window {
                     luci-cliccabili: root.luci-cliccabili;
                     casa-invito: root.casa-da-configurare;
                     anello-luci: root.fuoco-luci-valido && root.da-tastiera;
+                    init => { root.luci-bersaglio = self.bersaglio; }
+                    changed bersaglio => { root.luci-bersaglio = self.bersaglio; }
                     apri-luci => { mostra-luci(); }
                 }
                 if vista == "panoramica" && layout == 1: LayoutQuadranti {
@@ -1304,6 +1318,8 @@ export component Pannello inherits Window {
                     luci-cliccabili: root.luci-cliccabili;
                     casa-invito: root.casa-da-configurare;
                     anello-luci: root.fuoco-luci-valido && root.da-tastiera;
+                    init => { root.luci-bersaglio = self.bersaglio; }
+                    changed bersaglio => { root.luci-bersaglio = self.bersaglio; }
                     apri-luci => { mostra-luci(); }
                 }
 

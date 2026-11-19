@@ -200,6 +200,15 @@ export struct ContenutoLatoUi {
 // La fonte di un quadrante configurabile (vedi `lati::Lato`).
 export enum FonteQuadranteUi { niente, cpu, ram, disco, rete-giu, rete-su, batteria, ora, meteo, sensore, gpu, limite-5h, limite-7g, spesa-api }
 
+// Dove sta un bersaglio cliccabile di un layout della Panoramica (la riga o il quadrante CASA),
+// nelle coordinate del layout: il pannello ci mette il pulsante accessibile e il fuoco da tastiera.
+export struct Bersaglio {
+    x: length,
+    y: length,
+    larghezza: length,
+    altezza: length,
+}
+
 // Un quadrante configurabile dei Quadranti (vedi `ponte::quadranti_ui`). Per le fonti del PC e
 // per l'ora i valori li legge l'interfaccia (`StatPcUi`, l'ora del pannello); per meteo, sensori e le fonti
 // di Claude (limiti e spesa, `lati::quadrante_claude`)

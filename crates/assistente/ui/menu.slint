@@ -264,6 +264,7 @@ export component MenuScuro inherits Rectangle {
     }
 
     // Il clic fuori chiude il menu (spento a menu chiuso: lascia passare i clic agli elementi sotto).
+    // A menu aperto si tiene anche la rotella: non cambia il layout né scorre le sessioni sotto.
     TouchArea {
         enabled: root.aperto;
         pointer-event(evento) => {
@@ -271,6 +272,9 @@ export component MenuScuro inherits Rectangle {
                 root.usato-mouse();
                 root.chiudi();
             }
+        }
+        scroll-event(evento) => {
+            return accept;
         }
     }
 
