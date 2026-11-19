@@ -202,7 +202,10 @@ impl Sessioni {
     /// crea) e non tocca `ultimo`: non è un segno di vita degli hook, quindi non sposta l'ordine né
     /// la scadenza. `Cambiata` solo se il titolo è davvero cambiato.
     pub fn imposta_titolo(&mut self, id: &str, titolo: Option<&str>) -> Vec<Cambio> {
-        let Some(titolo) = titolo.filter(|t| !t.is_empty()) else { return Vec::new() };
+        // Un titolo che ripulito è vuoto (soli invisibili o spazi) vale «assente».
+        let Some(titolo) = titolo.filter(|t| !gestione_protocollo::testo_pulito(t).is_empty()) else {
+            return Vec::new();
+        };
         match self.v.iter_mut().find(|s| s.sessione_è(id)) {
             Some(s) if s.titolo != titolo => {
                 s.titolo = titolo.to_owned();
@@ -508,6 +511,18 @@ mod test {
         s.ricevi(&ev("b", TipoEvento::UserPromptSubmit), t);
         assert_eq!(s.elenco().iter().find(|x| x.id == "a").unwrap().titolo, "Altro");
         assert_eq!(s.elenco().iter().find(|x| x.id == "b").unwrap().titolo, "");
+    }
+
+    #[test]
+    fn un_titolo_che_pulito_e_vuoto_non_cancella_quello_buono() {
+        let t = Instant::now();
+        let mut s = Sessioni::new();
+        s.ricevi(&ev("a", TipoEvento::UserPromptSubmit), t);
+        s.imposta_titolo("a", Some("Sistemare il restyle"));
+        for vuoto in ["\u{2060}", "\u{061C}", "\u{3164}", "\u{00AD}", " \u{200b} \n", "  "] {
+            assert!(s.imposta_titolo("a", Some(vuoto)).is_empty(), "{vuoto:?}");
+            assert_eq!(s.elenco()[0].titolo, "Sistemare il restyle", "{vuoto:?}");
+        }
     }
 
     #[test]

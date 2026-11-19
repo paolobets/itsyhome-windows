@@ -9,6 +9,7 @@
 use std::io::{self, Read, Write};
 use std::time::{Duration, Instant};
 
+use gestione_protocollo::testo_pulito;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -126,23 +127,15 @@ fn nome_pulito(s: &str) -> Option<String> {
     (!t.is_empty()).then_some(t)
 }
 
-/// Il nome della sessione ripulito: a capo e tab diventano spazi, gli altri caratteri di controllo,
-/// di direzione e zero-width spariscono, spazi ai lati tolti; oltre 60 caratteri (non byte) se ne
-/// tengono 59 e si chiude con «…». Vuoto dopo la pulizia: nessun titolo. Ripulire un testo già
-/// pulito non lo cambia: la convalida si appoggia a questo.
+/// Il nome della sessione ripulito con la stessa `gestione_protocollo::testo_pulito` che usa
+/// l'assistente per mostrarlo (invisibili, direzione e zero-width via, controlli e a capo come
+/// spazi, spazi compressi e ai lati tolti); oltre 60 caratteri (non byte) se ne tengono 59 e si
+/// chiude con «…». Vuoto dopo la pulizia: nessun titolo. Ripulire un testo già pulito non lo
+/// cambia: la convalida si appoggia a questo.
 fn titolo_pulito(s: &str) -> Option<String> {
-    let t: String = s
-        .chars()
-        .filter_map(|c| match c {
-            '\n' | '\r' | '\t' => Some(' '),
-            c if c.is_control() => None,
-            '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}' => None,
-            c => Some(c),
-        })
-        .collect();
-    let t = t.trim();
+    let t = testo_pulito(s);
     if t.chars().count() <= MASSIMO_TITOLO {
-        return (!t.is_empty()).then(|| t.to_owned());
+        return (!t.is_empty()).then_some(t);
     }
     let corto: String = t.chars().take(MASSIMO_TITOLO - 1).collect();
     Some(format!("{}\u{2026}", corto.trim_end()))
@@ -450,6 +443,24 @@ mod test {
         // Spazi ai lati tolti; controlli, direzione e zero-width via; a capo e tab diventano spazi.
         let sporco = format!("\"  Sistemare{} il\\nrestyle{} \"", '\u{202e}', '\u{200b}');
         assert_eq!(con(&sporco).as_deref(), Some("Sistemare il restyle"));
+    }
+
+    /// Gli invisibili di `gestione_protocollo::carattere_invisibile` (non solo quelli dei primi
+    /// test): soli valgono «assente», dentro un testo spariscono, e isola li rifiuta.
+    #[test]
+    fn titolo_senza_gli_invisibili_che_cambiano_la_lettura() {
+        let con = |nome: &str| {
+            let json = serde_json::json!({ "session_id": "s", "session_name": nome }).to_string();
+            dati_da_json(json.as_bytes()).unwrap().titolo
+        };
+        for c in ['\u{2060}', '\u{061C}', '\u{3164}', '\u{00AD}', '\u{2064}', '\u{FFA0}', '\u{FE0F}', '\u{E0041}', '\u{180E}'] {
+            assert_eq!(con(&c.to_string()), None, "{c:?} solo");
+            assert_eq!(con(&format!("{c}{c} {c}")), None, "{c:?} e spazi");
+            assert_eq!(con(&format!("a{c}b")).as_deref(), Some("ab"), "{c:?} dentro");
+            let corpo = |t: &str| con_titolo(&serde_json::to_string(t).unwrap());
+            assert!(inoltrati(&corpo(&c.to_string())).is_err(), "{c:?} solo, inoltrato");
+            assert!(inoltrati(&corpo(&format!("a{c}b"))).is_err(), "{c:?} dentro, inoltrato");
+        }
     }
 
     #[test]

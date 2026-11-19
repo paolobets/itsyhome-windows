@@ -12,6 +12,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
 # Ora locale della barra di stato.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# Solo `testo_pulito`: la stessa pulizia dei testi non fidati che usa l'assistente (dipende soltanto
+# da serde e serde_json, già qui).
+gestione-protocollo = { path = "../gestione-protocollo" }
 
 [target.'cfg(windows)'.dependencies]
 # Stessa versione del resto del workspace: tubo con nome, descrittore di sicurezza, identità dei

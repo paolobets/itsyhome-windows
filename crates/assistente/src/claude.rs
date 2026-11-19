@@ -1,7 +1,10 @@
 //! Le sessioni di Claude Code come l'assistente le mostra (M3, Task 4): le voci «In attesa», il
 //! colore degli occhi e il testo della pillola media «attività dal vivo». Logica pura: l'ora
 //! arriva sempre dal chiamante e nessun testo di prompt, risposta o file passa di qui (le sessioni
-//! portano solo cartella, titolo della sessione, stato e nome dello strumento).
+//! portano solo cartella, titolo della sessione, stato e nome dello strumento). Unica eccezione
+//! indiretta: il titolo della sessione, quando non l'ha scelto l'utente (`--name`, `/rename`), lo
+//! genera Claude Code e può riassumere il prompt; compare anche nelle notifiche di sistema, che
+//! Windows può conservare nel centro notifiche e mostrare a schermo bloccato.
 
 use crate::attenzione::{Fonte, Livello, Pulsante, Voce};
 use claude_hook::evento::EventoHook;

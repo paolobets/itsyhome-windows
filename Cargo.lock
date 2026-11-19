@@ -909,6 +909,7 @@ name = "claude-hook"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "gestione-protocollo",
  "serde",
  "serde_json",
  "tempfile",

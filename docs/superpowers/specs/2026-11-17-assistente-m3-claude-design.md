@@ -312,6 +312,11 @@ canale protetto** (18/11).
   vuoto = assente) e riconvalidato da isola come gli altri campi, ma **rifiutato** se troppo lungo o sporco.
   La sessione tiene l'ultimo titolo non vuoto (assente non cancella) e lo mostra al posto della cartella; la
   barra non crea sessioni. `cwd`, trascrizione e workspace restano esclusi dal corpo inoltrato.
+  **Attenzione alla riservatezza:** se il nome non l'ha scelto l'utente, è il titolo che Claude Code genera da
+  sé e può riassumere il prompt; lo si mostra anche nelle notifiche di sistema dei permessi, che Windows può
+  conservare nel centro notifiche e mostrare a schermo bloccato (scelta approvata da Paolo). Il comando del
+  permesso non entra mai nella notifica. La pulizia è quella di `gestione_protocollo::testo_pulito` (la stessa
+  ovunque); un titolo che ripulito è vuoto vale assente.
 - **Si tolgono**: il codice degli hook, la voce `isola:claude-hook` del portachiavi, la variabile
   `ISOLA_HOOK_TOKEN` in `HKCU\Environment` (e il «compromesso dichiarato» di §5), «Rigenera il codice», la porta
   in configurazione, l'ascoltatore TCP. Restano: tratto `Gestore`, limiti (16 istanze, 2 s di lettura), numero di
