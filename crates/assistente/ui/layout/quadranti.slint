@@ -105,7 +105,8 @@ component Quadrante inherits Vetro {
             alignment: center;
             spacing: 6px;
 
-            Icona {
+            // Nell'invito la casa grande sta già al posto dell'arco: qui non si ripete.
+            if !invito: Icona {
                 source: icona;
                 width: 16px;
                 height: 16px;

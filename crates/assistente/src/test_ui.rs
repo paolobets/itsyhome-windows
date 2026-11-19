@@ -103,14 +103,24 @@ fn stringhe_della_riga(riga: &str) -> Vec<String> {
     trovate
 }
 
-/// Il sorgente Rust senza il blocco di test in fondo (`#[cfg(test)]` subito seguito da `mod …`).
-/// Un `#[cfg(test)]` a metà file davanti a una funzione o a un `use` non lo chiude: il resto del
+/// Il sorgente Rust senza il blocco di test in fondo (`#[cfg(test)]` subito seguito da
+/// `mod nome {`, anche con la visibilità: `pub(crate) mod test {`). Un `#[cfg(test)]` a metà file
+/// davanti a una funzione, a un `use` o a `mod x;` (un file a parte) non lo chiude: il resto del
 /// file, dove stanno i testi per l'utente, si controlla.
 fn senza_modulo_di_test(testo: &str) -> String {
+    let apre_un_modulo = |riga: &str| {
+        let riga = riga.trim();
+        let senza_visibilita = match riga.strip_prefix("pub") {
+            Some(resto) if resto.starts_with('(') => resto.split_once(')').map_or(resto, |(_, dopo)| dopo),
+            Some(resto) => resto,
+            None => riga,
+        };
+        senza_visibilita.trim_start().strip_prefix("mod ").is_some_and(|nome| nome.trim_end().ends_with('{'))
+    };
     let righe: Vec<&str> = testo.lines().collect();
     let fine = righe
         .windows(2)
-        .position(|w| w[0].trim() == "#[cfg(test)]" && w[1].trim_start().starts_with("mod "))
+        .position(|w| w[0].trim() == "#[cfg(test)]" && apre_un_modulo(w[1]))
         .unwrap_or(righe.len());
     righe[..fine].join("\n")
 }
@@ -174,6 +184,16 @@ fn il_blocco_di_test_si_taglia_solo_in_fondo() {
     assert!(tenuto.contains("Ambiente rimosso"), "dopo un #[cfg(test)] a metà file si guarda ancora");
     assert!(!tenuto.contains("\"ambiente\""), "il modulo di test in fondo si salta");
     assert_eq!(senza_modulo_di_test("fn a() {}\r\nfn b() {}\r\n"), "fn a() {}\nfn b() {}", "senza modulo di test");
+    // N1 (revisione finale): `#[cfg(test)] mod x;` dichiara un file a parte, non chiude il sorgente.
+    let testo = "#[cfg(test)]\nmod test_ui;\nfn c() { \"Ambiente dopo\" }\n#[cfg(test)]\nmod test {\n    \"ambiente\"\n}\n";
+    let tenuto = senza_modulo_di_test(testo);
+    assert!(tenuto.contains("Ambiente dopo"), "dopo `mod x;` si guarda ancora");
+    assert!(!tenuto.contains("\"ambiente\""), "il blocco di test in fondo si salta");
+    // N2: il modulo di test con la visibilità (`pub(crate) mod test {`) si riconosce.
+    for testa in ["pub(crate) mod test {", "pub mod test {", "pub(super) mod test{"] {
+        let tenuto = senza_modulo_di_test(&format!("fn d() {{}}\n#[cfg(test)]\n{testa}\n    \"ambiente\"\n}}\n"));
+        assert_eq!(tenuto, "fn d() {}", "«{testa}»");
+    }
 }
 
 #[test]
@@ -3879,10 +3899,16 @@ mod accessibilita {
             });
             for (nome, dettaglio) in [("RAM", ram), ("DISCO", disco)] {
                 // Il Text vero del dettaglio e la sua misura sono nella stessa riga: stessa posizione.
-                let y = elemento(&p, nome).absolute_position().y + 22.0;
+                // La riga per y e anche per x: un'altra colonna alla stessa altezza (CUFFIE accanto a
+                // DISCO) ha gli stessi id.
+                let riga = elemento(&p, nome);
+                let (y, x, larga) = (riga.absolute_position().y + 22.0, riga.absolute_position().x, riga.size().width);
                 let della_riga = |id: &str| {
                     ElementHandle::find_by_element_id(&p, id)
-                        .find(|e| (e.absolute_position().y - y).abs() < 0.5)
+                        .find(|e| {
+                            let pos = e.absolute_position();
+                            (pos.y - y).abs() < 0.5 && pos.x >= x - 0.5 && pos.x < x + larga
+                        })
                         .unwrap_or_else(|| panic!("nessun {id} nella riga {nome}"))
                 };
                 let (misura, vero) = (della_riga("Riga::misura"), della_riga("Riga::dettaglio-testo"));

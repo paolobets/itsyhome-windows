@@ -21,13 +21,15 @@ import { Anello, Etichetta, Pulsante, TipoPulsante } from "../../assistente/ui/c
 
 // Una riga della tabella: le celle da mostrare e, per Narrator, il testo che le legge tutte.
 // `gruppo`: l'intestazione che sta sopra questa riga ("" = nessuna); `prima`: quante intestazioni
-// stanno sopra le righe precedenti (per la posizione); `evidenza`: riga del riepilogo in testa.
+// stanno sopra le righe precedenti (per la posizione); `evidenza`: riga del riepilogo in testa;
+// `striscia`: sfondo alterno, contato dalla prima riga del gruppo (che non l'ha mai).
 export struct RigaUi {
     celle: [string],
     testo: string,
     gruppo: string,
     prima: int,
     evidenza: bool,
+    striscia: bool,
 }
 
 export struct SchedaUi {
@@ -211,7 +213,7 @@ component RigaTabella inherits FocusScope {
         y: testa;
         height: alto-riga;
         border-radius: Tema.raggio-s;
-        background: root.has-focus ? Tema.scheda-attiva : mod(indice, 2) == 1 ? Tema.card-fondo : transparent;
+        background: root.has-focus ? Tema.scheda-attiva : riga.striscia ? Tema.card-fondo : transparent;
     }
 
     for cella[ci] in riga.celle: Text {

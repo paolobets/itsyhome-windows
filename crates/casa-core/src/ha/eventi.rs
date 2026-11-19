@@ -349,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn notifica_senza_titolo_usa_home_assistant() {
+    fn notifica_senza_titolo_usa_casa() {
         let v = notifiche("updated", json!({ "x": { "notification_id": "x", "title": null, "message": "Ciao" } }));
         let Some(EventoWs::Notifiche { tipo, notifiche }) = interpreta_notifiche(&v) else { panic!() };
         assert_eq!(tipo, Aggiornamento::Aggiornate);

@@ -364,9 +364,10 @@ export component VistaClaude inherits Rectangle {
         }
     }
 
-    // Quante ce ne sono oltre la finestra: un filo sul bordo destro, solo se la colonna scorre.
+    // Quante ce ne sono oltre la finestra: un filo a destra della colonna, solo se scorre. Sta nello
+    // spazio vuoto fra le due colonne (16 px), non sopra il bordo delle righe.
     if con-righe && alto-elenco > root.height: Rectangle {
-        x: larghezza-sinistra - 4px;
+        x: larghezza-sinistra + 6px;
         y: 4px + (root.height - 8px - self.height) * (-elenco.content-y / (alto-elenco - root.height));
         width: 3px;
         height: max(16px, (root.height - 8px) * root.height / alto-elenco);
@@ -565,7 +566,9 @@ export component VistaClaude inherits Rectangle {
             width: parent.width - 24px - (dettagli-visibili ? 84px : 0px);
             height: spesa != "" ? 14px : 36px;
             text: spesa-nota;
-            vertical-alignment: top;
+            // Senza valore la nota sta al centro dello spazio sotto l'etichetta (non in alto col
+            // vuoto sotto); col valore resta sotto di lui.
+            vertical-alignment: spesa != "" ? top : center;
             wrap: word-wrap;
             font-size: Tema.testo-piccolo;
             color: Tema.testo-tenue;

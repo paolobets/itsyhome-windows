@@ -294,6 +294,7 @@ struct Riga {
     gruppo: String,
     prima: i32,
     evidenza: bool,
+    striscia: bool,
 }
 
 impl ModelloSchede {
@@ -352,11 +353,13 @@ fn testa_di(s: &SchedaDati) -> Testa {
 
 /// Le righe di una scheda come si mostrano (RC-54): ognuna sa l'intestazione che porta sopra di
 /// sé, quante ce ne sono prima e se è del riepilogo in testa (le righe prima del primo gruppo,
-/// solo se un gruppo c'è). Narrator legge il gruppo davanti a ogni riga che ne fa parte.
+/// solo se un gruppo c'è). Narrator legge il gruppo davanti a ogni riga che ne fa parte. Le
+/// strisce alterne ripartono dalla prima riga di ogni gruppo, che non è mai a striscia.
 fn righe_di(s: &SchedaDati) -> Vec<Riga> {
     let primo_gruppo = s.gruppi.iter().map(|g| g.riga).min();
     let mut gruppo_corrente: Option<&str> = None;
     let mut prima = 0;
+    let mut nel_gruppo = 0;
     s.righe
         .iter()
         .enumerate()
@@ -364,7 +367,10 @@ fn righe_di(s: &SchedaDati) -> Vec<Riga> {
             let suo = s.gruppi.iter().find(|g| g.riga == j).map(|g| g.titolo.as_str());
             if suo.is_some() {
                 gruppo_corrente = suo;
+                nel_gruppo = 0;
             }
+            let striscia = nel_gruppo % 2 == 1;
+            nel_gruppo += 1;
             let testo = testo_riga(&s.colonne, celle);
             let riga = Riga {
                 celle: celle.clone(),
@@ -372,6 +378,7 @@ fn righe_di(s: &SchedaDati) -> Vec<Riga> {
                 gruppo: suo.unwrap_or_default().to_owned(),
                 prima,
                 evidenza: primo_gruppo.is_some_and(|p| j < p),
+                striscia,
             };
             if suo.is_some() {
                 prima += 1;
@@ -410,6 +417,7 @@ fn riga_ui(r: &Riga) -> RigaUi {
         gruppo: r.gruppo.as_str().into(),
         prima: r.prima,
         evidenza: r.evidenza,
+        striscia: r.striscia,
     }
 }
 
@@ -1098,6 +1106,8 @@ mod test {
                 ("Ultimi giorni".to_owned(), 1, false, "Ultimi giorni · Voce: 16/11, Spesa: 40,00 $".to_owned()),
             ]
         );
+        // Le strisce alterne ripartono dalla prima riga di ogni gruppo (mai a striscia).
+        assert_eq!(s.righe.iter().map(|r| r.striscia).collect::<Vec<_>>(), [false, false, true, false]);
         // Senza gruppi nessuna riga è «in evidenza»: è il riepilogo solo se dopo ci sono gruppi.
         let t = schede.row_data(1).unwrap();
         assert!(t.righe.iter().all(|r| !r.evidenza && r.gruppo.is_empty() && r.prima == 0));
