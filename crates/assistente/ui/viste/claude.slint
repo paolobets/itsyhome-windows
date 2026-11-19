@@ -1,6 +1,7 @@
 // Vista Claude (M3, Task 9): Claude Code in un colpo d'occhio, nel pannello 800 × 300. A sinistra
 // le sessioni, tutte, in una colonna che scorre (rotella e frecce; la riga col fuoco resta in
-// vista): cartella, stato col colore del suo livello, strumento, durata, contesto (caldo oltre
+// vista): il nome (il titolo della sessione, se ne ha uno, con la cartella attenuata nella seconda riga;
+// sennò la cartella), stato col colore del suo livello, strumento, durata, contesto (caldo oltre
 // l'80 %). L'ordine lo decide Rust e sta fermo a pannello aperto. A destra i due limiti
 // dell'abbonamento ad anello («Limite 5 ore», «Limite 7 giorni», con quando si azzerano; dopo un
 // riavvio, finché non arriva un dato nuovo, l'ultimo valore ricordato, attenuato e con «visto
@@ -33,7 +34,8 @@ component RigaClaude inherits Rectangle {
     border-color: Tema.vetro-bordo;
     background: area.has-hover || sopra-icona ? Tema.card-vetro-sopra : Tema.card-vetro;
     accessible-role: button;
-    accessible-label: riga.cartella + ", " + riga.stato;
+    // Col titolo della sessione: «titolo, cartella, stato»; senza, come sempre «cartella, stato».
+    accessible-label: (riga.titolo != "" ? riga.titolo + ", " : "") + riga.cartella + ", " + riga.stato;
     // Senza la durata: cambia ogni secondo e Narrator non deve ripeterla.
     property <string> dettagli: riga.strumento != "" && riga.contesto != "" ? riga.strumento + ", contesto " + riga.contesto
         : riga.strumento != "" ? riga.strumento : riga.contesto != "" ? "contesto " + riga.contesto : "";
@@ -60,7 +62,8 @@ component RigaClaude inherits Rectangle {
         Text {
             horizontal-stretch: 1;
             preferred-width: 0px;
-            text: riga.cartella;
+            // Il nome della sessione è il suo titolo, se ne ha uno; sennò la cartella.
+            text: riga.titolo != "" ? riga.titolo : riga.cartella;
             vertical-alignment: center;
             overflow: elide;
             font-weight: 500;
@@ -103,7 +106,20 @@ component RigaClaude inherits Rectangle {
             accessible-role: none;
         }
 
-        Rectangle { horizontal-stretch: 1; }
+        // Col titolo, la cartella sta qui, attenuata, nel vuoto della seconda riga: il titolo in alto
+        // resta largo quanto prima. Senza titolo il vuoto è solo spazio.
+        if riga.titolo != "": Text {
+            horizontal-stretch: 1;
+            preferred-width: 0px;
+            text: "· " + riga.cartella;
+            vertical-alignment: center;
+            overflow: elide;
+            font-size: Tema.testo-piccolo;
+            color: Tema.testo-tenue;
+            accessible-role: none;
+        }
+
+        if riga.titolo == "": Rectangle { horizontal-stretch: 1; }
 
         // Il clic ripiega sull'ultimo terminale usato (RC-57): un'icona col suo suggerimento, non
         // la frase su ogni riga; il nome lo legge Narrator.

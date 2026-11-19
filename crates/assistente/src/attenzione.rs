@@ -687,14 +687,17 @@ pub(crate) mod test {
             errore: None,
             riassunto: Some("rm -rf segreto".into()),
         };
-        let v = crate::claude::voce_permesso(3, &e, Instant::now());
+        let v = crate::claude::voce_permesso(3, &e, "", Instant::now());
         assert!(v.titolo.contains("segreto") && v.dettaglio.contains("segreto"), "la voce in pillola resta completa");
         let (titolo, dettaglio) = testo_notifica(&v);
         assert_eq!(titolo, "Claude chiede un permesso · progetto");
         assert!(!titolo.contains("segreto") && !dettaglio.contains("segreto"));
         e.cartella.clear();
-        let v = crate::claude::voce_permesso(3, &e, Instant::now());
+        let v = crate::claude::voce_permesso(3, &e, "", Instant::now());
         assert_eq!(testo_notifica(&v).0, "Claude chiede un permesso · Claude");
+        // Con il titolo della sessione la notifica dice quello, non la cartella.
+        let v = crate::claude::voce_permesso(3, &e, "Sistemare il restyle", Instant::now());
+        assert_eq!(testo_notifica(&v).0, "Claude chiede un permesso · Sistemare il restyle");
         // Le altre voci non cambiano.
         let altra = voce("x", Livello::Attenzione, Instant::now());
         assert_eq!(testo_notifica(&altra), (altra.titolo.clone(), altra.dettaglio.clone()));

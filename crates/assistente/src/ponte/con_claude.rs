@@ -372,6 +372,12 @@ impl Ponte {
     /// Come `claude_barra`, a un'ora data (secondi dall'epoca): i test ne passano una.
     pub(super) fn claude_barra_a(&self, d: DatiBarra, ora: i64) {
         self.casa.diagnosi().conta(Contatore::claude_barre);
+        // Il titolo della sessione (`session_name`) arriva solo da qui, non dagli hook: se cambia
+        // voci, vista e nome della pillola lo seguono; assente non cancella quello di prima.
+        let cambi = self.claude_sessioni.borrow_mut().imposta_titolo(&d.sessione, d.titolo.as_deref());
+        if !cambi.is_empty() {
+            self.claude_cambiate(&cambi, Instant::now());
+        }
         {
             let mut l = self.claude_limiti.borrow_mut();
             let (cinque, sette) = l.get_or_insert((None, None));
@@ -809,7 +815,15 @@ impl Ponte {
             return;
         }
         self.claude_permessi.borrow_mut().insert(id, Pendente { sessione: e.sessione.clone(), tx, sequenza });
-        let voce = claude::voce_permesso(id, &e, ora);
+        let titolo = self
+            .claude_sessioni
+            .borrow()
+            .elenco()
+            .into_iter()
+            .find(|s| s.id == e.sessione)
+            .map(|s| s.titolo.clone())
+            .unwrap_or_default();
+        let voce = claude::voce_permesso(id, &e, &titolo, ora);
         // Prima il permesso in elenco, poi l'evento: la voce «ti aspetta» della sessione cede il
         // posto a quella del permesso.
         self.claude_evento(e, sequenza, ora);
@@ -1314,6 +1328,7 @@ fn riga_ui(r: claude::RigaSessione, ripiego: bool, finestra_non_scheda: bool) ->
         avviso: if finestra_non_scheda && cfg!(windows) { "Apre la finestra del terminale, non la scheda" } else { "" }.into(),
         id: r.id.into(),
         cartella: r.cartella.into(),
+        titolo: r.titolo.into(),
         stato: r.stato_testo.into(),
         livello: r.livello.map_or(LivelloUi::Nessuno, pillola::livello_ui),
         strumento: r.strumento.into(),
@@ -1494,6 +1509,7 @@ mod test {
             claude::RigaSessione {
                 id: "x".into(),
                 cartella: "c".into(),
+                titolo: String::new(),
                 stato_testo: "Fatto",
                 livello: None,
                 strumento: String::new(),
@@ -1683,6 +1699,7 @@ mod test {
         let r = || claude::RigaSessione {
             id: "x".into(),
             cartella: "c".into(),
+            titolo: String::new(),
             stato_testo: "Fatto",
             livello: None,
             strumento: String::new(),
@@ -2302,7 +2319,72 @@ mod test {
 
     fn barra(sessione: &str, cinque: Option<(f32, i64)>, sette: Option<(f32, i64)>) -> DatiBarra {
         let l = |x: Option<(f32, i64)>| x.map(|(percentuale, azzera_alle)| Limite { percentuale, azzera_alle });
-        DatiBarra { sessione: sessione.into(), modello: Some("Opus 5.5".into()), contesto: Some(40.0), cinque_ore: l(cinque), sette_giorni: l(sette) }
+        DatiBarra { sessione: sessione.into(), modello: Some("Opus 5.5".into()), contesto: Some(40.0), cinque_ore: l(cinque), sette_giorni: l(sette), titolo: None }
+    }
+
+    /// La barra di una sessione col suo titolo (`session_name`).
+    fn barra_titolata(sessione: &str, titolo: Option<&str>) -> DatiBarra {
+        DatiBarra { titolo: titolo.map(str::to_owned), ..barra(sessione, None, None) }
+    }
+
+    /// Due sessioni nella stessa cartella: il titolo dalla barra arriva alla vista Claude, alle
+    /// voci «In attesa» e al nome della pillola; un titolo assente non cancella il precedente, e la
+    /// barra non crea sessioni.
+    #[test]
+    fn il_titolo_della_barra_arriva_a_vista_voci_e_pillola() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let pannello = con_pannello(&p);
+        p.casa().aggiorna_config(|c| c.claude.collegato = true);
+        let c_e_voce = |p: &Ponte, titolo: &str| voci_claude(p).iter().any(|(_, _, t)| t == titolo);
+        // Una barra per una sessione sconosciuta non la crea.
+        p.claude_barra(barra_titolata("x", Some("Fantasma")));
+        assert!(p.claude_sessioni.borrow().elenco().is_empty());
+        manda(&p, EventoHook { cartella: "bin".into(), ..ev("a", TipoEvento::UserPromptSubmit) });
+        manda(&p, EventoHook { cartella: "bin".into(), ..ev("b", TipoEvento::PermissionRequest) });
+        p.vista_claude(true);
+        let titoli = |pannello: &crate::Pannello| -> Vec<(String, String)> {
+            let righe = pannello.get_claude_righe();
+            (0..righe.row_count())
+                .map(|i| righe.row_data(i).unwrap())
+                .map(|r| (r.cartella.to_string(), r.titolo.to_string()))
+                .collect()
+        };
+        assert_eq!(titoli(&pannello), [("bin".into(), String::new()), ("bin".into(), String::new())]);
+        assert!(c_e_voce(&p, "Claude ti aspetta · bin"));
+        // I titoli arrivano con le barre; l'ordine fermo della vista non cambia.
+        p.claude_barra(barra_titolata("b", Some("Aggiornare i test")));
+        p.claude_barra(barra_titolata("a", Some("Sistemare il restyle")));
+        assert_eq!(
+            titoli(&pannello),
+            [("bin".into(), "Aggiornare i test".into()), ("bin".into(), "Sistemare il restyle".into())]
+        );
+        assert!(c_e_voce(&p, "Claude ti aspetta · Aggiornare i test"));
+        assert!(!c_e_voce(&p, "Claude ti aspetta · bin"), "la voce vecchia non resta");
+        // Una barra senza titolo non lo cancella; una con un titolo nuovo lo cambia.
+        p.claude_barra(barra_titolata("b", None));
+        assert_eq!(titoli(&pannello)[0].1, "Aggiornare i test");
+        p.claude_barra(barra_titolata("b", Some("Altro")));
+        assert_eq!(titoli(&pannello)[0].1, "Altro");
+        // Il nome per Narrator della pillola: «a» lavora da sola, col suo titolo.
+        let nome = claude::nome_attivita(&p.claude_sessioni.borrow(), Instant::now()).unwrap();
+        assert_eq!(nome, "Claude, Sistemare il restyle, Pensa, meno di un minuto");
+    }
+
+    /// Il titolo è anche nel permesso che una sessione già titolata chiede.
+    #[test]
+    fn il_permesso_dice_il_titolo_della_sessione() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        manda(&p, EventoHook { cartella: "bin".into(), ..ev("a", TipoEvento::UserPromptSubmit) });
+        p.claude_barra(barra_titolata("a", Some("Sistemare il restyle")));
+        let e = EventoHook {
+            cartella: "bin".into(),
+            strumento: Some("Bash".into()),
+            riassunto: Some("ls".into()),
+            ..ev("a", TipoEvento::PermissionRequest)
+        };
+        p.claude_permesso(1, e, None, 2, Instant::now());
+        let dettaglio = p.attese.borrow().voce(&claude::id_voce_permesso(1)).map(|v| v.dettaglio.clone());
+        assert_eq!(dettaglio.as_deref(), Some("ls\nSessione: Sistemare il restyle"));
     }
 
     const FUTURO: i64 = 4_000_000_000;

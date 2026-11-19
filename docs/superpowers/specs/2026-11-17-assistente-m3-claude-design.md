@@ -96,7 +96,7 @@ solo guardare / qualche azione sicura / gestione completa).
 | Evento falso che mostra un finto permesso | Serve il codice segreto; in più la risposta «Consenti» va solo alla connessione che ha chiesto, quindi un falso non ottiene nulla su una sessione vera |
 | Permesso concesso per sbaglio | Mai con Invio da solo; **Ctrl+Invio**, fuoco iniziale su «Nega» (già nella spec); nessun «Consenti sempre»; la pillola mostra strumento + comando/percorso (riassunto), il testo completo nel pannello; se Paolo non risponde l'assistente **non risponde** e decide il terminale |
 | Corpo enorme o malformato | Limite 256 KB per richiesta (oltre: 413, letto e scartato), timeout di lettura 2 s, al massimo 16 connessioni aperte (§6.3); parser JSON che non va mai in panico |
-| Fuga di contenuti delle sessioni | Si tengono solo i campi necessari (id sessione, nome della cartella, stato, nome dello strumento, riassunto breve del permesso in attesa); prompt, comandi completi e risposte degli strumenti non si salvano mai, nemmeno nei log. Non ci si iscrive a `PostToolUse` (corpi grandi, non servono). `diagnosi.log` solo contatori |
+| Fuga di contenuti delle sessioni | Si tengono solo i campi necessari (id sessione, nome della cartella, titolo della sessione dalla barra (19/11), stato, nome dello strumento, riassunto breve del permesso in attesa); prompt, comandi completi e risposte degli strumenti non si salvano mai, nemmeno nei log. Non ci si iscrive a `PostToolUse` (corpi grandi, non servono). `diagnosi.log` solo contatori |
 | Furto della chiave da amministratore | Solo nel **portachiavi del sistema** (`keyring`, come il token HA); campo mascherato nelle Impostazioni, dopo il salvataggio si vedono solo le ultime 4 cifre; mai nei log, mai nei messaggi d'errore; trasmessa solo a `https://api.anthropic.com` con verifica del certificato (rustls) |
 | Chiave da amministratore usata per modificare | Il client API dell'assistente ha un **elenco chiuso** di percorsi, tutti `GET`; un test verifica che non esista nessun altro metodo/percorso. Se la Console permette una chiave con permessi ridotti (sola lettura / analytics), la guida dice di usare quella — **da verificare** sulla doc al momento del piano |
 | Malware che gira come Paolo | Fuori portata: può già leggere `~/.claude` e il portachiavi dell'utente. Non lo dichiariamo protetto |
@@ -305,6 +305,13 @@ canale protetto** (18/11).
 - **Barra di stato**: `statusLine` = `<percorso corto>/isola-hook.exe barra` (forma shell: serve il percorso 8.3
   se ci sono spazi, D5); l'aiutante stampa la riga e manda `DatiBarra` per il tubo. Il ramo
   `assistente --barra-stato` del Task 6 si toglie.
+  *Nota del 19/11/2026 (campi inoltrati).* `DatiBarra` porta anche `titolo`, dal `session_name` della barra
+  (documentato: il nome di `--name` o `/rename`, altrimenti il titolo generato dall'IA; assente se la sessione
+  non ne ha). Gli hook non lo ricevono, quindi arriva solo da qui. Ripulito nell'aiutante (spazi ai lati
+  tolti, controlli, direzione e zero-width via, a capo e tab come spazi, al più 60 caratteri «…» compreso;
+  vuoto = assente) e riconvalidato da isola come gli altri campi, ma **rifiutato** se troppo lungo o sporco.
+  La sessione tiene l'ultimo titolo non vuoto (assente non cancella) e lo mostra al posto della cartella; la
+  barra non crea sessioni. `cwd`, trascrizione e workspace restano esclusi dal corpo inoltrato.
 - **Si tolgono**: il codice degli hook, la voce `isola:claude-hook` del portachiavi, la variabile
   `ISOLA_HOOK_TOKEN` in `HKCU\Environment` (e il «compromesso dichiarato» di §5), «Rigenera il codice», la porta
   in configurazione, l'ascoltatore TCP. Restano: tratto `Gestore`, limiti (16 istanze, 2 s di lettura), numero di

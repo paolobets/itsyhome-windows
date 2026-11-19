@@ -9,7 +9,8 @@
 //! avviarla in prova (`ITSYHOME_ASSISTENTE_DIR`) con `ITSYHOME_AIUTANTE_ATTESO` = il percorso di
 //! questo esempio. Per ogni sessione: un prompt all'inizio, un `PreToolUse` ogni 2 s, uno `Stop` ogni
 //! 30 s (seguito da 10 s di pausa e da un nuovo prompt), una barra di stato ogni 5 s, un
-//! `SessionEnd` alla fine. Le cartelle sono finte («progetto-a»…); nessun dato vero.
+//! `SessionEnd` alla fine. Le cartelle sono finte («progetto-a»…) e quattro sessioni su sei hanno un
+//! `session_name` finto (`TITOLI`) nella barra; nessun dato vero.
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -24,6 +25,17 @@ const CARTELLE: [&str; 6] = [
     "progetto-d",
     "progetto-e",
     "progetto-f",
+];
+
+/// Il `session_name` di ogni sessione, come lo manda la barra di stato di Claude Code: alcune ne
+/// hanno uno (anche lungo, per vederlo tagliato), altre no e restano con la cartella.
+const TITOLI: [Option<&str>; 6] = [
+    Some("Sistemare il restyle"),
+    Some("Aggiornare i test"),
+    None,
+    Some("Un titolo di sessione davvero molto lungo, per vedere come si taglia nella riga"),
+    None,
+    Some("Indagare sul riavvio"),
 ];
 
 /// Che cosa mandare.
@@ -64,10 +76,14 @@ fn evento(sessione: &str, cartella: &str, nome: &str, strumento: Option<&str>) -
     )
 }
 
-fn barra(sessione: &str, cartella: &str, t: u64) -> String {
+fn barra(sessione: &str, cartella: &str, titolo: Option<&str>, t: u64) -> String {
     let cwd = json_testo(&format!("C:\\finto\\{cartella}"));
+    // Come Claude Code: `session_name` c'è solo se la sessione ha un nome.
+    let nome = titolo
+        .map(|n| format!(",\"session_name\":{}", json_testo(n)))
+        .unwrap_or_default();
     format!(
-        "{{\"session_id\":{},\"cwd\":{cwd},\"model\":{{\"display_name\":\"Modello finto\"}},\"context_window\":{{\"used_percentage\":{}}},\"rate_limits\":{{\"five_hour\":{{\"used_percentage\":{},\"resets_at\":4102444800}},\"seven_day\":{{\"used_percentage\":{},\"resets_at\":4102444800}}}}}}",
+        "{{\"session_id\":{},\"cwd\":{cwd}{nome},\"model\":{{\"display_name\":\"Modello finto\"}},\"context_window\":{{\"used_percentage\":{}}},\"rate_limits\":{{\"five_hour\":{{\"used_percentage\":{},\"resets_at\":4102444800}},\"seven_day\":{{\"used_percentage\":{},\"resets_at\":4102444800}}}}}}",
         json_testo(sessione),
         (t * 3) % 100,
         (t / 2) % 100,
@@ -162,7 +178,7 @@ fn main() {
                 )));
             }
             if s % 5 == 0 {
-                manda(Invio::Barra(barra(&sessione, cartella, s)));
+                manda(Invio::Barra(barra(&sessione, cartella, TITOLI[i], s)));
             }
         }
     }

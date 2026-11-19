@@ -1934,7 +1934,7 @@ mod accessibilita {
             errore: None,
             riassunto: Some("ls".into()),
         };
-        let voce = crate::claude::voce_permesso(1, &e, std::time::Instant::now());
+        let voce = crate::claude::voce_permesso(1, &e, "", std::time::Instant::now());
         p.set_attese(ModelRc::new(VecModel::from(vec![VoceAttesaUi {
             id: voce.id.as_str().into(),
             livello: LivelloUi::Bloccante,
@@ -2180,6 +2180,7 @@ mod accessibilita {
         crate::RigaSessioneUi {
             id: id.into(),
             cartella: cartella.into(),
+            titolo: Default::default(),
             stato: stato.into(),
             livello,
             strumento: Default::default(),
@@ -2402,6 +2403,8 @@ mod accessibilita {
         let mut righe = Vec::new();
         for (i, stato) in ["Ti aspetta", "Fatto", "Lavora"].iter().enumerate() {
             righe.push(crate::RigaSessioneUi {
+                // Anche col titolo più lungo (60 caratteri) e la cartella: nulla esce dalla vista.
+                titolo: "Un titolo di sessione davvero lungo, da sessanta caratteri…".into(),
                 strumento: "Modifica".into(),
                 durata: "1:02:05".into(),
                 contesto: "100%".into(),
@@ -2514,6 +2517,29 @@ mod accessibilita {
         // La riga resta il pulsante che apre la sessione.
         elemento(&p, "uno, Fatto").invoke_accessible_default_action();
         assert_eq!(*eventi.borrow(), ["apri a"]);
+    }
+
+    /// Due sessioni nella stessa cartella («bin») si distinguono dal titolo: la riga si chiama
+    /// «titolo, cartella, stato» per Narrator; senza titolo resta «cartella, stato». Il titolo dà il
+    /// nome visibile della riga e la cartella sta sotto, attenuata (vedi `RigaClaude`).
+    #[test]
+    fn la_riga_col_titolo_porta_titolo_e_cartella() {
+        let con_titolo = |id: &str, titolo: &str| crate::RigaSessioneUi {
+            titolo: titolo.into(),
+            ..riga_claude(id, "bin", "Fatto", crate::LivelloUi::Informazione)
+        };
+        let righe = ModelRc::new(VecModel::from(vec![
+            con_titolo("a", "Sistemare il restyle"),
+            con_titolo("b", "Aggiornare i test"),
+            con_titolo("c", ""),
+        ]));
+        let (p, eventi) = pannello_claude(true, righe);
+        elemento(&p, "Aggiornare i test, bin, Fatto").invoke_accessible_default_action();
+        elemento(&p, "Sistemare il restyle, bin, Fatto").invoke_accessible_default_action();
+        elemento(&p, "bin, Fatto").invoke_accessible_default_action();
+        assert_eq!(*eventi.borrow(), ["apri b", "apri a", "apri c"]);
+        // La riga col titolo non si chiama più solo «bin»: nessun elemento ambiguo a due righe.
+        assert_eq!(ElementHandle::find_by_accessible_label(&p, "bin, Fatto").count(), 1);
     }
 
     /// Impostazioni › Claude (M3, Task 7 e 7B): l'anteprima si apre col fuoco su «Annulla» (Invio per

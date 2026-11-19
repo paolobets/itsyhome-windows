@@ -1,7 +1,7 @@
 //! Le sessioni di Claude Code come l'assistente le mostra (M3, Task 4): le voci «In attesa», il
 //! colore degli occhi e il testo della pillola media «attività dal vivo». Logica pura: l'ora
 //! arriva sempre dal chiamante e nessun testo di prompt, risposta o file passa di qui (le sessioni
-//! portano solo cartella, stato e nome dello strumento).
+//! portano solo cartella, titolo della sessione, stato e nome dello strumento).
 
 use crate::attenzione::{Fonte, Livello, Pulsante, Voce};
 use claude_hook::evento::EventoHook;
@@ -78,14 +78,25 @@ pub fn id_permesso_da_voce(voce: &str) -> Option<u64> {
     voce.strip_prefix(PREFISSO_PERMESSO)?.parse().ok()
 }
 
+/// Il nome con cui si mostra una sessione: il suo titolo (dalla barra di stato) se ne ha uno, poi la
+/// cartella, poi «Claude». Testo non fidato, quindi ripulito: un titolo fatto di soli invisibili
+/// vale come assente.
+fn nome_visto(titolo: &str, cartella: &str) -> String {
+    [titolo, cartella]
+        .into_iter()
+        .map(testo_pulito)
+        .find(|t| !t.is_empty())
+        .unwrap_or_else(|| SENZA_CARTELLA.to_owned())
+}
+
 /// La voce del permesso `id` chiesto da una sessione: *bloccante*, col riassunto di cosa Claude sta
 /// per fare (testo non fidato: ripulito da caratteri invisibili, di direzione e a capo) e i
-/// pulsanti per decidere. Il titolo ne porta al più 60 caratteri, il dettaglio tutto.
-pub fn voce_permesso(id: u64, e: &EventoHook, ora: Instant) -> Voce {
+/// pulsanti per decidere. Il titolo della voce ne porta al più 60 caratteri, il dettaglio tutto e
+/// la sessione col suo `titolo` (vuoto: la cartella).
+pub fn voce_permesso(id: u64, e: &EventoHook, titolo: &str, ora: Instant) -> Voce {
     let strumento = e.strumento.as_deref().map_or_else(|| "Strumento".to_owned(), |s| strumento_italiano(Some(s)));
     let riassunto = testo_pulito(e.riassunto.as_deref().unwrap_or(""));
-    let cartella = testo_pulito(&e.cartella);
-    let cartella = if cartella.is_empty() { SENZA_CARTELLA } else { cartella.as_str() };
+    let cartella = nome_visto(titolo, &e.cartella);
     let titolo = if riassunto.is_empty() {
         format!("Claude chiede: {strumento}")
     } else if riassunto.chars().count() > MASSIMO_RIASSUNTO_TITOLO {
@@ -165,7 +176,7 @@ pub fn frase_errore_claude(e: &str) -> &'static str {
 /// e chi ha finito ed è stato visto non ne ha.
 pub fn voce_sessione(s: &Sessione, ora: Instant) -> Option<Voce> {
     let [aspetta, errore, fatto] = id_voci(&s.id);
-    let cartella = if s.cartella.is_empty() { SENZA_CARTELLA } else { s.cartella.as_str() };
+    let cartella = nome_visto(&s.titolo, &s.cartella);
     let (id, livello, titolo, dettaglio) = match (s.stato, s.vista) {
         (Stato::TiAspetta, _) => (
             aspetta,
@@ -276,13 +287,17 @@ fn durata_parlata(d: Duration) -> String {
 }
 
 /// Il nome della pillola media per Narrator: «Claude, Modifica, 3 minuti»; con più sessioni
-/// «Claude, 2 sessioni, 3 minuti». Cambia una volta al minuto, non a ogni secondo.
+/// «Claude, 2 sessioni, 3 minuti»; con una sola sessione titolata «Claude, Sistemare il restyle,
+/// Modifica, 3 minuti». Cambia una volta al minuto, non a ogni secondo.
 pub fn nome_attivita(s: &Sessioni, ora: Instant) -> Option<String> {
     let l = lavorano(s, ora);
     match l.as_slice() {
         [] => None,
         [(una, durata)] => {
-            Some(format!("Claude, {}, {}", strumento_italiano(una.strumento.as_deref()), durata_parlata(*durata)))
+            // Col titolo della sessione, se ne ha uno; la cartella qui non c'è mai stata.
+            let titolo = testo_pulito(&una.titolo);
+            let titolo = if titolo.is_empty() { String::new() } else { format!("{titolo}, ") };
+            Some(format!("Claude, {titolo}{}, {}", strumento_italiano(una.strumento.as_deref()), durata_parlata(*durata)))
         }
         _ => {
             let piu_lunga = l.iter().map(|(_, d)| *d).max().unwrap_or(Duration::ZERO);
@@ -321,6 +336,9 @@ pub const SPESA_NESSUN_DATO: &str = "nessun dato";
 pub struct RigaSessione {
     pub id: String,
     pub cartella: String,
+    /// Il nome della sessione (dalla barra di stato), se ne ha uno; vuoto altrimenti. Quando c'è,
+    /// è il nome della riga e la cartella passa in secondo piano.
+    pub titolo: String,
     pub stato_testo: &'static str,
     /// Il livello che dà il colore allo stato; `None` per chi lavora.
     pub livello: Option<Livello>,
@@ -369,6 +387,7 @@ pub fn righe_sessioni(
             RigaSessione {
                 id: id_sessione(&x.id),
                 cartella,
+                titolo: testo_pulito(&x.titolo),
                 stato_testo,
                 livello,
                 strumento: if lavora { strumento_italiano(x.strumento.as_deref()) } else { String::new() },
@@ -1181,7 +1200,7 @@ mod test {
 
     #[test]
     fn riassunto_pulito() {
-        let v = voce_permesso(7, &permesso("rm \u{202E}-rf\n/tmp\u{200B}/x"), Instant::now());
+        let v = voce_permesso(7, &permesso("rm \u{202E}-rf\n/tmp\u{200B}/x"), "", Instant::now());
         assert_eq!(v.titolo, "Claude chiede: Comando rm -rf /tmp/x");
         assert_eq!(v.dettaglio, "rm -rf /tmp/x\nSessione: progetto-a");
         for t in [&v.titolo, &v.dettaglio] {
@@ -1194,29 +1213,29 @@ mod test {
         assert_eq!(id_permesso_da_voce("claude.0123.aspetta"), None);
         // Anche la cartella non fidata viene ripulita.
         let e = EventoHook { cartella: "pro\u{202E}getto".into(), ..permesso("ls") };
-        assert_eq!(voce_permesso(1, &e, Instant::now()).dettaglio, "ls\nSessione: progetto");
+        assert_eq!(voce_permesso(1, &e, "", Instant::now()).dettaglio, "ls\nSessione: progetto");
     }
 
     #[test]
     fn titolo_permesso_tagliato_a_sessanta() {
         let lungo = "x".repeat(300);
-        let v = voce_permesso(1, &permesso(&lungo), Instant::now());
+        let v = voce_permesso(1, &permesso(&lungo), "", Instant::now());
         assert!(v.titolo.chars().count() <= "Claude chiede: Comando ".chars().count() + 60, "{}", v.titolo.chars().count());
         assert!(v.titolo.ends_with('…'));
         assert_eq!(v.dettaglio, format!("{lungo}\nSessione: progetto-a"), "il dettaglio ha il riassunto intero");
         // Esattamente 60: nessun taglio.
-        let v = voce_permesso(1, &permesso(&"y".repeat(60)), Instant::now());
+        let v = voce_permesso(1, &permesso(&"y".repeat(60)), "", Instant::now());
         assert!(!v.titolo.ends_with('…'));
         // Senza riassunto né strumento né cartella.
         let nudo = EventoHook { cartella: String::new(), ..ev("a", TipoEvento::PermissionRequest) };
-        let v = voce_permesso(1, &nudo, Instant::now());
+        let v = voce_permesso(1, &nudo, "", Instant::now());
         assert_eq!(v.titolo, "Claude chiede: Strumento");
         assert_eq!(v.dettaglio, "Sessione: Claude");
     }
 
     #[test]
     fn pulsanti_del_permesso() {
-        let v = voce_permesso(1, &permesso("ls"), Instant::now());
+        let v = voce_permesso(1, &permesso("ls"), "", Instant::now());
         assert_eq!(v.pulsanti, vec![Pulsante::new("nega", "Nega"), Pulsante::delicato("consenti", "Consenti")]);
         assert_eq!(PULSANTE_TERMINALE, "terminale");
     }
@@ -1418,6 +1437,65 @@ mod test {
         let mut s = Sessioni::new();
         con(&mut s, EventoHook { cartella: "pro\u{202e}getto".into(), ..ev("a", TipoEvento::Stop) }, t);
         assert_eq!(righe_sessioni(&s, &HashMap::new(), t, &[]).0[0].cartella, "progetto");
+    }
+
+    /// Due sessioni nella stessa cartella: il titolo dalla barra le distingue ovunque il nome si
+    /// mostra (voci «In attesa», notifiche, riga della vista); senza titolo resta la cartella.
+    #[test]
+    fn il_titolo_della_sessione_prende_il_posto_della_cartella() {
+        let t = Instant::now();
+        let mut s = Sessioni::new();
+        con(&mut s, ev("a", TipoEvento::Stop), t);
+        con(&mut s, ev("b", TipoEvento::Stop), t);
+        s.imposta_titolo("a", Some("Sistemare il restyle"));
+        let titoli: Vec<String> = ["a", "b"]
+            .iter()
+            .map(|id| voce_sessione(s.elenco().into_iter().find(|x| x.id == *id).unwrap(), t).unwrap().titolo)
+            .collect();
+        assert_eq!(titoli, ["Claude ha finito · Sistemare il restyle", "Claude ha finito · progetto-a"]);
+        // Anche per chi aspetta e per chi si è fermato.
+        con(&mut s, ev("a", TipoEvento::PermissionRequest), t);
+        assert_eq!(voce_sessione(s.elenco().into_iter().find(|x| x.id == "a").unwrap(), t).unwrap().titolo, "Claude ti aspetta · Sistemare il restyle");
+        let errore = EventoHook { errore: Some("rate_limit".into()), ..ev("a", TipoEvento::StopFailure) };
+        con(&mut s, errore, t);
+        assert_eq!(voce_sessione(s.elenco().into_iter().find(|x| x.id == "a").unwrap(), t).unwrap().titolo, "Claude si è fermato · Sistemare il restyle");
+        // Riga della vista: il titolo e, a parte, la cartella; senza titolo il campo è vuoto.
+        let (righe, _) = righe_sessioni(&s, &HashMap::new(), t, &[]);
+        let riga = |id: &str| righe.iter().find(|r| r.id == id_sessione(id)).unwrap();
+        assert_eq!((riga("a").titolo.as_str(), riga("a").cartella.as_str()), ("Sistemare il restyle", "progetto-a"));
+        assert_eq!((riga("b").titolo.as_str(), riga("b").cartella.as_str()), ("", "progetto-a"));
+        // Il titolo, testo non fidato, si ripulisce come la cartella.
+        s.imposta_titolo("b", Some("Ri\u{202e}fare\u{200b}"));
+        let (righe, _) = righe_sessioni(&s, &HashMap::new(), t, &[]);
+        assert_eq!(righe.iter().find(|r| r.id == id_sessione("b")).unwrap().titolo, "Rifare");
+    }
+
+    #[test]
+    fn il_permesso_porta_il_titolo_della_sessione() {
+        let v = voce_permesso(1, &permesso("ls"), "Sistemare il restyle", Instant::now());
+        assert_eq!(v.dettaglio, "ls\nSessione: Sistemare il restyle");
+        assert_eq!(v.titolo, "Claude chiede: Comando ls", "il titolo della voce resta quello di prima");
+        // Senza titolo (o fatto di soli invisibili) vale la cartella; senza nulla «Claude».
+        assert_eq!(voce_permesso(1, &permesso("ls"), "", Instant::now()).dettaglio, "ls\nSessione: progetto-a");
+        assert_eq!(voce_permesso(1, &permesso("ls"), "\u{200b}", Instant::now()).dettaglio, "ls\nSessione: progetto-a");
+        let nudo = EventoHook { cartella: String::new(), ..permesso("ls") };
+        assert_eq!(voce_permesso(1, &nudo, "", Instant::now()).dettaglio, "ls\nSessione: Claude");
+    }
+
+    #[test]
+    fn il_nome_per_narrator_dice_il_titolo_solo_se_c_e() {
+        let t = Instant::now();
+        let mut s = Sessioni::new();
+        con(&mut s, ev("a", TipoEvento::UserPromptSubmit), t);
+        let pre = EventoHook { strumento: Some("Edit".into()), ..ev("a", TipoEvento::PreToolUse) };
+        con(&mut s, pre, t);
+        let ora = t + Duration::from_secs(192);
+        assert_eq!(nome_attivita(&s, ora).as_deref(), Some("Claude, Modifica, 3 minuti"));
+        s.imposta_titolo("a", Some("Sistemare il restyle"));
+        assert_eq!(nome_attivita(&s, ora).as_deref(), Some("Claude, Sistemare il restyle, Modifica, 3 minuti"));
+        // Con più sessioni al lavoro: solo il numero, come prima.
+        con(&mut s, ev("b", TipoEvento::UserPromptSubmit), t);
+        assert_eq!(nome_attivita(&s, ora).as_deref(), Some("Claude, 2 sessioni, 3 minuti"));
     }
 
     fn riepilogo_con_spesa(micro: Option<&str>, aggiornato: Option<(u32, u32)>) -> Riepilogo {

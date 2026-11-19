@@ -2,7 +2,8 @@
 //!
 //! Claude Code lancia il comando della barra a ogni aggiornamento e gli passa un JSON su stdin.
 //! `isola-hook barra` lo legge, stampa una riga breve e manda all'assistente in esecuzione, per il
-//! tubo protetto, solo `DatiBarra`: mai lo stdin grezzo (niente cartelle, trascrizione, workspace).
+//! tubo protetto, solo `DatiBarra`: mai lo stdin grezzo (niente cartelle, trascrizione, workspace;
+//! del nome della sessione passa il solo testo ripulito, come `titolo`).
 //! Il comando deve essere veloce: 40 ms in tutto, la riga prima di ogni invio.
 
 use std::io::{self, Read, Write};
@@ -19,6 +20,8 @@ use crate::tubo::{self, Destinazione};
 pub const MASSIMO_STDIN: usize = 64 * 1024;
 /// Lunghezza massima del nome del modello.
 const MASSIMO_MODELLO: usize = 40;
+/// Lunghezza massima del titolo della sessione, «…» compreso.
+const MASSIMO_TITOLO: usize = 60;
 /// Il testo mostrato quando non si sa altro.
 const RIGA_VUOTA: &str = "Claude";
 
@@ -39,6 +42,10 @@ pub struct DatiBarra {
     pub contesto: Option<f32>,
     pub cinque_ore: Option<Limite>,
     pub sette_giorni: Option<Limite>,
+    /// Il nome della sessione (`session_name` della barra: quello di `--name` o `/rename`, o il
+    /// titolo che Claude Code genera da sé), ripulito e al più 60 caratteri. Assente se la sessione
+    /// non ne ha ancora uno. Gli hook non lo ricevono: arriva solo da qui.
+    pub titolo: Option<String>,
 }
 
 /// Un valore del tipo giusto o niente: un campo strano non fa fallire tutto il resto.
@@ -85,6 +92,9 @@ struct Grezzo {
     context_window: Option<Contesto>,
     #[serde(default, deserialize_with = "tollerante")]
     rate_limits: Option<Limiti>,
+    /// Il nome di `--name` o `/rename`, o il titolo generato: assente se la sessione non ne ha.
+    #[serde(default, deserialize_with = "solo_testo")]
+    session_name: Option<String>,
 }
 
 fn percentuale(p: Option<f64>) -> Option<f32> {
@@ -116,6 +126,28 @@ fn nome_pulito(s: &str) -> Option<String> {
     (!t.is_empty()).then_some(t)
 }
 
+/// Il nome della sessione ripulito: a capo e tab diventano spazi, gli altri caratteri di controllo,
+/// di direzione e zero-width spariscono, spazi ai lati tolti; oltre 60 caratteri (non byte) se ne
+/// tengono 59 e si chiude con «…». Vuoto dopo la pulizia: nessun titolo. Ripulire un testo già
+/// pulito non lo cambia: la convalida si appoggia a questo.
+fn titolo_pulito(s: &str) -> Option<String> {
+    let t: String = s
+        .chars()
+        .filter_map(|c| match c {
+            '\n' | '\r' | '\t' => Some(' '),
+            c if c.is_control() => None,
+            '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}' => None,
+            c => Some(c),
+        })
+        .collect();
+    let t = t.trim();
+    if t.chars().count() <= MASSIMO_TITOLO {
+        return (!t.is_empty()).then(|| t.to_owned());
+    }
+    let corto: String = t.chars().take(MASSIMO_TITOLO - 1).collect();
+    Some(format!("{}\u{2026}", corto.trim_end()))
+}
+
 impl Limite {
     fn stretto(self) -> Limite {
         Limite {
@@ -130,6 +162,11 @@ impl DatiBarra {
     /// corpo inoltrato: sessione valida, percentuali finite in 0..=100, nome ripulito.
     pub(crate) fn convalida(mut self) -> Result<DatiBarra, ErroreEvento> {
         if sessione_valida(Some(&self.sessione)).is_none() {
+            return Err(ErroreEvento::NonValido);
+        }
+        // Il titolo, a differenza del modello, non si corregge: chi l'ha costruito l'ha già
+        // ripulito, e uno troppo lungo o sporco (un cliente che non è l'aiutante) si rifiuta.
+        if self.titolo.as_ref().is_some_and(|t| titolo_pulito(t).as_deref() != Some(t.as_str())) {
             return Err(ErroreEvento::NonValido);
         }
         self.modello = self.modello.as_deref().and_then(nome_pulito);
@@ -167,6 +204,7 @@ pub fn dati_da_json(corpo: &[u8]) -> Result<DatiBarra, ErroreEvento> {
             .and_then(|c| percentuale(c.used_percentage)),
         cinque_ore: limite(r.five_hour),
         sette_giorni: limite(r.seven_day),
+        titolo: g.session_name.as_deref().and_then(titolo_pulito),
     }
     .convalida()
 }
@@ -338,6 +376,7 @@ mod test {
             contesto: None,
             cinque_ore: None,
             sette_giorni: None,
+            titolo: None,
         };
         assert_eq!(riga(&d, T, ora_fissa), "Claude");
         let d = dati_da_json(
@@ -385,6 +424,74 @@ mod test {
         // Campi in più: rifiutato.
         let extra = br#"{"sessione":"s","modello":null,"contesto":null,"cinque_ore":null,"sette_giorni":null,"cwd":"x"}"#;
         assert!(inoltrati(extra).is_err());
+    }
+
+    /// Un corpo inoltrato col solo `titolo` variabile.
+    fn con_titolo(titolo: &str) -> Vec<u8> {
+        format!(
+            r#"{{"sessione":"s","modello":null,"contesto":null,"cinque_ore":null,"sette_giorni":null,"titolo":{titolo}}}"#
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn titolo_della_sessione_dalla_barra() {
+        let d = dati_da_json(completo().as_bytes()).unwrap();
+        assert_eq!(d.titolo.as_deref(), Some("nome-segreto"));
+        let con = |nome: &str| {
+            dati_da_json(format!(r#"{{"session_id":"s","session_name":{nome}}}"#).as_bytes()).unwrap().titolo
+        };
+        // Assente, null, di un altro tipo, vuoto o fatto di soli invisibili: nessun titolo.
+        assert_eq!(dati_da_json(br#"{"session_id":"s"}"#).unwrap().titolo, None);
+        let invisibili = format!("\"{}{}\"", '\u{200b}', '\u{202e}');
+        for niente in ["null", "42", "[]", r#""""#, r#""  \t\n ""#, invisibili.as_str()] {
+            assert_eq!(con(niente), None, "{niente}");
+        }
+        // Spazi ai lati tolti; controlli, direzione e zero-width via; a capo e tab diventano spazi.
+        let sporco = format!("\"  Sistemare{} il\\nrestyle{} \"", '\u{202e}', '\u{200b}');
+        assert_eq!(con(&sporco).as_deref(), Some("Sistemare il restyle"));
+    }
+
+    #[test]
+    fn titolo_lungo_si_taglia_a_sessanta() {
+        let con = |n: usize| {
+            let nome = "è".repeat(n);
+            dati_da_json(format!(r#"{{"session_id":"s","session_name":"{nome}"}}"#).as_bytes()).unwrap().titolo.unwrap()
+        };
+        // Fino a 60 caratteri resta intero (non 60 byte: «è» ne pesa due).
+        assert_eq!(con(60), "è".repeat(60));
+        // Oltre: 59 caratteri e «…», 60 in tutto, senza spezzare un carattere.
+        let t = con(61);
+        assert_eq!(t.chars().count(), 60);
+        assert_eq!(t, format!("{}\u{2026}", "è".repeat(59)));
+        assert_eq!(con(500).chars().count(), 60);
+        // Lo spazio prima del taglio non resta appeso al «…».
+        let t = dati_da_json(format!(r#"{{"session_id":"s","session_name":"{} {}"}}"#, "a".repeat(58), "b".repeat(10)).as_bytes())
+            .unwrap()
+            .titolo
+            .unwrap();
+        assert_eq!(t, format!("{}\u{2026}", "a".repeat(58)));
+    }
+
+    #[test]
+    fn titolo_inoltrato_si_riconvalida_e_si_rifiuta_se_sporco() {
+        // Il titolo ripulito passa e torna uguale.
+        let mut d = dati_da_json(completo().as_bytes()).unwrap();
+        d.titolo = Some("Sistemare il restyle".into());
+        assert_eq!(inoltrati(&serde_json::to_vec(&d).unwrap()).unwrap(), d);
+        assert_eq!(inoltrati(&con_titolo("null")).unwrap().titolo, None);
+        // Il campo può mancare del tutto (un aiutante più vecchio).
+        let senza = br#"{"sessione":"s","modello":null,"contesto":null,"cinque_ore":null,"sette_giorni":null}"#;
+        assert_eq!(inoltrati(senza).unwrap().titolo, None);
+        // Il 60 esatto passa, il 61 no.
+        assert!(inoltrati(&con_titolo(&format!("\"{}\"", "a".repeat(60)))).is_ok());
+        assert!(inoltrati(&con_titolo(&format!("\"{}\"", "a".repeat(61)))).is_err());
+        // Sporco (controlli, direzione, zero-width), non rifilato o vuoto: rifiutato, non corretto.
+        let bidi = format!("\"a{}b\"", '\u{202e}');
+        let zero_width = format!("\"a{}b\"", '\u{200b}');
+        for no in [r#""a\u0007b""#, bidi.as_str(), zero_width.as_str(), r#"" a""#, r#""a ""#, r#""""#, r#""a\nb""#, "42"] {
+            assert!(inoltrati(&con_titolo(no)).is_err(), "{no}");
+        }
     }
 
     #[test]
@@ -532,7 +639,7 @@ mod test {
         let b = Richiesta::Barra(d).in_byte().unwrap();
         let t = String::from_utf8(b).unwrap();
         for vietato in [
-            "segreto",
+            "C:\\\\segreto",
             "transcript",
             "cwd",
             "workspace",
@@ -541,5 +648,11 @@ mod test {
         ] {
             assert!(!t.contains(vietato), "inoltrato {vietato}: {t}");
         }
+        // Del `session_name` parte solo il valore, nel campo `titolo`: nessun altro campo nuovo.
+        assert!(t.contains(r#""titolo":"nome-segreto""#), "{t}");
+        let v: serde_json::Value = serde_json::from_str(&t).unwrap();
+        let mut chiavi: Vec<&str> = v["Barra"].as_object().unwrap().keys().map(String::as_str).collect();
+        chiavi.sort_unstable();
+        assert_eq!(chiavi, ["cinque_ore", "contesto", "modello", "sessione", "sette_giorni", "titolo"]);
     }
 }

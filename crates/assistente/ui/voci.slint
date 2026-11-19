@@ -240,10 +240,12 @@ export struct SceltaQuadranteUi {
 // Una sessione di Claude Code nella vista Claude (M3, Task 9). `id`: l'impronta della sessione
 // (`claude::id_sessione`). `stato`: «Lavora», «Ti aspetta», «Fatto», «Errore»; `livello` ne dà il
 // colore (`nessuno` per chi lavora). `strumento` e `durata` solo per chi lavora; `contesto` «42%»,
-// vuoto se non si sa.
+// vuoto se non si sa. `titolo`: il nome della sessione (di `--name`, `/rename` o generato da Claude
+// Code), vuoto se non ne ha: con il titolo la riga porta quello e la cartella sta sotto, attenuata.
 export struct RigaSessioneUi {
     id: string,
     cartella: string,
+    titolo: string,
     stato: string,
     livello: LivelloUi,
     strumento: string,

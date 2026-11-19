@@ -25,6 +25,9 @@ pub enum Stato {
 pub struct Sessione {
     pub id: String,
     pub cartella: String,
+    /// Il nome che la sessione ha (`--name`, `/rename` o il titolo generato da Claude Code), dalla
+    /// barra di stato; vuoto finché non arriva. Gli hook non lo portano.
+    pub titolo: String,
     pub stato: Stato,
     pub strumento: Option<String>,
     /// Da quando lavora (solo se `Lavora`).
@@ -119,6 +122,7 @@ impl Sessioni {
             None => Sessione {
                 id: e.sessione.clone(),
                 cartella: String::new(),
+                titolo: String::new(),
                 stato: Stato::Lavora,
                 strumento: None,
                 lavora_da: None,
@@ -191,6 +195,21 @@ impl Sessioni {
         s.errore = None;
         s.lavora_da = Some(ora);
         vec![Cambio::Cambiata(id.to_owned())]
+    }
+
+    /// Il titolo che la barra di stato dà alla sessione `id`: l'ultimo non vuoto vince, uno assente
+    /// (o vuoto) non cancella quello di prima. Vale solo per una sessione già nota (la barra non ne
+    /// crea) e non tocca `ultimo`: non è un segno di vita degli hook, quindi non sposta l'ordine né
+    /// la scadenza. `Cambiata` solo se il titolo è davvero cambiato.
+    pub fn imposta_titolo(&mut self, id: &str, titolo: Option<&str>) -> Vec<Cambio> {
+        let Some(titolo) = titolo.filter(|t| !t.is_empty()) else { return Vec::new() };
+        match self.v.iter_mut().find(|s| s.sessione_è(id)) {
+            Some(s) if s.titolo != titolo => {
+                s.titolo = titolo.to_owned();
+                vec![Cambio::Cambiata(id.to_owned())]
+            }
+            _ => Vec::new(),
+        }
     }
 
     /// Un evento che aggiorna solo `ultimo`: la sessione passa in fondo, così la posizione resta
@@ -463,6 +482,45 @@ mod test {
         // a parità, la più recente prima
         s.ricevi(&ev("lavora2", TipoEvento::UserPromptSubmit), t + Duration::from_secs(5));
         assert_eq!(id(&s), ["aspetta", "errore", "lavora2", "lavora", "fatto"]);
+    }
+
+    #[test]
+    fn il_titolo_dalla_barra_resta_alla_sessione() {
+        let t = Instant::now();
+        let mut s = Sessioni::new();
+        // Sessione sconosciuta: la barra non la crea.
+        assert!(s.imposta_titolo("a", Some("Restyle")).is_empty());
+        assert!(s.elenco().is_empty());
+        s.ricevi(&ev("a", TipoEvento::UserPromptSubmit), t);
+        assert_eq!(s.elenco()[0].titolo, "");
+        assert_eq!(s.imposta_titolo("a", Some("Sistemare il restyle")), vec![Cambio::Cambiata("a".into())]);
+        assert_eq!(s.elenco()[0].titolo, "Sistemare il restyle");
+        // Lo stesso titolo: nessun cambio. Assente o vuoto: non cancella.
+        assert!(s.imposta_titolo("a", Some("Sistemare il restyle")).is_empty());
+        assert!(s.imposta_titolo("a", None).is_empty());
+        assert!(s.imposta_titolo("a", Some("")).is_empty());
+        assert_eq!(s.elenco()[0].titolo, "Sistemare il restyle");
+        // Un titolo nuovo prende il posto (l'ultimo vince).
+        assert_eq!(s.imposta_titolo("a", Some("Altro")), vec![Cambio::Cambiata("a".into())]);
+        assert_eq!(s.elenco()[0].titolo, "Altro");
+        // Gli eventi dopo non lo toccano; le altre sessioni non lo ricevono.
+        s.ricevi(&ev("a", TipoEvento::Stop), t);
+        s.ricevi(&ev("b", TipoEvento::UserPromptSubmit), t);
+        assert_eq!(s.elenco().iter().find(|x| x.id == "a").unwrap().titolo, "Altro");
+        assert_eq!(s.elenco().iter().find(|x| x.id == "b").unwrap().titolo, "");
+    }
+
+    #[test]
+    fn il_titolo_non_e_un_segno_di_vita() {
+        let t = Instant::now();
+        let mut s = Sessioni::new();
+        s.ricevi(&ev("a", TipoEvento::UserPromptSubmit), t);
+        s.ricevi(&ev("b", TipoEvento::UserPromptSubmit), t + Duration::from_secs(1));
+        s.imposta_titolo("a", Some("Restyle"));
+        // `a` resta la più vecchia (e scade con la sua ora), anche dopo una barra.
+        assert_eq!(s.elenco().last().unwrap().id, "a");
+        assert_eq!(s.elenco().last().unwrap().ultimo, t);
+        assert_eq!(s.scadute(t + SILENZIO_MASSIMO), vec!["a".to_string()]);
     }
 
     #[test]

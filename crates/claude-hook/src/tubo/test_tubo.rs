@@ -419,6 +419,7 @@ fn barra_ricevuta_e_passata_al_gestore() {
         contesto: Some(4.0),
         cinque_ore: None,
         sette_giorni: None,
+        titolo: Some("Sistemare il restyle".into()),
     };
     assert_eq!(
         invia(&nome, &Richiesta::Barra(d.clone()).in_byte().unwrap()),
