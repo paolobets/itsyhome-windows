@@ -96,6 +96,32 @@ component CardRiga inherits Rectangle {
     }
 }
 
+// I pulsanti di Claude Code nella sua card: «Scollega» (da collegato) e «Collega Claude Code» /
+// «Aggiorna il collegamento» con la tinta d'azione. La card li mette accanto al testo o sotto.
+component ComandiClaude inherits HorizontalLayout {
+    in property <bool> scollega;
+    in property <bool> collega;
+    in property <bool> aggiorna;
+    callback scollega-premuto();
+    callback collega-premuto();
+    callback fuoco-preso();
+
+    spacing: 10px;
+
+    if scollega: Bottone {
+        testo: "Scollega";
+        premuto => { root.scollega-premuto(); }
+        fuoco-preso => { root.fuoco-preso(); }
+    }
+
+    if collega: Bottone {
+        testo: aggiorna ? "Aggiorna il collegamento" : "Collega Claude Code";
+        tipo: TipoPulsante.azione;
+        premuto => { root.collega-premuto(); }
+        fuoco-preso => { root.fuoco-preso(); }
+    }
+}
+
 // Una colonna che scorre (elenchi e sezioni lunghe): i figli stanno in una Flickable larga quanto
 // lei e `alto-contenuto` è l'altezza della colonna dei figli (la sua `preferred-height`). La
 // barretta di scorrimento disegnata (4 px, nel margine a destra) si vede solo se il contenuto non
@@ -150,6 +176,8 @@ component Campo inherits Rectangle {
     // Il fuoco ha lasciato il campo (controllo al blur) e il testo è cambiato.
     callback lasciato();
     callback modificato();
+    // Ha appena preso il fuoco (Tab): chi lo contiene lo porta in vista.
+    callback fuoco-preso();
 
     public function prendi() {
         input.focus();
@@ -160,9 +188,11 @@ component Campo inherits Rectangle {
     HorizontalLayout {
         spacing: 8px;
 
+        // Un'etichetta più lunga della sua colonna va a capo (due righe stanno nei 34 px).
         Text {
             width: larghezza-etichetta;
             text: etichetta;
+            wrap: word-wrap;
             vertical-alignment: center;
             font-size: Tema.testo-corpo;
             color: Tema.testo-etichetta;
@@ -207,7 +237,9 @@ component Campo inherits Rectangle {
                 accessible-description: errore;
                 edited => { root.modificato(); }
                 changed has-focus => {
-                    if (!self.has-focus) {
+                    if (self.has-focus) {
+                        root.fuoco-preso();
+                    } else {
                         root.lasciato();
                     }
                 }
@@ -857,8 +889,14 @@ export component FinestraImpostazioni inherits Window {
     // La conferma di «Togli» aperta (RC-33). Si chiude da sola se la chiave sparisce.
     property <bool> api-conferma-togli;
     changed api-presente => { api-conferma-togli = false; }
-    // Una colonna sola per le etichette dei campi della sezione Claude (RC-47).
-    property <length> etichette-claude: 220px;
+    // Dove va il fuoco quando la card della chiave si rifà: su «Togli» dopo «Salva» o dopo aver
+    // annullato la conferma (I-1, M-1), sul campo «Chiave» dopo aver tolto la chiave (M-1). Chi
+    // nasce col suo segnale acceso prende il fuoco e lo spegne.
+    property <bool> fuoco-togli;
+    property <bool> fuoco-chiave;
+    // Una colonna sola per le etichette dei campi della sezione Claude (RC-47). Sotto i 700 px
+    // di finestra si stringe (le etichette vanno a capo) perché le caselle restino usabili (M-2).
+    property <length> etichette-claude: root.width >= 700px ? 220px : 140px;
 
     // Avvisi di Claude (M3, Task 12): le soglie dei limiti dell'abbonamento e della spesa del mese.
     // Rust valida, salva e restituisce l'errore da mostrare (vuoto = salvato): un valore rifiutato
@@ -1094,16 +1132,36 @@ export component FinestraImpostazioni inherits Window {
         radice.focus();
     }
 
-    // Chiude la conferma di «Togli»: il fuoco torna alla finestra.
+    // I pulsanti della card di Claude Code.
+    function chiedi-scollega() {
+        claude-esito = "";
+        claude-passo = 2;
+    }
+
+    function prepara-claude() {
+        claude-esito = "";
+        root.claude-prepara();
+    }
+
+    // Chiude la conferma di «Togli» senza togliere: il fuoco torna su «Togli», che rinasce.
     function chiudi-togli() {
+        fuoco-togli = true;
         api-conferma-togli = false;
-        radice.focus();
+    }
+
+    // «Salva» la chiave (pulsante o Invio nel campo): se Rust la accetta il campo sparisce e il
+    // fuoco va su «Togli» della stessa card, non al primo campo degli Avvisi.
+    function salva-chiave() {
+        fuoco-togli = true;
+        root.api-salva(api-campo);
     }
 
     // Lasciando la sezione la conferma non resta in sospeso.
     changed sezione => {
         conferma-c-id = "";
         api-conferma-togli = false;
+        fuoco-togli = false;
+        fuoco-chiave = false;
         if (claude-passo != 0) {
             chiudi-claude();
         }
@@ -2213,42 +2271,75 @@ export component FinestraImpostazioni inherits Window {
                         // RC-46: una card sola per Claude Code, con lo stato e le azioni di adesso
                         // (collega; da collegato scollega, e aggiorna se serve). «Collega» ha la tinta
                         // d'azione: è l'unica cosa da fare.
-                        card-stato := CardRiga {
-                            titolo: claude-stato;
-                            descrizione: !claude-disponibile
-                                ? "Il collegamento con le sessioni di Claude Code è solo per Windows; la lettura dei consumi via API funziona ovunque."
-                                : claude-collegato
-                                    ? "Le sessioni di Claude Code compaiono nella pillola, coi permessi da consentire. «Scollega» toglie da settings.json solo le voci di isola."
-                                    : "Le sessioni di Claude Code compaiono nella pillola, coi permessi da consentire.";
+                        // M-3: se il testo resterebbe schiacciato (finestra stretta, o due pulsanti
+                        // affiancati) i pulsanti vanno sotto il testo invece che accanto.
+                        card-stato := Rectangle {
+                            property <bool> scollega: claude-passo == 0 && claude-disponibile && claude-collegato;
+                            property <bool> collega: claude-passo == 0 && claude-disponibile && (!claude-collegato || claude-da-aggiornare);
+                            property <bool> comandi-sotto: self.width < (scollega && collega ? 600px : 400px);
+                            height: max(64px, corpo-stato.preferred-height);
+                            border-radius: Tema.raggio-xl;
+                            background: Tema.card-fondo;
+                            border-width: 1px;
+                            border-color: Tema.vetro-bordo;
 
-                            HorizontalLayout {
+                            corpo-stato := VerticalLayout {
+                                padding-left: 16px;
+                                padding-right: 18px;
+                                padding-top: 12px;
+                                padding-bottom: 14px;
                                 spacing: 10px;
 
-                                if claude-passo == 0 && claude-disponibile && claude-collegato: Bottone {
-                                    testo: "Scollega";
-                                    premuto => {
-                                        claude-esito = "";
-                                        claude-passo = 2;
+                                HorizontalLayout {
+                                    spacing: 12px;
+
+                                    VerticalLayout {
+                                        horizontal-stretch: 1;
+                                        alignment: center;
+                                        spacing: 6px;
+
+                                        Text {
+                                            text: claude-stato;
+                                            overflow: elide;
+                                            font-weight: 500;
+                                            font-size: Tema.testo-medio;
+                                            color: Tema.testo;
+                                        }
+
+                                        Text {
+                                            text: !claude-disponibile
+                                                ? "Il collegamento con le sessioni di Claude Code è solo per Windows; la lettura dei consumi via API funziona ovunque."
+                                                : claude-collegato
+                                                    ? "Le sessioni di Claude Code compaiono nella pillola, coi permessi da consentire. «Scollega» toglie da settings.json solo le voci di isola."
+                                                    : "Le sessioni di Claude Code compaiono nella pillola, coi permessi da consentire.";
+                                            wrap: word-wrap;
+                                            font-size: Tema.testo-piccolo;
+                                            color: Tema.testo-tenue;
+                                        }
                                     }
-                                    changed has-focus => {
-                                        if (self.has-focus) {
-                                            claude.porta-in-vista(card-stato.y, card-stato.height);
+
+                                    if !card-stato.comandi-sotto: VerticalLayout {
+                                        alignment: center;
+
+                                        ComandiClaude {
+                                            scollega: card-stato.scollega;
+                                            collega: card-stato.collega;
+                                            aggiorna: claude-da-aggiornare;
+                                            scollega-premuto => { chiedi-scollega(); }
+                                            collega-premuto => { prepara-claude(); }
+                                            fuoco-preso => { claude.porta-in-vista(card-stato.y, card-stato.height); }
                                         }
                                     }
                                 }
 
-                                if claude-passo == 0 && claude-disponibile && (!claude-collegato || claude-da-aggiornare): Bottone {
-                                    testo: claude-da-aggiornare ? "Aggiorna il collegamento" : "Collega Claude Code";
-                                    tipo: TipoPulsante.azione;
-                                    premuto => {
-                                        claude-esito = "";
-                                        root.claude-prepara();
-                                    }
-                                    changed has-focus => {
-                                        if (self.has-focus) {
-                                            claude.porta-in-vista(card-stato.y, card-stato.height);
-                                        }
-                                    }
+                                if card-stato.comandi-sotto && (card-stato.scollega || card-stato.collega): ComandiClaude {
+                                    alignment: start;
+                                    scollega: card-stato.scollega;
+                                    collega: card-stato.collega;
+                                    aggiorna: claude-da-aggiornare;
+                                    scollega-premuto => { chiedi-scollega(); }
+                                    collega-premuto => { prepara-claude(); }
+                                    fuoco-preso => { claude.porta-in-vista(card-stato.y, card-stato.height); }
                                 }
                             }
                         }
@@ -2288,7 +2379,7 @@ export component FinestraImpostazioni inherits Window {
 
                                 // Il riquadro mono: scorre col mouse e, con il fuoco dentro, con le
                                 // frecce. Basso abbastanza da lasciare in vista i pulsanti (RC-31).
-                                Rectangle {
+                                riquadro-json := Rectangle {
                                     height: 120px;
                                     border-radius: Tema.raggio-m;
                                     background: Tema.riquadro-fondo;
@@ -2312,6 +2403,11 @@ export component FinestraImpostazioni inherits Window {
                                             font-size: Tema.testo-piccolo;
                                             color: Tema.testo;
                                             accessible-label: "Voci di isola come resteranno in settings.json";
+                                            changed has-focus => {
+                                                if (self.has-focus) {
+                                                    claude.porta-in-vista(card-anteprima.y + riquadro-json.y, riquadro-json.height);
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -2463,14 +2559,23 @@ export component FinestraImpostazioni inherits Window {
                                     color: Tema.testo-tenue;
                                 }
 
-                                if !api-presente: Campo {
+                                if !api-presente: campo-chiave := Campo {
                                     etichetta: "Chiave";
                                     larghezza-etichetta: etichette-claude;
                                     suggerimento: "sk-ant-admin01-…";
                                     nome-accessibile: "Chiave da amministratore";
                                     password: true;
                                     testo <=> api-campo;
-                                    invio => { root.api-salva(api-campo); }
+                                    invio => { salva-chiave(); }
+                                    // Ricompare dopo aver tolto la chiave: il fuoco ci torna.
+                                    init => {
+                                        if (fuoco-chiave) {
+                                            fuoco-chiave = false;
+                                            fuoco-togli = false;
+                                            self.prendi();
+                                        }
+                                    }
+                                    fuoco-preso => { claude.porta-in-vista(card-api.y + campo-chiave.y, campo-chiave.height); }
                                 }
 
                                 if api-presente: Text {
@@ -2482,7 +2587,7 @@ export component FinestraImpostazioni inherits Window {
                                 }
 
                                 // Con la conferma di «Togli» aperta i pulsanti lasciano il posto a lei.
-                                if !api-conferma-togli: HorizontalLayout {
+                                if !api-conferma-togli: riga-api := HorizontalLayout {
                                     height: 30px;
                                     spacing: 10px;
                                     alignment: start;
@@ -2490,7 +2595,8 @@ export component FinestraImpostazioni inherits Window {
                                     if !api-presente: Bottone {
                                         testo: "Salva";
                                         tipo: TipoPulsante.azione;
-                                        premuto => { root.api-salva(api-campo); }
+                                        premuto => { salva-chiave(); }
+                                        fuoco-preso => { claude.porta-in-vista(card-api.y + riga-api.y, riga-api.height); }
                                     }
 
                                     Bottone {
@@ -2500,11 +2606,21 @@ export component FinestraImpostazioni inherits Window {
                                                 root.api-prova(api-campo);
                                             }
                                         }
+                                        fuoco-preso => { claude.porta-in-vista(card-api.y + riga-api.y, riga-api.height); }
                                     }
 
-                                    if api-presente: Bottone {
+                                    if api-presente: togli-chiave := Bottone {
                                         testo: "Togli";
                                         premuto => { api-conferma-togli = true; }
+                                        // Rinasce dopo «Salva» o dopo la conferma annullata: il fuoco ci torna.
+                                        init => {
+                                            if (fuoco-togli) {
+                                                fuoco-togli = false;
+                                                fuoco-chiave = false;
+                                                self.focus();
+                                            }
+                                        }
+                                        fuoco-preso => { claude.porta-in-vista(card-api.y + riga-api.y, riga-api.height); }
                                     }
 
                                     // Le schede delle API anche da qui, appena c'è la chiave (RC-46).
@@ -2512,6 +2628,7 @@ export component FinestraImpostazioni inherits Window {
                                         testo: "Dettagli delle API";
                                         tipo: TipoPulsante.azione;
                                         premuto => { root.api-dettagli(); }
+                                        fuoco-preso => { claude.porta-in-vista(card-api.y + riga-api.y, riga-api.height); }
                                     }
                                 }
 
@@ -2563,9 +2680,16 @@ export component FinestraImpostazioni inherits Window {
                                             conferma-togli := Bottone {
                                                 testo: "Togli";
                                                 tipo: TipoPulsante.pericolo;
+                                                // Tolta, il campo «Chiave» ricompare e prende il fuoco;
+                                                // se il portachiavi rifiuta, la chiave resta e il fuoco
+                                                // torna su «Togli».
                                                 premuto => {
-                                                    chiudi-togli();
+                                                    fuoco-chiave = true;
                                                     root.api-togli();
+                                                    if (api-presente) {
+                                                        fuoco-togli = true;
+                                                    }
+                                                    api-conferma-togli = false;
                                                 }
                                                 changed has-focus => {
                                                     if (self.has-focus) {
@@ -2599,7 +2723,7 @@ export component FinestraImpostazioni inherits Window {
                             text: "AVVISI";
                         }
 
-                        Rectangle {
+                        card-avvisi := Rectangle {
                             height: colonna-avvisi.preferred-height;
                             border-radius: Tema.raggio-xl;
                             background: Tema.card-fondo;
@@ -2620,7 +2744,7 @@ export component FinestraImpostazioni inherits Window {
                                     color: Tema.testo-tenue;
                                 }
 
-                                Campo {
+                                campo-limite := Campo {
                                     etichetta: "Avvisa quando un limite supera (%)";
                                     larghezza-etichetta: etichette-claude;
                                     suggerimento: "80";
@@ -2628,6 +2752,7 @@ export component FinestraImpostazioni inherits Window {
                                     errore: errore-soglia-limite;
                                     invio => { errore-soglia-limite = root.soglia-limite-scritta(self.testo); }
                                     lasciato => { errore-soglia-limite = root.soglia-limite-scritta(self.testo); }
+                                    fuoco-preso => { claude.porta-in-vista(card-avvisi.y + campo-limite.y, campo-limite.height); }
                                 }
 
                                 if errore-soglia-limite != "": Text {
@@ -2638,7 +2763,8 @@ export component FinestraImpostazioni inherits Window {
                                     accessible-role: none;
                                 }
 
-                                Campo {
+                                // In vista anche la riga dell'errore sotto, se c'è.
+                                campo-spesa := Campo {
                                     etichetta: "Soglia di spesa mensile ($)";
                                     larghezza-etichetta: etichette-claude;
                                     suggerimento: "Per esempio 250";
@@ -2646,6 +2772,7 @@ export component FinestraImpostazioni inherits Window {
                                     errore: errore-soglia-spesa;
                                     invio => { errore-soglia-spesa = root.soglia-spesa-scritta(self.testo); }
                                     lasciato => { errore-soglia-spesa = root.soglia-spesa-scritta(self.testo); }
+                                    fuoco-preso => { claude.porta-in-vista(card-avvisi.y + campo-spesa.y, card-avvisi.height - campo-spesa.y); }
                                 }
 
                                 if errore-soglia-spesa != "": Text {

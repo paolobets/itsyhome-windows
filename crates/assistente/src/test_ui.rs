@@ -2399,6 +2399,131 @@ mod accessibilita {
         assert!(col_fuoco(&f).ends_with("annulla-claude"), "fuoco su «{}»", col_fuoco(&f));
     }
 
+    /// Posizione (nella finestra) e misura dell'elemento col fuoco vero.
+    fn dove_il_fuoco(f: &FinestraImpostazioni) -> Option<(f32, f32, f32, f32)> {
+        let fuoco = i_slint_core::window::WindowInner::from_pub(f.window()).focus_item.borrow().upgrade()?;
+        // `map_to_window` parte dall'origine del genitore: la posizione dell'elemento va aggiunta.
+        let g = fuoco.geometry();
+        let p = fuoco.map_to_window(g.origin);
+        Some((p.x, p.y, g.size.width, g.size.height))
+    }
+
+    /// Il fuoco vero è su questo elemento (stessa posizione nella finestra).
+    fn ha_il_fuoco(f: &FinestraImpostazioni, e: &ElementHandle) -> bool {
+        let p = e.absolute_position();
+        dove_il_fuoco(f).is_some_and(|(x, y, _, _)| (x - p.x).abs() < 0.5 && (y - p.y).abs() < 0.5)
+    }
+
+    /// Fix 1, I-1 e M-1: da tastiera, dopo «Salva» il fuoco va su «Togli» della card della chiave
+    /// (non al primo campo degli Avvisi); annullata la conferma torna su «Togli»; tolta la chiave va
+    /// al campo «Chiave» che ricompare.
+    #[test]
+    fn il_fuoco_segue_la_chiave_salvata_e_tolta() {
+        use slint::platform::{Key, WindowEvent};
+        piattaforma_di_prova();
+        let f = FinestraImpostazioni::new().expect("impostazioni");
+        f.set_sezione(crate::finestra_impostazioni::SEZIONE_CLAUDE);
+        f.show().expect("impostazioni mostrate nel backend di prova");
+        f.window().set_size(slint::LogicalSize::new(760.0, 1400.0));
+        f.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
+        let debole = f.as_weak();
+        f.on_api_salva(move |_| {
+            let f = debole.upgrade().unwrap();
+            f.set_api_campo("".into());
+            f.set_api_ultime("0000".into());
+            f.set_api_presente(true);
+        });
+        let debole = f.as_weak();
+        f.on_api_togli(move || debole.upgrade().unwrap().set_api_presente(false));
+        let chiave = || campo(&f, "Chiave da amministratore");
+        // Tab fino al campo della chiave, si scrive, Invio.
+        for _ in 0..30 {
+            if ha_il_fuoco(&f, &chiave()) {
+                break;
+            }
+            tasto_finestra(&f, Key::Tab);
+        }
+        assert!(
+            ha_il_fuoco(&f, &chiave()),
+            "Tab arriva al campo della chiave: fuoco «{}» {:?}, campo {:?}",
+            col_fuoco(&f),
+            dove_il_fuoco(&f),
+            chiave().absolute_position()
+        );
+        scrivi(&f, "sk-ant-admin01-finta");
+        tasto_finestra(&f, Key::Return);
+        assert!(f.get_api_presente());
+        assert!(col_fuoco(&f).ends_with("togli-chiave"), "dopo «Salva» il fuoco è su «{}»", col_fuoco(&f));
+        // Invio su «Togli» apre la conferma; Invio su «Annulla» la chiude e il fuoco torna su «Togli».
+        tasto_finestra(&f, Key::Return);
+        assert!(col_fuoco(&f).ends_with("annulla-togli"), "«{}»", col_fuoco(&f));
+        tasto_finestra(&f, Key::Return);
+        assert!(col_fuoco(&f).ends_with("togli-chiave"), "dopo «Annulla» il fuoco è su «{}»", col_fuoco(&f));
+        // Di nuovo, e questa volta «Togli» rosso: il fuoco va al campo che ricompare.
+        tasto_finestra(&f, Key::Return);
+        tasto_finestra(&f, Key::Tab);
+        tasto_finestra(&f, Key::Return);
+        assert!(!f.get_api_presente());
+        assert!(ha_il_fuoco(&f, &chiave()), "tolta la chiave il fuoco è sul campo, non su «{}»", col_fuoco(&f));
+    }
+
+    /// Fix 1, I-2: alla misura di serie (720×520) Tab fino a «Soglia di spesa mensile» la porta
+    /// intera nell'area visibile (ogni controllo della sezione Claude scorre in vista).
+    #[test]
+    fn tab_porta_in_vista_la_soglia_di_spesa() {
+        use slint::platform::{Key, WindowEvent};
+        piattaforma_di_prova();
+        let f = FinestraImpostazioni::new().expect("impostazioni");
+        f.set_sezione(crate::finestra_impostazioni::SEZIONE_CLAUDE);
+        f.show().expect("impostazioni mostrate nel backend di prova");
+        f.window().set_size(slint::LogicalSize::new(720.0, 520.0));
+        f.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
+        let spesa = || campo(&f, "Soglia di spesa mensile ($)");
+        let (y0, h0) = (spesa().absolute_position().y, spesa().size().height);
+        assert!(y0 + h0 > 520.0 - 24.0, "all'apertura la casella è sotto il bordo (altrimenti il test non prova nulla): {y0}");
+        for _ in 0..30 {
+            if ha_il_fuoco(&f, &spesa()) {
+                break;
+            }
+            tasto_finestra(&f, Key::Tab);
+        }
+        assert!(ha_il_fuoco(&f, &spesa()), "Tab arriva alla soglia di spesa");
+        let (_, y, _, h) = dove_il_fuoco(&f).unwrap();
+        assert!(y >= 18.0 && y + h <= 520.0 - 24.0 + 0.5, "la casella col fuoco è fuori vista: y {y} + {h}");
+    }
+
+    /// Fix 1, M-2 e M-3: a finestra minima (600 px) le caselle della sezione Claude restano larghe
+    /// abbastanza e, collegato e da aggiornare, i due pulsanti vanno sotto il testo della card.
+    #[test]
+    fn sezione_claude_a_finestra_minima() {
+        piattaforma_di_prova();
+        let f = FinestraImpostazioni::new().expect("impostazioni");
+        f.set_sezione(crate::finestra_impostazioni::SEZIONE_CLAUDE);
+        f.set_claude_collegato(true);
+        f.set_claude_da_aggiornare(true);
+        f.set_claude_stato("Da aggiornare".into());
+        f.show().expect("impostazioni mostrate nel backend di prova");
+        f.window().set_size(slint::LogicalSize::new(600.0, 1400.0));
+        for nome in ["Chiave da amministratore", "Avvisa quando un limite supera (%)", "Soglia di spesa mensile ($)"] {
+            let l = campo(&f, nome).size().width;
+            assert!(l >= 120.0, "«{nome}» largo solo {l}");
+        }
+        let titolo = elemento(&f, "Da aggiornare");
+        let sotto = titolo.absolute_position().y + titolo.size().height;
+        for nome in ["Scollega", "Aggiorna il collegamento"] {
+            let p = elemento(&f, nome);
+            assert!(p.absolute_position().y > sotto, "«{nome}» accanto al testo invece che sotto");
+        }
+        // Alla misura di serie un pulsante solo (non collegato) resta accanto al testo.
+        f.set_claude_collegato(false);
+        f.set_claude_da_aggiornare(false);
+        f.set_claude_stato("Non collegato".into());
+        f.window().set_size(slint::LogicalSize::new(720.0, 1400.0));
+        let titolo = elemento(&f, "Non collegato");
+        let collega = elemento(&f, "Collega Claude Code");
+        assert!(collega.absolute_position().y < titolo.absolute_position().y + 40.0, "«Collega» accanto al testo");
+    }
+
     /// RC-33: «Togli» la chiave chiede conferma come «Scollega»: domanda, fuoco su «Annulla»
     /// (Invio lì non toglie nulla), Esc annulla, «Togli» rosso toglie davvero.
     #[test]
