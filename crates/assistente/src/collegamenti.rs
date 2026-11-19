@@ -26,8 +26,9 @@ pub fn valida_nome(s: &str) -> Result<String, String> {
 }
 
 /// Quanti colori ha la tavolozza dei cerchi (`Tema.colore-collegamento` in tema.slint; un test
-/// controlla che i due numeri coincidano).
-pub const TONI: usize = 8;
+/// controlla che i due numeri coincidano). Solo i sei colori dei petali: i toni caldi dell'app
+/// vogliono dire avviso o errore e non devono fare da colore d'identità.
+pub const TONI: usize = 6;
 
 /// L'iniziale del nome, maiuscola, per il cerchio del collegamento: il primo carattere che sia
 /// una lettera o una cifra («#» se il nome non ne ha).

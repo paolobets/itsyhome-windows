@@ -65,29 +65,59 @@ fn colore_a_mano(codice: &str) -> bool {
     })
 }
 
-/// I pezzi fra virgolette di una riga di codice (Slint o Rust), senza il commento `//`.
+/// I pezzi fra virgolette di una riga di codice (Slint o Rust), senza il commento `//`. Capisce
+/// `"\\"` (la barra rovesciata è un carattere, non protegge la virgoletta dopo) e i caratteri
+/// `'"'` / `'\"'`. Limiti noti: non vede le stringhe su più righe (`\` a capo) né le raw string.
 fn stringhe_della_riga(riga: &str) -> Vec<String> {
-    let codice = senza_commento(riga);
+    let c: Vec<char> = riga.chars().collect();
     let mut trovate = Vec::new();
     let mut corrente: Option<String> = None;
-    let mut prima = ' ';
-    for c in codice.chars() {
-        if c == '"' && prima != '\\' {
-            match corrente.take() {
-                Some(s) => trovate.push(s),
-                None => corrente = Some(String::new()),
+    let mut i = 0;
+    while i < c.len() {
+        if let Some(s) = corrente.as_mut() {
+            if c[i] == '\\' {
+                s.push('\\');
+                if let Some(&dopo) = c.get(i + 1) {
+                    s.push(dopo);
+                }
+                i += 2;
+                continue;
             }
-        } else if let Some(s) = corrente.as_mut() {
-            s.push(c);
+            if c[i] == '"' {
+                trovate.extend(corrente.take());
+            } else {
+                s.push(c[i]);
+            }
+            i += 1;
+            continue;
         }
-        prima = c;
+        match c[i] {
+            '"' => corrente = Some(String::new()),
+            '/' if c.get(i + 1) == Some(&'/') => break,
+            '\'' if c.get(i + 1) == Some(&'"') && c.get(i + 2) == Some(&'\'') => i += 2,
+            '\'' if c.get(i + 1) == Some(&'\\') && c.get(i + 3) == Some(&'\'') => i += 3,
+            _ => {}
+        }
+        i += 1;
     }
     trovate
 }
 
+/// Il sorgente Rust senza il blocco di test in fondo (`#[cfg(test)]` subito seguito da `mod …`).
+/// Un `#[cfg(test)]` a metà file davanti a una funzione o a un `use` non lo chiude: il resto del
+/// file, dove stanno i testi per l'utente, si controlla.
+fn senza_modulo_di_test(testo: &str) -> String {
+    let righe: Vec<&str> = testo.lines().collect();
+    let fine = righe
+        .windows(2)
+        .position(|w| w[0].trim() == "#[cfg(test)]" && w[1].trim_start().starts_with("mod "))
+        .unwrap_or(righe.len());
+    righe[..fine].join("\n")
+}
+
 /// Le stringhe per l'utente che nominano un «ambiente»: nei `.slint` ogni stringa (testi ed etichette
-/// per Narrator); nei sorgenti Rust dell'assistente quelle fuori dai test (la parte dopo
-/// `#[cfg(test)]` e `test_ui.rs` non contano). Fanno eccezione solo i due nomi interni elencati.
+/// per Narrator); nei sorgenti Rust dell'assistente quelle fuori dai test (il
+/// blocco `#[cfg(test)] mod …` in fondo e `test_ui.rs` non contano). Fanno eccezione solo i due nomi interni elencati.
 fn stringhe_con_ambiente() -> Vec<String> {
     // Non arrivano all'utente: la base dell'id di una casa senza nome e il nome del tipo nel Debug.
     const INTERNE: [&str; 2] = ["ambiente", "Ambiente"];
@@ -120,8 +150,7 @@ fn stringhe_con_ambiente() -> Vec<String> {
     }
     for percorso in rust {
         let testo = std::fs::read_to_string(&percorso).expect("sorgente leggibile");
-        let fuori_dai_test = testo.split("#[cfg(test)]").next().unwrap_or("");
-        cerca(&percorso.display().to_string(), fuori_dai_test, &mut trovate);
+        cerca(&percorso.display().to_string(), &senza_modulo_di_test(&testo), &mut trovate);
     }
     trovate
 }
@@ -131,6 +160,20 @@ fn riconosce_le_stringhe_con_ambiente() {
     assert_eq!(stringhe_della_riga(r#"text: "Nessun ambiente"; // un ambiente"#), ["Nessun ambiente"]);
     assert_eq!(stringhe_della_riga(r#"a("uno", "due \" tre")"#).len(), 2);
     assert!(stringhe_della_riga("let ambiente = 1; // «ambiente»").is_empty());
+    // Il carattere virgoletta e la barra rovesciata non scombinano il resto della riga.
+    assert_eq!(stringhe_della_riga(r#"['"', 'x'] + "Ambiente rimosso""#), ["Ambiente rimosso"]);
+    assert_eq!(stringhe_della_riga(r#"['\"'] + "ambiente""#), ["ambiente"]);
+    assert_eq!(stringhe_della_riga(r#"a("\\") + "ambiente""#), ["\\\\", "ambiente"]);
+    assert_eq!(stringhe_della_riga(r#"url("https://x.it") // "ambiente""#), ["https://x.it"]);
+}
+
+#[test]
+fn il_blocco_di_test_si_taglia_solo_in_fondo() {
+    let testo = "fn a() { \"uno\" }\n#[cfg(test)]\nfn solo_prova() {}\nfn b() { \"Ambiente rimosso\" }\n\n#[cfg(test)]\nmod test {\n    \"ambiente\"\n}\n";
+    let tenuto = senza_modulo_di_test(testo);
+    assert!(tenuto.contains("Ambiente rimosso"), "dopo un #[cfg(test)] a metà file si guarda ancora");
+    assert!(!tenuto.contains("\"ambiente\""), "il modulo di test in fondo si salta");
+    assert_eq!(senza_modulo_di_test("fn a() {}\r\nfn b() {}\r\n"), "fn a() {}\nfn b() {}", "senza modulo di test");
 }
 
 #[test]
@@ -2041,9 +2084,10 @@ mod accessibilita {
         // suggerimento sulla card (per Narrator) e, se serve, l'errore.
         assert!(ElementHandle::find_by_accessible_label(&p, "Si aprono nel browser").next().is_none());
         assert!(ElementHandle::find_by_accessible_label(&p, "COLLEGAMENTI").next().is_none());
-        // Il cerchio col nome: l'iniziale (e il colore dal nome, tono 0..).
-        assert!(ElementHandle::find_by_accessible_label(&p, "P").next().is_some(), "iniziale di Proxmox");
-        assert!(ElementHandle::find_by_accessible_label(&p, "S").next().is_some(), "iniziale di Stampante");
+        // L'iniziale nel cerchio è decorativa: Narrator legge solo il nome della card.
+        assert!(ElementHandle::find_by_accessible_label(&p, "P").next().is_none(), "iniziale di Proxmox esposta");
+        assert!(ElementHandle::find_by_accessible_label(&p, "S").next().is_none(), "iniziale di Stampante esposta");
+        assert!(ElementHandle::find_by_accessible_label(&p, "Proxmox, esempio.lan:8006").next().is_some());
         p.set_errore_collegamenti("«NAS» non si è aperto".into());
         assert!(ElementHandle::find_by_accessible_label(&p, "«NAS» non si è aperto").next().is_some());
     }

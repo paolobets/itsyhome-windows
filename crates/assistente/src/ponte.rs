@@ -531,7 +531,7 @@ pub fn con_ottimismo(mut p: Preferito, ottimismo: &Ottimismo<bool>) -> Preferito
 }
 
 /// L'errore di un tocco che Home Assistant non ha confermato in tempo.
-pub const ERRORE_SENZA_CONFERMA: &str = "Home Assistant non ha confermato il comando";
+pub const ERRORE_SENZA_CONFERMA: &str = "La casa non ha confermato il comando";
 
 /// L'entità con questo id fra preferiti, stanze e scene (per il comando di un tocco).
 pub fn entita(menu: &MenuData, entity_id: &str) -> Option<AppEntity> {

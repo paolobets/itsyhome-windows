@@ -57,7 +57,7 @@ pub const EVENTI_RILETTURA: [&str; 4] =
     ["area_registry_updated", "device_registry_updated", "entity_registry_updated", "core_config_updated"];
 
 /// Titolo di una notifica senza titolo (in HA `title` è facoltativo e può essere null).
-pub const TITOLO_PREDEFINITO: &str = "Home Assistant";
+pub const TITOLO_PREDEFINITO: &str = "Casa";
 
 /// Un evento di `subscribe_events`: solo quelli che fanno rileggere (`EVENTI_RILETTURA`).
 ///
@@ -353,7 +353,7 @@ mod tests {
         let v = notifiche("updated", json!({ "x": { "notification_id": "x", "title": null, "message": "Ciao" } }));
         let Some(EventoWs::Notifiche { tipo, notifiche }) = interpreta_notifiche(&v) else { panic!() };
         assert_eq!(tipo, Aggiornamento::Aggiornate);
-        assert_eq!(notifiche[0].titolo, "Home Assistant");
+        assert_eq!(notifiche[0].titolo, "Casa");
     }
 
     #[test]

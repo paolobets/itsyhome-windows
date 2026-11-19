@@ -136,8 +136,8 @@ export global Tema {
         return testo-tenue;
     }
 
-    // I colori dei cerchi dei collegamenti (iniziale del nome): otto toni della tavolozza, scelti
-    // dal nome in Rust (`collegamenti::tono`). Tutti chiari: la lettera in `corpo` (scura) ci sta
+    // I colori dei cerchi dei collegamenti (iniziale del nome): sei toni, i petali (mai i caldi:
+    // quelli dicono avviso o errore), scelti dal nome in Rust (`collegamenti::tono`). Tutti chiari: la lettera in `corpo` (scura) ci sta
     // sopra con più di 4,5:1 (lo controlla un test, come il numero di toni).
     public pure function colore-collegamento(tono: int) -> color {
         if (tono == 0) { return petalo-1; }
@@ -145,9 +145,7 @@ export global Tema {
         if (tono == 2) { return petalo-3; }
         if (tono == 3) { return petalo-4; }
         if (tono == 4) { return petalo-5; }
-        if (tono == 5) { return petalo-6; }
-        if (tono == 6) { return caldo-1; }
-        return caldo-2;
+        return petalo-6;
     }
 
     // L'arco (di un limite, della spesa) diventa caldo ALLA soglia o sopra (frazione 0..1, come le voci
