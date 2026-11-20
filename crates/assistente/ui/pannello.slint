@@ -15,7 +15,9 @@
 // Invio o Spazio sul volume: muto sì/no; frecce dentro la zona
 // (in «In attesa» ←/→ fra le voci, Invio apre la Coda su quella voce; nella Coda ↑/↓ fra le righe,
 // → ai pulsanti (si entra su «Nega» se c'è, altrimenti sul primo), ← indietro fino alla riga,
-// Invio sul pulsante (mai su un consenso), «Consenti» solo con Ctrl+Invio esatto; nella
+// Invio sul pulsante (mai su un consenso); un permesso si apre (Invio, «Apri», clic) col testo
+// intero: ↑/↓ lo scorrono, «Consenti» c'è solo dopo il fondo del testo e solo con Ctrl+Invio
+// esatto, Esc o Backspace lo richiudono; nella
 // Panoramica ←/→ cambiano layout, nelle schede cambiano scheda; in Casa Tab passa dall'elenco alle
 // card: ↑/↓ fra «Preferiti» e le stanze e → alle card, le frecce fra le card, ← dalla prima colonna all'elenco
 // e ↑ dalla prima riga a «Riprova» quando c'è; Casa vuota e non connessa: «Apri Impostazioni»);
@@ -39,7 +41,7 @@ import { Anello, Fuoco, Fuochi } from "componenti.slint";
 import { ContornoIsola, RigaAlta, Barra } from "guscio/cornice.slint";
 import { SchedaBarraUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, UmoreUi, StanzaUi, CollegamentoUi, QuadranteUi, FonteQuadranteUi, TipoReteUi, TintaBatteriaUi, RigaSessioneUi, LimiteClaudeUi, VoceMenuUi, SchermoMenuUi, Bersaglio, ModuloUi, TonoModuloUi } from "voci.slint";
 import { Attesa, RigaAttesa } from "attesa.slint";
-import { ImpiantoElenco } from "impianti/elenco.slint";
+import { ImpiantoElenco, Permessi } from "impianti/elenco.slint";
 import { MenuScuro } from "menu.slint";
 import { VistaPc } from "viste/pc.slint";
 import { VistaClaude } from "viste/claude.slint";
@@ -385,8 +387,26 @@ export component Pannello inherits Window {
     property <int> fuoco-coda-pulsante: -1;
     property <string> coda-voce-pulsanti;
     property <int> coda-riga: max(0, min(fuoco-coda-riga, attese.length - 1));
+    // Un permesso aperto (`coda-aperta`, id; vale solo finché è ancora la voce della riga col fuoco:
+    // se sparisce o cambia posto si chiude) col testo intero; `coda-visto`: il fondo del suo testo
+    // si è visto (lo dice la voce aperta), e solo allora «Consenti» c'è e prende il fuoco.
+    property <string> coda-aperta;
+    property <bool> coda-visto;
+    property <bool> coda-aperta-valida: attese.length > 0 && coda-aperta != "" && attese[coda-riga].id == coda-aperta;
+    changed coda-aperta-valida => {
+        if (!coda-aperta-valida) {
+            coda-aperta = "";
+            coda-visto = false;
+        }
+    }
+    // Scorrimento del testo del permesso aperto da tastiera (contatori: ogni scatto è un passo).
+    property <int> coda-testo-su: 0;
+    property <int> coda-testo-giu: 0;
+    // Il pulsante col fuoco: nella riga chiusa il delicato è «Apri»; nel permesso aperto un
+    // delicato vale solo dopo il fondo del testo.
     property <int> coda-pulsante: attese.length > 0 && fuoco-coda-pulsante >= 0
         && fuoco-coda-pulsante < attese[coda-riga].pulsanti.length && attese[coda-riga].id == coda-voce-pulsanti
+        && (!coda-aperta-valida || !attese[coda-riga].pulsanti[fuoco-coda-pulsante].delicato || coda-visto)
         ? fuoco-coda-pulsante : -1;
     // Rotella: spostamento accumulato e pausa dopo un cambio (un touchpad manda molti piccoli passi).
     property <length> rotella: 0px;
@@ -537,10 +557,41 @@ export component Pannello inherits Window {
     }
 
     // Apre la Coda sulla voce `i` (clic o Invio su «In attesa», «+N»): il fuoco sulla sua riga.
+    // Un permesso si apre subito col testo intero (dalla pillola «Apri» si arriva qui).
     function apri-coda(i: int) {
         vai("coda");
         zona = Zona.contenuto;
+        scegli-riga-coda(i);
+    }
+
+    // Da Rust: il pannello si apre dalla pillola su un permesso, già aperto nella Coda.
+    public function apri-coda-su(i: int) {
+        apri-coda(i);
+    }
+
+    // La riga `i` della Coda scelta (clic, apertura): un permesso si apre, le altre prendono il fuoco.
+    function scegli-riga-coda(i: int) {
         fuoco-coda-riga = max(0, min(i, attese.length - 1));
+        fuoco-coda-pulsante = -1;
+        if (attese.length > 0 && Permessi.chiede(attese[coda-riga])) {
+            apri-permesso();
+        }
+    }
+
+    // Apre il permesso della riga col fuoco: il testo intero, il fuoco su «Nega» (o sul testo se
+    // non c'è). «Consenti» aspetta il fondo del testo.
+    function apri-permesso() {
+        coda-aperta = attese[coda-riga].id;
+        coda-visto = false;
+        fuoco-coda-riga = coda-riga;
+        coda-voce-pulsanti = coda-aperta;
+        fuoco-coda-pulsante = primo-non-delicato(coda-riga);
+    }
+
+    // Chiude il permesso aperto: di nuovo l'elenco, il fuoco sulla sua riga.
+    function chiudi-permesso() {
+        coda-aperta = "";
+        coda-visto = false;
         fuoco-coda-pulsante = -1;
     }
 
@@ -550,7 +601,23 @@ export component Pannello inherits Window {
         if (attese.length > 0 && attese[coda-riga].pulsanti.length > 0) {
             coda-voce-pulsanti = attese[coda-riga].id;
             fuoco-coda-riga = coda-riga;
-            fuoco-coda-pulsante = primo-non-delicato(coda-riga) >= 0 ? primo-non-delicato(coda-riga) : 0;
+            // Senza «Nega»: il primo, ma mai un consenso prima del fondo del testo (allora il
+            // fuoco resta sul testo).
+            fuoco-coda-pulsante = primo-non-delicato(coda-riga) >= 0 ? primo-non-delicato(coda-riga)
+                : coda-aperta-valida && !coda-visto ? -1 : 0;
+        }
+    }
+
+    // ←/→ fra i pulsanti della riga o del permesso aperto: un consenso nascosto (fondo del testo
+    // non ancora visto) non si raggiunge.
+    function pulsante-coda(passo: int) {
+        let n = coda-pulsante + passo;
+        if (n >= 0 && n < attese[coda-riga].pulsanti.length
+                && (!coda-aperta-valida || !attese[coda-riga].pulsanti[n].delicato || coda-visto)) {
+            fuoco-coda-pulsante = n;
+        } else if (n < 0 && !coda-aperta-valida) {
+            // Nella riga, ← dal primo pulsante torna alla riga.
+            fuoco-coda-pulsante = -1;
         }
     }
 
@@ -663,6 +730,8 @@ export component Pannello inherits Window {
         fuoco-collegamento = 0;
         fuoco-coda-riga = 0;
         fuoco-coda-pulsante = -1;
+        coda-aperta = "";
+        coda-visto = false;
         if (!ha-zona(zona)) {
             zona = ha-zona(Zona.contenuto) ? Zona.contenuto : Zona.dock;
         }
@@ -670,7 +739,9 @@ export component Pannello inherits Window {
 
     // Backspace o Alt+←, un livello alla volta: prima la stanza aperta, poi la Panoramica.
     function indietro() {
-        if (filtro-luci) {
+        if (vista == "coda" && coda-aperta-valida) {
+            chiudi-permesso();
+        } else if (filtro-luci) {
             esci-filtro();
         } else if (stanza-aperta >= 0) {
             chiudi-stanza-ora();
@@ -729,6 +800,24 @@ export component Pannello inherits Window {
             } else if (k == Key.RightArrow) {
                 fuoco-dock = min(schede.length - 1, fuoco-dock + 1);
             }
+        } else if (zona == Zona.contenuto && vista == "coda" && coda-aperta-valida) {
+            // Permesso aperto: sul testo ↑/↓ lo scorrono e, visto il fondo, ↓ (o →) passa ai
+            // pulsanti; sui pulsanti ←/→ fra loro, ↑ torna al testo.
+            if (coda-pulsante >= 0) {
+                if (k == Key.UpArrow) {
+                    fuoco-coda-pulsante = -1;
+                } else if (k == Key.LeftArrow) {
+                    pulsante-coda(-1);
+                } else if (k == Key.RightArrow) {
+                    pulsante-coda(1);
+                }
+            } else if (k == Key.UpArrow) {
+                coda-testo-su += 1;
+            } else if (k == Key.DownArrow && !coda-visto) {
+                coda-testo-giu += 1;
+            } else if (k == Key.DownArrow || k == Key.RightArrow) {
+                entra-pulsanti();
+            }
         } else if (zona == Zona.contenuto && vista == "coda" && attese.length > 0) {
             // ↑/↓ fra le righe; → ai pulsanti e fra loro; ← indietro fino alla riga.
             if (k == Key.UpArrow) {
@@ -738,9 +827,9 @@ export component Pannello inherits Window {
             } else if (k == Key.RightArrow && coda-pulsante < 0) {
                 entra-pulsanti();
             } else if (k == Key.RightArrow) {
-                fuoco-coda-pulsante = min(attese[coda-riga].pulsanti.length - 1, coda-pulsante + 1);
+                pulsante-coda(1);
             } else if (k == Key.LeftArrow && coda-pulsante >= 0) {
-                fuoco-coda-pulsante = coda-pulsante - 1;
+                pulsante-coda(-1);
             }
         } else if (zona == Zona.attesa) {
             if (k == Key.LeftArrow) {
@@ -854,7 +943,8 @@ export component Pannello inherits Window {
     function attiva(ctrl: bool) {
         if (ctrl) {
             // Solo un consenso col fuoco da tastiera nella Coda; altrove Ctrl+Invio non fa nulla.
-            if (zona == Zona.contenuto && vista == "coda" && coda-pulsante >= 0
+            // Solo nel permesso aperto e dopo il fondo del testo (`coda-pulsante` lo controlla).
+            if (zona == Zona.contenuto && vista == "coda" && coda-aperta-valida && coda-visto && coda-pulsante >= 0
                     && attese[coda-riga].pulsanti[coda-pulsante].delicato) {
                 root.azione(attese[coda-riga].id, attese[coda-riga].pulsanti[coda-pulsante].id);
             }
@@ -889,13 +979,18 @@ export component Pannello inherits Window {
         } else if (vista == "coda") {
             // Vuota: «Torna alla Panoramica». Sulla riga Invio entra nei pulsanti (su «Nega»), su un
             // pulsante lo preme, mai se è un consenso.
+            // Una riga di permesso (o il suo «Apri») apre il testo intero.
             if (attese.length == 0) {
                 fuoco-dock = 0;
                 vai("panoramica");
+            } else if (coda-pulsante < 0 && !coda-aperta-valida && Permessi.chiede(attese[coda-riga])) {
+                apri-permesso();
             } else if (coda-pulsante < 0) {
                 entra-pulsanti();
             } else if (!attese[coda-riga].pulsanti[coda-pulsante].delicato) {
                 root.azione(attese[coda-riga].id, attese[coda-riga].pulsanti[coda-pulsante].id);
+            } else if (!coda-aperta-valida) {
+                apri-permesso();
             }
         } else if (vista == "collegamenti") {
             if (collegamenti.length == 0 || fuoco-collegamento < 0) {
@@ -957,7 +1052,9 @@ export component Pannello inherits Window {
             // Un livello alla volta: con una stanza aperta torna a «Preferiti»; poi chiude il
             // pannello (anche dalla Coda).
             if (evento.text == Key.Escape) {
-                if (filtro-luci && vista == "casa") {
+                if (vista == "coda" && coda-aperta-valida) {
+                    chiudi-permesso();
+                } else if (filtro-luci && vista == "casa") {
                     esci-filtro();
                 } else if (stanza-aperta >= 0) {
                     chiudi-stanza-ora();
@@ -1273,6 +1370,18 @@ export component Pannello inherits Window {
                     moduli: root.moduli-in-attesa;
                     fuoco-riga: root.coda-riga;
                     fuoco-pulsante: root.coda-pulsante;
+                    aperta: root.coda-aperta-valida;
+                    scorri-su: root.coda-testo-su;
+                    scorri-giu: root.coda-testo-giu;
+                    chiudi-voce => {
+                        da-tastiera = false;
+                        chiudi-permesso();
+                    }
+                    visto-fondo => {
+                        if (coda-aperta-valida) {
+                            coda-visto = true;
+                        }
+                    }
                     // Come nelle altre viste, il fuoco chiede anche la vista (lasciandola non si
                     // accende su un elemento che sta sparendo).
                     con-fuoco: da-tastiera && zona == Zona.contenuto && vista == "coda";
@@ -1282,11 +1391,11 @@ export component Pannello inherits Window {
                         da-tastiera = false;
                         root.azione(voce, pulsante);
                     }
+                    // Clic su una riga (un permesso si apre col testo intero) o sul suo «Apri».
                     riga-scelta(i) => {
                         da-tastiera = false;
                         zona = Zona.contenuto;
-                        fuoco-coda-riga = i;
-                        fuoco-coda-pulsante = -1;
+                        scegli-riga-coda(i);
                     }
                     torna => {
                         da-tastiera = false;

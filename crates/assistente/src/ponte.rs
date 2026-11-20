@@ -53,6 +53,9 @@ mod con_moduli;
 pub enum DallaPillola {
     /// Su questa vista: la pagina di un modulo o la Coda (`coda`).
     Vista(&'static str),
+    /// Sulla Coda, col permesso in questa posizione già aperto (testo intero): la pillola col
+    /// testo tagliato offre «Apri» proprio per farlo leggere qui prima di concedere (dec. 11).
+    Permesso(i32),
     /// Sulla Panoramica.
     Panoramica,
 }
@@ -2302,9 +2305,9 @@ impl Ponte {
 
     /// Dove si apre il pannello da un clic sulla pillola (`attivita_visibile`: la pillola sta
     /// mostrando l'attività di Claude). Una voce allargata porta alla pagina del suo modulo (Claude
-    /// → Agenti, Casa, PC), tranne un permesso, che apre la Panoramica (la riga «In attesa», poi la
-    /// voce del Task 8: mai una pagina dove il consenso stia a un tasto); il puntino apre la Coda;
-    /// l'attività di Claude, Agenti; a riposo la Panoramica.
+    /// → Agenti, Casa, PC), tranne un permesso, che si apre nella Coda col testo intero (lì si legge
+    /// il comando e la sessione prima di decidere); il puntino apre la Coda; l'attività di Claude,
+    /// Agenti; a riposo la Panoramica.
     pub fn apertura_dalla_pillola(&self, attivita_visibile: bool) -> DallaPillola {
         let (allargata, puntino) = match self.mostrato.borrow().as_ref() {
             Some(v) => (v.voce_allargata().map(str::to_owned), v.aspetto == AspettoPillola::Puntino),
@@ -2314,8 +2317,13 @@ impl Ponte {
             let attese = self.attese.borrow();
             return match attese.voce(&id) {
                 // Il permesso lo dice l'identità della voce, non i suoi pulsanti (senza risposta dalla
-                // pillola il permesso ha solo «Apri il terminale»).
-                Some(v) if v.fonte == Fonte::Claude && v.id.starts_with(crate::claude::PREFISSO_PERMESSO) => DallaPillola::Panoramica,
+                // pillola il permesso ha solo «Apri il terminale»): la sua posizione nella Coda.
+                Some(v) if v.fonte == Fonte::Claude && v.id.starts_with(crate::claude::PREFISSO_PERMESSO) => {
+                    match attese.ordinate().iter().position(|x| x.id == id) {
+                        Some(i) => DallaPillola::Permesso(i as i32),
+                        None => DallaPillola::Panoramica,
+                    }
+                }
                 Some(v) => match v.fonte {
                     Fonte::Claude => DallaPillola::Vista("agenti"),
                     Fonte::Casa => DallaPillola::Vista("casa"),

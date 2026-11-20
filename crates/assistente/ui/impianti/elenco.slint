@@ -3,6 +3,11 @@
 // scorrimento con la riga col fuoco portata in vista. Oggi lo usa la Coda minima («In attesa»);
 // in F2 lo riusa la pagina Agenti.
 //
+// Un permesso (voce con un pulsante delicato) nella riga non offre «Consenti» ma «Apri»: si apre
+// (`VoceAperta`, al posto dell'elenco) col titolo a capo e il testo intero (comando e sessione) in
+// mono, scorrevole, e «Consenti» compare solo dopo che il fondo del testo si è visto (regola M3:
+// mai un consenso a un comando che non si è potuto leggere; spec M3 r. 97, dec. 11).
+//
 // La tastiera la governa il pannello (`tasti`): qui arrivano solo gli indici della riga e del
 // pulsante col fuoco, già validi, e il fuoco vero si sposta da sé (`Fuoco`, `Pulsante.chiede-fuoco`)
 // perché Narrator legga ruolo e nome. Nessun pulsante si preme dalla sua tastiera: «Consenti»
@@ -42,10 +47,41 @@ export component TestataPagina inherits Rectangle {
     }
 }
 
-// Una riga dell'elenco: alta 40. Il segno del livello dice lo stato con la forma oltre che col
-// colore (occhietti tondi per «ti aspetta», a mandorla per «guarda presto», un trattino per
-// «quando vuoi»). Per Narrator è una voce d'elenco «{titolo}, {livello} · {modulo}» col testo
-// completo come descrizione.
+// Il segno del livello: la forma dice lo stato oltre al colore (occhietti tondi per «ti aspetta»,
+// a mandorla per «guarda presto», un trattino per «quando vuoi»). 15 × 8, decorativo.
+component SegnoLivello inherits Rectangle {
+    in property <LivelloUi> livello;
+
+    width: 15px;
+    height: 8px;
+
+    if root.livello == LivelloUi.bloccante || root.livello == LivelloUi.attenzione: Occhietti {
+        x: 0;
+        y: 0;
+        dock: true;
+        tono: root.livello == LivelloUi.bloccante ? TonoModuloUi.aspetta : TonoModuloUi.guarda;
+        colore: Tema.colore-livello(root.livello);
+    }
+    if root.livello == LivelloUi.informazione: Rectangle {
+        x: 2px;
+        y: (parent.height - self.height) / 2;
+        width: 11px;
+        height: 2px;
+        border-radius: 1px;
+        background: Tema.colore-livello(root.livello);
+    }
+}
+
+// La voce ha un pulsante delicato (un permesso): al massimo 2 pulsanti per voce.
+export global Permessi {
+    public pure function chiede(v: VoceAttesaUi) -> bool {
+        return (v.pulsanti.length > 0 && v.pulsanti[0].delicato) || (v.pulsanti.length > 1 && v.pulsanti[1].delicato);
+    }
+}
+
+// Una riga dell'elenco: alta 40. Per Narrator è una voce d'elenco «{titolo}, {livello} · {modulo}»
+// col testo completo come descrizione. Il pulsante delicato di un permesso qui è «Apri» (apre la
+// voce col testo intero), mai «Consenti».
 export component RigaElenco inherits Rectangle {
     in property <VoceAttesaUi> voce;
     in property <int> indice;
@@ -53,11 +89,9 @@ export component RigaElenco inherits Rectangle {
     // Il fuoco da tastiera è sulla riga (vero) o su un suo pulsante (indice, -1 nessuno).
     in property <bool> fuoco-riga;
     in property <int> fuoco-pulsante: -1;
+    // Clic sulla riga o su «Apri».
     callback scelta();
     callback azione(string);
-
-    // Col fuoco su un consenso la riga sotto dice come si concede (Invio da solo non lo fa).
-    property <bool> su-consenso: fuoco-pulsante >= 0 && fuoco-pulsante < voce.pulsanti.length && voce.pulsanti[fuoco-pulsante].delicato;
 
     height: 40px;
     border-radius: Tema.raggio-m;
@@ -76,21 +110,10 @@ export component RigaElenco inherits Rectangle {
         clicked => { root.scelta(); }
     }
 
-    // Il segno del livello, a sinistra, centrato sulla riga.
-    if voce.livello == LivelloUi.bloccante || voce.livello == LivelloUi.attenzione: Occhietti {
+    SegnoLivello {
         x: 10px;
         y: (parent.height - self.height) / 2;
-        dock: true;
-        tono: voce.livello == LivelloUi.bloccante ? TonoModuloUi.aspetta : TonoModuloUi.guarda;
-        colore: Tema.colore-livello(voce.livello);
-    }
-    if voce.livello == LivelloUi.informazione: Rectangle {
-        x: 12px;
-        y: (parent.height - self.height) / 2;
-        width: 11px;
-        height: 2px;
-        border-radius: 1px;
-        background: Tema.colore-livello(voce.livello);
+        livello: root.voce.livello;
     }
 
     Image {
@@ -120,7 +143,7 @@ export component RigaElenco inherits Rectangle {
         x: 60px;
         y: 22px;
         width: pulsanti.x - self.x - 12px;
-        text: root.su-consenso ? "Ctrl+Invio per consentire" : voce.sotto;
+        text: voce.sotto;
         overflow: elide;
         font-size: Tema.testo-piccolo;
         color: Tema.testo-tenue;
@@ -134,18 +157,42 @@ export component RigaElenco inherits Rectangle {
         height: 32px;
         spacing: 8px;
 
-        for p[i] in voce.pulsanti: Pulsante {
-            testo: p.testo;
-            tipo: RegolaPulsanti.tipo(i == voce.pulsanti.length - 1, p.delicato);
+        if voce.pulsanti.length > 0: Pulsante {
+            testo: root.voce.pulsanti[0].delicato ? "Apri" : root.voce.pulsanti[0].testo;
+            tipo: RegolaPulsanti.tipo(root.voce.pulsanti.length == 1, root.voce.pulsanti[0].delicato);
             altezza: 32px;
             raggio: 9px;
             largo-min: 72px;
-            anello: i == root.fuoco-pulsante;
-            chiede-fuoco: i == root.fuoco-pulsante;
-            // La tastiera la governa il pannello (Ctrl+Invio per un permesso).
+            anello: root.fuoco-pulsante == 0;
+            chiede-fuoco: root.fuoco-pulsante == 0;
+            // La tastiera la governa il pannello.
             tasti-propri: false;
-            delicato: p.delicato;
-            premuto => { root.azione(p.id); }
+            delicato: root.voce.pulsanti[0].delicato;
+            premuto => {
+                if (root.voce.pulsanti[0].delicato) {
+                    root.scelta();
+                } else {
+                    root.azione(root.voce.pulsanti[0].id);
+                }
+            }
+        }
+        if voce.pulsanti.length > 1: Pulsante {
+            testo: root.voce.pulsanti[1].delicato ? "Apri" : root.voce.pulsanti[1].testo;
+            tipo: RegolaPulsanti.tipo(true, root.voce.pulsanti[1].delicato);
+            altezza: 32px;
+            raggio: 9px;
+            largo-min: 72px;
+            anello: root.fuoco-pulsante == 1;
+            chiede-fuoco: root.fuoco-pulsante == 1;
+            tasti-propri: false;
+            delicato: root.voce.pulsanti[1].delicato;
+            premuto => {
+                if (root.voce.pulsanti[1].delicato) {
+                    root.scelta();
+                } else {
+                    root.azione(root.voce.pulsanti[1].id);
+                }
+            }
         }
     }
 
@@ -156,19 +203,218 @@ export component RigaElenco inherits Rectangle {
     }
 }
 
+// Un permesso aperto (come la voce espansa di M3): titolo a capo fino a 3 righe, «livello ·
+// modulo», il testo intero (comando e «Sessione: …») in mono, scorrevole con una sfumatura se c'è
+// altro; «Consenti» compare solo quando il fondo del testo si è visto (`visto`, che resta vero per
+// questa voce anche risalendo). «Torna all'elenco» la chiude.
+export component VoceAperta inherits Rectangle {
+    in property <VoceAttesaUi> voce;
+    // Il fuoco da tastiera: -2 il testo, 0/1 un pulsante, -1 nessuno.
+    in property <int> fuoco: -1;
+    // Scorrimento da tastiera: il pannello incrementa uno dei due contatori a ogni ↑/↓.
+    in property <int> scorri-su;
+    in property <int> scorri-giu;
+    callback chiudi();
+    callback azione(string);
+    // Il fondo del testo si è visto (una volta per voce): il pannello sblocca «Consenti».
+    callback visto-fondo();
+
+    property <length> passo: 36px;
+    property <length> scorrimento-minimo: min(0px, testo.height - testo.content-height);
+    property <bool> a-fondo: testo.content-y <= scorrimento-minimo + 0.5px;
+    out property <bool> visto: false;
+    changed scorri-giu => { testo.content-y = max(scorrimento-minimo, testo.content-y - passo); }
+    changed scorri-su => { testo.content-y = min(0px, testo.content-y + passo); }
+    changed a-fondo => { root.segna-fondo(); }
+    init => { root.segna-fondo(); }
+    // Un'altra voce al posto di questa (il pannello la chiude prima, ma per sicurezza): si riparte
+    // dall'inizio del testo e il fondo va rivisto.
+    property <string> id-voce: voce.id;
+    changed id-voce => {
+        visto = false;
+        testo.content-y = 0px;
+        root.segna-fondo();
+    }
+    function segna-fondo() {
+        if (a-fondo && !visto) {
+            visto = true;
+            root.visto-fondo();
+        }
+    }
+    // Mostra il pulsante `i` (un consenso solo dopo il fondo del testo).
+    pure function mostra(i: int) -> bool {
+        return voce.pulsanti.length > i && (!voce.pulsanti[i].delicato || visto);
+    }
+
+    border-radius: Tema.raggio-xl;
+    background: Tema.riquadro-fondo;
+    border-width: 1px;
+    border-color: Tema.vetro-bordo;
+    accessible-role: groupbox;
+    accessible-label: voce.titolo + ", " + voce.sotto;
+    accessible-description: voce.dettaglio;
+
+    Fuoco { chiede: root.fuoco == -2; }
+
+    SegnoLivello {
+        x: 14px;
+        y: 17px;
+        livello: root.voce.livello;
+    }
+
+    Image {
+        x: 34px;
+        y: 13px;
+        width: 16px;
+        height: 16px;
+        source: voce.icona;
+        colorize: Tema.icona;
+        image-rendering: smooth;
+        accessible-role: none;
+    }
+
+    // Il titolo si legge intero: va a capo (al massimo 3 righe; il testo intero sta comunque sotto).
+    titolo := Text {
+        x: 60px;
+        y: 10px;
+        width: torna.x - self.x - 12px;
+        height: min(self.preferred-height, 57px);
+        text: voce.titolo;
+        wrap: word-wrap;
+        overflow: elide;
+        vertical-alignment: top;
+        font-weight: 700;
+        font-size: Tema.testo-titolo;
+        color: Tema.testo;
+        accessible-role: none;
+    }
+
+    sotto-testo := Text {
+        x: 60px;
+        y: titolo.y + titolo.height + 2px;
+        width: torna.x - self.x - 12px;
+        text: voce.sotto;
+        overflow: elide;
+        font-size: Tema.testo-piccolo;
+        color: Tema.testo-tenue;
+        accessible-role: none;
+    }
+
+    torna := Pulsante {
+        x: parent.width - self.width - 12px;
+        y: 10px;
+        testo: "Torna all'elenco";
+        altezza: 28px;
+        largo-min: 60px;
+        corpo-testo: Tema.testo-piccolo;
+        tasti-propri: false;
+        focalizzabile: false;
+        premuto => { root.chiudi(); }
+    }
+
+    // Il testo intero, in mono (il comando si legge carattere per carattere), a capo, scorrevole.
+    testo := Flickable {
+        x: 60px;
+        y: sotto-testo.y + sotto-testo.height + 6px;
+        width: parent.width - self.x - 18px;
+        height: parent.height - self.y - 52px;
+        content-height: max(self.height, dettaglio.preferred-height);
+
+        dettaglio := Text {
+            y: 0px;
+            width: parent.width;
+            height: self.preferred-height;
+            text: voce.dettaglio;
+            wrap: word-wrap;
+            vertical-alignment: top;
+            font-family: Tema.carattere-mono;
+            font-size: Tema.testo-corpo;
+            color: Tema.testo-2;
+            accessible-role: none;
+        }
+    }
+
+    if !a-fondo: Rectangle {
+        x: testo.x;
+        y: testo.y + testo.height - self.height;
+        width: testo.width;
+        height: 16px;
+        background: @linear-gradient(180deg, Tema.g1.with-alpha(0) 0%, Tema.g1 100%);
+    }
+
+    // Accanto ai pulsanti: perché «Consenti» non c'è ancora, o come si concede.
+    if Permessi.chiede(voce) && (!visto || (fuoco >= 0 && fuoco < voce.pulsanti.length && voce.pulsanti[fuoco].delicato)): Text {
+        x: 60px;
+        y: pulsanti-voce.y;
+        width: pulsanti-voce.x - self.x - 12px;
+        height: 32px;
+        text: !visto ? "Leggi fino in fondo per consentire" : "Ctrl+Invio per consentire";
+        horizontal-alignment: right;
+        vertical-alignment: center;
+        overflow: elide;
+        font-size: Tema.testo-piccolo;
+        color: Tema.testo-tenue;
+    }
+
+    pulsanti-voce := HorizontalLayout {
+        width: self.preferred-width;
+        x: parent.width - self.width - 14px;
+        y: parent.height - 32px - 12px;
+        height: 32px;
+        spacing: 8px;
+
+        if root.mostra(0): Pulsante {
+            testo: root.voce.pulsanti[0].testo;
+            tipo: RegolaPulsanti.tipo(root.voce.pulsanti.length == 1, root.voce.pulsanti[0].delicato);
+            altezza: 32px;
+            raggio: 9px;
+            largo-min: 72px;
+            anello: root.fuoco == 0;
+            chiede-fuoco: root.fuoco == 0;
+            tasti-propri: false;
+            delicato: root.voce.pulsanti[0].delicato;
+            premuto => { root.azione(root.voce.pulsanti[0].id); }
+        }
+        if root.mostra(1): Pulsante {
+            testo: root.voce.pulsanti[1].testo;
+            tipo: RegolaPulsanti.tipo(true, root.voce.pulsanti[1].delicato);
+            altezza: 32px;
+            raggio: 9px;
+            largo-min: 72px;
+            anello: root.fuoco == 1;
+            chiede-fuoco: root.fuoco == 1;
+            tasti-propri: false;
+            delicato: root.voce.pulsanti[1].delicato;
+            premuto => { root.azione(root.voce.pulsanti[1].id); }
+        }
+    }
+
+    if root.fuoco == -2: Anello { raggio: parent.border-radius; distanza: -2px; }
+}
+
 export component ImpiantoElenco inherits Rectangle {
     in property <[VoceAttesaUi]> voci;
     // Da quanti moduli vengono le voci (lo conta Rust).
     in property <int> moduli;
-    // Riga col fuoco (indice valido) e suo pulsante (-1 = la riga), decisi dal pannello.
+    // Riga col fuoco (indice valido) e suo pulsante (-1 = la riga), decisi dal pannello. Con la
+    // voce aperta (`aperta`, sempre la riga col fuoco) il pulsante è della voce aperta (-1 = il
+    // suo testo).
     in property <int> fuoco-riga;
     in property <int> fuoco-pulsante: -1;
+    in property <bool> aperta;
+    // Scorrimento del testo della voce aperta da tastiera (contatori).
+    in property <int> scorri-su;
+    in property <int> scorri-giu;
     // Il fuoco da tastiera è qui (altrimenti nessun anello e nessun fuoco vero).
     in property <bool> con-fuoco;
     // Un pulsante premuto col clic: (id della voce, id del pulsante).
     callback azione(string, string);
-    // Una riga scelta col clic.
+    // Una riga scelta col clic (o il suo «Apri»): un permesso si apre.
     callback riga-scelta(int);
+    // «Torna all'elenco» della voce aperta.
+    callback chiudi-voce();
+    // Il fondo del testo della voce aperta si è visto.
+    callback visto-fondo();
     // «Torna alla Panoramica» dello stato vuoto.
     callback torna();
 
@@ -187,7 +433,7 @@ export component ImpiantoElenco inherits Rectangle {
         }
     }
 
-    if voci.length > 0: TestataPagina {
+    if voci.length > 0 && !aperta: TestataPagina {
         x: 0;
         y: 0;
         width: parent.width;
@@ -200,6 +446,7 @@ export component ImpiantoElenco inherits Rectangle {
         y: sotto-testata;
         width: parent.width;
         height: parent.height - self.y;
+        visible: !root.aperta;
         content-height: max(self.height, voci.length * passo - 4px);
         accessible-role: list;
         accessible-label: "In attesa";
@@ -211,11 +458,27 @@ export component ImpiantoElenco inherits Rectangle {
             voce: v;
             indice: i;
             totale: root.voci.length;
-            fuoco-riga: root.con-fuoco && i == root.fuoco-riga && root.fuoco-pulsante < 0;
-            fuoco-pulsante: root.con-fuoco && i == root.fuoco-riga ? root.fuoco-pulsante : -1;
+            fuoco-riga: root.con-fuoco && !root.aperta && i == root.fuoco-riga && root.fuoco-pulsante < 0;
+            fuoco-pulsante: root.con-fuoco && !root.aperta && i == root.fuoco-riga ? root.fuoco-pulsante : -1;
             scelta => { root.riga-scelta(i); }
             azione(id) => { root.azione(v.id, id); }
         }
+    }
+
+    if aperta && fuoco-riga >= 0 && fuoco-riga < voci.length: VoceAperta {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        voce: root.voci[root.fuoco-riga];
+        // Chiusa (anche prima che sparisca, mentre il pannello la toglie) non chiede più il fuoco:
+        // lo prende la riga, e non resta su un elemento che sta per sparire.
+        fuoco: !root.con-fuoco || !root.aperta ? -1 : root.fuoco-pulsante >= 0 ? root.fuoco-pulsante : -2;
+        scorri-su: root.scorri-su;
+        scorri-giu: root.scorri-giu;
+        chiudi => { root.chiudi-voce(); }
+        azione(id) => { root.azione(root.voci[root.fuoco-riga].id, id); }
+        visto-fondo => { root.visto-fondo(); }
     }
 
     // Vuota: lo dice e porta indietro.

@@ -455,14 +455,7 @@ impl Apertura {
         pannello.on_vista_cambiata(move || {
             if let (Some(a), Some(p)) = (a.upgrade(), debole.upgrade()) {
                 a.aggiorna_fonti(&p);
-                // Wi-Fi e Bluetooth (M2, Task 8) si seguono solo a vista PC aperta.
-                a.ponte.vista_pc(p.get_vista() == "pc");
-                // La vista Claude (M3, Task 9) scrive e conta il tempo solo a vista aperta.
-                a.ponte.vista_claude(p.get_vista() == "agenti");
-                // La Coda (ridisegno F1, Task 7): entrandoci «Consenti» si riarma.
-                a.ponte.vista_coda(p.get_vista() == "coda");
-                // La scheda della vista nuova si allarga col nome (la capsula scivola).
-                a.ponte.scrivi_schede(&p);
+                a.ponte.vista_cambiata(&p);
             }
         });
         let a = self.io.clone();
@@ -631,9 +624,12 @@ impl Apertura {
             pannello.set_partenza_occhi_y(finestre::SCARTO_OCCHI_PANNELLO_Y);
         }
         // La destinazione di ciò che la pillola mostra: la pagina di un modulo o la Coda
-        // (`pannello_aperto` la mette), altrimenti la Panoramica.
-        if let DallaPillola::Vista(vista) = self.ponte.apertura_dalla_pillola(pillola.get_attivita_visibile()) {
-            self.ponte.chiedi_vista(vista);
+        // (`pannello_aperto` la mette), un permesso aperto nella Coda col testo intero,
+        // altrimenti la Panoramica.
+        match self.ponte.apertura_dalla_pillola(pillola.get_attivita_visibile()) {
+            DallaPillola::Vista(vista) => self.ponte.chiedi_vista(vista),
+            DallaPillola::Permesso(indice) => pannello.invoke_apri_coda_su(indice),
+            DallaPillola::Panoramica => {}
         }
         // Parte con l'umore della pillola; il ponte glielo aggiorna appena la pillola è sparita.
         pannello.set_umore(pillola.get_umore());

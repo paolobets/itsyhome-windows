@@ -61,12 +61,15 @@ static PROSSIMO_PERMESSO: AtomicU64 = AtomicU64::new(1);
 pub(super) struct Armamento {
     pillola: Option<String>,
     pannello: Option<String>,
+    /// I permessi (voci con un pulsante delicato) col loro posto nell'elenco ordinato: la Coda li
+    /// mostra tutti, e uno che cambia posto si arma di nuovo.
+    permessi: Vec<(usize, String)>,
     dal: Cell<Instant>,
 }
 
 impl Armamento {
     pub(super) fn nuovo() -> Armamento {
-        Armamento { pillola: None, pannello: None, dal: Cell::new(Instant::now()) }
+        Armamento { pillola: None, pannello: None, permessi: Vec::new(), dal: Cell::new(Instant::now()) }
     }
 }
 
@@ -868,25 +871,36 @@ impl Ponte {
         }
     }
 
-    /// Dopo ogni cambio delle voci: se la voce della pillola o la prima del pannello è cambiata,
-    /// «Consenti» si arma fra `ARMAMENTO_CONSENTI`.
+    /// Dopo ogni cambio delle voci: se la voce della pillola o la prima del pannello è cambiata, o
+    /// se un permesso (voce con un pulsante delicato) è comparso o ha cambiato posto nella Coda
+    /// (che mostra tutti i permessi: una riga che sale sotto il puntatore porta un altro
+    /// «Consenti»), «Consenti» si arma fra `ARMAMENTO_CONSENTI`.
     pub(super) fn claude_riarma(&self, ora: Instant) {
-        let (pillola, pannello) = {
+        let (pillola, pannello, permessi) = {
             let a = self.attese.borrow();
             let v = a.ordinate();
             (
                 v.iter().filter(|x| x.livello == Livello::Bloccante).min_by_key(|x| x.creata).map(|x| x.id.clone()),
                 v.first().map(|x| x.id.clone()),
+                v.iter()
+                    .enumerate()
+                    .filter(|(_, x)| x.pulsanti.iter().any(|p| p.delicato))
+                    .map(|(i, x)| (i, x.id.clone()))
+                    .collect::<Vec<_>>(),
             )
         };
         let mut arm = self.claude_armamento.borrow_mut();
-        if arm.pillola != pillola || arm.pannello != pannello {
-            if (pillola.is_some() && arm.pillola != pillola) || (pannello.is_some() && arm.pannello != pannello) {
+        // Un permesso nuovo o spostato (una sua coppia posto-id che prima non c'era); toglierne uno
+        // senza spostare gli altri non riarma.
+        let spostati = permessi.iter().any(|p| !arm.permessi.contains(p));
+        if arm.pillola != pillola || arm.pannello != pannello || spostati {
+            if (pillola.is_some() && arm.pillola != pillola) || (pannello.is_some() && arm.pannello != pannello) || spostati {
                 arm.dal.set(ora + ARMAMENTO_CONSENTI);
             }
             arm.pillola = pillola;
             arm.pannello = pannello;
         }
+        arm.permessi = permessi;
     }
 
     /// Una superficie che mostra i permessi compare (pannello aperto, pillola che torna): con un
@@ -895,6 +909,19 @@ impl Ponte {
         if !self.claude_permessi.borrow().is_empty() {
             self.claude_armamento.borrow().dal.set(ora + ARMAMENTO_CONSENTI);
         }
+    }
+
+    /// Il pannello ha cambiato vista (`vista-cambiata`): ciò che vive solo a vista aperta segue.
+    pub fn vista_cambiata(&self, p: &crate::Pannello) {
+        let vista = p.get_vista();
+        // Wi-Fi e Bluetooth (M2, Task 8) si seguono solo a vista PC aperta.
+        self.vista_pc(vista == "pc");
+        // La vista Claude (M3, Task 9) scrive e conta il tempo solo a vista aperta.
+        self.vista_claude(vista == "agenti");
+        // La Coda (ridisegno F1, Task 7): entrandoci «Consenti» si riarma.
+        self.vista_coda(vista == "coda");
+        // La scheda della vista nuova si allarga col nome (la capsula scivola).
+        self.scrivi_schede(p);
     }
 
     /// La Coda si apre (vero) o si chiude (altra vista, pannello chiuso). È una superficie che
@@ -1648,7 +1675,7 @@ mod test {
     }
 
     /// Ridisegno F1, Task 7: il clic sulla pillola porta alla destinazione. I sette casi: permesso
-    /// allargato → Panoramica (lo mostra la riga «In attesa», poi la voce del Task 8); voce allargata
+    /// allargato → Coda col permesso aperto (fix 1: il testo intero si legge lì); voce allargata
     /// di Claude che non è un permesso → Agenti; di Casa → Casa; del PC → PC; pillola col puntino →
     /// Coda; attività di Claude → Agenti; riposo → Panoramica. Sostituisce i test di `Espandi`.
     #[test]
@@ -1669,13 +1696,15 @@ mod test {
             assert_eq!(dove(&p), DallaPillola::Vista(vista), "{id}");
             p.togli_voce(id);
         }
-        // Un permesso allargato: la Panoramica (mai una pagina dove il consenso stia a un tasto).
+        // Un permesso allargato: aperto nella Coda col testo intero (fix 1, C1), alla sua posizione.
+        p.metti_voce(voce_di_prova("casa.info", Fonte::Casa, Livello::Informazione, false), false);
         p.metti_voce(voce_di_prova("claude.permesso.7", Fonte::Claude, Livello::Bloccante, true), false);
-        assert_eq!(dove(&p), DallaPillola::Panoramica, "permesso");
+        assert_eq!(dove(&p), DallaPillola::Permesso(0), "permesso");
         p.togli_voce("claude.permesso.7");
+        p.togli_voce("casa.info");
         // Senza risposta dalla pillola il permesso ha solo «Apri il terminale»: è ancora un permesso.
         p.metti_voce(voce_di_prova("claude.permesso.8", Fonte::Claude, Livello::Bloccante, false), false);
-        assert_eq!(dove(&p), DallaPillola::Panoramica, "permesso senza risposta dalla pillola");
+        assert_eq!(dove(&p), DallaPillola::Permesso(0), "permesso senza risposta dalla pillola");
         p.togli_voce("claude.permesso.8");
         manda(&p, ev("a", TipoEvento::SessionEnd));
         // Il puntino (una sola informazione: non allarga): la Coda.
@@ -2282,6 +2311,59 @@ mod test {
         p.vista_coda(false);
         p.vista_coda(true);
         assert!(p.claude_armamento.borrow().dal.get() > Instant::now(), "rientrando si riarma");
+    }
+
+    /// Fix 1 del Task 7 (M2 della revisione): entrare nella Coda dal pannello vero (clic sulla
+    /// riga «In attesa») passa da `vista-cambiata` a `vista_coda` e riarma «Consenti».
+    #[test]
+    fn entrare_nella_coda_dal_pannello_riarma() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::ComponentHandle;
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let pannello = crate::Pannello::new().unwrap();
+        pannello.set_aperto(true);
+        pannello.show().unwrap();
+        p.riempi(&pannello);
+        p.pannello_aperto(&pannello);
+        // Lo stesso aggancio di `pannello.rs` (senza il campionatore del PC).
+        let (ponte, debole) = (p.clone(), pannello.as_weak());
+        pannello.on_vista_cambiata(move || {
+            if let Some(x) = debole.upgrade() {
+                ponte.vista_cambiata(&x);
+            }
+        });
+        let _rx = permesso(&p, 1, "a");
+        armato(&p);
+        slint::platform::update_timers_and_animations();
+        assert!(p.claude_armamento.borrow().dal.get() <= Instant::now(), "armato prima di entrare");
+        let titolo = p.attese.borrow().ordinate()[0].titolo.clone();
+        let riga = ElementHandle::find_by_accessible_label(&pannello, &format!("{titolo}, Aspetta te · Agenti"))
+            .next()
+            .expect("la voce nella riga «In attesa»");
+        riga.invoke_accessible_default_action();
+        slint::platform::update_timers_and_animations();
+        assert_eq!(pannello.get_vista(), "coda");
+        assert!(p.claude_armamento.borrow().dal.get() > Instant::now(), "entrando nella Coda «Consenti» si riarma");
+        p.pannello_chiuso();
+    }
+
+    /// Fix 1 del Task 7 (I1): la Coda mostra tutti i «Consenti». Tolto il permesso di mezzo, quello
+    /// più vecchio sale al suo posto (sotto il puntatore): si arma di nuovo, anche se la prima voce
+    /// e il bloccante più vecchio non cambiano. Toglierne uno senza spostare gli altri no.
+    #[test]
+    fn tolgo_il_permesso_di_mezzo_riarma() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let _r1 = permesso(&p, 1, "a");
+        let _r2 = permesso(&p, 2, "b");
+        let _r3 = permesso(&p, 3, "c");
+        armato(&p);
+        p.togli_voce(&voce_di(2));
+        assert!(p.claude_armamento.borrow().dal.get() > Instant::now(), "il permesso salito si arma di nuovo");
+        // Una voce che non è un permesso, sotto i permessi, va e viene: nessuno si sposta, nessun riarmo.
+        p.metti_voce(voce_di_prova("casa.info", Fonte::Casa, Livello::Informazione, false), false);
+        armato(&p);
+        p.togli_voce("casa.info");
+        assert!(p.claude_armamento.borrow().dal.get() <= Instant::now(), "nessun permesso si è spostato");
     }
 
     #[test]

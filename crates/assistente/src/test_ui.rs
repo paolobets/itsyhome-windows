@@ -820,6 +820,114 @@ mod accessibilita {
         assert_eq!(etichetta_col_fuoco(&p), "Casa non raggiungibile, Guarda presto · Casa", "← alla riga");
     }
 
+    /// Un permesso col riassunto lungo (il comando) e la sessione, come lo scrive `voce_permesso`.
+    fn permesso_lungo(righe: usize) -> VoceAttesaUi {
+        let comando: Vec<String> =
+            (0..righe).map(|i| format!("Remove-Item -Recurse -Force C:\\Work\\cartella-{i}\\sottocartella")).collect();
+        VoceAttesaUi {
+            dettaglio: format!("{}\nSessione: progetto-a", comando.join(" ; ")).into(),
+            ..voce_coda(
+                "claude.permesso.1",
+                "Claude chiede: PowerShell Remove-Item -Recurse -Force C:\\Work\\cartella-0\\sottocartella ; Remove-Item -Recurse…",
+                LivelloUi::Bloccante,
+                "Aspetta te · Agenti",
+                true,
+            )
+        }
+    }
+
+    /// Fix 1 del Task 7 (C1, sostituisce `titolo_della_voce_espansa_va_a_capo`): un permesso si
+    /// apre col titolo a capo (più righe, non tagliato in una) e il testo intero (comando e
+    /// sessione) per Narrator e sullo schermo; la riga chiusa non offre «Consenti» ma «Apri».
+    #[test]
+    fn permesso_aperto_si_legge_intero() {
+        let (p, _) = pannello_in_coda(ModelRc::new(VecModel::from(vec![permesso_lungo(2)])));
+        assert!(ElementHandle::find_by_accessible_label(&p, "Consenti").next().is_none(), "nella riga niente «Consenti»");
+        assert_eq!(elemento(&p, "Apri").accessible_role(), Some(AccessibleRole::Button));
+        elemento(&p, "Apri").invoke_accessible_default_action();
+        lascia_girare(&p);
+        let titolo = ElementHandle::find_by_element_id(&p, "VoceAperta::titolo").next().expect("il titolo della voce aperta");
+        let sotto = ElementHandle::find_by_element_id(&p, "VoceAperta::sotto-testo").next().expect("la riga sotto");
+        assert!(titolo.size().height > 30.0, "titolo lungo a capo: {}", titolo.size().height);
+        assert!(sotto.absolute_position().y >= titolo.absolute_position().y + titolo.size().height, "la riga sotto scende");
+        let voce = ElementHandle::find_by_accessible_label(&p, &format!("{}, Aspetta te · Agenti", permesso_lungo(2).titolo))
+            .find(|e| e.accessible_role() == Some(AccessibleRole::Groupbox))
+            .expect("la voce aperta");
+        let descrizione = voce.accessible_description().unwrap_or_default();
+        assert!(descrizione.contains("cartella-1") && descrizione.ends_with("Sessione: progetto-a"), "{descrizione}");
+        // Il testo sta in un riquadro visibile sotto la riga, in mono.
+        let dettaglio = ElementHandle::find_by_element_id(&p, "VoceAperta::dettaglio").next().expect("il testo intero");
+        assert!(dettaglio.size().height > 0.0 && dettaglio.absolute_position().y > sotto.absolute_position().y);
+        let sorgente = include_str!("../ui/impianti/elenco.slint");
+        let inizio = sorgente.find("dettaglio := Text").expect("il testo intero");
+        assert!(sorgente[inizio..inizio + 400].contains("font-family: Tema.carattere-mono"), "il comando in mono");
+    }
+
+    /// Fix 1 del Task 7 (C1, dec. 11): dalla pillola («Apri» o clic su un permesso) il pannello
+    /// nasce sulla Coda col permesso già aperto e il testo intero, il fuoco su «Nega».
+    #[test]
+    fn dalla_pillola_il_permesso_si_apre_intero() {
+        use slint::platform::Key;
+        let (p, azioni) = pannello_in_coda(ModelRc::new(VecModel::from(vec![
+            voce_coda("casa", "Casa non raggiungibile", LivelloUi::Attenzione, "Guarda presto · Casa", false),
+            permesso_lungo(2),
+        ])));
+        p.set_vista("panoramica".into());
+        p.invoke_apri_coda_su(1);
+        lascia_girare(&p);
+        assert_eq!(p.get_vista(), "coda");
+        assert!(ElementHandle::find_by_element_id(&p, "VoceAperta::dettaglio").next().is_some(), "il testo intero");
+        tasto(&p, Key::Escape);
+        tasto(&p, Key::Return);
+        lascia_girare(&p);
+        assert_eq!(etichetta_col_fuoco(&p), "Nega", "riaperto da tastiera, il fuoco su «Nega»");
+        assert!(azioni.borrow().is_empty());
+    }
+
+    /// Fix 1 del Task 7 (C1): col testo più lungo del riquadro «Consenti» non c'è (né col clic né
+    /// con la tastiera né con Ctrl+Invio) finché il fondo del testo non si è visto; scorso il
+    /// testo fino in fondo compare, e solo Ctrl+Invio concede.
+    #[test]
+    fn consenso_impossibile_prima_del_fondo_del_testo() {
+        use slint::platform::Key;
+        let (p, azioni) = pannello_in_coda(ModelRc::new(VecModel::from(vec![permesso_lungo(12)])));
+        tasto(&p, Key::Return);
+        lascia_girare(&p);
+        assert_eq!(etichetta_col_fuoco(&p), "Nega");
+        assert!(ElementHandle::find_by_accessible_label(&p, "Consenti").next().is_none(), "«Consenti» prima del fondo");
+        assert!(ElementHandle::find_by_accessible_label(&p, "Leggi fino in fondo per consentire").next().is_some());
+        // → e Ctrl+Invio non portano a nulla.
+        tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Nega", "il consenso nascosto non si raggiunge");
+        con_modificatori(&p, &[Key::Control], Key::Return);
+        assert!(azioni.borrow().is_empty(), "concesso senza aver letto: {:?}", azioni.borrow());
+        // ↑ al testo, poi ↓ lo scorre fino in fondo; solo allora ↓ passa ai pulsanti.
+        tasto(&p, Key::UpArrow);
+        let mut passi = 0;
+        while ElementHandle::find_by_accessible_label(&p, "Consenti").next().is_none() {
+            assert_eq!(etichetta_col_fuoco(&p), format!("{}, Aspetta te · Agenti", permesso_lungo(12).titolo), "sul testo");
+            tasto(&p, Key::DownArrow);
+            lascia_girare(&p);
+            passi += 1;
+            assert!(passi < 40, "il fondo del testo non arriva");
+        }
+        assert!(passi > 1, "il testo doveva scorrere: {passi} passi");
+        assert!(azioni.borrow().is_empty());
+        tasto(&p, Key::DownArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Nega");
+        tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Consenti");
+        tasto(&p, Key::Return);
+        assert!(azioni.borrow().is_empty(), "Invio da solo non concede");
+        con_modificatori(&p, &[Key::Control], Key::Return);
+        assert_eq!(*azioni.borrow(), ["consenti"]);
+        // Esc richiude il permesso: di nuovo la riga, senza «Consenti».
+        tasto(&p, Key::Escape);
+        lascia_girare(&p);
+        assert!(ElementHandle::find_by_accessible_label(&p, "Consenti").next().is_none());
+        assert_eq!(p.get_vista(), "coda");
+    }
+
     /// Ridisegno F1, Task 7 (C1, regola M3): «Nega» e «Consenti» sono entrambi neutri, senza
     /// tinta d'azione; la tinta resta all'ultimo pulsante di una voce che non è un permesso
     /// («Apri», «Riprova»). Sostituisce `nega_e_consenti_sono_neutri` (la voce espansa non c'è più).
@@ -859,27 +967,33 @@ mod accessibilita {
         let (p, azioni) = pannello_in_coda(ModelRc::from(voci.clone()));
         tasto(&p, Key::DownArrow);
         tasto(&p, Key::DownArrow);
-        tasto(&p, Key::RightArrow);
+        // Il terzo si apre (Invio), → su «Consenti».
+        tasto(&p, Key::Return);
+        lascia_girare(&p);
         tasto(&p, Key::RightArrow);
         assert_eq!(etichetta_col_fuoco(&p), "Consenti");
         voci.remove(2);
         // I `changed` girano al giro seguente del ciclo d'eventi.
         slint::platform::update_timers_and_animations();
         assert_eq!(etichetta_col_fuoco(&p), "Secondo, Ti aspetta · Agenti", "il fuoco va sulla riga precedente");
+        assert_eq!(ruolo_col_fuoco(&p), i_slint_core::items::AccessibleRole::ListItem, "sulla riga, non sul permesso chiuso");
         // Una riga che arriva dopo non si prende il fuoco da sola.
         voci.push(voce_coda("d", "Quarto", LivelloUi::Bloccante, "Ti aspetta · Agenti", true));
         slint::platform::update_timers_and_animations();
         assert_eq!(etichetta_col_fuoco(&p), "Secondo, Ti aspetta · Agenti", "il fuoco resta dov'era");
         tasto(&p, Key::UpArrow);
         assert_eq!(etichetta_col_fuoco(&p), "Primo, Ti aspetta · Agenti", "il tasto seguente non si perde");
-        // Una voce diversa al posto di quella col fuoco (stesso numero di righe): il fuoco lascia
-        // «Consenti» e torna sulla riga, mai sul consenso di un'altra richiesta.
-        tasto(&p, Key::RightArrow);
+        // Una voce diversa al posto di quella aperta (stesso numero di righe): il permesso si
+        // chiude, il fuoco lascia «Consenti» e torna sulla riga, mai sul consenso di un'altra
+        // richiesta.
+        tasto(&p, Key::Return);
+        lascia_girare(&p);
         tasto(&p, Key::RightArrow);
         assert_eq!(etichetta_col_fuoco(&p), "Consenti");
         voci.set_row_data(0, voce_coda("z", "Un altro", LivelloUi::Bloccante, "Ti aspetta · Agenti", true));
         slint::platform::update_timers_and_animations();
         assert_eq!(etichetta_col_fuoco(&p), "Un altro, Ti aspetta · Agenti");
+        assert_eq!(ruolo_col_fuoco(&p), i_slint_core::items::AccessibleRole::ListItem, "la riga, il permesso si è chiuso");
         con_modificatori(&p, &[Key::Control], Key::Return);
         assert!(azioni.borrow().is_empty(), "Ctrl+Invio sulla riga non concede: {:?}", azioni.borrow());
     }
@@ -2287,19 +2401,9 @@ mod accessibilita {
     fn invio_non_consente_anche_col_fuoco_sul_pulsante() {
         // Il pulsante «Consenti» ha il fuoco vero (e sa premersi con Invio da solo), ma `tasti`
         // intercetta prima: Invio da solo non concede, Ctrl+Invio sì (UX3/FE15).
-        // Ridisegno F1, Task 7: sulla riga della Coda.
+        // Ridisegno F1, Task 7: sul permesso aperto nella Coda.
         use slint::platform::Key;
-        let (p, azioni) = pannello_in_coda(ModelRc::new(VecModel::from(vec![voce_coda(
-            "v",
-            "Permesso",
-            LivelloUi::Bloccante,
-            "Ti aspetta · prova",
-            true,
-        )])));
-        // → entra su «Nega», → ancora su «Consenti», poi Invio da solo.
-        tasto(&p, Key::RightArrow);
-        tasto(&p, Key::RightArrow);
-        assert_eq!(etichetta_col_fuoco(&p), "Consenti", "il fuoco vero è su «Consenti»");
+        let (p, azioni) = coda_sul_consenso();
         tasto(&p, Key::Return);
         assert!(azioni.borrow().is_empty(), "Invio da solo ha consentito: {:?}", azioni.borrow());
         // Ctrl+Invio sì.
@@ -2310,8 +2414,9 @@ mod accessibilita {
         assert_eq!(*azioni.borrow(), ["consenti"]);
     }
 
-    /// Un pannello sulla Coda con la riga «Permesso» (Nega / Consenti) e il fuoco vero su
-    /// «Consenti» (→ entra su «Nega», → ancora); restituisce le azioni arrivate.
+    /// Un pannello sulla Coda col permesso «Permesso» (Nega / Consenti, testo corto) aperto e il
+    /// fuoco vero su «Consenti» (→ «Nega», → «Apri», Invio apre, → «Consenti»); restituisce le
+    /// azioni arrivate.
     fn coda_sul_consenso() -> (Pannello, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
         use slint::platform::Key;
         let (p, azioni) = pannello_in_coda(ModelRc::new(VecModel::from(vec![voce_coda(
@@ -2323,8 +2428,38 @@ mod accessibilita {
         )])));
         tasto(&p, Key::RightArrow);
         tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Apri", "nella riga il consenso è «Apri»");
+        tasto(&p, Key::Return);
+        lascia_girare(&p);
+        assert_eq!(etichetta_col_fuoco(&p), "Nega", "aperto, il fuoco è su «Nega»");
+        tasto(&p, Key::RightArrow);
         assert_eq!(etichetta_col_fuoco(&p), "Consenti", "il fuoco vero è su «Consenti»");
+        assert!(azioni.borrow().is_empty());
         (p, azioni)
+    }
+
+    /// Il ruolo del primo elemento con un nome, dall'elemento col fuoco in su (vedi
+    /// `etichetta_col_fuoco`): distingue la riga dal permesso aperto, che hanno lo stesso nome.
+    fn ruolo_col_fuoco(p: &Pannello) -> i_slint_core::items::AccessibleRole {
+        use i_slint_core::accessibility::AccessibleStringProperty;
+        use i_slint_core::item_tree::ParentItemTraversalMode;
+        let mut corrente = i_slint_core::window::WindowInner::from_pub(p.window()).focus_item.borrow().upgrade();
+        while let Some(item) = corrente {
+            if item.accessible_string_property(AccessibleStringProperty::Label).is_some_and(|e| !e.is_empty()) {
+                return item.accessible_role();
+            }
+            corrente = item.parent_item(ParentItemTraversalMode::StopAtPopups);
+        }
+        i_slint_core::items::AccessibleRole::None
+    }
+
+    /// Dopo l'apertura di un permesso: lascia nascere la voce aperta e girare i suoi `init` e
+    /// `changed` (dice al pannello se il fondo del testo si è visto).
+    fn lascia_girare(p: &Pannello) {
+        let _ = ElementHandle::find_by_element_id(p, "VoceAperta::titolo").count();
+        slint::platform::update_timers_and_animations();
+        let _ = ElementHandle::find_by_element_id(p, "VoceAperta::titolo").count();
+        slint::platform::update_timers_and_animations();
     }
 
     /// `tasto` con i modificatori premuti prima e rilasciati dopo.
@@ -2396,14 +2531,16 @@ mod accessibilita {
             icona: Default::default(),
             pulsanti: crate::pillola::pulsanti_ui(&voce.pulsanti),
         }])));
-        // Invio sulla riga entra nei pulsanti come →, sempre su «Nega»: non risponde.
+        // Invio sulla riga apre il permesso col testo intero, il fuoco su «Nega»: non risponde.
         tasto(&p, Key::Return);
+        lascia_girare(&p);
         assert!(azioni.borrow().is_empty(), "Invio sulla riga ha risposto: {:?}", azioni.borrow());
         assert_eq!(etichetta_col_fuoco(&p), "Nega");
         tasto(&p, Key::Return);
         assert_eq!(*azioni.borrow(), ["nega"], "Invio da solo nega, non consente");
         azioni.borrow_mut().clear();
         tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Consenti", "testo corto: «Consenti» c'è");
         tasto(&p, Key::Return);
         assert!(azioni.borrow().is_empty(), "Invio su «Consenti» non concede: {:?}", azioni.borrow());
         con_modificatori(&p, &[Key::Control], Key::Return);
