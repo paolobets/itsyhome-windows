@@ -107,7 +107,7 @@ export component RigaAttesa inherits Rectangle {
             text: "+" + altre;
             font-size: Tema.testo-corpo;
             font-weight: 500;
-            color: Tema.testo-ora;
+            color: Tema.testo-2;
         }
 
         area-altre := TouchArea {
@@ -287,7 +287,7 @@ export component VoceEspansa inherits Rectangle {
             wrap: word-wrap;
             vertical-alignment: top;
             font-size: Tema.testo-corpo;
-            color: Tema.testo-ora;
+            color: Tema.testo-2;
         }
     }
 
@@ -296,8 +296,8 @@ export component VoceEspansa inherits Rectangle {
         y: testo.y + testo.height - self.height;
         width: testo.width;
         height: 16px;
-        // Dal trasparente al fondo della voce (vetro al 5% sul corpo del pannello).
-        background: @linear-gradient(180deg, Tema.riquadro-svanito 0%, Tema.riquadro-pieno 100%);
+        // Dal trasparente al fondo della voce (la carta, `g1`).
+        background: @linear-gradient(180deg, Tema.g1.with-alpha(0) 0%, Tema.g1 100%);
     }
 
     // Col fuoco da tastiera su un consenso: Invio da solo non fa nulla, lo si dice accanto.

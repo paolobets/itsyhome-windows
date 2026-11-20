@@ -32,7 +32,7 @@ export component Fuoco inherits FocusScope {
     focus-on-tab-navigation: false;
 }
 
-// Tipo di un pulsante: neutro (bianco tenue), azione (verde acqua, con il bordo), pericolo (rosso).
+// Tipo di un pulsante: neutro (grigio pieno), azione (bianco con testo nero), pericolo (rosa).
 export enum TipoPulsante { neutro, azione, pericolo }
 
 // Chi ha la tinta d'azione fra i pulsanti di una voce: l'ultimo, ma mai un permesso (pulsante
@@ -67,7 +67,7 @@ export component Anello inherits Rectangle {
 }
 
 // Il pulsante di testo (UX16: una sola forma). Alto 30 e raggio 10 (nella pillola 26/28 e 8);
-// neutro bianco al 9%, azione verde acqua al 20% con il bordo, pericolo rosso con il bordo. Fra
+// neutro grigio pieno (g3, g4 al passaggio), azione bianco con testo nero, pericolo rosa con il bordo. Fra
 // due pulsanti affiancati ha la tinta d'azione l'ultimo. Il clic non gli dà il fuoco: l'anello
 // si vede solo da tastiera (`anello`, di norma quando ha il fuoco).
 export component Pulsante inherits FocusScope {
@@ -154,7 +154,8 @@ export component Pulsante inherits FocusScope {
             font-family: Tema.carattere;
             font-weight: 500;
             font-size: corpo-testo;
-            color: Tema.testo;
+            // Sul primario bianco il testo è nero.
+            color: tipo == TipoPulsante.azione ? Tema.testo-su-primario : Tema.testo;
             accessible-role: none;
         }
     }
@@ -242,8 +243,9 @@ export global NomeRete {
 export component Etichetta inherits Text {
     font-family: Tema.carattere-mono;
     font-size: Tema.testo-piccolo;
-    letter-spacing: 0.6px;
-    color: Tema.testo-etichetta;
+    // Tracking .07em (spec §5.2): 12 px → 0,84.
+    letter-spacing: 0.84px;
+    color: Tema.testo-2;
     vertical-alignment: center;
 }
 
@@ -393,7 +395,7 @@ export component Scelta inherits FocusScope {
 
             Rectangle {
                 border-radius: Tema.raggio-m;
-                background: Tema.riquadro-pieno;
+                background: Tema.g1;
                 border-width: 1px;
                 border-color: Tema.vetro-bordo;
             }
@@ -433,7 +435,7 @@ export component Scelta inherits FocusScope {
                         vertical-alignment: center;
                         font-family: Tema.carattere;
                         font-size: Tema.testo-corpo;
-                        font-weight: i == root.indice ? 500 : 400;
+                        font-weight: i == root.indice ? 700 : 500;
                         color: Tema.testo;
                         accessible-role: none;
                     }

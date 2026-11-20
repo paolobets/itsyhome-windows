@@ -196,7 +196,7 @@ component Campo inherits Rectangle {
             wrap: word-wrap;
             vertical-alignment: center;
             font-size: Tema.testo-corpo;
-            color: Tema.testo-etichetta;
+            color: Tema.testo-2;
         }
 
         // Col fuoco il bordo resta quello di sempre e fuori compare l'anello bianco di tutti gli
@@ -301,8 +301,8 @@ component Sezione inherits FocusScope {
                 vertical-alignment: center;
                 overflow: elide;
                 font-size: Tema.testo-medio;
-                font-weight: attiva ? 500 : 400;
-                color: attiva ? Tema.testo : Tema.testo-ora;
+                font-weight: attiva ? 700 : 500;
+                color: attiva ? Tema.testo : Tema.testo-2;
             }
         }
     }
@@ -345,7 +345,7 @@ component Stato inherits Rectangle {
             vertical-alignment: center;
             overflow: elide;
             font-size: Tema.testo-corpo;
-            color: Tema.testo-ora;
+            color: Tema.testo-2;
         }
     }
 }
@@ -382,7 +382,7 @@ component Interruttore inherits FocusScope {
             width: 18px;
             height: 18px;
             border-radius: self.height / 2;
-            background: acceso ? Tema.pomello-acceso : Tema.testo-ora;
+            background: acceso ? Tema.pomello-acceso : Tema.testo-2;
             animate x { duration: Movimento.ridotto ? 0ms : 120ms; easing: ease-out; }
         }
     }
@@ -525,7 +525,7 @@ component SceltaIcona inherits FocusScope {
 
     Rectangle {
         border-radius: Tema.raggio-xl;
-        background: Tema.riquadro-pieno;
+        background: Tema.g1;
         border-width: 1px;
         border-color: Tema.vetro-bordo;
     }
@@ -629,7 +629,7 @@ component ConfermaElimina inherits FocusScope {
 
     Rectangle {
         border-radius: Tema.raggio-xl;
-        background: Tema.riquadro-pieno;
+        background: Tema.g1;
         border-width: 1px;
         border-color: Tema.pericolo-filo;
     }
@@ -964,7 +964,8 @@ export component FinestraImpostazioni inherits Window {
     min-width: 600px;
     min-height: 420px;
     default-font-family: Tema.carattere;
-    background: Tema.fondo-finestra;
+    default-font-weight: 500;
+    background: Tema.nero;
     forward-focus: radice;
     // Il riquadro AboutSlint segue la tavolozza dei widget standard: logo e testo chiari sul
     // fondo scuro, qualunque sia il tema di Windows.
@@ -1220,12 +1221,12 @@ export component FinestraImpostazioni inherits Window {
             return reject;
         }
 
-        // Sotto la barra di Windows il filo dei petali, come il bordo del pannello e la cornice della
-        // gestione (R1-19): 1,5 px arrotondato al pixel fisico.
+        // Sotto la barra di Windows il filo, come nella cornice della gestione (R1-19): 1,5 px
+        // arrotondato al pixel fisico.
         filo-petali := Rectangle {
             y: 0;
             height: Tema.sul-pixel(1.5px);
-            background: Tema.petali;
+            background: Tema.filo;
         }
 
         // Niente titolo «Impostazioni»: lo dice già la barra della finestra.
@@ -1655,7 +1656,7 @@ export component FinestraImpostazioni inherits Window {
                                                 height: 17px;
                                                 text: riga.nome;
                                                 overflow: elide;
-                                                font-weight: testata ? 500 : 400;
+                                                font-weight: testata ? 700 : 500;
                                                 font-size: Tema.testo-corpo;
                                                 color: riga.nascosto ? Tema.testo-tenue : Tema.testo;
                                             }
@@ -2467,7 +2468,7 @@ export component FinestraImpostazioni inherits Window {
                         if claude-passo == 2: card-scollega := Rectangle {
                             height: corpo-scollega.preferred-height;
                             border-radius: Tema.raggio-xl;
-                            background: Tema.riquadro-pieno;
+                            background: Tema.g1;
                             border-width: 1px;
                             border-color: Tema.pericolo-filo;
                             init => { annulla-scollega.focus(); }
@@ -2642,7 +2643,7 @@ export component FinestraImpostazioni inherits Window {
                                 if api-conferma-togli: conferma-api := Rectangle {
                                     height: corpo-togli.preferred-height;
                                     border-radius: Tema.raggio-l;
-                                    background: Tema.riquadro-pieno;
+                                    background: Tema.g1;
                                     border-width: 1px;
                                     border-color: Tema.pericolo-filo;
                                     init => { annulla-togli.focus(); }
@@ -2863,7 +2864,7 @@ export component FinestraImpostazioni inherits Window {
                         text: "© Paolo Bets";
                         vertical-alignment: center;
                         font-size: Tema.testo-corpo;
-                        color: Tema.testo-ora;
+                        color: Tema.testo-2;
                     }
 
                     // Attribuzione richiesta dalla licenza Slint royalty-free 2.0, punto 2(a)

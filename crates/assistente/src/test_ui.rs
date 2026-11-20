@@ -217,27 +217,147 @@ fn contrasto(a: &str, b: &str) -> f64 {
     (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
 }
 
+/// Il sorgente di `tema.slint`.
+fn tema_slint() -> String {
+    std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("ui/tema.slint")).expect("tema.slint leggibile")
+}
+
+/// Il colore `#rrggbb` di un token di `Tema`: se il token è definito come un altro token
+/// (`attivo: caldo-2`) si segue l'alias fino al letterale.
+fn colore_del_token(tema: &str, nome: &str) -> String {
+    let cerca = format!("out property <color> {nome}:");
+    let i = tema.find(&cerca).unwrap_or_else(|| panic!("token {nome} non trovato")) + cerca.len();
+    let valore = tema[i..].split(';').next().expect("fine del token").trim();
+    if valore.starts_with('#') && valore.len() == 7 {
+        valore.to_string()
+    } else if valore.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+        colore_del_token(tema, valore)
+    } else {
+        panic!("il token {nome} vale «{valore}»: né un colore #rrggbb né l'alias di un altro token");
+    }
+}
+
 #[test]
 fn iniziali_dei_collegamenti_leggibili_sul_loro_cerchio() {
-    // R1-23: l'iniziale (Tema.corpo, scura) sul cerchio (tavolozza di `colore-collegamento` in
+    // R1-23: l'iniziale (Tema.nero, scura) sul cerchio (tavolozza di `colore-collegamento` in
     // tema.slint) deve avere almeno 4,5:1 (WCAG AA, testo normale), per ogni colore.
-    let tema = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("ui/tema.slint")).expect("tema.slint leggibile");
-    let colore = |nome: &str| -> String {
-        let cerca = format!("out property <color> {nome}: #");
-        let i = tema.find(&cerca).unwrap_or_else(|| panic!("token {nome} non trovato")) + cerca.len() - 1;
-        tema[i..i + 7].to_string()
-    };
+    let tema = tema_slint();
+    let colore = |nome: &str| colore_del_token(&tema, nome);
     let inizio = tema.find("function colore-collegamento").expect("funzione colore-collegamento");
     let corpo = &tema[inizio..];
     let corpo = &corpo[..corpo.find("\n    }").expect("fine della funzione")];
     let toni: Vec<&str> = corpo.split("return ").skip(1).map(|r| r.split(';').next().unwrap().trim()).collect();
     assert_eq!(toni.len(), crate::collegamenti::TONI, "un colore per ogni tono");
-    let lettera = colore("corpo");
+    let lettera = colore("nero");
     for t in toni {
         let sfondo = colore(t);
         let c = contrasto(&lettera, &sfondo);
         assert!(c >= 4.5, "{t} ({sfondo}) con la lettera {lettera}: {c:.2}:1");
     }
+}
+
+#[test]
+fn contrasti_dei_token() {
+    // Ridisegno F1, Task 1: parola ≥ 4,5:1, segno e bordo di controllo ≥ 3:1, sui fondi veri
+    // (nero della finestra, g1 carta, g2 riga scelta).
+    let tema = tema_slint();
+    let colore = |nome: &str| colore_del_token(&tema, nome);
+    let mut sotto = Vec::new();
+    let mut verifica = |sopra: &str, fondo: &str, minimo: f64| {
+        let c = contrasto(&colore(sopra), &colore(fondo));
+        if c < minimo {
+            sotto.push(format!("{sopra} su {fondo}: {c:.2}:1 (minimo {minimo}:1)"));
+        }
+    };
+    for testo in ["testo-2", "testo-tenue"] {
+        for fondo in ["nero", "g1", "g2"] {
+            verifica(testo, fondo, 4.5);
+        }
+    }
+    for tono in ["attivo", "aspetta", "guarda", "fatto", "errore"] {
+        for fondo in ["nero", "g1"] {
+            verifica(tono, fondo, 4.5);
+        }
+    }
+    verifica("bordo-ctl", "g1", 3.0);
+    verifica("testo-su-primario", "primario", 4.5);
+    assert!(sotto.is_empty(), "contrasti sotto soglia:\n{}", sotto.join("\n"));
+}
+
+#[test]
+fn caratteri_incorporati() {
+    // Ridisegno F1, Task 1: Inter 500/700 e JetBrains Mono NL 500, e nient'altro.
+    let tema = tema_slint();
+    let importati: Vec<&str> = tema
+        .lines()
+        .map(senza_commento)
+        .filter_map(|r| r.trim().strip_prefix("import \"").and_then(|r| r.strip_suffix("\";")))
+        .filter(|p| p.ends_with(".ttf"))
+        .collect();
+    assert_eq!(
+        importati,
+        ["../assets/font/Inter-Medium.ttf", "../assets/font/Inter-Bold.ttf", "../assets/font/JetBrainsMonoNL-Medium.ttf"],
+        "i caratteri che tema.slint incorpora"
+    );
+
+    let mut vecchi = Vec::new();
+    for percorso in file_slint() {
+        let testo = std::fs::read_to_string(&percorso).expect("file .slint leggibile");
+        for (n, riga) in testo.lines().enumerate() {
+            // Pesi di prima: 400 e 600 non esistono più (500 e 700), anche dentro un ternario.
+            let peso_vecchio = senza_commento(riga).split_once("font-weight:").is_some_and(|(_, dopo)| {
+                dopo.split(|c: char| !c.is_ascii_digit()).any(|p| p == "400" || p == "600")
+            });
+            if riga.contains("Inter Tight") || peso_vecchio {
+                vecchi.push(format!("{}:{}: {}", percorso.display(), n + 1, riga.trim()));
+            }
+        }
+    }
+    assert!(vecchi.is_empty(), "caratteri o pesi di prima:\n{}", vecchi.join("\n"));
+
+    let cartella = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/font");
+    let mut nomi: Vec<String> = std::fs::read_dir(&cartella)
+        .expect("cartella dei caratteri leggibile")
+        .map(|v| v.expect("voce leggibile").file_name().to_string_lossy().into_owned())
+        .collect();
+    nomi.sort();
+    assert_eq!(
+        nomi,
+        ["Inter-Bold.ttf", "Inter-Medium.ttf", "JetBrainsMonoNL-Medium.ttf", "OFL-Inter.txt", "OFL-JetBrainsMono.txt"],
+        "assets/font: tre caratteri e le due licenze, nient'altro"
+    );
+}
+
+#[test]
+fn finestre_col_peso_500() {
+    // Ridisegno F1, Task 1: ogni finestra parte dal peso 500 (il «normale» del ridisegno); il 700
+    // si chiede dove serve. Letto dal sorgente: una `Window` senza `default-font-weight: 500`
+    // userebbe il 400, che non è incorporato.
+    let ui = Path::new(env!("CARGO_MANIFEST_DIR")).join("ui");
+    let finestre = [
+        ("Pannello", ui.join("pannello.slint")),
+        ("Pillola", ui.join("pillola.slint")),
+        ("FinestraImpostazioni", ui.join("impostazioni.slint")),
+        ("Cornice", ui.join("../../gestione/ui/cornice.slint")),
+    ];
+    for (nome, file) in finestre {
+        let testo = std::fs::read_to_string(&file).expect("file .slint leggibile");
+        let inizio = testo
+            .find(&format!("export component {nome} inherits Window {{"))
+            .unwrap_or_else(|| panic!("finestra {nome} non trovata"));
+        let componente = &testo[inizio..];
+        let componente = &componente[..componente.find("\n}\n").unwrap_or(componente.len())];
+        assert!(
+            componente.lines().map(senza_commento).any(|r| r.trim() == "default-font-weight: 500;"),
+            "{nome} senza default-font-weight: 500"
+        );
+    }
+    let tema = tema_slint();
+    assert!(tema.contains("out property <string> carattere: \"Inter\";"), "carattere dell'interfaccia: Inter");
+    assert!(
+        tema.contains("out property <string> carattere-mono: \"JetBrains Mono NL\";"),
+        "carattere dei numeri e delle etichette: JetBrains Mono NL"
+    );
 }
 
 #[test]
@@ -2829,15 +2949,24 @@ mod accessibilita {
         f.show().expect("impostazioni mostrate nel backend di prova");
         f.window().set_size(slint::LogicalSize::new(720.0, 520.0));
         f.window().dispatch_event(WindowEvent::WindowActiveChanged(true));
-        let spesa = || campo(&f, "Soglia di spesa mensile ($)");
-        let (y0, h0) = (spesa().absolute_position().y, spesa().size().height);
-        assert!(y0 + h0 > 520.0 - 24.0, "all'apertura la casella è sotto il bordo (altrimenti il test non prova nulla): {y0}");
+        // Una casella oltre il bordo della finestra la ricerca non la vede (fuori dal ritaglio):
+        // con Inter, più largo di Inter Tight, le righe vanno a capo prima e la casella parte
+        // sotto i 520 px; «non trovata» vale quindi «sotto il bordo».
+        let spesa = || {
+            ElementHandle::find_by_accessible_label(&f, "Soglia di spesa mensile ($)")
+                .find(|e| e.accessible_role() == Some(AccessibleRole::TextInput))
+        };
+        assert!(
+            spesa().is_none_or(|c| c.absolute_position().y + c.size().height > 520.0 - 24.0),
+            "all'apertura la casella è sotto il bordo (altrimenti il test non prova nulla)"
+        );
         for _ in 0..30 {
-            if ha_il_fuoco(&f, &spesa()) {
+            if spesa().is_some_and(|c| ha_il_fuoco(&f, &c)) {
                 break;
             }
             tasto_finestra(&f, Key::Tab);
         }
+        let spesa = || campo(&f, "Soglia di spesa mensile ($)");
         assert!(ha_il_fuoco(&f, &spesa()), "Tab arriva alla soglia di spesa");
         let (_, y, _, h) = dove_il_fuoco(&f).unwrap();
         assert!(y >= 18.0 && y + h <= 520.0 - 24.0 + 0.5, "la casella col fuoco è fuori vista: y {y} + {h}");

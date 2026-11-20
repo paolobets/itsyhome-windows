@@ -70,7 +70,7 @@ export component LayoutOrologio inherits Rectangle {
                 font-weight: 500;
                 font-size: Tema.testo-ora-grande;
                 letter-spacing: -1.5px;
-                color: Tema.ora-grande;
+                color: Tema.testo;
             }
 
             Text {
@@ -96,7 +96,7 @@ export component LayoutOrologio inherits Rectangle {
                     overflow: elide;
                     font-size: Tema.testo-corpo;
                     // L'invito ha il verde acqua dell'azione: è l'unica cosa da fare.
-                    color: casa-invito ? Tema.petalo-5 : Tema.testo-ora;
+                    color: casa-invito ? Tema.petalo-5 : Tema.testo-2;
                 }
 
                 // Il «›» che dice che la riga si apre: a parte, così non si accorcia coi testi lunghi
@@ -106,7 +106,7 @@ export component LayoutOrologio inherits Rectangle {
                     horizontal-stretch: 0;
                     text: "›";
                     font-size: Tema.testo-corpo;
-                    color: casa-invito ? Tema.petalo-5 : Tema.testo-ora;
+                    color: casa-invito ? Tema.petalo-5 : Tema.testo-2;
                 }
             }
 
@@ -116,7 +116,7 @@ export component LayoutOrologio inherits Rectangle {
                 text: riga-pc;
                 overflow: elide;
                 font-size: Tema.testo-corpo;
-                color: Tema.testo-ora;
+                color: Tema.testo-2;
             }
         }
     }

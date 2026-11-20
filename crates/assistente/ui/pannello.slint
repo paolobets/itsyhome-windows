@@ -434,6 +434,7 @@ export component Pannello inherits Window {
     background: transparent;
     title: "ItsyHome — pannello";
     default-font-family: Tema.carattere;
+    default-font-weight: 500;
     width: larghezza-pannello;
     height: 300px;
     forward-focus: tasti;
@@ -1056,40 +1057,14 @@ export component Pannello inherits Window {
             opacity: aperto ? 1 : 0;
             animate height { duration: Movimento.ridotto ? 0ms : 200ms; easing: ease-out; }
             animate opacity { duration: Movimento.ridotto ? 120ms : 200ms; easing: ease-out; }
-            border-radius: Tema.raggio-pannello;
+            // Nero vero, angoli bassi a raggio 34 (isola di TwoCode). Senza l'anello dei petali e
+            // senza i bagliori: il contorno nuovo arriva con la cornice (Task 6).
+            border-top-left-radius: Tema.raggio-pannello;
+            border-top-right-radius: Tema.raggio-pannello;
+            border-bottom-left-radius: Tema.raggio-isola;
+            border-bottom-right-radius: Tema.raggio-isola;
             clip: true;
-            // Anello sottile con i colori dei petali, come il bordo dell'isola nella bozza (fermo).
-            background: Tema.petali;
-
-            // Filo di 1,5 px arrotondato al pixel fisico (FE27): a 1,25 e 1,75 non si sfoca.
-            Rectangle {
-                property <length> filo: Tema.sul-pixel(1.5px);
-                x: filo;
-                y: filo;
-                width: parent.width - 2 * filo;
-                height: parent.height - 2 * filo;
-                border-radius: parent.border-radius - filo;
-                clip: true;
-                background: Tema.corpo;
-
-                // Due bagliori appena percettibili (indaco in alto a sinistra, verde acqua in basso a destra).
-                // Quadrati con la sfumatura che svanisce prima dei lati: nessun bordo visibile.
-                Rectangle {
-                    x: -100px;
-                    y: -220px;
-                    width: 440px;
-                    height: 440px;
-                    background: @radial-gradient(circle, Tema.bagliore-indaco 0%, transparent 60%);
-                }
-
-                Rectangle {
-                    x: parent.width - 230px;
-                    y: parent.height - 190px;
-                    width: 400px;
-                    height: 400px;
-                    background: @radial-gradient(circle, Tema.bagliore-acqua 0%, transparent 60%);
-                }
-            }
+            background: Tema.nero;
 
             // Riga alta: occhi al centro, ora a destra e poi «⋯».
             // Il battito di ciglia (dentro Occhi) solo a pannello aperto.
@@ -1148,7 +1123,7 @@ export component Pannello inherits Window {
                 vertical-alignment: center;
                 font-family: Tema.carattere-mono;
                 font-size: Tema.testo-corpo;
-                color: Tema.testo-ora;
+                color: Tema.testo-2;
             }
 
             // «⋯» (Task 14i): il menu dell'isola senza «Apri», con Impostazioni in testa. Bersaglio

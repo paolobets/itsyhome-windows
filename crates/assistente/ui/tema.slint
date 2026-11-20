@@ -1,10 +1,12 @@
-// Tema condiviso: colori del marchio HIRIS e caratteri (Inter Tight, JetBrains Mono — SIL OFL).
-// Unico posto dei colori: fuori da questo file nessun letterale di colore (`#…`, `rgb(…)`,
-// `rgba(…)`), solo token di ruolo; lo controlla un test (`ui_senza_colori_a_mano`). Una tinta
-// cambiata qui cambia ovunque.
-import "../assets/font/InterTight-Regular.ttf";
-import "../assets/font/InterTight-Medium.ttf";
-import "../assets/font/JetBrainsMono-Regular.ttf";
+// Tema condiviso: i token del ridisegno (nero, grigi pieni, bianco = azione) e i caratteri
+// (Inter e JetBrains Mono NL — SIL OFL). Unico posto dei colori: fuori da questo file nessun
+// letterale di colore (`#…`, `rgb(…)`, `rgba(…)`), solo token di ruolo; lo controlla un test
+// (`ui_senza_colori_a_mano`). Una tinta cambiata qui cambia ovunque.
+// Solo i pesi 500 e 700 di Inter e il 500 del mono sono incorporati: ogni finestra parte da
+// `default-font-weight: 500`, il 700 si chiede dove serve.
+import "../assets/font/Inter-Medium.ttf";
+import "../assets/font/Inter-Bold.ttf";
+import "../assets/font/JetBrainsMonoNL-Medium.ttf";
 import { LivelloUi } from "voci.slint";
 
 // Movimento ridotto (impostazione di Windows «Effetti di animazione», scritta da Rust in ogni
@@ -15,86 +17,110 @@ export global Movimento {
 }
 
 export global Tema {
-    // I sei colori dei petali, nell'ordine dell'aura.
+    // ─── Grigi: il nero è il fondo, i grigi sono superfici piene (niente trasparenze) ───
+    // Fondo di ogni finestra e dell'isola: nero vero, come TwoCode.
+    out property <color> nero: #000000;
+    // Carta: carte, righe, campi (sul nero si leggono con il filo accanto).
+    out property <color> g1: #0f0f11;
+    // Riga scelta o sotto il mouse.
+    out property <color> g2: #18181b;
+    // Pulsante secondario.
+    out property <color> g3: #242428;
+    // Pulsante secondario al passaggio del mouse.
+    out property <color> g4: #303035;
+    // Filo fra le superfici: bordo di una carta, riga di separazione.
+    out property <color> filo: #232327;
+    // Bordo di un controllo (campo, casella): almeno 3:1 sulla carta, per vederne il contorno.
+    out property <color> bordo-ctl: #74747c;
+
+    // ─── Testi: tre gradini, tutti sopra 4,5:1 sul nero e sulle carte ───
+    out property <color> testo: #ffffff;
+    // Secondario: ora, etichette, dettagli (sostituisce `testo-ora` e `testo-etichetta`).
+    out property <color> testo-2: #c4c4ca;
+    // Terziario: stati, suggerimenti.
+    out property <color> testo-tenue: #9b9ba3;
+    // Azione primaria: bianco con testo nero, ovunque; il grigio pieno è la secondaria.
+    out property <color> primario: #ffffff;
+    out property <color> testo-su-primario: #000000;
+    // Il primario al passaggio del mouse: un filo più scuro, ancora ≥ 4,5:1 col testo nero.
+    out property <color> primario-sopra: #e4e4e7;
+
+    // ─── Toni: dicono lo stato, sempre accompagnati dalla parola o dalla forma ───
+    // I sei colori dei petali (i colori dei cerchi dei collegamenti) e l'aura calda.
     out property <color> petalo-1: #c084fc;
     out property <color> petalo-2: #818cf8;
     out property <color> petalo-3: #60a5fa;
     out property <color> petalo-4: #22d3ee;
     out property <color> petalo-5: #2dd4bf;
     out property <color> petalo-6: #e879f9;
-    // I petali in fila (bordo del pannello, filo delle Impostazioni e della cornice).
-    out property <brush> petali: @linear-gradient(90deg, petalo-1 0%, petalo-2 20%, petalo-3 40%, petalo-4 60%, petalo-5 80%, petalo-6 100%);
-
-    // Aura calda di "ti cerca".
     out property <color> caldo-1: #fbbf24;
     out property <color> caldo-2: #fb923c;
     out property <color> caldo-3: #f472b6;
     out property <color> caldo-4: #e879f9;
-
-    out property <color> fondo-alto: #2a0a4e;
-    out property <color> fondo-basso: #0a0015;
-    // Fondo delle finestre (Impostazioni, cornice): dal viola al quasi nero.
-    out property <brush> fondo-finestra: @linear-gradient(160deg, fondo-alto 0%, fondo-basso 55%);
-    out property <color> corpo: #07030f;
-    out property <color> occhio: #f5efff;
+    // Al lavoro (arancio), ti aspetta (ambra), guarda (blu), fatto (verde acqua), errore (rosa).
+    out property <color> attivo: caldo-2;
+    out property <color> aspetta: caldo-1;
+    out property <color> guarda: petalo-3;
+    out property <color> fatto: petalo-5;
+    out property <color> errore: caldo-3;
+    // Costo in dollari (verde acqua più chiaro del «fatto»).
+    out property <color> dollaro: #7ce4d7;
+    // La luce che sale dal basso nella pillola e nell'isola: le stesse tinte dei toni, ma più
+    // scure, perché sul nero la radiale non abbagli.
+    out property <color> luce-attivo: rgb(251, 137, 43);
+    out property <color> luce-aspetta: rgb(220, 160, 4);
+    out property <color> luce-guarda: rgb(17, 121, 248);
+    // Gli occhi hanno la tinta dello stato, più chiara della luce (il bagliore è il loro colore).
+    out property <color> occhio-lavora: #fcb67d;
+    out property <color> occhio-chiede: #fcd56e;
+    out property <color> occhio-guarda: #a2cafc;
+    // Occhi di chi non ha niente da dire: bianchi, col bagliore del loro colore.
+    out property <color> occhio: #ffffff;
     // L'occhio che dorme (trattino): più tenue.
     out property <color> occhio-dorme: occhio.with-alpha(0.6);
-    out property <color> bagliore-occhio: #c084fc;
-    out property <color> testo: #f3eefc;
-    out property <color> icona: rgba(236, 230, 250, 0.62);
-    out property <color> icona-attiva: #ffffff;
+    out property <color> bagliore-occhio: occhio;
+    // Velo sopra il corpo quando una voce si prende la scena: nero all'82 %.
+    out property <color> velo: nero.with-alpha(0.82);
 
-    // Pannello: testi secondari, quadranti spenti, vetro leggero di schede e card.
-    out property <color> testo-ora: #d9d0ee;
-    out property <color> testo-tenue: #a49cb8;
-    out property <color> testo-etichetta: #cfc6e6;
-    // Suggerimento di un campo vuoto: più tenue del testo vero (circa 4,5:1 contro 15:1), non
-    // sembra un valore già scritto.
-    out property <color> segnaposto: rgba(236, 230, 250, 0.40);
-    // Traccia degli archi e delle barre: circa 1,9:1 sulle card, la scala si legge anche con
-    // un valore piccolo (#24183a era 1,15:1).
-    out property <color> traccia: rgba(236, 230, 250, 0.16);
-    out property <color> vetro-bordo: rgba(255, 255, 255, 0.08);
-    out property <color> capsula: rgba(255, 255, 255, 0.035);
-    out property <color> scheda-sopra: rgba(255, 255, 255, 0.06);
-    out property <color> scheda-attiva: rgba(255, 255, 255, 0.09);
-    // Fondo delle card (voci chiuse, righe delle Impostazioni, card tenui della Casa).
-    out property <color> card-fondo: rgba(255, 255, 255, 0.04);
-    // Fondo di un riquadro più chiaro (voce espansa, casella di un campo).
-    out property <color> riquadro-fondo: rgba(255, 255, 255, 0.05);
-    // Il colore pieno del riquadro sul corpo del pannello (corpo + bianco al 5%): la sfumatura in
-    // fondo al testo lungo svanisce in questo.
-    out property <color> riquadro-pieno: #130f1b;
-    out property <color> riquadro-svanito: riquadro-pieno.with-alpha(0);
-    // Card "vetro" dei layout: riflesso appena accennato (e un po' di più sotto il mouse).
-    out property <brush> card-vetro: @linear-gradient(160deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.02) 100%);
-    out property <brush> card-vetro-sopra: @linear-gradient(160deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.04) 100%);
+    // ─── Superfici dei componenti (derivano dai grigi: una sola regola per tutta l'app) ───
+    out property <color> icona: testo-2;
+    out property <color> icona-attiva: testo;
+    // Icona di un dispositivo spento: dà almeno 3:1 sul nero e sulle carte.
+    out property <color> icona-spenta: bordo-ctl;
+    // Suggerimento di un campo vuoto: più tenue del testo vero (testo bianco), non sembra un
+    // valore già scritto.
+    out property <color> segnaposto: testo-tenue;
+    // Traccia degli archi e delle barre: grigio pieno, la scala si legge anche con un valore piccolo.
+    out property <color> traccia: g4;
+    out property <color> vetro-bordo: filo;
+    out property <color> capsula: g1;
+    out property <color> scheda-sopra: g2;
+    out property <color> scheda-attiva: g3;
+    // Fondo delle card (voci chiuse, righe delle Impostazioni, card tenui della Casa) e dei
+    // riquadri (voce espansa, casella di un campo): la carta. La sfumatura in fondo al testo
+    // lungo svanisce in lei (`g1` con trasparenza 0).
+    out property <color> card-fondo: g1;
+    out property <color> riquadro-fondo: g1;
 
-    // Pulsanti (un solo stile, vedi componenti.slint): neutro, azione (verde acqua), pericolo.
-    out property <color> neutro-fondo: rgba(255, 255, 255, 0.09);
-    out property <color> neutro-sopra: rgba(255, 255, 255, 0.16);
-    out property <color> azione-fondo: petalo-5.with-alpha(0.20);
-    out property <color> azione-sopra: petalo-5.with-alpha(0.30);
-    // Il bordo del primario: se ne vede il contorno (1,4:1 contro 1,2:1 del neutro).
-    out property <color> azione-bordo: petalo-5.with-alpha(0.45);
-    out property <color> pericolo-fondo: bloccante.with-alpha(0.22);
-    out property <color> pericolo-sopra: bloccante.with-alpha(0.34);
-    out property <color> pericolo-bordo: bloccante.with-alpha(0.55);
+    // Pulsanti (un solo stile, vedi componenti.slint): neutro (grigio pieno), azione (bianco con
+    // testo nero), pericolo (rosa dell'errore).
+    out property <color> neutro-fondo: g3;
+    out property <color> neutro-sopra: g4;
+    out property <color> azione-fondo: primario;
+    out property <color> azione-sopra: primario-sopra;
+    out property <color> azione-bordo: primario;
+    out property <color> pericolo-fondo: errore.with-alpha(0.22);
+    out property <color> pericolo-sopra: errore.with-alpha(0.34);
+    out property <color> pericolo-bordo: errore.with-alpha(0.55);
     // Riga in attesa di conferma della rimozione (Impostazioni).
-    out property <color> pericolo-velo: bloccante.with-alpha(0.08);
-    out property <color> pericolo-filo: bloccante.with-alpha(0.35);
-    // Interruttore delle Impostazioni.
-    out property <color> interruttore-acceso: petalo-5.with-alpha(0.55);
-    out property <color> interruttore-spento: rgba(255, 255, 255, 0.14);
-    out property <color> pomello-acceso: #ffffff;
+    out property <color> pericolo-velo: errore.with-alpha(0.08);
+    out property <color> pericolo-filo: errore.with-alpha(0.35);
+    // Interruttore delle Impostazioni: acceso = primario (bianco) col pomello nero, spento grigio.
+    out property <color> interruttore-acceso: primario;
+    out property <color> interruttore-spento: g4;
+    out property <color> pomello-acceso: testo-su-primario;
     // Testo selezionato in un campo.
-    out property <color> selezione: petalo-2.with-alpha(0.45);
-
-    // Bagliori del fondo del pannello (indaco in alto a sinistra, verde acqua in basso a destra).
-    out property <color> bagliore-indaco: petalo-2.with-alpha(0.10);
-    out property <color> bagliore-acqua: petalo-5.with-alpha(0.07);
-    // Ora grande del layout Orologio.
-    out property <brush> ora-grande: @linear-gradient(90deg, #e9d5ff 0%, #a5b4fc 50%, #67e8f9 100%);
+    out property <color> selezione: guarda.with-alpha(0.45);
 
     // Stato dei dispositivi: il colore compare solo quando sono accesi.
     out property <color> luce-accesa: #fcd34d;
@@ -104,33 +130,34 @@ export global Tema {
     out property <brush> luce-card: @linear-gradient(160deg, rgba(253, 230, 138, 0.28) 0%, rgba(251, 191, 36, 0.10) 100%);
     out property <color> presa-bordo: rgba(94, 234, 212, 0.32);
     out property <brush> presa-card: @linear-gradient(160deg, rgba(94, 234, 212, 0.24) 0%, rgba(45, 212, 191, 0.08) 100%);
-    // Icona di un dispositivo spento: .45 dà almeno 3:1 sul fondo e sulle card (.32 era 2,3:1).
-    out property <color> icona-spenta: rgba(236, 230, 250, 0.45);
     // Puntini dei layout: quello spento.
-    out property <color> puntino: rgba(236, 230, 250, 0.45);
-    // Anello del fuoco da tastiera (2 px, a 2 px dall'elemento).
-    out property <color> anello: #f5efff;
+    out property <color> puntino: bordo-ctl;
+    // Anello del fuoco da tastiera: 2 px bianchi più 1 px nero fuori (come quello di Windows),
+    // visibile sul nero e sul bianco del primario.
+    out property <color> anello: #ffffff;
+    out property <color> anello-esterno: #000000;
     // Suggerimento (tooltip) delle icone del dock.
-    out property <color> suggerimento: #1b1428;
-    // Menu «⋯» del pannello (Task 8): fondo pieno come i suggerimenti (si legge sopra qualunque
-    // vista) e ombra che lo stacca dal corpo, quasi nero.
+    out property <color> suggerimento: g3;
+    // Menu «⋯» del pannello: fondo pieno come i suggerimenti (si legge sopra qualunque vista) e
+    // ombra che lo stacca dal corpo, quasi nero.
     out property <color> menu-fondo: suggerimento;
     out property <color> menu-ombra: rgba(0, 0, 0, 0.55);
 
-    // Livelli dell'attenzione (riga «In attesa», puntino e bordo della pillola). Il colore è
-    // sempre accompagnato dalla parola del livello o dalla forma (bloccante: pillola ferma).
-    out property <color> bloccante: #f87171;
-    out property <color> attenzione: #fbbf24;
-    out property <color> informazione: #60a5fa;
+    // Livelli dell'attenzione (riga «In attesa», puntino e bordo della pillola): stessa tinta dei
+    // toni (spec §5.2): bloccante = aspetta (ambra), attenzione e informazione = guarda (blu). Il
+    // colore è sempre accompagnato dalla parola del livello o dalla forma.
+    out property <color> bloccante: aspetta;
+    out property <color> attenzione: guarda;
+    out property <color> informazione: guarda;
 
-    // Riquadri Wi-Fi e Bluetooth accesi nella vista PC (M2, Task 8): fondo e bordo dal petalo 3,
-    // icona piena. Il testo resta `testo` (contrasto invariato sul fondo tenue).
-    out property <color> radio-acceso: petalo-3;
+    // Riquadri Wi-Fi e Bluetooth accesi nella vista PC (M2, Task 8): fondo e bordo dal tono
+    // «guarda», icona piena. Il testo resta `testo` (contrasto invariato sul fondo tenue).
+    out property <color> radio-acceso: guarda;
     out property <color> radio-acceso-fondo: radio-acceso.with-alpha(0.20);
     out property <color> radio-acceso-bordo: radio-acceso.with-alpha(0.50);
 
-    // Glifo della batteria collegata all'alimentatore (verde, dal petalo 5 un po' più verso il verde).
-    out property <color> batteria-carica: #34d399;
+    // Glifo della batteria collegata all'alimentatore: il verde acqua del «fatto».
+    out property <color> batteria-carica: fatto;
 
     // `nessuno` (linea della ritirata senza voci in attesa): grigio neutro.
     public pure function colore-livello(livello: LivelloUi) -> color {
@@ -141,8 +168,8 @@ export global Tema {
     }
 
     // I colori dei cerchi dei collegamenti (iniziale del nome): sei toni, i petali (mai i caldi:
-    // quelli dicono avviso o errore), scelti dal nome in Rust (`collegamenti::tono`). Tutti chiari: la lettera in `corpo` (scura) ci sta
-    // sopra con più di 4,5:1 (lo controlla un test, come il numero di toni).
+    // quelli dicono avviso o errore), scelti dal nome in Rust (`collegamenti::tono`). Tutti chiari: la lettera in `nero`
+    // ci sta sopra con più di 4,5:1 (lo controlla un test, come il numero di toni).
     public pure function colore-collegamento(tono: int) -> color {
         if (tono == 0) { return petalo-1; }
         if (tono == 1) { return petalo-2; }
@@ -166,6 +193,8 @@ export global Tema {
     out property <length> raggio-l: 12px;
     out property <length> raggio-xl: 16px;
     out property <length> raggio-pannello: 22px;
+    // Angoli bassi dell'isola (TwoCode): proporzionali all'altezza, 34.
+    out property <length> raggio-isola: 34px;
     // Corpi del testo: etichette e righe piccole 12, testo 13, campi e nomi 14, titoli 15,
     // frecce e titolo di un elenco vuoto 16, vista vuota di un'app 17, intestazione di finestra
     // 20, ora grande 68.
@@ -188,6 +217,8 @@ export global Tema {
         return max(1, round(spessore / 1px * scala)) / scala * 1px;
     }
 
-    out property <string> carattere: "Inter Tight";
-    out property <string> carattere-mono: "JetBrains Mono";
+    // Inter per le parole; JetBrains Mono NL (la versione senza legature) per numeri, ore,
+    // durate ed etichette maiuscole, con spaziatura .07em.
+    out property <string> carattere: "Inter";
+    out property <string> carattere-mono: "JetBrains Mono NL";
 }

@@ -103,7 +103,7 @@ component Linguetta inherits FocusScope {
             horizontal-alignment: center;
             vertical-alignment: center;
             font-size: Tema.testo-corpo;
-            font-weight: scelta ? 500 : 400;
+            font-weight: scelta ? 700 : 500;
             color: scelta ? Tema.testo : Tema.testo-tenue;
             accessible-role: none;
         }
@@ -226,8 +226,8 @@ component RigaTabella inherits FocusScope {
         vertical-alignment: center;
         overflow: elide;
         font-size: Tema.testo-corpo;
-        font-weight: riga.evidenza ? 500 : 400;
-        color: ci == 0 || riga.evidenza ? Tema.testo : Tema.testo-ora;
+        font-weight: riga.evidenza ? 700 : 500;
+        color: ci == 0 || riga.evidenza ? Tema.testo : Tema.testo-2;
         accessible-role: none;
     }
 

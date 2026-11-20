@@ -54,7 +54,7 @@ component ValoreLato inherits Rectangle {
         text: contenuto.campione;
         font-family: Tema.carattere-mono;
         font-size: Tema.testo-corpo;
-        font-weight: 600;
+        font-weight: 500;
         accessible-role: none;
     }
 
@@ -66,7 +66,7 @@ component ValoreLato inherits Rectangle {
         vertical-alignment: center;
         font-family: Tema.carattere-mono;
         font-size: Tema.testo-corpo;
-        font-weight: 600;
+        font-weight: 500;
         color: Tema.testo;
         accessible-role: none;
     }
@@ -279,6 +279,7 @@ export component Pillola inherits Window {
     // Il carattere dell'assistente anche per i testi che non lo dicono (senza, Slint userebbe quello
     // di sistema: un font in più in memoria).
     default-font-family: Tema.carattere;
+    default-font-weight: 500;
     width: larghezza-finestra;
     height: altezza-finestra;
 
@@ -311,7 +312,7 @@ export component Pillola inherits Window {
         y: margine-aura;
         width: larghezza-linea;
         height: altezza-linea;
-        background: Tema.corpo;
+        background: Tema.nero;
 
         Rectangle {
             background: Tema.traccia;
@@ -325,7 +326,7 @@ export component Pillola inherits Window {
 
         Rectangle {
             border-width: Tema.sul-pixel(1px);
-            border-color: Tema.corpo;
+            border-color: Tema.nero;
         }
     }
 
@@ -372,7 +373,7 @@ export component Pillola inherits Window {
             width: parent.width - 2 * spessore-anello;
             height: parent.height - 2 * spessore-anello;
             border-radius: self.height / 2;
-            background: Tema.corpo;
+            background: Tema.nero;
         }
 
         // Clic sulla pillola (fuori dai pulsanti): apre il pannello, sulla voce se è allargata.
@@ -548,7 +549,7 @@ export component Pillola inherits Window {
             text: altri;
             vertical-alignment: center;
             font-family: Tema.carattere;
-            font-weight: 600;
+            font-weight: 700;
             font-size: Tema.testo-piccolo;
             color: Tema.testo;
             accessible-role: none;

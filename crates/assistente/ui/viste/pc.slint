@@ -442,7 +442,7 @@ component Collegamento inherits Rectangle {
         vertical-alignment: center;
         font-size: Tema.testo-piccolo;
         font-weight: 500;
-        color: Tema.testo-ora;
+        color: Tema.testo-2;
         accessible-role: none;
     }
 
@@ -493,7 +493,9 @@ export component VistaPc inherits Rectangle {
     // 0 reti Wi-Fi, 1 Bluetooth.
     callback apri-pagina(int);
 
-    out property <length> largo-colonna: 240px;
+    // 252: con Inter «1023,9 / 1023,9 GB» misura 108 px e ne vuole 108 fra il margine e la colonna
+    // del valore.
+    out property <length> largo-colonna: 252px;
     property <string> stato-wifi: !radio-lette ? "—" : !wifi-presente ? "Non presente" : !wifi-acceso ? "Spento"
         : nome-rete != "" ? nome-rete : "Acceso";
     property <string> stato-bt: !radio-lette ? "—" : !bt-presente ? "Non presente" : bt-acceso ? "Acceso" : "Spento";

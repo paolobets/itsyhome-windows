@@ -19,7 +19,7 @@ component CardCollegamento inherits Rectangle {
     border-radius: Tema.raggio-xl;
     border-width: 1px;
     border-color: Tema.vetro-bordo;
-    background: area.has-hover ? Tema.card-vetro-sopra : Tema.card-vetro;
+    background: area.has-hover ? Tema.g2 : Tema.g1;
     accessible-role: button;
     accessible-label: voce.nome + ", " + voce.corto;
     accessible-description: "Si apre nel browser";
@@ -27,7 +27,7 @@ component CardCollegamento inherits Rectangle {
 
     Fuoco { chiede: anello; }
 
-    // Il cerchio: l'iniziale del nome (scura, `Tema.corpo`) su un colore che dipende dal nome.
+    // Il cerchio: l'iniziale del nome (scura, `Tema.nero`) su un colore che dipende dal nome.
     // Nessuna rete: niente icone del sito.
     Rectangle {
         x: 10px;
@@ -45,9 +45,9 @@ component CardCollegamento inherits Rectangle {
             accessible-role: none;
             horizontal-alignment: center;
             vertical-alignment: center;
-            font-weight: 600;
+            font-weight: 700;
             font-size: Tema.testo-corpo;
-            color: Tema.corpo;
+            color: Tema.nero;
         }
     }
 

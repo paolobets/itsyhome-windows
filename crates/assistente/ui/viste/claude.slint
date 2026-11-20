@@ -32,7 +32,7 @@ component RigaClaude inherits Rectangle {
     border-radius: Tema.raggio-xl;
     border-width: 1px;
     border-color: Tema.vetro-bordo;
-    background: area.has-hover || sopra-icona ? Tema.card-vetro-sopra : Tema.card-vetro;
+    background: area.has-hover || sopra-icona ? Tema.g2 : Tema.g1;
     accessible-role: button;
     // Col titolo della sessione: «titolo, cartella, stato»; senza, come sempre «cartella, stato».
     accessible-label: (riga.titolo != "" ? riga.titolo + ", " : "") + riga.cartella + ", " + riga.stato;
@@ -197,7 +197,7 @@ component CardLimite inherits Rectangle {
     border-radius: Tema.raggio-xl;
     border-width: 1px;
     border-color: Tema.vetro-bordo;
-    background: Tema.card-vetro;
+    background: Tema.g1;
     accessible-role: progress-indicator;
     accessible-label: titolo;
     accessible-value: limite.testo;
@@ -532,7 +532,7 @@ export component VistaClaude inherits Rectangle {
         border-radius: Tema.raggio-xl;
         border-width: 1px;
         border-color: Tema.vetro-bordo;
-        background: Tema.card-vetro;
+        background: Tema.g1;
         accessible-role: text;
         accessible-label: "Spesa API del mese";
         accessible-value: spesa != "" ? spesa : spesa-nota;

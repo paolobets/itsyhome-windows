@@ -83,7 +83,8 @@ export component Cornice inherits Window {
     min-width: 480px;
     min-height: 360px;
     default-font-family: Tema.carattere;
-    background: Tema.fondo-finestra;
+    default-font-weight: 500;
+    background: Tema.nero;
     forward-focus: radice;
 
     radice := FocusScope {
@@ -111,13 +112,13 @@ export component Cornice inherits Window {
             return reject;
         }
 
-        // Il filo dei petali sotto la barra di Windows.
+        // Il filo sotto la barra di Windows.
         Rectangle {
             x: 0;
             y: 0;
             width: root.width;
             height: filo;
-            background: Tema.petali;
+            background: Tema.filo;
         }
 
         // Segno dell'assistente: un puntino coi colori dei petali.
@@ -147,8 +148,8 @@ export component Cornice inherits Window {
             overflow: elide;
             vertical-alignment: center;
             font-size: Tema.testo-medio;
-            font-weight: 400;
-            color: Tema.testo-ora;
+            font-weight: 500;
+            color: Tema.testo-2;
         }
 
         // Mittente · data (vuoti finché il protocollo non li porta): larghi al più un terzo.

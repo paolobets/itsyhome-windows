@@ -25,16 +25,14 @@ export component Dispositivo inherits Rectangle {
     // valore vecchio e resta neutra, come una non disponibile.
     property <bool> colorata: voce.acceso && !voce.tenue;
     // Tenue = colori con trasparenza (non opacity, che disegna in uno strato a parte). A 0,85 il
-    // testo dello stato (testo-tenue) sulla card tenue (bianco al 4%) è 5,6:1 sul corpo (Tema.corpo) e
-    // 5,0:1 nel punto peggiore, sotto il bagliore indaco del pannello (+10%); il nome 11:1.
-    // (A 0,78 era 4,9 / 4,5:1: al limite.)
+    // testo dello stato (testo-tenue) sulla card tenue (carta `g1`) resta sopra 4,5:1 sul nero.
     property <float> velatura: voce.tenue ? 0.85 : 1.0;
 
     border-radius: Tema.raggio-xl;
     border-width: 1px;
     border-color: !colorata ? Tema.vetro-bordo : luce ? Tema.luce-bordo : Tema.presa-bordo;
     background: voce.tenue ? Tema.card-fondo
-        : !colorata ? (sopra ? Tema.card-vetro-sopra : Tema.card-vetro)
+        : !colorata ? (sopra ? Tema.g2 : Tema.g1)
         : luce ? Tema.luce-card : Tema.presa-card;
     accessible-role: button;
     accessible-enabled: voce.toccabile;
@@ -133,7 +131,7 @@ component RigaStanza inherits Rectangle {
         vertical-alignment: center;
         overflow: elide;
         font-size: Tema.testo-corpo;
-        font-weight: selezionata ? 500 : 400;
+        font-weight: selezionata ? 700 : 500;
         color: tenue ? Tema.testo-tenue : Tema.testo;
     }
 
