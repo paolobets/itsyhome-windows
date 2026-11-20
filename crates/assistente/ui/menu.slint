@@ -47,7 +47,7 @@ component RigaMenu inherits Rectangle {
         y: root.separatore ? 9px : 0px;
         height: root.altezza;
         border-radius: Tema.raggio-s;
-        background: root.evidenziata ? Tema.scheda-attiva : (area.has-hover || root.sotto-aperto) ? Tema.scheda-sopra : transparent;
+        background: root.evidenziata ? Tema.menu-scelta : (area.has-hover || root.sotto-aperto) ? Tema.menu-sopra : transparent;
 
         // Il fuoco vero (Narrator): le voci sono pulsanti (quella con il sottomenu si espande), le
         // righe degli schermi sono a scelta singola, con la spunta sullo schermo di adesso. Il

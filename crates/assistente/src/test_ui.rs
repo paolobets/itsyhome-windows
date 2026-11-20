@@ -285,6 +285,20 @@ fn contrasti_dei_token() {
 }
 
 #[test]
+fn menu_fondo_passaggio_scelta_in_ordine_crescente() {
+    // Fix round 1: sul fondo del menu «⋯» la riga sotto il mouse e quella evidenziata devono
+    // staccarsi, e in quest'ordine: fondo < passaggio < scelta (luminanza), con le righe del
+    // menu che usano proprio quei token.
+    let tema = tema_slint();
+    let l = |nome: &str| luminanza(&colore_del_token(&tema, nome));
+    let (fondo, passaggio, scelta) = (l("menu-fondo"), l("menu-sopra"), l("menu-scelta"));
+    assert!(fondo < passaggio && passaggio < scelta, "ordine: fondo {fondo:.4}, passaggio {passaggio:.4}, scelta {scelta:.4}");
+    assert!(l("suggerimento") <= l("g2"), "suggerimento al più g2");
+    let menu = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("ui/menu.slint")).expect("menu.slint leggibile");
+    assert!(!menu.contains("Tema.scheda-attiva") && !menu.contains("Tema.scheda-sopra"), "le righe del menu usano menu-sopra e menu-scelta");
+}
+
+#[test]
 fn caratteri_incorporati() {
     // Ridisegno F1, Task 1: Inter 500/700 e JetBrains Mono NL 500, e nient'altro.
     let tema = tema_slint();
