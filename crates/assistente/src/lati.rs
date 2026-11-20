@@ -1,23 +1,21 @@
-//! Che cosa mostra la pillola ai lati degli occhi e che cosa mostrano i tre quadranti
-//! configurabili (M2, Task 4): un solo catalogo di fonti (`Lato`), le scelte da offrire nelle
-//! Impostazioni, di che cosa c'è bisogno (per accendere solo i timer che servono), il testo da
-//! mostrare e le misure della pillola a riposo. Tutto puro: niente interfaccia, niente timer.
+//! Che cosa mostra la pillola ai lati degli occhi (M2, Task 4): il catalogo delle fonti (`Lato`),
+//! le scelte da offrire nelle Impostazioni, di che cosa c'è bisogno (per accendere solo i timer
+//! che servono), il testo da mostrare e le misure della pillola a riposo. Tutto puro: niente
+//! interfaccia, niente timer. (I quadranti configurabili, che usavano lo stesso catalogo, sono
+//! stati tolti col ridisegno F1: la Panoramica è a carte.)
 //!
 //! I timer e i dati vivi stanno in `sorgenti_lati`; le misure qui coincidono con quelle di
 //! pillola.slint (lo controlla `test_ui::misure_dei_lati_slint_e_rust`).
 
-use crate::claude;
 use crate::finestre;
-use crate::pc_stats::{tinta_batteria, Fonti, LetturaBatteria, TintaBatteria};
+use crate::pc_stats::{tinta_batteria, LetturaBatteria, TintaBatteria};
 use crate::sistema::radio::StatoRete;
 use api_claude::Importo;
-use casa_core::config::{LimiteVisto, PREFISSO_SENSORE};
+use casa_core::config::PREFISSO_SENSORE;
 use casa_core::types::{MenuData, SensoreNumerico};
-use chrono::{DateTime, Local};
-use claude_hook::Limite;
 use std::collections::HashMap;
 
-/// Una fonte per un lato della pillola o per un quadrante.
+/// Una fonte per un lato della pillola.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum Lato {
     #[default]
@@ -32,22 +30,11 @@ pub enum Lato {
     Meteo,
     /// Un sensore di Home Assistant (`entity_id`).
     Sensore(String),
-    /// Solo per i quadranti: il disco e la velocità della rete in arrivo e in uscita.
-    Disco,
-    ReteGiu,
-    ReteSu,
-    /// Solo per i quadranti e solo su Windows (M2, Task 10): l'utilizzo della GPU, 0..100 %.
-    Gpu,
-    /// Solo per i quadranti (M3, Task 12): il limite di 5 ore dell'abbonamento a Claude.
-    Limite5h,
-    /// Solo per i quadranti: il limite di 7 giorni dell'abbonamento a Claude.
-    Limite7g,
-    /// Solo per i quadranti: la spesa del mese delle API di Claude.
-    SpesaApi,
 }
 
 impl Lato {
-    /// Dalla stringa salvata nella configurazione; sconosciuta o vuota: `Niente`.
+    /// Dalla stringa salvata nella configurazione; sconosciuta o vuota (anche una fonte dei
+    /// quadranti tolti, «disco», «gpu»…): `Niente`.
     pub fn da_str(s: &str) -> Lato {
         match s {
             "ora" => Lato::Ora,
@@ -56,13 +43,6 @@ impl Lato {
             "ram" => Lato::Ram,
             "rete" => Lato::Rete,
             "meteo" => Lato::Meteo,
-            "disco" => Lato::Disco,
-            "rete_giu" => Lato::ReteGiu,
-            "rete_su" => Lato::ReteSu,
-            "gpu" => Lato::Gpu,
-            "limite_5h" => Lato::Limite5h,
-            "limite_7g" => Lato::Limite7g,
-            "spesa_api" => Lato::SpesaApi,
             _ => match s.strip_prefix(PREFISSO_SENSORE) {
                 Some(id) if !id.is_empty() => Lato::Sensore(id.to_owned()),
                 _ => Lato::Niente,
@@ -80,13 +60,6 @@ impl Lato {
             Lato::Ram => "ram".into(),
             Lato::Rete => "rete".into(),
             Lato::Meteo => "meteo".into(),
-            Lato::Disco => "disco".into(),
-            Lato::ReteGiu => "rete_giu".into(),
-            Lato::ReteSu => "rete_su".into(),
-            Lato::Gpu => "gpu".into(),
-            Lato::Limite5h => "limite_5h".into(),
-            Lato::Limite7g => "limite_7g".into(),
-            Lato::SpesaApi => "spesa_api".into(),
             Lato::Sensore(id) => format!("{PREFISSO_SENSORE}{id}"),
         }
     }
@@ -98,11 +71,10 @@ fn di_temperatura(unita: &str) -> bool {
 }
 
 /// I sensori numerici della casa (`MenuData::sensori_numerici`, già per nome) che si possono
-/// scegliere: per i lati solo le temperature (ci stanno in pochi caratteri), per i quadranti tutti
-/// (temperatura, umidità, potenza, energia e produzione FV…). Anche quelli non disponibili adesso:
-/// hanno nome e unità, il valore arriverà.
-pub fn sensori_disponibili(menu: &MenuData, per_quadranti: bool) -> Vec<&SensoreNumerico> {
-    menu.sensori_numerici.iter().filter(|s| per_quadranti || di_temperatura(&s.unita)).collect()
+/// scegliere per un lato: solo le temperature (ci stanno in pochi caratteri). Anche quelle non
+/// disponibili adesso: hanno nome e unità, il valore arriverà.
+pub fn sensori_disponibili(menu: &MenuData) -> Vec<&SensoreNumerico> {
+    menu.sensori_numerici.iter().filter(|s| di_temperatura(&s.unita)).collect()
 }
 
 /// Il nome di un sensore nel selettore, col genere dall'unità: «Temperatura · Sala»,
@@ -122,34 +94,17 @@ fn nome_sensore(s: &SensoreNumerico) -> String {
 }
 
 /// Le scelte del selettore, nell'ordine: «Niente», «Ora», «Batteria» (solo se il PC ne ha una),
-/// «CPU», «RAM», poi per i quadranti disco, rete in arrivo e in uscita e (solo se `windows`, Task
-/// 10) «GPU»; «Rete» solo se `windows` (Task 8) e solo per i lati; «Temperatura esterna» solo se
-/// c'è un meteo; un sensore per voce (`sensori`, già filtrati da `sensori_disponibili`).
+/// «CPU», «RAM», «Rete» solo se `windows` (Task 8); «Temperatura esterna» solo se c'è un meteo;
+/// un sensore per voce (`sensori`, già filtrati da `sensori_disponibili`).
 /// `windows`: le fonti che esistono solo su Windows ci sono (`cfg!(windows)`).
-pub fn scelte(
-    meteo: bool,
-    sensori: &[&SensoreNumerico],
-    windows: bool,
-    batteria: bool,
-    per_quadranti: bool,
-) -> Vec<(Lato, String)> {
+pub fn scelte(meteo: bool, sensori: &[&SensoreNumerico], windows: bool, batteria: bool) -> Vec<(Lato, String)> {
     let mut v: Vec<(Lato, String)> = vec![(Lato::Niente, "Niente".into()), (Lato::Ora, "Ora".into())];
     if batteria {
         v.push((Lato::Batteria, "Batteria".into()));
     }
     v.push((Lato::Cpu, "CPU".into()));
     v.push((Lato::Ram, "RAM".into()));
-    if per_quadranti {
-        v.push((Lato::Disco, "Disco".into()));
-        v.push((Lato::ReteGiu, "Rete in arrivo".into()));
-        v.push((Lato::ReteSu, "Rete in uscita".into()));
-        if windows {
-            v.push((Lato::Gpu, "GPU".into()));
-        }
-        v.push((Lato::Limite5h, "Limite 5 ore".into()));
-        v.push((Lato::Limite7g, "Limite 7 giorni".into()));
-        v.push((Lato::SpesaApi, "Spesa API del mese".into()));
-    } else if windows {
+    if windows {
         v.push((Lato::Rete, "Rete".into()));
     }
     if meteo {
@@ -179,14 +134,7 @@ pub fn bisogni(sinistro: &Lato, destro: &Lato) -> Bisogni {
             Lato::Cpu | Lato::Ram => b.cpu_ram = true,
             Lato::Rete => b.rete = true,
             Lato::Meteo | Lato::Sensore(_) => b.casa = true,
-            Lato::Niente
-            | Lato::Disco
-            | Lato::ReteGiu
-            | Lato::ReteSu
-            | Lato::Gpu
-            | Lato::Limite5h
-            | Lato::Limite7g
-            | Lato::SpesaApi => {}
+            Lato::Niente => {}
         }
     }
     b
@@ -285,7 +233,7 @@ pub fn contenuto(l: &Lato, d: &DatiLati) -> ContenutoLato {
             .get(id)
             .and_then(|s| s.valore.map(|v| testo_sensore(v, &s.unita)))
             .map_or(ContenutoLato::Vuoto, ContenutoLato::Testo),
-        _ => ContenutoLato::Vuoto,
+        Lato::Ora | Lato::Niente => ContenutoLato::Vuoto,
     }
 }
 
@@ -305,15 +253,7 @@ pub fn a_tempo(l: &Lato) -> bool {
 /// l'interfaccia). La batteria riserva anche il posto del glifo.
 pub fn campione(l: &Lato, d: &DatiLati) -> Option<String> {
     Some(match l {
-        Lato::Niente
-        | Lato::Rete
-        | Lato::Disco
-        | Lato::ReteGiu
-        | Lato::ReteSu
-        | Lato::Gpu
-        | Lato::Limite5h
-        | Lato::Limite7g
-        | Lato::SpesaApi => return None,
+        Lato::Niente | Lato::Rete => return None,
         Lato::Ora => "00:00".into(),
         Lato::Batteria => "100%".into(),
         Lato::Cpu => "CPU 100%".into(),
@@ -379,128 +319,7 @@ pub fn scarto_occhi_riposo(l_sx: f32, l_dx: f32) -> f32 {
     }
 }
 
-// ─── Quadranti ──────────────────────────────────────────────────────────────
-
-/// I tre quadranti di M1, quando l'utente non ne ha scelti.
-pub const QUADRANTI_DI_M1: [Lato; 3] = [Lato::Cpu, Lato::Ram, Lato::Disco];
-
-/// I tre quadranti dalla configurazione: vuota = quelli di M1; meno di tre = gli altri a niente.
-pub fn quadranti(config: &[String]) -> [Lato; 3] {
-    if config.is_empty() {
-        return QUADRANTI_DI_M1;
-    }
-    let mut q: [Lato; 3] = Default::default();
-    for (posto, s) in q.iter_mut().zip(config) {
-        *posto = Lato::da_str(s);
-    }
-    q
-}
-
-/// Le fonti lente del PC che i quadranti mostrano (il campionatore del pannello legge solo quelle).
-pub fn fonti_dei_quadranti(q: &[Lato]) -> Fonti {
-    Fonti {
-        disco: q.contains(&Lato::Disco),
-        rete: q.iter().any(|l| matches!(l, Lato::ReteGiu | Lato::ReteSu)),
-        gpu: q.contains(&Lato::Gpu),
-    }
-}
-
-/// Ciò che Claude dà ai quadranti (M3, Task 12): i limiti dell'abbonamento già filtrati
-/// (`Ponte::limiti`: mai scaduti né non finiti) e la spesa del mese dell'ultima lettura riuscita.
-/// Tutto `None` finché non c'è un dato.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct DatiClaude {
-    pub cinque: Option<Limite>,
-    pub sette: Option<Limite>,
-    pub spesa: Option<Importo>,
-    /// La soglia di spesa mensile (dollari): se c'è, è il fondo scala dell'arco della spesa.
-    pub soglia_spesa: Option<f64>,
-    /// C'è la chiave da amministratore (la lettura è in programma) ma non è ancora arrivata una
-    /// spesa: il quadrante lo dice invece di restare vuoto.
-    pub lettura_attesa: bool,
-    /// La soglia d'avviso dei limiti dell'utente (frazione 0..1): sopra, l'arco dei limiti è caldo.
-    pub soglia_limite: f32,
-    /// I limiti ricordati dal file di stato per le finestre non ancora arrivate (gli stessi della
-    /// vista Claude, `limiti_ricordati`: mai scaduti): il quadrante li mostra tenui (RC-56). Gli
-    /// avvisi non li usano mai.
-    pub ricordato_cinque: Option<LimiteVisto>,
-    pub ricordato_sette: Option<LimiteVisto>,
-}
-
-/// Valore, arco e riga piccola di un quadrante di Claude.
-#[derive(Debug, Clone, PartialEq)]
-pub struct QuadranteClaude {
-    /// «37%», «413 $»; «—» senza dato, mai «0%» né «0 $».
-    pub valore: String,
-    /// 0..1; -1 = niente arco.
-    pub frazione: f32,
-    /// «si azzera alle 14:30», «soglia 250,00 $»; vuota senza dato.
-    pub dettaglio: String,
-    /// Da questa frazione l'arco è caldo: la soglia dei limiti dell'utente; per la spesa quella
-    /// della voce d'avviso (`SOGLIA_AVVISO_SPESA` della soglia di spesa), e senza soglia di spesa
-    /// mai (nessuna voce avvisa, l'arco non deve dire altro). Voce e arco usano `>=`.
-    pub caldo_da: f32,
-    /// È il limite ricordato da prima del riavvio (RC-56): si mostra tenue, come nella vista Claude.
-    pub tenue: bool,
-}
-
-/// Da quale frazione della soglia di spesa scatta il primo avviso (e l'arco si fa caldo).
-pub const SOGLIA_AVVISO_SPESA: f32 = 0.8;
-/// «Mai caldo»: una frazione che l'arco non raggiunge.
-const MAI_CALDO: f32 = 2.0;
-
-/// Il quadrante di una fonte di Claude; `None` per ogni altra fonte. `massimo_utente`: il massimo
-/// scritto per la spesa quando non c'è una soglia. `ora`: quando si legge «si azzera alle…».
-pub fn quadrante_claude(
-    l: &Lato,
-    d: &DatiClaude,
-    massimo_utente: Option<f64>,
-    ora: DateTime<Local>,
-) -> Option<QuadranteClaude> {
-    let senza_dato =
-        || QuadranteClaude { valore: "—".into(), frazione: -1.0, dettaglio: String::new(), caldo_da: MAI_CALDO, tenue: false };
-    // Il dato arrivato; altrimenti quello ricordato, tenue e con «dalle…» (lo stesso testo della vista).
-    let limite = |l: &Option<Limite>, ricordato: &Option<LimiteVisto>| {
-        let (t, tenue) = match (l.filter(|l| l.percentuale.is_finite()), ricordato) {
-            (Some(l), _) => (claude::testo_limite(&l, ora), false),
-            (None, Some(v)) => (claude::testo_limite_ricordato(v, ora), true),
-            (None, None) => return senza_dato(),
-        };
-        QuadranteClaude { valore: t.testo, frazione: t.frazione, dettaglio: t.azzera, caldo_da: d.soglia_limite, tenue }
-    };
-    Some(match l {
-        Lato::Limite5h => limite(&d.cinque, &d.ricordato_cinque),
-        Lato::Limite7g => limite(&d.sette, &d.ricordato_sette),
-        Lato::SpesaApi => match d.spesa {
-            None => QuadranteClaude {
-                dettaglio: if d.lettura_attesa { "prima lettura fra poco".into() } else { String::new() },
-                ..senza_dato()
-            },
-            Some(s) => {
-                let dollari = s.micro_centesimi as f64 / MICRO_PER_DOLLARO;
-                let tetto = d.soglia_spesa.filter(|t| t.is_finite() && *t > 0.0).or(massimo_utente);
-                QuadranteClaude {
-                    // Breve come gli altri valori dei quadranti («413 $»): i centesimi stanno nella vista Claude.
-                    valore: testo_con_unita(dollari, "$"),
-                    frazione: frazione(l, None, tetto, dollari),
-                    dettaglio: d
-                        .soglia_spesa
-                        .filter(|t| t.is_finite() && *t > 0.0)
-                        .map_or_else(String::new, |t| format!("soglia {}", dollari_interi(t))),
-                    caldo_da: if d.soglia_spesa.is_some_and(|t| t.is_finite() && t > 0.0) { SOGLIA_AVVISO_SPESA } else { MAI_CALDO },
-                    tenue: false,
-                }
-            }
-        },
-        _ => return None,
-    })
-}
-
-/// Una soglia in dollari: senza centesimi se è intera («500 $»), altrimenti «250,50 $».
-fn dollari_interi(d: f64) -> String {
-    let testo = importo_da_dollari(d).in_dollari();
-    testo.strip_suffix(",00 $").map_or_else(|| testo.clone(), |interi| format!("{interi} $"))
-}
+// ─── Dollari (soglie di spesa di Claude) ────────────────────────────────────
 
 /// Quanti micro-centesimi (l'unità di `Importo`) fanno un dollaro.
 pub const MICRO_PER_DOLLARO: f64 = 100_000_000.0;
@@ -510,60 +329,8 @@ pub fn importo_da_dollari(d: f64) -> Importo {
     Importo { micro_centesimi: (d * MICRO_PER_DOLLARO).round() as i128 }
 }
 
-/// Massimo predefinito dell'arco per i watt e per i chilowatt.
-pub const MASSIMO_W: f64 = 3000.0;
-pub const MASSIMO_KW: f64 = 6.0;
-
-/// L'unità chiede un massimo all'utente: W, kW o un'unità che non ha una scala naturale.
-pub fn chiede_massimo(unita: Option<&str>) -> bool {
-    !matches!(unita.map(str::trim), Some("%" | "°C" | "°F"))
-}
-
-/// La scala dell'arco di un quadrante, `(minimo, massimo)`: percentuali del PC e `%` 0..100; `°C`
-/// −10..40 (anche la temperatura esterna; `°F` lo stesso intervallo in Fahrenheit); `W` 0..3000 e
-/// `kW` 0..6 se l'utente non sceglie un altro massimo; altre unità 0..massimo dell'utente o, finché
-/// non lo imposta, 0..(valore × 2). (Rispetto al brief c'è `valore`: serve proprio a quest'ultimo
-/// caso.)
-pub fn scala(fonte: &Lato, unita: Option<&str>, massimo_utente: Option<f64>, valore: f64) -> (f64, f64) {
-    let utente = massimo_utente.filter(|m| m.is_finite() && *m > 0.0);
-    match fonte {
-        Lato::Cpu | Lato::Ram | Lato::Disco | Lato::Batteria | Lato::Gpu | Lato::Limite5h | Lato::Limite7g => (0.0, 100.0),
-        Lato::Meteo if unita.map(str::trim) == Some("°F") => (14.0, 104.0),
-        Lato::Meteo => (-10.0, 40.0),
-        _ => match unita.map(str::trim) {
-            Some("%") => (0.0, 100.0),
-            Some("°C") => (-10.0, 40.0),
-            Some("°F") => (14.0, 104.0),
-            Some("W") => (0.0, utente.unwrap_or(MASSIMO_W)),
-            Some("kW") => (0.0, utente.unwrap_or(MASSIMO_KW)),
-            _ => (0.0, utente.unwrap_or_else(|| if valore.abs() > 0.0 { valore.abs() * 2.0 } else { 1.0 })),
-        },
-    }
-}
-
-/// La frazione 0..1 dell'arco: fuori scala l'arco è pieno o vuoto (il testo dice il valore vero).
-pub fn frazione(fonte: &Lato, unita: Option<&str>, massimo_utente: Option<f64>, valore: f64) -> f32 {
-    let (minimo, massimo) = scala(fonte, unita, massimo_utente, valore);
-    if massimo <= minimo || !valore.is_finite() {
-        return 0.0;
-    }
-    ((valore - minimo) / (massimo - minimo)).clamp(0.0, 1.0) as f32
-}
-
-/// Un massimo scritto nelle Impostazioni («4500», «4,5»): `Ok(None)` se vuoto (torna il
-/// predefinito), errore se non è un numero positivo.
-pub fn leggi_massimo(testo: &str) -> Result<Option<f64>, &'static str> {
-    let t = testo.trim();
-    if t.is_empty() {
-        return Ok(None);
-    }
-    match t.replace(',', ".").parse::<f64>() {
-        Ok(v) if v.is_finite() && v > 0.0 => Ok(Some(v)),
-        _ => Err("Scrivi un numero maggiore di zero"),
-    }
-}
-
-/// Un massimo come lo si rilegge nel campo: senza decimali inutili, con la virgola.
+/// Un numero scritto dall'utente (la soglia di spesa) come lo si rilegge nel campo: senza decimali
+/// inutili, con la virgola.
 pub fn testo_massimo(v: f64) -> String {
     if v.fract() == 0.0 {
         format!("{v:.0}")
@@ -576,7 +343,6 @@ pub fn testo_massimo(v: f64) -> String {
 mod test {
     use super::*;
     use crate::pc_stats::StatoBatteria;
-    use casa_core::config::Config;
 
     #[test]
     fn lato_da_e_verso_stringa() {
@@ -589,15 +355,12 @@ mod test {
             Lato::Rete,
             Lato::Meteo,
             Lato::Sensore("sensor.sala_t".into()),
-            Lato::Disco,
-            Lato::ReteGiu,
-            Lato::ReteSu,
-            Lato::Gpu,
-            Lato::Limite5h,
-            Lato::Limite7g,
-            Lato::SpesaApi,
         ] {
             assert_eq!(Lato::da_str(&l.come_str()), l, "andata e ritorno di {l:?}");
+        }
+        // Le fonti dei quadranti tolti (ridisegno F1), scritte a mano in un lato: niente.
+        for vecchia in ["disco", "rete_giu", "rete_su", "gpu", "limite_5h", "limite_7g", "spesa_api"] {
+            assert_eq!(Lato::da_str(vecchia), Lato::Niente, "{vecchia}");
         }
         assert_eq!(Lato::da_str("boh"), Lato::Niente);
         assert_eq!(Lato::da_str(""), Lato::Niente);
@@ -612,52 +375,24 @@ mod test {
 
     #[test]
     fn scelte_senza_meteo_ne_rete() {
-        let s: Vec<Lato> = scelte(false, &[], false, false, false).into_iter().map(|(l, _)| l).collect();
+        let s: Vec<Lato> = scelte(false, &[], false, false).into_iter().map(|(l, _)| l).collect();
         assert!(!s.contains(&Lato::Meteo) && !s.contains(&Lato::Rete));
         for l in [Lato::Niente, Lato::Ora, Lato::Cpu, Lato::Ram] {
             assert!(s.contains(&l), "manca {l:?}");
         }
         assert!(!s.contains(&Lato::Batteria), "senza batteria niente «Batteria»");
-        assert!(!s.contains(&Lato::Disco), "il disco è solo per i quadranti");
-        assert!(!s.contains(&Lato::Gpu), "la GPU è solo per i quadranti");
     }
 
     #[test]
     fn scelte_con_tutto_nell_ordine() {
         let sala = sensore("sensor.sala_t", "Sala", Some(21.5), "°C");
-        let v = scelte(true, &[&sala], true, true, false);
+        let v = scelte(true, &[&sala], true, true);
         let nomi: Vec<&str> = v.iter().map(|(_, n)| n.as_str()).collect();
         assert_eq!(nomi, ["Niente", "Ora", "Batteria", "CPU", "RAM", "Rete", "Temperatura esterna", "Temperatura · Sala"]);
-        // Per i quadranti: disco, rete in arrivo e in uscita e GPU (solo Windows), niente «Rete».
-        let fv = sensore("sensor.fv", "Fotovoltaico", Some(1500.0), "W");
-        let q = scelte(true, &[&sala, &fv], true, false, true);
-        let nomi: Vec<&str> = q.iter().map(|(_, n)| n.as_str()).collect();
-        assert_eq!(
-            nomi,
-            [
-                "Niente",
-                "Ora",
-                "CPU",
-                "RAM",
-                "Disco",
-                "Rete in arrivo",
-                "Rete in uscita",
-                "GPU",
-                "Limite 5 ore",
-                "Limite 7 giorni",
-                "Spesa API del mese",
-                "Temperatura esterna",
-                "Temperatura · Sala",
-                "Potenza · Fotovoltaico"
-            ]
-        );
-        // Fuori da Windows la GPU non c'è (assente, non spenta).
-        let q = scelte(false, &[], false, false, true);
-        assert!(!q.iter().any(|(l, _)| *l == Lato::Gpu));
     }
 
-    /// Giro di correzioni 1: il catalogo viene dai sensori numerici della casa. Per i quadranti
-    /// tutti (W, kWh, %…, anche se non disponibili adesso), per i lati solo le temperature.
+    /// Giro di correzioni 1: il catalogo viene dai sensori numerici della casa; per i lati solo le
+    /// temperature (anche se non disponibili adesso).
     #[test]
     fn sensori_numerici_fra_le_scelte() {
         let menu = MenuData {
@@ -669,12 +404,10 @@ mod test {
             ]),
             ..Default::default()
         };
-        let nomi = |per_quadranti| -> Vec<String> {
-            let s = sensori_disponibili(&menu, per_quadranti);
-            scelte(false, &s, false, false, per_quadranti).into_iter().skip_while(|(l, _)| !matches!(l, Lato::Sensore(_))).map(|(_, n)| n).collect()
-        };
-        assert_eq!(nomi(true), ["Energia · Produzione", "Potenza · Fotovoltaico", "Temperatura · Sala", "Umidità bagno"]);
-        assert_eq!(nomi(false), ["Temperatura · Sala"]);
+        let s = sensori_disponibili(&menu);
+        let nomi: Vec<String> =
+            scelte(false, &s, false, false).into_iter().skip_while(|(l, _)| !matches!(l, Lato::Sensore(_))).map(|(_, n)| n).collect();
+        assert_eq!(nomi, ["Temperatura · Sala"]);
     }
 
     #[test]
@@ -802,179 +535,7 @@ mod test {
     }
 
     #[test]
-    fn quadranti_di_m1_predefiniti() {
-        // Config senza la chiave (un file di M1): i tre quadranti di M1.
-        assert_eq!(quadranti(&Config::default().quadranti), [Lato::Cpu, Lato::Ram, Lato::Disco]);
-        let q = quadranti(&["sensore:sensor.fv".into(), "ram".into()]);
-        assert_eq!(q, [Lato::Sensore("sensor.fv".into()), Lato::Ram, Lato::Niente]);
-        assert_eq!(fonti_dei_quadranti(&q), Fonti::default(), "niente disco né rete");
-        assert_eq!(fonti_dei_quadranti(&QUADRANTI_DI_M1), Fonti { disco: true, ..Fonti::default() });
-        assert_eq!(fonti_dei_quadranti(&[Lato::ReteSu]), Fonti { rete: true, ..Fonti::default() });
-        // Task 10: la GPU si legge solo se un quadrante la mostra.
-        assert_eq!(fonti_dei_quadranti(&[Lato::Cpu, Lato::Gpu]), Fonti { gpu: true, ..Fonti::default() });
-    }
-
-    #[test]
-    fn scala_per_unita() {
-        let s = Lato::Sensore("sensor.x".into());
-        assert_eq!(scala(&Lato::Cpu, None, None, 50.0), (0.0, 100.0));
-        assert_eq!(scala(&Lato::Gpu, None, None, 50.0), (0.0, 100.0));
-        assert_eq!(scala(&s, Some("%"), None, 50.0), (0.0, 100.0));
-        assert_eq!(scala(&s, Some("°C"), None, 21.0), (-10.0, 40.0));
-        assert_eq!(scala(&Lato::Meteo, None, None, 9.0), (-10.0, 40.0));
-        assert_eq!(scala(&s, Some("W"), None, 800.0), (0.0, 3000.0), "W: massimo predefinito");
-        assert_eq!(scala(&s, Some("W"), Some(4500.0), 800.0), (0.0, 4500.0), "W: massimo dell'utente");
-        assert_eq!(scala(&s, Some("kW"), None, 2.0), (0.0, 6.0));
-        assert_eq!(scala(&s, Some("lx"), None, 300.0), (0.0, 600.0), "unità ignota: valore × 2");
-        assert_eq!(scala(&s, Some("lx"), Some(1000.0), 300.0), (0.0, 1000.0));
-        assert_eq!(scala(&s, None, Some(-3.0), 5.0), (0.0, 10.0), "un massimo non valido non conta");
-        // Fuori scala: arco pieno o vuoto.
-        assert_eq!(frazione(&s, Some("W"), None, 9000.0), 1.0);
-        assert_eq!(frazione(&s, Some("°C"), None, -30.0), 0.0);
-        assert!((frazione(&s, Some("°C"), None, 15.0) - 0.5).abs() < 1e-6);
-        // Chi chiede un massimo nelle Impostazioni.
-        assert!(chiede_massimo(Some("W")) && chiede_massimo(Some("kW")) && chiede_massimo(None) && chiede_massimo(Some("lx")));
-        assert!(!chiede_massimo(Some("%")) && !chiede_massimo(Some("°C")));
-    }
-
-    /// M3, Task 12: limiti dell'abbonamento e spesa API sono fonti dei soli quadranti.
-    #[test]
-    fn fonti_claude_andata_e_ritorno() {
-        for (s, l) in [("limite_5h", Lato::Limite5h), ("limite_7g", Lato::Limite7g), ("spesa_api", Lato::SpesaApi)] {
-            assert_eq!(Lato::da_str(s), l);
-            assert_eq!(l.come_str(), s);
-        }
-        // Non fra le scelte dei lati della pillola; sì fra quelle dei quadranti, coi loro nomi.
-        let lati: Vec<Lato> = scelte(true, &[], true, true, false).into_iter().map(|(l, _)| l).collect();
-        assert!(![Lato::Limite5h, Lato::Limite7g, Lato::SpesaApi].iter().any(|l| lati.contains(l)));
-        let q = scelte(true, &[], true, true, true);
-        for (l, nome) in
-            [(Lato::Limite5h, "Limite 5 ore"), (Lato::Limite7g, "Limite 7 giorni"), (Lato::SpesaApi, "Spesa API del mese")]
-        {
-            assert!(q.contains(&(l.clone(), nome.into())), "{nome}");
-            // Mai testo né campione a lato della pillola, e nessuna sorgente da accendere.
-            assert_eq!(contenuto(&l, &DatiLati::default()), ContenutoLato::Vuoto);
-            assert_eq!(campione(&l, &DatiLati::default()), None);
-            assert_eq!(bisogni(&l, &Lato::Niente), Bisogni::default());
-        }
-    }
-
-    fn limite(percentuale: f32, azzera_alle: i64) -> Limite {
-        Limite { percentuale, azzera_alle }
-    }
-
-    /// RC-51: nel primo minuto, con la chiave da amministratore ma senza ancora una lettura, il
-    /// quadrante della spesa lo dice in una riga piccola invece di restare vuoto; senza la chiave
-    /// la lettura non arriverà e la riga non c'è.
-    #[test]
-    fn spesa_nel_primo_minuto_dice_prima_lettura() {
-        let ora = chrono::Local::now();
-        let attesa = DatiClaude { lettura_attesa: true, ..Default::default() };
-        let q = quadrante_claude(&Lato::SpesaApi, &attesa, None, ora).unwrap();
-        assert_eq!((q.valore.as_str(), q.frazione, q.dettaglio.as_str()), ("—", -1.0, "prima lettura fra poco"));
-        let senza_chiave = DatiClaude::default();
-        assert_eq!(quadrante_claude(&Lato::SpesaApi, &senza_chiave, None, ora).unwrap().dettaglio, "");
-        // Arrivato il dato, la riga è la soglia (o niente), mai «prima lettura».
-        let spesa = api_claude::importo_da("41280").unwrap();
-        let arrivata = DatiClaude { spesa: Some(spesa), lettura_attesa: true, ..Default::default() };
-        assert_eq!(quadrante_claude(&Lato::SpesaApi, &arrivata, None, ora).unwrap().dettaglio, "");
-        // Solo la spesa ha una prima lettura: i limiti restano vuoti.
-        assert_eq!(quadrante_claude(&Lato::Limite5h, &attesa, None, ora).unwrap().dettaglio, "");
-    }
-
-    /// Fix round 1 (I2): l'arco diventa caldo dove la voce d'avviso scatta: i limiti alla soglia
-    /// dell'utente, la spesa all'80 % della soglia di spesa, e senza soglia di spesa mai.
-    #[test]
-    fn caldo_da_segue_le_voci_d_avviso() {
-        let ora = chrono::Local::now();
-        let spesa = api_claude::importo_da("41280").unwrap();
-        let dati = DatiClaude {
-            cinque: Some(limite(50.0, ora.timestamp() + 600)),
-            spesa: Some(spesa),
-            soglia_spesa: Some(500.0),
-            soglia_limite: 0.7,
-            ..Default::default()
-        };
-        assert_eq!(quadrante_claude(&Lato::Limite5h, &dati, None, ora).unwrap().caldo_da, 0.7, "limiti: soglia dell'utente");
-        assert_eq!(quadrante_claude(&Lato::SpesaApi, &dati, None, ora).unwrap().caldo_da, 0.8, "spesa: come la voce");
-        let senza_soglia = DatiClaude { soglia_spesa: None, ..dati };
-        assert!(quadrante_claude(&Lato::SpesaApi, &senza_soglia, Some(500.0), ora).unwrap().caldo_da > 1.0, "senza soglia di spesa mai caldo");
-    }
-
-    /// PF9: senza dato il quadrante dice «—», mai «0%» né «0 $», e non ha arco.
-    #[test]
-    fn quadrante_senza_dato_trattino() {
-        let ora = chrono::Local::now();
-        let nessuno = DatiClaude::default();
-        for l in [Lato::Limite5h, Lato::Limite7g, Lato::SpesaApi] {
-            let q = quadrante_claude(&l, &nessuno, None, ora).expect("è una fonte di Claude");
-            assert_eq!((q.valore.as_str(), q.frazione, q.dettaglio.as_str()), ("—", -1.0, ""), "{l:?}");
-        }
-        assert_eq!(quadrante_claude(&Lato::Cpu, &nessuno, None, ora), None, "le altre fonti non sono sue");
-        // Con il dato: percentuale e arco, e quando si azzera.
-        let dati = DatiClaude { cinque: Some(limite(36.6, ora.timestamp() + 600)), ..Default::default() };
-        let q = quadrante_claude(&Lato::Limite5h, &dati, None, ora).unwrap();
-        assert_eq!(q.valore, "37%");
-        assert!((q.frazione - 0.366).abs() < 1e-5);
-        assert!(q.dettaglio.starts_with("si azzera"), "{}", q.dettaglio);
-        assert_eq!(quadrante_claude(&Lato::Limite7g, &dati, None, ora).unwrap().valore, "—", "la finestra dei 7 giorni non c'è");
-        // La spesa: «412,80 $»; col tetto è la frazione della soglia, senza è il massimo dell'utente o il doppio.
-        let spesa = api_claude::importo_da("41280").unwrap();
-        let dati = DatiClaude { spesa: Some(spesa), soglia_spesa: Some(1000.0), ..Default::default() };
-        let q = quadrante_claude(&Lato::SpesaApi, &dati, Some(500.0), ora).unwrap();
-        assert_eq!(q.valore, "413 $");
-        // RC-51: la soglia intera senza centesimi, con i centesimi solo se ci sono.
-        assert_eq!(q.dettaglio, "soglia 1000 $");
-        let con_centesimi = DatiClaude { soglia_spesa: Some(250.5), ..dati.clone() };
-        assert_eq!(quadrante_claude(&Lato::SpesaApi, &con_centesimi, None, ora).unwrap().dettaglio, "soglia 250,50 $");
-        assert!((q.frazione - 0.4128).abs() < 1e-4, "la soglia vince sul massimo dell'utente");
-        let dati = DatiClaude { soglia_spesa: None, ..dati };
-        assert!((quadrante_claude(&Lato::SpesaApi, &dati, Some(500.0), ora).unwrap().frazione - 0.8256).abs() < 1e-4);
-        assert!((quadrante_claude(&Lato::SpesaApi, &dati, None, ora).unwrap().frazione - 0.5).abs() < 1e-4, "0..(valore × 2)");
-        // Un limite non finito è assente.
-        let dati = DatiClaude { cinque: Some(limite(f32::NAN, ora.timestamp() + 600)), ..Default::default() };
-        assert_eq!(quadrante_claude(&Lato::Limite5h, &dati, None, ora).unwrap().valore, "—");
-    }
-
-    /// m-2 (revisione finale): dopo un riavvio il quadrante del limite mostra il valore ricordato,
-    /// tenue e con «dalle…», come la vista Claude; il dato fresco lo sostituisce.
-    #[test]
-    fn quadrante_del_limite_mostra_il_ricordato_tenue() {
-        let ora = chrono::Local::now();
-        let visto = casa_core::config::LimiteVisto {
-            percentuale: 87.0,
-            azzera_alle: ora.timestamp() + 3600,
-            visto_alle: ora.timestamp() - 120,
-        };
-        let dati = DatiClaude { ricordato_cinque: Some(visto), soglia_limite: 0.8, ..Default::default() };
-        let q = quadrante_claude(&Lato::Limite5h, &dati, None, ora).unwrap();
-        let atteso = claude::testo_limite_ricordato(&visto, ora);
-        assert_eq!((q.valore.as_str(), q.dettaglio.as_str(), q.tenue), ("87%", atteso.azzera.as_str(), true));
-        assert!(q.dettaglio.starts_with("dal"), "{}", q.dettaglio);
-        assert!((q.frazione - 0.87).abs() < 1e-5);
-        assert_eq!(quadrante_claude(&Lato::Limite7g, &dati, None, ora).unwrap().valore, "—", "solo la sua finestra");
-        // Il dato fresco vince sul ricordato, e non è tenue.
-        let fresco = DatiClaude { cinque: Some(limite(40.0, ora.timestamp() + 600)), ..dati };
-        let q = quadrante_claude(&Lato::Limite5h, &fresco, None, ora).unwrap();
-        assert_eq!((q.valore.as_str(), q.tenue), ("40%", false));
-        assert!(q.dettaglio.starts_with("si azzera"), "{}", q.dettaglio);
-    }
-
-    #[test]
-    fn scala_dei_limiti_e_della_spesa() {
-        assert_eq!(scala(&Lato::Limite5h, None, None, 40.0), (0.0, 100.0));
-        assert_eq!(scala(&Lato::Limite7g, None, Some(5.0), 40.0), (0.0, 100.0));
-        assert_eq!(scala(&Lato::SpesaApi, None, Some(250.0), 40.0), (0.0, 250.0));
-        assert_eq!(scala(&Lato::SpesaApi, None, None, 40.0), (0.0, 80.0));
-        assert!(chiede_massimo(None), "la spesa senza soglia chiede un massimo");
-    }
-
-    #[test]
-    fn massimo_scritto_a_mano() {
-        assert_eq!(leggi_massimo(""), Ok(None));
-        assert_eq!(leggi_massimo(" 4500 "), Ok(Some(4500.0)));
-        assert_eq!(leggi_massimo("4,5"), Ok(Some(4.5)));
-        assert!(leggi_massimo("zero").is_err() && leggi_massimo("-2").is_err() && leggi_massimo("0").is_err());
+    fn numero_scritto_riletto() {
         assert_eq!(testo_massimo(4500.0), "4500");
         assert_eq!(testo_massimo(4.5), "4,5");
     }

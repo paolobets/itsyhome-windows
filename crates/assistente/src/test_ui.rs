@@ -1,7 +1,7 @@
 //! Controlli sull'interfaccia (`.slint`) che girano in `cargo test`, senza finestre: i sorgenti
 //! (colori a mano) e i componenti creati col backend di prova di Slint (misure, accessibilità).
 
-use crate::{finestre, layout, sistema, Pannello, Pillola};
+use crate::{finestre, sistema, Pannello, Pillola};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 
@@ -460,7 +460,6 @@ fn misure_slint_e_rust() {
     // Il corpo: 752 × 224 a (34, 44); la vista sta sopra la riga dei puntini (20 + 2).
     assert_eq!((pannello.get_centro_x(), pannello.get_centro_y(), pannello.get_centro_l()), (34.0, 44.0, 752.0));
     assert_eq!(pannello.get_centro_a(), 224.0 - 20.0 - 2.0);
-    assert_eq!(pannello.get_numero_layout() as usize, layout::TUTTI.len(), "layout della Panoramica");
     drop((pillola, pannello));
 }
 
@@ -529,6 +528,8 @@ mod accessibilita {
     /// esistono solo in una finestra mostrata.
     fn pannello() -> Pannello {
         let p = Pannello::new().expect("pannello");
+        // Tab nella Panoramica: l'ordine lo calcola Rust, come nel pannello vero.
+        crate::pannello::collega_fuoco(&p);
         p.set_aperto(true);
         p.show().expect("pannello mostrato nel backend di prova");
         p
@@ -560,13 +561,8 @@ mod accessibilita {
         assert_eq!(agenti.accessible_item_selected(), Some(false));
         let casa = elemento(&p, "Casa, scheda 3 di 5");
         assert_eq!(casa.accessible_item_selected(), Some(false));
-
-        let orologio = elemento(&p, "Layout Orologio");
-        assert_eq!(orologio.accessible_role(), Some(AccessibleRole::Tab));
-        assert_eq!(orologio.accessible_item_selected(), Some(true));
-        p.set_layout(1);
-        assert_eq!(elemento(&p, "Layout Orologio").accessible_item_selected(), Some(false));
-        assert_eq!(elemento(&p, "Layout Quadranti").accessible_item_selected(), Some(true));
+        // Ridisegno F1, Task 8: niente più puntini dei layout.
+        assert!(ElementHandle::find_by_accessible_label(&p, "Layout della Panoramica").next().is_none());
         assert_eq!(elemento(&p, "Pannello di ItsyHome").accessible_role(), Some(AccessibleRole::Groupbox));
         // La vista `agenti` è la scheda Agenti.
         p.set_vista("agenti".into());
@@ -605,9 +601,12 @@ mod accessibilita {
         assert!((centro_schede - 410.0).abs() <= 1.0, "schede centrate: {centro_schede}");
         assert!(agenti.absolute_position().y > 340.0 - 64.0);
 
-        // Contenuto → Tab: schede → Tab: ricerca → Tab: volume → Tab: «⋯».
-        tasto(&p, Key::Tab);
-        assert_eq!(etichetta_col_fuoco(&p), "Panoramica, scheda 1 di 5");
+        // Panoramica senza carte (ridisegno F1, Task 8: una scheda per Tab) → le cinque schede →
+        // ricerca → volume → «⋯».
+        for nome in ["Panoramica, scheda 1 di 5", "Agenti, scheda 2 di 5", "Casa, scheda 3 di 5", "PC, scheda 4 di 5", "Collegamenti, scheda 5 di 5"] {
+            tasto(&p, Key::Tab);
+            assert_eq!(etichetta_col_fuoco(&p), nome);
+        }
         tasto(&p, Key::Tab);
         assert_eq!(etichetta_col_fuoco(&p), "Cerca, in arrivo");
         tasto(&p, Key::Tab);
@@ -720,8 +719,8 @@ mod accessibilita {
         p.set_volume(0.4);
         p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
         p.global::<crate::Fuochi>().set_pronti(true);
-        // Contenuto → schede → ricerca → volume.
-        for _ in 0..3 {
+        // Contenuto → le cinque schede → ricerca → volume.
+        for _ in 0..7 {
             tasto(&p, Key::Tab);
         }
         assert_eq!(etichetta_col_fuoco(&p), "Volume 40 %");
@@ -769,6 +768,7 @@ mod accessibilita {
             livello,
             titolo: titolo.into(),
             sotto: sotto.into(),
+            modulo: "Agenti".into(),
             dettaglio: "Il testo completo".into(),
             icona: Default::default(),
             pulsanti: ModelRc::new(VecModel::from(pulsanti)),
@@ -1017,6 +1017,7 @@ mod accessibilita {
         for (nome, sorgente) in [
             ("impianti/elenco.slint", include_str!("../ui/impianti/elenco.slint")),
             ("pillola.slint", include_str!("../ui/pillola.slint")),
+            ("guscio/voce.slint", include_str!("../ui/guscio/voce.slint")),
         ] {
             assert!(sorgente.contains("RegolaPulsanti.tipo("), "{nome} non usa RegolaPulsanti.tipo");
             assert!(!sorgente.contains("TipoPulsante.azione"), "{nome} decide la tinta da sé");
@@ -1142,6 +1143,455 @@ mod accessibilita {
         assert_eq!(elemento(&p, "da 1 modulo").accessible_role(), Some(AccessibleRole::Text));
     }
 
+    // ─── Ridisegno F1, Task 8: Panoramica a griglia, voce che ti aspetta, pool di fuoco ───
+
+    /// I quattro moduli di un registro nuovo (primo avvio), come li scrive il ponte.
+    fn moduli_di_prova() -> ModelRc<crate::ModuloUi> {
+        ModelRc::new(VecModel::from(crate::moduli::registro::Registro::nuovo(&[]).moduli_ui()))
+    }
+
+    /// Un modulo di prova: nome per Narrator «{nome}, {titolo}», l'azione «{azione}, {nome}».
+    fn modulo(id: &str, nome: &str, titolo: &str, azione: Option<&str>) -> crate::ModuloUi {
+        crate::ModuloUi {
+            id: id.into(),
+            nome: nome.into(),
+            nome_breve: nome.into(),
+            titolo: titolo.into(),
+            sec: "Riga di prova".into(),
+            con_azione: azione.is_some(),
+            azione_id: azione.unwrap_or_default().into(),
+            azione_testo: azione.unwrap_or_default().into(),
+            narratore: format!("{nome}, {titolo}").into(),
+            narratore_azione: azione.map(|a| format!("{a}, {nome}")).unwrap_or_default().into(),
+            ..Default::default()
+        }
+    }
+
+    /// Agenti (azione), Casa (azione), PC (senza), Collegamenti (azione).
+    fn quattro_moduli() -> std::rc::Rc<VecModel<crate::ModuloUi>> {
+        std::rc::Rc::new(VecModel::from(vec![
+            modulo("agenti", "Agenti", "2 al lavoro", Some("Apri il terminale")),
+            modulo("casa", "Casa", "4 luci", Some("Spegni tutte")),
+            modulo("pc", "PC", "Tutto regolare", None),
+            modulo("collegamenti", "Collegamenti", "6 link", Some("Apri NAS")),
+        ]))
+    }
+
+    /// Il pannello sulla Panoramica con questi moduli, l'ora «09:45», la tastiera pronta.
+    fn pannello_panoramica(moduli: ModelRc<crate::ModuloUi>) -> Pannello {
+        piattaforma_di_prova();
+        let p = pannello();
+        p.set_schede(schede());
+        p.set_moduli(moduli);
+        crate::pannello::scrivi_ora(&p, "09:45");
+        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        p.global::<crate::Fuochi>().set_pronti(true);
+        p
+    }
+
+    /// I quattro posti delle carte (visibili), nell'ordine.
+    fn posti(p: &Pannello) -> Vec<ElementHandle> {
+        let mut v: Vec<ElementHandle> =
+            ElementHandle::find_by_element_type_name(p, "Posto").filter(|e| e.size().width > 0.0).collect();
+        v.sort_by(|a, b| a.absolute_position().x.total_cmp(&b.absolute_position().x));
+        v
+    }
+
+    /// L'elemento `id` dentro il posto della carta `k`.
+    fn nella_carta(p: &Pannello, k: usize, id: &str) -> ElementHandle {
+        let posto = &posti(p)[k];
+        let (x0, x1) = (posto.absolute_position().x, posto.absolute_position().x + posto.size().width);
+        ElementHandle::find_by_element_id(p, id)
+            .find(|e| e.absolute_position().x >= x0 - 0.5 && e.absolute_position().x < x1)
+            .unwrap_or_else(|| panic!("nessun {id} nella carta {k}"))
+    }
+
+    #[test]
+    fn bersagli_uguali_in_rust_e_slint() {
+        use crate::moduli::panoramica as r;
+        piattaforma_di_prova();
+        let p = pannello();
+        let b = p.global::<crate::Bersagli>();
+        assert_eq!(
+            (b.get_nega(), b.get_consenti(), b.get_altre(), b.get_scheda(), b.get_ricerca(), b.get_volume(), b.get_menu(), b.get_in_attesa()),
+            (r::ID_NEGA, r::ID_CONSENTI, r::ID_ALTRE, r::ID_SCHEDA, r::ID_RICERCA, r::ID_VOLUME, r::ID_MENU, r::ID_IN_ATTESA)
+        );
+    }
+
+    /// Con quattro moduli: l'orologio grande in alto, le carte in una riga, e nessun elemento
+    /// della griglia scende nella fascia della barra (y ≥ 276).
+    #[test]
+    fn panoramica_griglia_con_quattro_moduli() {
+        let p = pannello_panoramica(moduli_di_prova());
+        let orologio = elemento(&p, "09:45");
+        assert_eq!(orologio.accessible_role(), Some(AccessibleRole::Text));
+        assert!(orologio.size().height > 0.0 && orologio.absolute_position().y >= 44.0);
+        assert_eq!(posti(&p).len(), 4);
+        for tipo in ["Posto", "CartaVista", "OrologioGrande", "VoceInAttesa", "Text", "Image"] {
+            for e in ElementHandle::find_by_element_type_name(&p, tipo).filter(|e| e.size().height > 0.0) {
+                let fondo = e.absolute_position().y + e.size().height;
+                // Gli elementi della barra stanno sotto 276 per costruzione: qui solo quelli del corpo.
+                if e.absolute_position().y < 276.0 {
+                    assert!(fondo <= 276.0 + 0.01, "{tipo} scende nella barra: fondo {fondo}");
+                }
+            }
+        }
+        let fondo_carte = posti(&p).iter().map(|e| e.absolute_position().y + e.size().height).fold(0.0, f32::max);
+        assert!(fondo_carte <= 276.0, "carte sopra la barra: {fondo_carte}");
+    }
+
+    /// Le quattro carte sono alla stessa y, larghe 182, alte 108, a passo 190: al primo avvio,
+    /// con dati calmi e con titoli al limite.
+    #[test]
+    fn carte_tutte_della_stessa_misura() {
+        let lunghi = std::rc::Rc::new(VecModel::from(vec![
+            modulo("agenti", "Agenti", &"W".repeat(40), Some("Apri il terminale")),
+            modulo("casa", "Casa", &"Mmmmmmmm ".repeat(5), Some("Spegni tutte")),
+            modulo("pc", "PC", "CPU 100 %, RAM 100 %, disco pieno", None),
+            modulo("collegamenti", "Collegamenti", &"Collegamento lunghissimo".repeat(3), Some("Apri")),
+        ]));
+        for (nome, moduli) in
+            [("primo avvio", moduli_di_prova()), ("calmi", ModelRc::from(quattro_moduli())), ("al limite", ModelRc::from(lunghi))]
+        {
+            let p = pannello_panoramica(moduli);
+            let posti = posti(&p);
+            assert_eq!(posti.len(), 4, "{nome}");
+            let y = posti[0].absolute_position().y;
+            for (k, posto) in posti.iter().enumerate() {
+                assert_eq!(posto.absolute_position().y, y, "{nome}: carta {k} alla stessa y");
+                assert_eq!((posto.size().width, posto.size().height), (182.0, 108.0), "{nome}: carta {k}");
+                if k > 0 {
+                    assert_eq!(posto.absolute_position().x - posti[k - 1].absolute_position().x, 190.0, "{nome}: passo");
+                }
+            }
+            // Il gruppo è centrato nel corpo (34..786).
+            let (sinistra, destra) = (posti[0].absolute_position().x, posti[3].absolute_position().x + 182.0);
+            assert!((sinistra - 34.0 - (786.0 - destra)).abs() < 0.5, "{nome}: centrato {sinistra}..{destra}");
+        }
+    }
+
+    /// A riposo nessun bottone d'azione si vede (valore e riga larghi 154); Tab dalla carta 0
+    /// porta alla sua azione (che si vede: valore e riga a 116), poi alla carta 1; la carta PC,
+    /// senza azione, non ha nessun nodo d'azione per Narrator; Maiusc+Tab torna indietro.
+    #[test]
+    fn azione_al_passaggio_o_al_fuoco() {
+        use slint::platform::Key;
+        let p = pannello_panoramica(ModelRc::from(quattro_moduli()));
+        for k in 0..4 {
+            assert_eq!(nella_carta(&p, k, "CartaVista::riga").size().width, 154.0, "carta {k} a riposo");
+        }
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Agenti, 2 al lavoro");
+        assert_eq!(nella_carta(&p, 0, "CartaVista::riga").size().width, 116.0, "col fuoco sulla carta l'azione si vede");
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Apri il terminale, Agenti");
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Casa, 4 luci");
+        assert_eq!(nella_carta(&p, 0, "CartaVista::riga").size().width, 154.0, "lasciata la carta, l'azione sparisce");
+        tasto(&p, Key::Tab);
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "PC, Tutto regolare");
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Collegamenti, 6 link", "la carta PC salta il secondo passo");
+        con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "PC, Tutto regolare");
+        con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Spegni tutte, Casa");
+        // Narrator: nessun pulsante senza nome («Azione: » vuoto) e nessun nodo «…, PC».
+        assert_eq!(pulsanti_senza_nome(&p), 0);
+        let nodi_pc = i_slint_backend_testing::ElementQuery::from_root(&p)
+            .match_descendants()
+            .find_all()
+            .into_iter()
+            .filter(|e| e.accessible_label().is_some_and(|l| l.ends_with(", PC")))
+            .count();
+        assert_eq!(nodi_pc, 0, "la carta PC non ha azione per Narrator");
+        // Il passaggio del mouse mostra solo l'azione di quella carta.
+        let (x, y) = centro(&posti(&p)[1]);
+        p.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position: slint::LogicalPosition::new(x, y) });
+        assert_eq!(nella_carta(&p, 1, "CartaVista::riga").size().width, 116.0, "al passaggio sulla carta Casa");
+        assert_eq!(nella_carta(&p, 3, "CartaVista::riga").size().width, 154.0);
+    }
+
+    /// Review Focus 1: con l'azione visibile valore e riga finiscono prima del bottone
+    /// (x < 182 − 14 − 32 − 6 dalla carta), con l'ellissi; senza azione hanno tutto lo spazio.
+    #[test]
+    fn carta_con_testi_lunghi_ha_ellissi_e_azione_libera() {
+        use slint::platform::Key;
+        let p = pannello_panoramica(ModelRc::new(VecModel::from(vec![
+            crate::ModuloUi { sec: "W".repeat(40).into(), ..modulo("agenti", "Agenti", &"W".repeat(40), Some("Apri il terminale")) },
+            modulo("casa", "Casa", "4 luci", None),
+        ])));
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), format!("Agenti, {}", "W".repeat(40)), "il nome intero per Narrator");
+        let x0 = posti(&p)[0].absolute_position().x;
+        let limite = x0 + 182.0 - 14.0 - 32.0 - 6.0;
+        for id in ["CartaVista::valore", "CartaVista::riga"] {
+            let e = nella_carta(&p, 0, id);
+            let fine = e.absolute_position().x + e.size().width;
+            assert!(fine <= limite + 0.01, "{id} finisce a {fine}, oltre {limite}");
+        }
+        let valore = nella_carta(&p, 0, "CartaVista::valore");
+        assert_ne!(valore.accessible_role(), Some(AccessibleRole::Text), "il testo della carta non è un nodo per Narrator");
+        // Senza azione (carta Casa) tutto lo spazio: 154.
+        assert_eq!(nella_carta(&p, 1, "CartaVista::valore").size().width, 154.0);
+    }
+
+    /// Un permesso che ti aspetta, col testo intero in una riga (si concede nella voce).
+    fn permesso_corto() -> VoceAttesaUi {
+        VoceAttesaUi { dettaglio: "npm test".into(), ..voce_coda("p1", "Claude chiede: PowerShell npm test", LivelloUi::Bloccante, "Aspetta te · Agenti", true) }
+    }
+
+    /// La Panoramica con le carte e queste voci in attesa; restituisce i pulsanti premuti della
+    /// voce che ti aspetta (`azione-voce`).
+    fn panoramica_con_voci(voci: ModelRc<VoceAttesaUi>) -> (Pannello, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
+        let p = pannello_panoramica(ModelRc::from(quattro_moduli()));
+        let azioni = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let a = azioni.clone();
+        p.on_azione_voce(move |_, id| a.borrow_mut().push(id.to_string()));
+        let a = azioni.clone();
+        p.on_azione(move |_, id| a.borrow_mut().push(format!("coda {id}")));
+        p.set_attese(voci);
+        slint::platform::update_timers_and_animations();
+        (p, azioni)
+    }
+
+    /// Con una voce bloccante: l'orologio grande lascia il posto alla voce, l'ora piccola torna
+    /// nella riga alta, il fuoco iniziale è su «Nega»; le carte non si spostano.
+    #[test]
+    fn voce_al_posto_dell_orologio() {
+        let p = pannello_panoramica(ModelRc::from(quattro_moduli()));
+        let prima: Vec<_> = posti(&p).iter().map(|e| (e.absolute_position(), e.size())).collect();
+        assert!(!p.get_ora_riga_visibile(), "con l'orologio grande niente ora piccola");
+        let voci = std::rc::Rc::new(VecModel::from(vec![permesso_corto()]));
+        p.set_attese(ModelRc::from(voci.clone()));
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&p, "09:45").all(|e| e.absolute_position().y < 44.0), "niente orologio grande, solo l'ora piccola");
+        let voce = elemento(&p, "Ti aspetta · Agenti: Claude chiede: PowerShell npm test");
+        assert_eq!(voce.accessible_role(), Some(AccessibleRole::Groupbox));
+        assert_eq!(voce.accessible_description().as_deref(), Some("npm test"));
+        assert_eq!((voce.size().width, voce.size().height), (752.0, 108.0));
+        assert!(p.get_ora_riga_visibile(), "l'ora piccola torna nella riga alta");
+        assert_eq!(etichetta_col_fuoco(&p), "Nega", "fuoco iniziale su «Nega»");
+        let dopo: Vec<_> = posti(&p).iter().map(|e| (e.absolute_position(), e.size())).collect();
+        assert_eq!(prima, dopo, "le carte non si spostano");
+        // Tolta la voce, torna l'orologio.
+        voci.remove(0);
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&p, "09:45").any(|e| e.absolute_position().y >= 44.0), "l'orologio grande torna");
+        assert!(!p.get_ora_riga_visibile());
+    }
+
+    /// La voce che ti aspetta col fuoco su «Consenti»: (Tab da «Nega»).
+    fn voce_sul_consenso() -> (Pannello, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
+        use slint::platform::Key;
+        let (p, azioni) = panoramica_con_voci(ModelRc::new(VecModel::from(vec![permesso_corto()])));
+        assert_eq!(etichetta_col_fuoco(&p), "Nega");
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Consenti", "testo intero nella voce: «Consenti»");
+        (p, azioni)
+    }
+
+    /// Le stesse 9 combinazioni della Coda: col fuoco su «Consenti» della voce solo Ctrl+Invio
+    /// esatto concede.
+    #[test]
+    fn voce_consenti_solo_con_ctrl_invio_esatto() {
+        use slint::platform::Key;
+        let casi: [(&str, &[Key], Key); 9] = [
+            ("Invio", &[], Key::Return),
+            ("Spazio", &[], Key::Space),
+            ("Alt+Invio", &[Key::Alt], Key::Return),
+            ("Ctrl+Spazio", &[Key::Control], Key::Space),
+            ("Maiusc+Invio", &[Key::Shift], Key::Return),
+            ("Alt+Spazio", &[Key::Alt], Key::Space),
+            ("Ctrl+Alt+Invio (qui arriva come Invio semplice)", &[Key::Control, Key::Alt], Key::Return),
+            ("AltGr+Invio", &[Key::AltGr], Key::Return),
+            ("Maiusc+Ctrl+Invio", &[Key::Shift, Key::Control], Key::Return),
+        ];
+        for (nome, modificatori, t) in casi {
+            let (p, azioni) = voce_sul_consenso();
+            con_modificatori(&p, modificatori, t);
+            assert!(azioni.borrow().is_empty(), "{nome} ha concesso: {:?}", azioni.borrow());
+        }
+        let (p, azioni) = voce_sul_consenso();
+        con_modificatori(&p, &[Key::Control], Key::Return);
+        assert_eq!(*azioni.borrow(), ["consenti"], "Ctrl+Invio concede");
+        // Ctrl+Invio su «Nega» non fa nulla (non concede, non nega).
+        let (p, azioni) = panoramica_con_voci(ModelRc::new(VecModel::from(vec![permesso_corto()])));
+        con_modificatori(&p, &[Key::Control], Key::Return);
+        assert!(azioni.borrow().is_empty(), "{:?}", azioni.borrow());
+    }
+
+    /// Invio su «Consenti» della voce non concede; Invio su «Nega» nega. Un permesso col testo più
+    /// lungo della voce non offre «Consenti» ma «Apri»: Invio lo apre nella Coda (testo intero,
+    /// fuoco su «Nega»), senza rispondere.
+    #[test]
+    fn voce_invio_su_consenti_non_concede() {
+        use slint::platform::Key;
+        let (p, azioni) = voce_sul_consenso();
+        tasto(&p, Key::Return);
+        assert!(azioni.borrow().is_empty(), "Invio su «Consenti» ha concesso: {:?}", azioni.borrow());
+        con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Nega");
+        tasto(&p, Key::Return);
+        assert_eq!(*azioni.borrow(), ["nega"], "Invio su «Nega» nega");
+        // Testo lungo (comando e sessione): «Apri», mai «Consenti».
+        let (p, azioni) = panoramica_con_voci(ModelRc::new(VecModel::from(vec![permesso_lungo(2)])));
+        assert!(ElementHandle::find_by_accessible_label(&p, "Consenti").next().is_none(), "nella voce niente «Consenti»");
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Apri");
+        con_modificatori(&p, &[Key::Control], Key::Return);
+        assert!(azioni.borrow().is_empty(), "Ctrl+Invio su «Apri» non concede");
+        tasto(&p, Key::Return);
+        lascia_girare(&p);
+        assert_eq!(p.get_vista(), "coda");
+        assert!(ElementHandle::find_by_element_id(&p, "VoceAperta::dettaglio").next().is_some(), "il testo intero");
+        assert_eq!(etichetta_col_fuoco(&p), "Nega");
+        assert!(azioni.borrow().is_empty(), "{:?}", azioni.borrow());
+    }
+
+    /// Requisito del Task 7 (rereview-2 n1): un doppio clic su «Apri» della voce (o su «+N») non
+    /// preme nulla: il secondo clic non trova «Nega» né «Consenti» del permesso aperto, né un
+    /// pulsante di una riga della Coda.
+    #[test]
+    fn doppio_clic_sulla_voce_non_risponde() {
+        let voci = || ModelRc::new(VecModel::from(vec![permesso_lungo(2), voce_coda("b", "Secondo", LivelloUi::Bloccante, "Aspetta te · Agenti", true)]));
+        let (p, azioni) = panoramica_con_voci(voci());
+        let (x, y) = centro(&elemento(&p, "Apri"));
+        clic_in(&p, x, y);
+        lascia_girare(&p);
+        assert!(ElementHandle::find_by_element_id(&p, "VoceAperta::dettaglio").next().is_some(), "il primo clic apre");
+        for nome in ["Nega", "Consenti"] {
+            for e in ElementHandle::find_by_accessible_label(&p, nome) {
+                let (pos, lato) = (e.absolute_position(), e.size());
+                assert!(!(x >= pos.x && x <= pos.x + lato.width && y >= pos.y && y <= pos.y + lato.height), "«{nome}» sotto il punto di «Apri»");
+            }
+        }
+        clic_in(&p, x, y);
+        lascia_girare(&p);
+        assert!(azioni.borrow().is_empty(), "il doppio clic su «Apri» ha risposto: {:?}", azioni.borrow());
+        // «+N»: la Coda come elenco, nessun permesso aperto, il secondo clic non preme nulla.
+        let (p, azioni) = panoramica_con_voci(voci());
+        let (x, y) = centro(&elemento(&p, "Un'altra voce in attesa"));
+        clic_in(&p, x, y);
+        lascia_girare(&p);
+        assert_eq!(p.get_vista(), "coda");
+        assert!(ElementHandle::find_by_element_id(&p, "VoceAperta::dettaglio").next().is_none(), "«+N» non apre un permesso");
+        clic_in(&p, x, y);
+        lascia_girare(&p);
+        assert!(azioni.borrow().is_empty(), "il doppio clic su «+N» ha risposto: {:?}", azioni.borrow());
+    }
+
+    /// Review Focus 2: fuoco su «Consenti», la voce tolta da Rust (permesso risolto nel
+    /// terminale): il fuoco va sulla carta 0 e il Tab seguente alla sua azione.
+    #[test]
+    fn voce_che_sparisce_col_fuoco_addosso() {
+        use slint::platform::Key;
+        let voci = std::rc::Rc::new(VecModel::from(vec![permesso_corto()]));
+        let (p, _) = panoramica_con_voci(ModelRc::from(voci.clone()));
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Consenti");
+        voci.remove(0);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&p), "Agenti, 2 al lavoro", "il fuoco va sulla prima carta");
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Apri il terminale, Agenti", "il Tab seguente non si perde");
+        // Una voce diversa al posto della prima, col fuoco su «Consenti»: il fuoco torna su «Nega».
+        voci.push(permesso_corto());
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&p), "Nega", "la voce che compare prende il fuoco su «Nega»");
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Consenti");
+        voci.set_row_data(0, VoceAttesaUi { id: "altro".into(), ..permesso_corto() });
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&p), "Nega", "mai sul consenso di un'altra richiesta");
+    }
+
+    /// Review Focus 2: fuoco sull'azione della carta Casa e l'azione sparisce: il fuoco va sul
+    /// corpo della stessa carta.
+    #[test]
+    fn azione_che_sparisce_col_fuoco_addosso() {
+        use slint::platform::Key;
+        let moduli = quattro_moduli();
+        let p = pannello_panoramica(ModelRc::from(moduli.clone()));
+        for _ in 0..4 {
+            tasto(&p, Key::Tab);
+        }
+        assert_eq!(etichetta_col_fuoco(&p), "Spegni tutte, Casa");
+        moduli.set_row_data(1, modulo("casa", "Casa", "Luci spente", None));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&p), "Casa, Luci spente", "sul corpo della stessa carta");
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "PC, Tutto regolare");
+    }
+
+    /// Il nome dell'elemento col fuoco è `moduli[k].narratore`; cambiato il modello sotto il
+    /// fuoco, il nome lo segue.
+    #[test]
+    fn nomi_per_narrator_dal_modello() {
+        use slint::platform::Key;
+        let moduli = quattro_moduli();
+        let p = pannello_panoramica(ModelRc::from(moduli.clone()));
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), moduli.row_data(0).unwrap().narratore.as_str());
+        moduli.set_row_data(0, modulo("agenti", "Agenti", "Ti aspetta", Some("Apri il terminale")));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&p), "Agenti, Ti aspetta");
+    }
+
+    /// Tre voci di attenzione (nessuna ti aspetta): «3 in attesa ›» nella riga alta (Narrator
+    /// senza la freccia), raggiungibile con Tab subito dopo la riga alta (C11), clic → Coda.
+    /// Con la voce che ti aspetta non c'è (le altre le conta il suo «+N»).
+    #[test]
+    fn in_attesa_nella_riga_alta() {
+        use slint::platform::Key;
+        let voci: Vec<VoceAttesaUi> =
+            (0..3).map(|i| voce_coda(&format!("a{i}"), &format!("Avviso {i}"), LivelloUi::Attenzione, "Guarda presto · Casa", false)).collect();
+        let (p, _) = panoramica_con_voci(ModelRc::new(VecModel::from(voci)));
+        crate::pannello::scrivi_in_attesa(&p, 3, false);
+        let riga = elemento(&p, "3 in attesa");
+        assert_eq!(riga.accessible_role(), Some(AccessibleRole::Button));
+        assert!(riga.absolute_position().y < 44.0, "nella riga alta");
+        assert!(elemento(&p, "09:45").size().height > 0.0, "senza voce bloccante l'orologio resta");
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "3 in attesa", "prima delle carte");
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Agenti, 2 al lavoro");
+        con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
+        tasto(&p, Key::Return);
+        assert_eq!(p.get_vista(), "coda", "Invio apre la Coda");
+        p.set_vista("panoramica".into());
+        let (x, y) = centro(&elemento(&p, "3 in attesa"));
+        clic_in(&p, x, y);
+        assert_eq!(p.get_vista(), "coda", "il clic apre la Coda");
+        // Con una voce che ti aspetta: niente «N in attesa ›».
+        p.set_vista("panoramica".into());
+        crate::pannello::scrivi_in_attesa(&p, 3, true);
+        assert!(ElementHandle::find_by_accessible_label(&p, "3 in attesa").next().is_none());
+    }
+
+    /// L'ora grande sta in celle ferme: con «11:11» e con «00:00» ogni cella è alla stessa x.
+    #[test]
+    fn orologio_a_celle_fisse() {
+        let p = pannello_panoramica(ModelRc::from(quattro_moduli()));
+        let celle = |p: &Pannello| -> Vec<(f32, f32)> {
+            let mut v: Vec<(f32, f32)> = ElementHandle::find_by_element_id(p, "OrologioGrande::cifra")
+                .map(|e| (e.absolute_position().x, e.size().width))
+                .collect();
+            v.sort_by(|a, b| a.0.total_cmp(&b.0));
+            v
+        };
+        crate::pannello::scrivi_ora(&p, "11:11");
+        let uno = celle(&p);
+        crate::pannello::scrivi_ora(&p, "00:00");
+        let zero = celle(&p);
+        assert_eq!(uno.len(), 5);
+        assert_eq!(uno, zero, "celle ferme");
+        // Centrate nel corpo (34..786).
+        let (sinistra, destra) = (uno[0].0, uno[4].0 + uno[4].1);
+        assert!((sinistra - 34.0 - (786.0 - destra)).abs() < 0.5, "centrate: {sinistra}..{destra}");
+    }
+
     /// `n` voci «In attesa» di prova: «Titolo 0», «Titolo 1»… con livello «Quando vuoi».
     fn voci_attesa(n: usize) -> ModelRc<VoceAttesaUi> {
         ModelRc::new(VecModel::from(
@@ -1151,6 +1601,7 @@ mod accessibilita {
                     livello: LivelloUi::Informazione,
                     titolo: format!("Titolo {i}").into(),
                     sotto: "Quando vuoi · prova".into(),
+                    modulo: "Prova".into(),
                     dettaglio: "Il testo completo".into(),
                     icona: Default::default(),
                     pulsanti: ModelRc::new(VecModel::from(Vec::<PulsanteUi>::new())),
@@ -1159,203 +1610,8 @@ mod accessibilita {
         ))
     }
 
-    fn voce_chiusa(p: &Pannello, i: usize) -> Option<ElementHandle> {
-        ElementHandle::find_by_accessible_label(p, &format!("Titolo {i}, Quando vuoi · prova")).next()
-    }
-
-    /// R1-22 (Paolo): da tre voci in su la riga «In attesa» ha due card larghe e «+N» con le
-    /// altre, invece di tre strette dove i titoli si tagliano; con una o due voci nessun «+N».
-    #[test]
-    fn da_tre_voci_due_card_larghe_e_piu_n() {
-        piattaforma_di_prova();
-        let p = pannello();
-        for (n, chiuse, piu_n) in [
-            (1, 1, None),
-            (2, 2, None),
-            (3, 2, Some("Un'altra voce in attesa: Titolo 2")),
-            (4, 2, Some("Altre 2 voci in attesa: Titolo 2")),
-            (5, 2, Some("Altre 3 voci in attesa: Titolo 2")),
-        ] {
-            p.set_attese(voci_attesa(n));
-            let viste = (0..n).filter(|i| voce_chiusa(&p, *i).is_some()).count();
-            assert_eq!(viste, chiuse, "{n} voci: card chiuse");
-            let ci_sono_altre = ["Un'altra voce in attesa: Titolo 2", "Altre 2 voci in attesa: Titolo 2", "Altre 3 voci in attesa: Titolo 2"]
-                .iter()
-                .any(|nome| ElementHandle::find_by_accessible_label(&p, nome).count() > 0);
-            assert_eq!(ci_sono_altre, piu_n.is_some(), "{n} voci: «+N»");
-            if let Some(t) = piu_n {
-                assert_eq!(elemento(&p, t).accessible_role(), Some(AccessibleRole::Button), "{n} voci");
-            }
-        }
-        // Le due card sono larghe: più di quanto lo erano le tre (circa 220 px).
-        p.set_attese(voci_attesa(4));
-        let larghezza = voce_chiusa(&p, 0).expect("prima voce").size().width;
-        assert!(larghezza > 300.0, "card larga: {larghezza}");
-    }
-
-    /// R1-22: il «+N» si raggiunge da tastiera (→ dalla seconda card), prende il fuoco e Invio apre
-    /// la prima voce nascosta; nessun elemento irraggiungibile.
-    #[test]
-    fn il_piu_n_si_raggiunge_da_tastiera() {
-        use slint::platform::Key;
-        for n in [3usize, 5] {
-            piattaforma_di_prova();
-            let p = pannello();
-            p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
-            p.global::<crate::Fuochi>().set_pronti(true);
-            p.set_attese(voci_attesa(n));
-            // Maiusc+Tab dal contenuto: «In attesa», prima voce.
-            con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
-            assert_eq!(etichetta_col_fuoco(&p), "Titolo 0, Quando vuoi · prova", "{n} voci");
-            tasto(&p, Key::RightArrow);
-            assert_eq!(etichetta_col_fuoco(&p), "Titolo 1, Quando vuoi · prova", "{n} voci");
-            tasto(&p, Key::RightArrow);
-            let piu_n = if n == 3 { "Un'altra voce in attesa: Titolo 2".to_owned() } else { format!("Altre {} voci in attesa: Titolo 2", n - 2) };
-            assert_eq!(etichetta_col_fuoco(&p), piu_n, "{n} voci: il fuoco arriva su «+N»");
-            tasto(&p, Key::RightArrow);
-            assert_eq!(etichetta_col_fuoco(&p), piu_n, "{n} voci: «+N» è l'ultimo");
-            tasto(&p, Key::Return);
-            assert_eq!(p.get_vista(), "coda", "{n} voci: Invio su «+N» apre la Coda");
-            assert_eq!(etichetta_col_fuoco(&p), "Titolo 2, Quando vuoi · prova", "{n} voci: sulla prima nascosta");
-        }
-    }
-
-    /// Ridisegno F1, Task 7: il clic su una voce della riga «In attesa» apre la Coda su di lei.
-    #[test]
-    fn la_voce_in_attesa_apre_la_coda() {
-        use slint::platform::Key;
-        piattaforma_di_prova();
-        let p = pannello();
-        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
-        p.global::<crate::Fuochi>().set_pronti(true);
-        p.set_attese(voci_attesa(2));
-        voce_chiusa(&p, 1).expect("seconda voce").invoke_accessible_default_action();
-        assert_eq!(p.get_vista(), "coda");
-        // Il primo tasto accende la tastiera sulla voce scelta: ↓ va oltre, ↑ torna su di lei.
-        tasto(&p, Key::UpArrow);
-        assert_eq!(etichetta_col_fuoco(&p), "Titolo 0, Quando vuoi · prova");
-        // Backspace torna alla Panoramica.
-        tasto(&p, Key::Backspace);
-        assert_eq!(p.get_vista(), "panoramica");
-    }
-
-    /// R1-14: nel layout Orologio della Panoramica l'ora piccola della riga alta non c'è (c'è la
-    /// grande); negli altri layout e nelle altre viste (anche la Coda) sì.
-    #[test]
-    fn ora_piccola_nascosta_solo_nell_orologio() {
-        piattaforma_di_prova();
-        let p = pannello();
-        p.set_layout(0);
-        assert!(!p.get_ora_riga_visibile(), "Orologio: c'è già l'ora grande");
-        p.set_layout(1);
-        assert!(p.get_ora_riga_visibile(), "Quadranti");
-        p.set_layout(0);
-        p.set_vista("pc".into());
-        assert!(p.get_ora_riga_visibile(), "altre viste");
-        p.set_vista("coda".into());
-        assert!(p.get_ora_riga_visibile(), "Coda");
-    }
-
-    /// R1-13: a casa non configurata la riga «Casa» (Orologio) e il quadrante CASA (Quadranti) sono
-    /// un invito che porta alle Impostazioni: col clic, con Narrator e solo con la tastiera.
-    #[test]
-    fn casa_non_configurata_invita_alle_impostazioni() {
-        use slint::platform::Key;
-        for (layout, nome) in [(0, "Collega la casa: apri le Impostazioni"), (1, "CASA, Collega la casa: apri le Impostazioni")] {
-            piattaforma_di_prova();
-            let p = pannello();
-            p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
-            p.global::<crate::Fuochi>().set_pronti(true);
-            let aperte = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
-            let a = aperte.clone();
-            p.on_apri_app(move |id| a.borrow_mut().push(id.to_string()));
-            p.set_layout(layout);
-            p.set_stato_casa("Casa non configurata".into());
-            assert!(
-                ElementHandle::find_by_accessible_label(&p, nome).next().is_none(),
-                "layout {layout}: senza invito niente bersaglio"
-            );
-            p.set_casa_da_configurare(true);
-            let bottone = ElementHandle::find_by_accessible_label(&p, nome)
-                .find(|e| e.accessible_role() == Some(AccessibleRole::Button))
-                .unwrap_or_else(|| panic!("layout {layout}: nessun pulsante «{nome}»"));
-            bottone.invoke_accessible_default_action();
-            assert_eq!(*aperte.borrow(), ["impostazioni"], "layout {layout}: Narrator");
-            // Da tastiera: ↓ porta sulla riga, Invio la apre.
-            tasto(&p, Key::DownArrow);
-            assert_eq!(etichetta_col_fuoco(&p), nome, "layout {layout}");
-            tasto(&p, Key::Return);
-            assert_eq!(*aperte.borrow(), ["impostazioni", "impostazioni"], "layout {layout}: Invio");
-        }
-    }
-
-    /// R1-11 e RC-50: i quadranti riempiono la larghezza bordo a bordo con la riga «In attesa»
-    /// (stesso margine a sinistra e a destra) e stanno a 8 px l'uno dall'altro come le voci.
-    #[test]
-    fn quadranti_allineati_alla_riga_in_attesa() {
-        piattaforma_di_prova();
-        let p = pannello();
-        p.set_layout(1);
-        p.set_stato_casa("Casa non connessa".into());
-        p.set_attese(voci_attesa(3));
-        let (v0, piu_n) = (voce_chiusa(&p, 0).expect("prima voce"), elemento(&p, "Un'altra voce in attesa: Titolo 2"));
-        let (a, b, c, d) = (
-            elemento(&p, "CPU"),
-            elemento(&p, "RAM"),
-            elemento(&p, "DISCO"),
-            elemento(&p, "CASA, Casa non connessa"),
-        );
-        let bordi = |e: &ElementHandle| (e.absolute_position().x, e.absolute_position().x + e.size().width);
-        let (sinistra_voci, destra_voci) = (bordi(&v0).0, bordi(&piu_n).1);
-        assert!((bordi(&a).0 - sinistra_voci).abs() < 0.5, "a sinistra: {} contro {sinistra_voci}", bordi(&a).0);
-        assert!((bordi(&d).1 - destra_voci).abs() < 0.5, "a destra: {} contro {destra_voci}", bordi(&d).1);
-        for (prima, dopo) in [(&a, &b), (&b, &c), (&c, &d)] {
-            let spazio = bordi(dopo).0 - bordi(prima).1;
-            assert!((spazio - 8.0).abs() < 0.5, "spazio fra le card: {spazio}");
-        }
-    }
-
-    /// Fix round 1: con il fuoco su «+N», se le voci scendono da 3 a 2 il fuoco va alla card più
-    /// vicina (la seconda), non si perde.
-    #[test]
-    fn il_fuoco_su_piu_n_non_si_perde_se_le_voci_calano() {
-        use slint::platform::Key;
-        piattaforma_di_prova();
-        let p = pannello();
-        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
-        p.global::<crate::Fuochi>().set_pronti(true);
-        p.set_attese(voci_attesa(3));
-        con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
-        tasto(&p, Key::RightArrow);
-        tasto(&p, Key::RightArrow);
-        assert_eq!(etichetta_col_fuoco(&p), "Un'altra voce in attesa: Titolo 2");
-        p.set_attese(voci_attesa(2));
-        slint::platform::update_timers_and_animations();
-        assert_eq!(etichetta_col_fuoco(&p), "Titolo 1, Quando vuoi · prova", "il fuoco passa alla card più vicina");
-    }
-
-    /// Fix round 1: il quadrante CASA con l'invito non è un indicatore vuoto (niente «—» come
-    /// valore): c'è l'invito e la casa al posto dell'arco.
-    #[test]
-    fn il_quadrante_casa_invito_non_ha_il_trattino() {
-        piattaforma_di_prova();
-        let p = pannello();
-        p.set_layout(1);
-        p.set_stato_casa("Casa non configurata".into());
-        assert_eq!(elemento(&p, "CASA, Casa non configurata").accessible_value().as_deref(), Some("—"), "normale: il trattino");
-        p.set_casa_da_configurare(true);
-        // T2 (revisione finale): l'invito non è un indicatore senza valore; per Narrator c'è solo
-        // il pulsante, uno.
-        let indicatori = ElementHandle::find_by_accessible_label(&p, "CASA, Collega la casa")
-            .filter(|e| e.accessible_role() == Some(AccessibleRole::ProgressIndicator))
-            .count();
-        assert_eq!(indicatori, 0, "invito: nessun indicatore");
-        let pulsanti = ElementHandle::find_by_accessible_label(&p, "CASA, Collega la casa: apri le Impostazioni").count();
-        assert_eq!(pulsanti, 1, "invito: un pulsante solo");
-    }
-
     /// RC-44: il colore caldo dell'arco parte SOPRA la soglia d'avviso dell'utente (70 → caldo a
-    /// 71, non a 85), nella vista Claude e nei quadranti; il PC resta all'85 %.
+    /// 71, non a 85), nella vista Claude; il PC resta all'85 %.
     #[test]
     fn il_caldo_parte_oltre_la_soglia_dell_utente() {
         piattaforma_di_prova();
@@ -1366,31 +1622,19 @@ mod accessibilita {
         assert!(!tema.invoke_oltre_soglia(0.69, 0.70));
         assert!(!tema.invoke_oltre_soglia(0.50, 0.70));
         assert!(tema.invoke_oltre_soglia(0.80, 0.70), "a 80 con soglia 70 l'arco è caldo (prima no)");
-        let (claude, quadranti) = (include_str!("../ui/viste/claude.slint"), include_str!("../ui/layout/quadranti.slint"));
+        let claude = include_str!("../ui/viste/claude.slint");
         assert!(!claude.contains("0.85"), "la vista Claude non ha più un 85 % fisso");
-        assert!(
-            quadranti.contains("? q.caldo-da : 0.85"),
-            "i quadranti di Claude usano la soglia dell'utente"
-        );
         assert!((p.get_claude_soglia() - 0.80).abs() < 1e-6, "di serie 80");
     }
 
     #[test]
-    fn quadranti_dicono_nome_e_valore() {
+    fn la_vista_pc_dice_nome_e_valore() {
         piattaforma_di_prova();
         let p = pannello();
-        p.set_layout(1);
         p.set_pc(StatPcUi { pronta: true, cpu: 0.12, cpu_testo: "12%".into(), ..Default::default() });
-        let cpu = elemento(&p, "CPU");
-        assert_eq!(cpu.accessible_role(), Some(AccessibleRole::ProgressIndicator));
-        assert_eq!(cpu.accessible_value().as_deref(), Some("12%"));
-        // Nella vista PC la rete è una velocità (testo), CPU un indicatore.
+        // Nella vista PC la rete è una velocità (testo).
         p.set_vista("pc".into());
         assert_eq!(elemento(&p, "RETE").accessible_role(), Some(AccessibleRole::Text));
-        p.set_vista("panoramica".into());
-        // Senza sensori, il quadrante CASA dice lo stato della casa.
-        p.set_stato_casa("Casa non connessa".into());
-        assert_eq!(elemento(&p, "CASA, Casa non connessa").accessible_role(), Some(AccessibleRole::ProgressIndicator));
     }
 
     /// M2 Task 1: la riga BATTERIA col glifo dice ancora nome, valore e stato per Narrator; il
@@ -1822,9 +2066,12 @@ mod accessibilita {
         let (e1, e2) = (eventi.clone(), eventi.clone());
         p.on_menu(move || e1.borrow_mut().push("menu"));
         p.on_chiudi(move || e2.borrow_mut().push("chiudi"));
-        let e3 = eventi.clone();
-        p.on_scorri_layout(move |_| e3.borrow_mut().push("layout"));
-        // Contenuto → Tab: schede → Tab: ricerca → Tab: «⋯» (senza volume) → Invio.
+        // Panoramica senza carte: Tab → scheda Panoramica → Tab: ricerca → Tab: «⋯» (senza volume).
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Panoramica, scheda 1 di 5");
+        tasto(&p, Key::Tab);
+        tasto(&p, Key::Tab);
+        tasto(&p, Key::Tab);
         tasto(&p, Key::Tab);
         tasto(&p, Key::Tab);
         tasto(&p, Key::Tab);
@@ -1833,16 +2080,14 @@ mod accessibilita {
         assert!(col_fuoco_pannello(&p).ends_with("::fuoco-menu"), "fuoco su «{}»", col_fuoco_pannello(&p));
         tasto(&p, Key::Space);
         assert_eq!(*eventi.borrow(), ["menu", "menu"]);
-        // Tab da «⋯» torna al contenuto (Panoramica senza voci in attesa): Invio cambia layout.
+        // Tab da «⋯» torna in cima (la prima scheda); Maiusc+Tab torna a «⋯», Invio apre il menu.
         tasto(&p, Key::Tab);
-        tasto(&p, Key::Return);
-        assert_eq!(*eventi.borrow(), ["menu", "menu", "layout"]);
-        // Maiusc+Tab dal contenuto: «⋯» (niente «In attesa»), Invio apre il menu.
+        assert_eq!(etichetta_col_fuoco(&p), "Panoramica, scheda 1 di 5");
         con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
         tasto(&p, Key::Return);
-        assert_eq!(*eventi.borrow(), ["menu", "menu", "layout", "menu"]);
+        assert_eq!(*eventi.borrow(), ["menu", "menu", "menu"]);
         tasto(&p, Key::Escape);
-        assert_eq!(*eventi.borrow(), ["menu", "menu", "layout", "menu", "chiudi"]);
+        assert_eq!(*eventi.borrow(), ["menu", "menu", "menu", "chiudi"]);
     }
 
     /// L'id dell'elemento col fuoco vero nel pannello («Pannello::fuoco-menu»).
@@ -2076,11 +2321,11 @@ mod accessibilita {
         assert_eq!((p.get_stanza_aperta(), p.get_vista().as_str()), (-1, "casa"), "Backspace torna prima a «Preferiti»");
         tasto(&p, Key::Backspace);
         assert_eq!(p.get_vista(), "panoramica");
-        // Il pannello ha ancora la tastiera (prima il fuoco finiva su una card che spariva).
-        let e5 = eventi.clone();
-        p.on_scorri_layout(move |_| e5.borrow_mut().push("scorri".into()));
-        tasto(&p, Key::RightArrow);
-        assert_eq!(eventi.borrow().last().map(String::as_str), Some("scorri"));
+        // Il pannello ha ancora la tastiera (prima il fuoco finiva su una card che spariva): Tab
+        // porta il fuoco su un elemento vero.
+        tasto(&p, Key::Tab);
+        let col_fuoco = etichetta_col_fuoco(&p);
+        assert!(!col_fuoco.is_empty() && col_fuoco != "Pannello di ItsyHome", "fuoco su «{col_fuoco}»");
         tasto(&p, Key::Escape);
         assert_eq!(eventi.borrow().last().map(String::as_str), Some("chiudi pannello"), "{:?}", eventi.borrow());
     }
@@ -2173,34 +2418,42 @@ mod accessibilita {
         assert!(icona.1 + icona.3 <= cs.height - 40.0, "l'icona non tocca il nome: {icona:?} in {cs:?}");
     }
 
-    /// 18/11 (Paolo): il clic su «N luci accese» della Panoramica apre la Casa filtrata sulle luci
-    /// accese, in entrambi i layout; senza luci accese la riga resta solo una riga.
+    /// 18/11 (Paolo) e ridisegno F1, Task 8: «N luci accese» porta ancora alla Casa filtrata, ma
+    /// è il clic (o Narrator, o Invio) sulla carta Casa con luci accese; senza luci accese la carta
+    /// apre la Casa completa.
     #[test]
-    fn il_clic_su_luci_accese_apre_la_casa_filtrata() {
-        for (layout, etichetta) in [
-            (0, "Casa · 2 luci accese: mostra le luci accese"),
-            (1, "CASA, 2 luci accese: mostra le luci accese"),
-        ] {
-            let (p, _) = pannello_casa();
-            p.set_vista("panoramica".into());
-            p.set_layout(layout);
-            p.set_stato_casa("2 luci accese".into());
-            assert!(
-                ElementHandle::find_by_accessible_label(&p, etichetta).next().is_none(),
-                "layout {layout}: senza luci accese la riga non si clicca"
-            );
-            p.set_luci(luci_accese_di_prova(&["light.a", "light.b"]).into());
-            let riga = elemento(&p, etichetta);
-            assert_eq!(riga.accessible_role(), Some(AccessibleRole::Button));
-            riga.invoke_accessible_default_action();
-            assert_eq!((p.get_vista().as_str(), p.get_filtro_luci()), ("casa", true), "layout {layout}");
-            assert!(titolo(&p, "Luci accese (2)"), "layout {layout}: l'intestazione dice quante");
-            assert!(ElementHandle::find_by_accessible_label(&p, "Nome light.a, Acceso").next().is_some());
-            elemento(&p, "Spegni tutte");
-            elemento(&p, "Tutta la casa");
-            // Lasciata la vista, la prossima volta la Casa torna completa.
-            p.set_vista("panoramica".into());
+    fn la_carta_casa_con_luci_accese_apre_la_casa_filtrata() {
+        use slint::platform::Key;
+        let (p, _) = pannello_casa();
+        p.set_schede(schede());
+        p.set_moduli(moduli_di_prova());
+        let casa = p.get_moduli().iter().find(|m| m.id == "casa").expect("la carta Casa").narratore.to_string();
+        p.set_vista("panoramica".into());
+        elemento(&p, &casa).invoke_accessible_default_action();
+        assert_eq!((p.get_vista().as_str(), p.get_filtro_luci()), ("casa", false), "senza luci: la Casa completa");
+        p.set_vista("panoramica".into());
+        p.set_luci(luci_accese_di_prova(&["light.a", "light.b"]).into());
+        let carta = elemento(&p, &casa);
+        assert_eq!(carta.accessible_role(), Some(AccessibleRole::Button));
+        carta.invoke_accessible_default_action();
+        assert_eq!((p.get_vista().as_str(), p.get_filtro_luci()), ("casa", true));
+        assert!(titolo(&p, "Luci accese (2)"), "l'intestazione dice quante");
+        assert!(ElementHandle::find_by_accessible_label(&p, "Nome light.a, Acceso").next().is_some());
+        elemento(&p, "Spegni tutte");
+        elemento(&p, "Tutta la casa");
+        // Da tastiera: Tab porta alla carta Casa (Agenti, la sua azione, Casa), Invio la apre.
+        tasto(&p, Key::Backspace);
+        tasto(&p, Key::Backspace);
+        assert_eq!(p.get_vista(), "panoramica");
+        for _ in 0..8 {
+            if etichetta_col_fuoco(&p) == casa {
+                break;
+            }
+            tasto(&p, Key::Tab);
         }
+        assert_eq!(etichetta_col_fuoco(&p), casa);
+        tasto(&p, Key::Return);
+        assert_eq!((p.get_vista().as_str(), p.get_filtro_luci()), ("casa", true), "Invio sulla carta");
     }
 
     /// Backspace nella Casa filtrata torna all'elenco completo; il secondo, alla Panoramica.
@@ -2260,92 +2513,6 @@ mod accessibilita {
         assert_eq!(eventi.borrow().last().map(String::as_str), Some("chiudi pannello"));
     }
 
-    /// Dalla Panoramica, solo con i tasti: ↓ (o Tab) porta sulla riga «N luci accese» (nome per
-    /// Narrator, anello), Invio o Spazio la aprono; senza il fuoco su di lei Invio cambia ancora layout.
-    #[test]
-    fn dalla_panoramica_alla_casa_filtrata_solo_con_la_tastiera() {
-        use slint::platform::Key;
-        for (layout, nome) in [(0, "Casa · 2 luci accese: mostra le luci accese"), (1, "CASA, 2 luci accese: mostra le luci accese")] {
-            let (p, eventi) = pannello_casa();
-            p.set_vista("panoramica".into());
-            p.set_layout(layout);
-            p.set_stato_casa("2 luci accese".into());
-            let scorri = || eventi.borrow().iter().filter(|e| *e == "scorri").count();
-            let e = eventi.clone();
-            p.on_scorri_layout(move |_| e.borrow_mut().push("scorri".into()));
-            // Senza luci accese la riga non è un elemento: Invio cambia layout.
-            tasto(&p, Key::Return);
-            assert_eq!(scorri(), 1);
-            p.set_luci(luci_accese_di_prova(&["light.a", "light.b"]).into());
-            tasto(&p, Key::Return);
-            assert_eq!(scorri(), 2, "layout {layout}: senza fuoco su di lei Invio cambia layout");
-            tasto(&p, Key::DownArrow);
-            assert_eq!(etichetta_col_fuoco(&p), nome, "layout {layout}");
-            tasto(&p, Key::Return);
-            assert_eq!((p.get_vista().as_str(), p.get_filtro_luci()), ("casa", true), "layout {layout}");
-            assert_eq!(scorri(), 2);
-            // Con Tab: dal contenuto va a lei, e Maiusc+Tab torna indietro; Spazio la apre.
-            tasto(&p, Key::Escape);
-            tasto(&p, Key::Backspace);
-            assert_eq!(p.get_vista(), "panoramica");
-            tasto(&p, Key::Tab);
-            assert_eq!(etichetta_col_fuoco(&p), nome, "layout {layout}: Tab");
-            con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
-            assert_ne!(etichetta_col_fuoco(&p), nome, "layout {layout}: Maiusc+Tab torna al layout");
-            tasto(&p, Key::Tab);
-            tasto(&p, Key::Space);
-            assert_eq!((p.get_vista().as_str(), p.get_filtro_luci()), ("casa", true), "layout {layout}: Spazio");
-        }
-    }
-
-    /// Un pannello sulla Panoramica col fuoco da tastiera sulla riga «N luci accese» (↓).
-    fn panoramica_col_fuoco_sulle_luci(layout: i32) -> (Pannello, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
-        use slint::platform::Key;
-        let (p, eventi) = pannello_casa();
-        p.set_vista("panoramica".into());
-        p.set_layout(layout);
-        p.set_stato_casa("1 luce accesa".into());
-        p.set_luci(luci_accese_di_prova(&["light.a"]).into());
-        tasto(&p, Key::DownArrow);
-        assert!(etichetta_col_fuoco(&p).ends_with("mostra le luci accese"), "il fuoco è sulla riga: «{}»", etichetta_col_fuoco(&p));
-        (p, eventi)
-    }
-
-    /// Il pannello ha ancora la tastiera: Esc lo chiude.
-    fn esc_chiude(p: &Pannello, eventi: &std::rc::Rc<std::cell::RefCell<Vec<String>>>, dove: &str) {
-        use slint::platform::Key;
-        tasto(p, Key::Escape);
-        assert_eq!(eventi.borrow().last().map(String::as_str), Some("chiudi pannello"), "{dove}: la tastiera è rimasta viva");
-    }
-
-    /// Il fuoco sulla riga e l'ultima luce si spegne altrove (o la casa si disconnette): la riga
-    /// non è più un bersaglio, ma il fuoco non resta su un elemento che sparisce e il pannello
-    /// continua a rispondere ai tasti.
-    #[test]
-    fn la_riga_luci_perde_il_bersaglio_col_fuoco_addosso() {
-        // Prova strutturale (il backend di prova non riproduce il blocco della tastiera): subito
-        // dopo, l'elemento col fuoco esiste ancora (non era dentro un `if` distrutto); al tasto
-        // dopo il fuoco è tornato a `tasti`, e la tastiera risponde.
-        let fuoco_vivo = |p: &Pannello| i_slint_core::window::WindowInner::from_pub(p.window()).focus_item.borrow().upgrade().is_some();
-        // Il fuoco è tornato a `tasti` o ai puntini dei layout (che lo reclamano appena la riga non vale più).
-        let fuoco_tornato = |p: &Pannello| {
-            let e = etichetta_col_fuoco(p);
-            (e == "Pannello di ItsyHome" || e.starts_with("Layout ")).then_some(()).ok_or(e)
-        };
-        for layout in [0, 1] {
-            let (p, eventi) = panoramica_col_fuoco_sulle_luci(layout);
-            p.set_luci(luci_accese_di_prova(&[]).into());
-            assert!(fuoco_vivo(&p), "layout {layout}: l'elemento col fuoco esiste ancora");
-            esc_chiude(&p, &eventi, &format!("layout {layout}, ultima luce spenta"));
-            assert_eq!(fuoco_tornato(&p), Ok(()), "layout {layout}: il fuoco è tornato a `tasti` o ai puntini");
-            let (p, eventi) = panoramica_col_fuoco_sulle_luci(layout);
-            p.set_casa_pronta(false);
-            assert!(fuoco_vivo(&p), "layout {layout}: l'elemento col fuoco esiste ancora");
-            esc_chiude(&p, &eventi, &format!("layout {layout}, casa disconnessa"));
-            assert_eq!(fuoco_tornato(&p), Ok(()), "layout {layout}: il fuoco è tornato a `tasti` o ai puntini");
-        }
-    }
-
     /// Gli elementi accessibili con ruolo di pulsante e senza nome.
     fn pulsanti_senza_nome(p: &Pannello) -> usize {
         i_slint_backend_testing::ElementQuery::from_root(p)
@@ -2354,72 +2521,6 @@ mod accessibilita {
             .iter()
             .filter(|e| e.accessible_role() == Some(AccessibleRole::Button) && e.accessible_label().is_none_or(|l| l.is_empty()))
             .count()
-    }
-
-    /// T1-M1 (revisione finale): la riga «N luci accese» (o il quadrante CASA) è un solo pulsante
-    /// per Narrator, grande quanto la riga o la card e non quanto tutta la Panoramica; nelle altre
-    /// viste, e senza luci accese, non resta un pulsante senza nome.
-    #[test]
-    fn la_riga_luci_e_un_solo_pulsante_al_suo_posto() {
-        for (layout, etichetta) in [
-            (0, "Casa · 2 luci accese: mostra le luci accese"),
-            (1, "CASA, 2 luci accese: mostra le luci accese"),
-        ] {
-            let (p, _) = pannello_casa();
-            p.set_vista("panoramica".into());
-            p.set_layout(layout);
-            p.set_stato_casa("2 luci accese".into());
-            assert_eq!(pulsanti_senza_nome(&p), 0, "layout {layout}: senza luci accese");
-            p.set_luci(luci_accese_di_prova(&["light.a", "light.b"]).into());
-            assert_eq!(ElementHandle::find_by_accessible_label(&p, etichetta).count(), 1, "layout {layout}: un pulsante solo");
-            let riga = elemento(&p, etichetta);
-            let (pos, lato) = (riga.absolute_position(), riga.size());
-            let contenuto = p.window().size().to_logical(p.window().scale_factor());
-            assert!(lato.width > 0.0 && lato.height > 0.0, "layout {layout}: {lato:?}");
-            if layout == 0 {
-                assert!(lato.height <= 32.0, "layout {layout}: alto quanto la riga, non il contenuto: {lato:?}");
-            } else {
-                assert!(lato.width < contenuto.width / 2.0, "layout {layout}: largo quanto la card: {lato:?} su {contenuto:?}");
-            }
-            // Il pulsante sta sul bersaglio del mouse: il clic al suo centro apre la Casa filtrata.
-            use slint::platform::{PointerEventButton, WindowEvent};
-            let position = slint::LogicalPosition::new(pos.x + lato.width / 2.0, pos.y + lato.height / 2.0);
-            p.window().dispatch_event(WindowEvent::PointerMoved { position });
-            p.window().dispatch_event(WindowEvent::PointerPressed { position, button: PointerEventButton::Left });
-            p.window().dispatch_event(WindowEvent::PointerReleased { position, button: PointerEventButton::Left });
-            assert_eq!((p.get_vista().as_str(), p.get_filtro_luci()), ("casa", true), "layout {layout}");
-            assert_eq!(pulsanti_senza_nome(&p), 0, "layout {layout}: nella vista Casa");
-            assert!(ElementHandle::find_by_accessible_label(&p, etichetta).next().is_none(), "layout {layout}: fuori dalla Panoramica");
-        }
-    }
-
-    /// Quadranti con un sensore: il quadrante CASA non c'è, quindi la riga non è un bersaglio da
-    /// tastiera (↓ e Invio non aprono il filtro da niente) e cambiare layout col fuoco sulla riga
-    /// non blocca la tastiera.
-    #[test]
-    fn quadranti_con_sensori_non_hanno_la_riga_luci_da_tastiera() {
-        use slint::platform::Key;
-        let sensore = crate::SensoreUi { voce: voce_casa("sensor.t", "Temperatura"), frazione: 0.5 };
-        let (p, eventi) = pannello_casa();
-        p.set_vista("panoramica".into());
-        p.set_layout(1);
-        p.set_stato_casa("1 luce accesa".into());
-        p.set_luci(luci_accese_di_prova(&["light.a"]).into());
-        p.set_sensori(ModelRc::new(VecModel::from(vec![sensore.clone()])));
-        let e = eventi.clone();
-        p.on_scorri_layout(move |_| e.borrow_mut().push("scorri".into()));
-        tasto(&p, Key::DownArrow);
-        tasto(&p, Key::Return);
-        assert_eq!((p.get_vista().as_str(), p.get_filtro_luci()), ("panoramica", false), "Invio non apre il filtro da un bersaglio assente");
-        assert_eq!(eventi.borrow().last().map(String::as_str), Some("scorri"), "Invio cambia layout, come sempre");
-        tasto(&p, Key::RightArrow);
-        tasto(&p, Key::LeftArrow);
-        esc_chiude(&p, &eventi, "Quadranti con sensori");
-        // Il fuoco sulla riga dell'Orologio, poi i Quadranti con sensori (frecce): nessun blocco.
-        let (p, eventi) = panoramica_col_fuoco_sulle_luci(0);
-        p.set_sensori(ModelRc::new(VecModel::from(vec![sensore])));
-        p.set_layout(1);
-        esc_chiude(&p, &eventi, "layout cambiato col fuoco sulla riga");
     }
 
     /// Senza connessione la Casa filtrata non ha pulsanti che non funzionano: dice lo stato.
@@ -2597,6 +2698,7 @@ mod accessibilita {
             livello: LivelloUi::Bloccante,
             titolo: voce.titolo.as_str().into(),
             sotto: "Ti aspetta · Agenti".into(),
+            modulo: "Agenti".into(),
             dettaglio: voce.dettaglio.as_str().into(),
             icona: Default::default(),
             pulsanti: crate::pillola::pulsanti_ui(&voce.pulsanti),
@@ -3966,7 +4068,7 @@ mod accessibilita {
         assert_eq!(crate::finestra_impostazioni::SEZIONE_INFORMAZIONI, 6);
         f.set_sezione(3);
         assert_eq!(elemento(&f, "Isola").accessible_item_selected(), Some(true));
-        for nome in ["A sinistra degli occhi", "A destra degli occhi", "Meteo da", "Quadrante 1", "Quadrante 3"] {
+        for nome in ["A sinistra degli occhi", "A destra degli occhi", "Meteo da"] {
             let e = ElementHandle::find_by_accessible_label(&f, nome)
                 .find(|e| e.accessible_role() == Some(AccessibleRole::Combobox))
                 .unwrap_or_else(|| panic!("selettore «{nome}»"));
@@ -3974,19 +4076,16 @@ mod accessibilita {
         }
         // Le note «solo su Windows» compaiono solo fuori da Windows (e con la minuscola dopo i due punti).
         let rete = "«Rete»: solo su Windows, solo l'icona della connessione. Il nome della rete non compare mai nella pillola.";
-        let gpu = "«GPU»: solo su Windows.";
         assert!(ElementHandle::find_by_accessible_label(&f, rete).next().is_none(), "nota Rete su Windows");
-        assert!(ElementHandle::find_by_accessible_label(&f, gpu).next().is_none(), "nota GPU su Windows");
         f.set_fuori_da_windows(true);
         assert!(ElementHandle::find_by_accessible_label(&f, rete).next().is_some(), "nota Rete fuori da Windows");
-        assert!(ElementHandle::find_by_accessible_label(&f, gpu).next().is_some(), "nota GPU fuori da Windows");
         // L'avviso delle cuffie ha la sua sezione «AVVISI», fuori da «PILLOLA».
         assert!(ElementHandle::find_by_accessible_label(&f, "AVVISI").next().is_none(), "AVVISI senza cuffie");
         f.set_avvisi_bt_disponibile(true);
         assert!(ElementHandle::find_by_accessible_label(&f, "AVVISI").next().is_some(), "AVVISI con le cuffie");
     }
 
-    /// Le scelte arrivate a Rust: (0/1 lato o 10 + posizione del quadrante, indice).
+    /// Le scelte arrivate a Rust: (0/1 lato, indice).
     type Scelte = std::rc::Rc<std::cell::RefCell<Vec<(i32, i32)>>>;
 
     /// Impostazioni › Isola coi selettori riempiti come fa il ponte.
@@ -3997,15 +4096,7 @@ mod accessibilita {
             ModelRc::new(VecModel::from(v.iter().map(|s| slint::SharedString::from(*s)).collect::<Vec<_>>()))
         };
         f.set_scelte_lati(voci(&["Niente", "Ora", "CPU", "RAM"]));
-        f.set_scelte_quadranti(voci(&["Niente", "Ora", "CPU", "RAM", "Disco", "Potenza · Fotovoltaico"]));
         f.set_scelte_meteo(voci(&["Automatico"]));
-        let q = |indice, con_massimo| crate::SceltaQuadranteUi {
-            indice,
-            con_massimo,
-            massimo: "".into(),
-            predefinito: if con_massimo { "3000".into() } else { "".into() },
-        };
-        f.set_quadranti_scelti(ModelRc::new(VecModel::from(vec![q(2, false), q(3, false), q(5, true)])));
         f.set_sezione(3);
         f.show().expect("impostazioni mostrate nel backend di prova");
         // Alta abbastanza da vedere tutte le righe (la ricerca salta ciò che lo scorrimento nasconde).
@@ -4014,8 +4105,6 @@ mod accessibilita {
         let scelti = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         let s = scelti.clone();
         f.on_scegli_lato(move |quale, i| s.borrow_mut().push((quale, i)));
-        let s = scelti.clone();
-        f.on_scegli_quadrante(move |posizione, i| s.borrow_mut().push((10 + posizione, i)));
         (f, scelti)
     }
 
@@ -4076,39 +4165,30 @@ mod accessibilita {
         assert!(ElementHandle::find_by_accessible_label(&f, "Isola").next().is_some());
     }
 
-    /// Il selettore di un quadrante: dice la scelta, Narrator lo apre e sceglie, e accanto a un
-    /// sensore in watt c'è il campo «Massimo» col predefinito come suggerimento.
+    /// Il selettore di un lato: dice la scelta, Narrator lo apre e sceglie. Ridisegno F1, Task 8:
+    /// niente più «Quadrante n» né campo «Massimo».
     #[test]
-    fn selettore_del_quadrante() {
+    fn selettore_del_lato_e_niente_quadranti() {
         let (f, scelti) = scheda_isola();
-        let primo = selettore(&f, "Quadrante 1");
-        assert_eq!(primo.accessible_value().as_deref(), Some("CPU"));
-        assert_eq!(selettore(&f, "Quadrante 3").accessible_value().as_deref(), Some("Potenza · Fotovoltaico"));
-        primo.invoke_accessible_default_action();
-        assert_eq!(primo.accessible_expanded(), Some(true));
-        ElementHandle::find_by_accessible_label(&f, "Disco")
+        f.set_indice_lato_destro(2);
+        let destra = selettore(&f, "A destra degli occhi");
+        assert_eq!(destra.accessible_value().as_deref(), Some("CPU"));
+        destra.invoke_accessible_default_action();
+        assert_eq!(destra.accessible_expanded(), Some(true));
+        ElementHandle::find_by_accessible_label(&f, "RAM")
             .find(|e| e.accessible_role() == Some(AccessibleRole::ListItem))
-            .expect("voce «Disco»")
+            .expect("voce «RAM»")
             .invoke_accessible_default_action();
-        assert_eq!(*scelti.borrow(), [(10, 4)], "quadrante 1 → «Disco»");
-        let campi = |f: &FinestraImpostazioni| -> Vec<ElementHandle> {
-            ElementHandle::find_by_accessible_label(f, "Quadrante 3, massimo")
-                .filter(|e| e.accessible_role() == Some(AccessibleRole::TextInput))
-                .collect()
-        };
-        let massimi = campi(&f);
-        assert_eq!(massimi.len(), 1, "il campo «Massimo» solo accanto al sensore in watt, col nome del quadrante");
-        assert_eq!(massimi[0].accessible_placeholder_text().as_deref(), Some("3000"));
-        // Giro di correzioni 1: scritto a mano e poi un altro sensore in watt, il campo mostra il
-        // massimo del sensore nuovo (il testo scritto non resta).
-        massimi[0].set_accessible_value("4500");
-        assert_eq!(massimi[0].accessible_value().as_deref(), Some("4500"));
-        let modello = f.get_quadranti_scelti();
-        modello.set_row_data(
-            2,
-            crate::SceltaQuadranteUi { indice: 4, con_massimo: true, massimo: "6000".into(), predefinito: "3000".into() },
-        );
-        assert_eq!(campi(&f)[0].accessible_value().as_deref(), Some("6000"));
+        assert_eq!(*scelti.borrow(), [(1, 3)], "a destra → «RAM»");
+        assert!(ElementHandle::find_by_accessible_label(&f, "Quadrante 1").next().is_none());
+        assert!(ElementHandle::find_by_accessible_label(&f, "QUADRANTI").next().is_none());
+        let massimi = i_slint_backend_testing::ElementQuery::from_root(&f)
+            .match_descendants()
+            .find_all()
+            .into_iter()
+            .filter(|e| e.accessible_label().is_some_and(|l| l.ends_with(", massimo")))
+            .count();
+        assert_eq!(massimi, 0, "nessun campo «Massimo»");
     }
 
     /// M3, Task 12: Impostazioni › Claude › Avvisi. «Avvisa quando un limite supera (%)» parte da 80;
@@ -4187,35 +4267,6 @@ mod accessibilita {
         assert_eq!(spese(), ["spesa Some(99.5)"]);
         scrivi(SPESA, "");
         assert_eq!(spese(), ["spesa Some(99.5)", "spesa None"], "vuota = nessuna soglia");
-    }
-
-    /// Di serie il pannello mostra i tre quadranti di M1; il modello del ponte li sostituisce
-    /// (un sensore col suo valore, l'ora del pannello) e «niente» non c'è.
-    #[test]
-    fn quadranti_configurabili_nel_pannello() {
-        use crate::{FonteQuadranteUi, QuadranteUi};
-        piattaforma_di_prova();
-        let p = pannello();
-        p.set_layout(1);
-        for nome in ["CPU", "RAM", "DISCO"] {
-            assert_eq!(elemento(&p, nome).accessible_role(), Some(AccessibleRole::ProgressIndicator), "{nome} di serie");
-        }
-        p.set_ora("14:05".into());
-        p.set_quadranti(ModelRc::new(VecModel::from(vec![
-            QuadranteUi { fonte: FonteQuadranteUi::Ora, etichetta: "ORA".into(), frazione: -1.0, ..Default::default() },
-            QuadranteUi {
-                fonte: FonteQuadranteUi::Sensore,
-                etichetta: "CASA".into(),
-                valore: "21,5 °C".into(),
-                frazione: 0.63,
-                dettaglio: "Sala".into(),
-                genere: crate::GenereUi::Termo,
-                ..Default::default()
-            },
-        ])));
-        assert_eq!(elemento(&p, "ORA").accessible_value().as_deref(), Some("14:05"));
-        assert_eq!(elemento(&p, "CASA, Sala").accessible_value().as_deref(), Some("21,5 °C"));
-        assert!(ElementHandle::find_by_accessible_label(&p, "DISCO").next().is_none(), "il disco non è più scelto");
     }
 
     // ─── M2, Task 7: volume del PC ───
@@ -4645,25 +4696,6 @@ mod accessibilita {
             .into_iter()
             .any(|e| e.accessible_label().as_deref() == Some("37%"));
         assert!(testo, "il valore della GPU si vede");
-    }
-
-    /// M2, Task 10: il quadrante «GPU» della Panoramica a Quadranti legge `StatPcUi`: col dato
-    /// valore e arco, senza «—».
-    #[test]
-    fn quadrante_gpu() {
-        piattaforma_di_prova();
-        let p = pannello();
-        p.set_layout(1);
-        p.set_quadranti(slint::ModelRc::new(slint::VecModel::from(crate::ponte::quadranti_ui(
-            &[crate::lati::Lato::Gpu],
-            None,
-            &std::collections::HashMap::new(),
-            &crate::lati::DatiClaude::default(),
-        ))));
-        let gpu = elemento(&p, "GPU");
-        assert_eq!(gpu.accessible_value().as_deref(), Some("—"));
-        p.set_pc(StatPcUi { pronta: true, ha_gpu: true, gpu: 0.37, gpu_testo: "37%".into(), ..Default::default() });
-        assert_eq!(elemento(&p, "GPU").accessible_value().as_deref(), Some("37%"));
     }
 
     /// Riquadri: interruttori per Narrator con lo stato; Bluetooth spento; senza radio
@@ -5126,30 +5158,35 @@ mod accessibilita {
         assert_eq!(*scelte.borrow(), ["esci"]);
     }
 
-    /// m-1 (revisione finale): a menu aperto la rotella non attraversa il menu (il layout della
-    /// Panoramica non cambia sotto); chiuso, la rotella torna a cambiare layout.
+    /// m-1 (revisione finale): a menu aperto la rotella non attraversa il menu (il volume della
+    /// barra non cambia sotto); chiuso, la rotella sul volume torna a cambiarlo.
     #[test]
     fn la_rotella_non_attraversa_il_menu_aperto() {
         use slint::platform::WindowEvent;
         let (p, _, _) = pannello_con_menu(false, &[]);
         p.set_vista("panoramica".into());
+        p.set_volume_disponibile(true);
+        p.set_volume(0.4);
+        p.set_rotella_volume(true);
         let scorsi = std::rc::Rc::new(std::cell::Cell::new(0));
         let s = scorsi.clone();
-        p.on_scorri_layout(move |_| s.set(s.get() + 1));
+        p.on_imposta_volume(move |_| s.set(s.get() + 1));
+        let volume = elemento(&p, "Volume 40 %");
+        let (pos, lato) = (volume.absolute_position(), volume.size());
         let rotella = || {
-            let position = slint::LogicalPosition::new(40.0, 220.0);
+            let position = slint::LogicalPosition::new(pos.x + lato.width / 2.0, pos.y + lato.height / 2.0);
             p.window().dispatch_event(WindowEvent::PointerMoved { position });
-            p.window().dispatch_event(WindowEvent::PointerScrolled { position, delta_x: 0.0, delta_y: -60.0 });
+            p.window().dispatch_event(WindowEvent::PointerScrolled { position, delta_x: 0.0, delta_y: 60.0 });
         };
         apri_menu(&p);
         assert!(riga_menu(&p, "Esci").is_some());
         rotella();
-        assert_eq!(scorsi.get(), 0, "a menu aperto il layout non cambia");
+        assert_eq!(scorsi.get(), 0, "a menu aperto il volume non cambia");
         assert!(riga_menu(&p, "Esci").is_some(), "e il menu resta aperto");
         tasto(&p, slint::platform::Key::Escape);
         assert!(riga_menu(&p, "Esci").is_none());
         rotella();
-        assert_eq!(scorsi.get(), 1, "a menu chiuso la rotella cambia layout");
+        assert_eq!(scorsi.get(), 1, "a menu chiuso la rotella cambia il volume");
     }
 
     /// Il mouse sul centro di un elemento (lo «passa sopra») e, con `clicca`, il clic sinistro.

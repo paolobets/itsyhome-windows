@@ -8,10 +8,9 @@ use crate::attenzione::{
     PULSANTE_ARCHIVIA, PULSANTE_APRI, PULSANTE_HO_CAPITO, PULSANTE_IMPOSTAZIONI, PULSANTE_RIPROVA,
 };
 use crate::claude::PREFISSO_CLAUDE;
-use crate::lati::{self, DatiClaude, Lato};
-use crate::layout::Layout;
+use crate::lati::{self, Lato};
 use crate::orologio;
-use crate::pc_stats::{Fonti, LetturaBatteria};
+use crate::pc_stats::LetturaBatteria;
 use crate::sorgenti_lati;
 use crate::sistema::{autoavvio, servizi, volume};
 #[cfg(windows)]
@@ -26,9 +25,8 @@ use crate::dispositivi::{self, Riga, TipoRiga};
 use crate::collegamenti;
 use crate::moduli::registro::Registro;
 use crate::{
-    AmbienteUi, CollegamentoUi, FinestraImpostazioni, FonteQuadranteUi, GenereUi, ModuloUi, Pannello, Pillola, PreferitoUi,
-    QuadranteUi, RigaDispositivoUi, RigaSessioneUi, SceltaQuadranteUi, SchedaBarraUi, SensoreUi, StanzaUi, TipoRigaUi, TonoUi,
-    VoceAttesaUi,
+    AmbienteUi, CollegamentoUi, FinestraImpostazioni, GenereUi, ModuloUi, Pannello, Pillola, PreferitoUi, RigaDispositivoUi,
+    RigaSessioneUi, SchedaBarraUi, StanzaUi, TipoRigaUi, TonoUi, VoceAttesaUi,
 };
 use casa_core::config::Config;
 use casa_core::diagnosi::Contatore;
@@ -36,7 +34,7 @@ use claude_hook::sessioni::Sessioni;
 use casa_core::eventi::{Ascoltatore, CasaEvento, StatoConnessione};
 use casa_core::segreti::Segreti;
 use casa_core::servizio::CasaService;
-use casa_core::types::{AppEntity, BaseEntity, MenuData, Meteo, SensorEntity, TestConnectionResult, GRUPPO_SCENE};
+use casa_core::types::{AppEntity, BaseEntity, MenuData, Meteo, TestConnectionResult, GRUPPO_SCENE};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -65,9 +63,6 @@ const MARGINE_SVEGLIA: Duration = Duration::from_millis(20);
 
 /// Quanti preferiti mostra il pannello.
 pub const MASSIMO_PREFERITI: usize = 8;
-
-/// Quanti sensori preferiti stanno nei Quadranti, accanto a CPU, RAM e disco.
-pub const MASSIMO_SENSORI: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tipo {
@@ -406,32 +401,23 @@ fn tono_ui(t: Tono) -> TonoUi {
     }
 }
 
-/// La parte sinistra della riga alta del pannello (nella Panoramica): `(testo, nome per Narrator)`.
-/// Quadranti: data e temperatura («VEN 13 NOV · 9°», senza meteo solo la data). Orologio: la data è
-/// già grande al centro, quindi solo il meteo («9° · Nuvoloso»; senza meteo niente). Una
-/// temperatura che manca non lascia «°»; una condizione sconosciuta non lascia il vuoto.
-pub fn riga_sinistra(layout: Layout, data: &str, meteo: Option<&Meteo>) -> (String, String) {
+/// La parte sinistra della riga alta del pannello (nella Panoramica): `(testo, nome per Narrator)`,
+/// data e temperatura («VEN 13 NOV · 9°», senza meteo solo la data); per Narrator anche la
+/// condizione. Una temperatura che manca non lascia «°»; una condizione sconosciuta non lascia il
+/// vuoto.
+pub fn riga_sinistra(data: &str, meteo: Option<&Meteo>) -> (String, String) {
     let temperatura = meteo.and_then(orologio::temperatura_breve);
     let condizione = meteo.map(|m| orologio::condizione_italiana(&m.condizione)).filter(|c| !c.is_empty());
     // Per chi ascolta: «9 gradi», senza il simbolo.
     let gradi = temperatura.as_deref().map(|t| format!("{} gradi", t.trim_end_matches('°')));
-    let dati = |sep: &str, voci: [Option<&str>; 2]| voci.into_iter().flatten().collect::<Vec<_>>().join(sep);
-    match layout {
-        Layout::Quadranti => {
-            let testo = dati(" · ", [Some(data), temperatura.as_deref()]);
-            let esteso = orologio::data_per_esteso(data).unwrap_or_else(|| data.to_owned());
-            let minuscola = condizione.map(str::to_lowercase);
-            let nome = [Some(esteso.as_str()), gradi.as_deref(), minuscola.as_deref()].into_iter().flatten().collect::<Vec<_>>().join(", ");
-            (testo, nome)
-        }
-        Layout::Orologio => (
-            dati(" · ", [temperatura.as_deref(), condizione]),
-            dati(", ", [gradi.as_deref(), condizione.map(|c| c.to_lowercase()).as_deref()]),
-        ),
-    }
+    let testo = [Some(data), temperatura.as_deref()].into_iter().flatten().collect::<Vec<_>>().join(" · ");
+    let esteso = orologio::data_per_esteso(data).unwrap_or_else(|| data.to_owned());
+    let minuscola = condizione.map(str::to_lowercase);
+    let nome = [Some(esteso.as_str()), gradi.as_deref(), minuscola.as_deref()].into_iter().flatten().collect::<Vec<_>>().join(", ");
+    (testo, nome)
 }
 
-/// La riga di stato della casa nel layout Orologio.
+/// La riga di stato della casa (testata della vista Casa).
 pub fn riga_stato(stato: &StatoConnessione, menu: Option<&MenuData>) -> String {
     match (stato, menu) {
         (StatoConnessione::Connesso, Some(m)) => {
@@ -490,32 +476,6 @@ pub fn frase_errore(e: &str) -> &'static str {
     }
 }
 
-/// I sensori dei Quadranti: i primi `quanti` sensori disponibili fra i preferiti mostrati (i primi
-/// `max`), ognuno con la frazione dell'arco (umidità 0–100%, temperatura 10–30 °C / 50–86 °F;
-/// altrimenti -1 = niente arco).
-pub fn sensori_quadranti(menu: &MenuData, max: usize, quanti: usize) -> Vec<(Preferito, f32)> {
-    entita_mostrate(menu)
-        .take(max)
-        .filter_map(|e| match &e {
-            AppEntity::Sensor(s) if s.base.is_available => Some((preferito(&e), frazione_arco(s))),
-            _ => None,
-        })
-        .take(quanti)
-        .collect()
-}
-
-fn frazione_arco(s: &SensorEntity) -> f32 {
-    let numero = s.value.trim().replace(',', ".").parse::<f32>().ok();
-    let unita = s.unit.as_deref().unwrap_or_default();
-    let frazione = match numero {
-        Some(v) if unita.ends_with('%') => v / 100.0,
-        Some(v) if unita.ends_with('F') => (v - 50.0) / 36.0,
-        Some(v) if unita.contains('°') => (v - 10.0) / 20.0,
-        _ => return -1.0,
-    };
-    frazione.clamp(0.0, 1.0)
-}
-
 /// Acceso o spento, per i dispositivi che un tocco accende e spegne (il valore dello stato
 /// ottimistico); `None` per tutto il resto.
 pub fn acceso_di(e: &AppEntity) -> Option<bool> {
@@ -550,98 +510,7 @@ pub fn entita(menu: &MenuData, entity_id: &str) -> Option<AppEntity> {
         })
 }
 
-// ─── Lati e quadranti (M2, Task 4) ───────────────────────────────────────────
-
-/// Il genere (icona) di un sensore numerico dalla sua unità: termometro, goccia o sensore.
-fn genere_di_unita(unita: &str) -> GenereUi {
-    match unita.trim() {
-        u if u.contains('°') => GenereUi::Termo,
-        "%" => GenereUi::Goccia,
-        _ => GenereUi::Sensore,
-    }
-}
-
-/// I quadranti configurabili per il pannello (quelli a «niente» non ci sono). PC e ora li legge
-/// l'interfaccia; meteo e sensori (da `MenuData::sensori_numerici`: anche W, kWh e FV, che stanze
-/// e preferiti non hanno) hanno qui valore, arco (scala di `lati::scala`, col massimo
-/// dell'utente) e nome. Un sensore che non c'è più resta, col trattino.
-pub fn quadranti_ui(q: &[Lato], menu: Option<&MenuData>, massimi: &HashMap<String, f64>, claude: &DatiClaude) -> Vec<QuadranteUi> {
-    let ora = chrono::Local::now();
-    let pc = |fonte, etichetta: &str| QuadranteUi { fonte, etichetta: etichetta.into(), frazione: -1.0, ..Default::default() };
-    q.iter()
-        .filter_map(|l| {
-            Some(match l {
-                Lato::Niente | Lato::Rete => return None,
-                Lato::Cpu => pc(FonteQuadranteUi::Cpu, "CPU"),
-                Lato::Ram => pc(FonteQuadranteUi::Ram, "RAM"),
-                Lato::Disco => pc(FonteQuadranteUi::Disco, "DISCO"),
-                Lato::ReteGiu => pc(FonteQuadranteUi::ReteGiu, "RETE ↓"),
-                Lato::ReteSu => pc(FonteQuadranteUi::ReteSu, "RETE ↑"),
-                Lato::Gpu => pc(FonteQuadranteUi::Gpu, "GPU"),
-                Lato::Batteria => pc(FonteQuadranteUi::Batteria, "BATTERIA"),
-                Lato::Ora => pc(FonteQuadranteUi::Ora, "ORA"),
-                Lato::Meteo => {
-                    let meteo = menu.and_then(|m| m.meteo.as_ref());
-                    let t = meteo.and_then(|m| m.temperatura).filter(|t| t.is_finite());
-                    QuadranteUi {
-                        fonte: FonteQuadranteUi::Meteo,
-                        etichetta: "METEO".into(),
-                        valore: meteo.and_then(orologio::temperatura_breve).unwrap_or_default().into(),
-                        frazione: t.map_or(-1.0, |t| lati::frazione(l, meteo.map(|m| m.unita.as_str()), None, t)),
-                        dettaglio: meteo.map(|m| orologio::condizione_italiana(&m.condizione)).unwrap_or_default().into(),
-                        genere: GenereUi::Casa,
-                        ..Default::default()
-                    }
-                }
-                Lato::Limite5h | Lato::Limite7g | Lato::SpesaApi => {
-                    let (fonte, etichetta) = match l {
-                        Lato::Limite5h => (FonteQuadranteUi::Limite5h, "LIMITE 5 ORE"),
-                        Lato::Limite7g => (FonteQuadranteUi::Limite7g, "LIMITE 7 GIORNI"),
-                        _ => (FonteQuadranteUi::SpesaApi, "SPESA API DEL MESE"),
-                    };
-                    // Senza dato «—» e nessun arco (PF9): mai «0%» né «0 $».
-                    let q = lati::quadrante_claude(l, claude, massimi.get(&l.come_str()).copied(), ora)?;
-                    QuadranteUi {
-                        fonte,
-                        etichetta: etichetta.into(),
-                        valore: q.valore.into(),
-                        frazione: q.frazione,
-                        dettaglio: q.dettaglio.into(),
-                        genere: GenereUi::Sensore,
-                        caldo_da: q.caldo_da,
-                        tenue: q.tenue,
-                    }
-                }
-                Lato::Sensore(id) => {
-                    let sensore = menu.and_then(|m| m.sensori_numerici.iter().find(|n| n.entity_id == *id));
-                    let (valore, frazione, nome, genere) = match sensore {
-                        Some(s) => {
-                            let unita = Some(s.unita.as_str()).filter(|u| !u.is_empty());
-                            let (valore, frazione) = match s.valore {
-                                Some(v) => (
-                                    lati::testo_con_unita(v, &s.unita),
-                                    lati::frazione(l, unita, massimi.get(&l.come_str()).copied(), v),
-                                ),
-                                None => ("Non disponibile".to_owned(), -1.0),
-                            };
-                            (valore, frazione, s.nome.clone(), genere_di_unita(&s.unita))
-                        }
-                        None => (String::new(), -1.0, "non disponibile".to_owned(), GenereUi::Sensore),
-                    };
-                    QuadranteUi {
-                        fonte: FonteQuadranteUi::Sensore,
-                        etichetta: "CASA".into(),
-                        valore: valore.into(),
-                        frazione,
-                        dettaglio: nome.into(),
-                        genere,
-                        ..Default::default()
-                    }
-                }
-            })
-        })
-        .collect()
-}
+// ─── Lati della pillola (M2, Task 4) ─────────────────────────────────────────
 
 /// Il nome di una scelta salvata che oggi non è fra quelle disponibili (un sensore sparito, il
 /// meteo assente): resta nel selettore, così si vede che cosa è scelto.
@@ -649,9 +518,8 @@ fn voce_mancante(l: &Lato) -> String {
     let nome = match l {
         Lato::Sensore(id) => id.clone(),
         // Il nome che la scelta ha nel catalogo completo («Temperatura esterna», «Disco»…).
-        altro => lati::scelte(true, &[], true, true, true)
+        altro => lati::scelte(true, &[], true, true)
             .into_iter()
-            .chain(lati::scelte(true, &[], true, true, false))
             .find(|(l, _)| l == altro)
             .map_or_else(|| altro.come_str(), |(_, n)| n),
     };
@@ -678,18 +546,15 @@ pub struct Isola {
     /// `None` = automatico.
     pub meteo: Vec<(Option<String>, String)>,
     pub indice_meteo: i32,
-    pub quadranti: Vec<(Lato, String)>,
-    pub scelte_quadranti: Vec<SceltaQuadranteUi>,
 }
 
 /// Impostazioni › Isola dalla configurazione e dai dati della casa (anche senza: niente meteo né
 /// sensori fra le scelte).
 pub fn isola(config: &Config, menu: Option<&MenuData>, batteria: bool) -> Isola {
     let meteo_c = menu.is_some_and(|m| m.meteo.is_some());
-    let sensori_lati = menu.map(|m| lati::sensori_disponibili(m, false)).unwrap_or_default();
-    let sensori_q = menu.map(|m| lati::sensori_disponibili(m, true)).unwrap_or_default();
+    let sensori_lati = menu.map(lati::sensori_disponibili).unwrap_or_default();
     // La rete (Task 8) solo su Windows.
-    let mut cat_lati = lati::scelte(meteo_c, &sensori_lati, cfg!(windows), batteria, false);
+    let mut cat_lati = lati::scelte(meteo_c, &sensori_lati, cfg!(windows), batteria);
     let sinistro = indice_in(&mut cat_lati, &Lato::da_str(&config.lato_sinistro));
     let destro = indice_in(&mut cat_lati, &Lato::da_str(&config.lato_destro));
 
@@ -710,37 +575,7 @@ pub fn isola(config: &Config, menu: Option<&MenuData>, batteria: bool) -> Isola 
             }
         },
     };
-
-    // La GPU (Task 10) solo su Windows.
-    let mut cat_q = lati::scelte(meteo_c, &sensori_q, cfg!(windows), batteria, true);
-    let mut scelte_quadranti = Vec::new();
-    for l in lati::quadranti(&config.quadranti) {
-        let indice = indice_in(&mut cat_q, &l);
-        let unita: Option<Option<&str>> = match &l {
-            Lato::Sensore(id) => {
-                sensori_q.iter().find(|s| &s.entity_id == id).map(|s| Some(s.unita.as_str()).filter(|u| !u.is_empty()))
-            }
-            // La spesa dei quadranti ha come fondo scala la soglia; senza, chiede il massimo (come
-            // un'unità senza scala); i limiti sono sempre 0..100.
-            Lato::SpesaApi if config.claude.soglia_spesa.is_none() => Some(None),
-            _ => None,
-        };
-        // Il massimo si chiede solo per un sensore che c'è e la cui unità non ha una scala.
-        let con_massimo = unita.is_some_and(lati::chiede_massimo);
-        let predefinito = match unita.flatten().map(str::trim) {
-            Some("W") => lati::testo_massimo(lati::MASSIMO_W),
-            Some("kW") => lati::testo_massimo(lati::MASSIMO_KW),
-            _ => "automatico".into(),
-        };
-        let massimo = config.massimi_quadranti.get(&l.come_str()).map(|v| lati::testo_massimo(*v)).unwrap_or_default();
-        scelte_quadranti.push(SceltaQuadranteUi {
-            indice,
-            con_massimo,
-            massimo: massimo.into(),
-            predefinito: if con_massimo { predefinito.into() } else { SharedString::default() },
-        });
-    }
-    Isola { lati: cat_lati, sinistro, destro, meteo, indice_meteo, quadranti: cat_q, scelte_quadranti }
+    Isola { lati: cat_lati, sinistro, destro, meteo, indice_meteo }
 }
 
 // ─── Il ponte vivo, sul thread dell'interfaccia ──────────────────────────────
@@ -796,6 +631,7 @@ fn voce_attesa_ui(v: &Voce, registro: &Registro, non_archiviata: bool) -> VoceAt
         livello: pillola::livello_ui(v.livello),
         titolo: v.titolo.as_str().into(),
         sotto: sotto.into(),
+        modulo: registro.nome(v.fonte.modulo()).into(),
         dettaglio: v.dettaglio.as_str().into(),
         icona: pillola::icona_fonte(v.fonte),
         pulsanti: pillola::pulsanti_ui(&v.pulsanti),
@@ -832,10 +668,8 @@ pub struct Ponte {
     menu: RefCell<Option<Arc<MenuData>>>,
     /// Comandi falliti, per entità: l'errore resta sulla voce fino al prossimo tocco o a un esito ok.
     errori: RefCell<HashMap<String, String>>,
-    /// I modelli dei preferiti e dei sensori dei Quadranti: sopravvivono al pannello, che li
-    /// riprende a ogni apertura.
+    /// Il modello dei preferiti: sopravvive al pannello, che lo riprende a ogni apertura.
     preferiti: Rc<VecModel<PreferitoUi>>,
-    sensori: Rc<VecModel<SensoreUi>>,
     /// Le stanze della vista Casa e i dispositivi della stanza aperta (`stanza_aperta`, un'area).
     stanze: Rc<VecModel<StanzaUi>>,
     dispositivi: Rc<VecModel<PreferitoUi>>,
@@ -920,8 +754,6 @@ pub struct Ponte {
     ottimismo: RefCell<Ottimismo<bool>>,
     /// Suona alla scadenza della prossima attesa di conferma (solo se ce ne sono).
     sveglia_ottimismo: slint::Timer,
-    /// I quadranti configurabili per il pannello (sopravvive al pannello come gli altri modelli).
-    quadranti: Rc<VecModel<QuadranteUi>>,
     /// La pillola si vede (`Visibilita::Pillola`, la dicono i servizi di sistema): i lati
     /// campionano solo allora.
     pillola_mostrata: Cell<bool>,
@@ -985,8 +817,6 @@ pub struct Ponte {
     isola: RefCell<Isola>,
     voci_lati: Rc<VecModel<SharedString>>,
     voci_meteo: Rc<VecModel<SharedString>>,
-    voci_quadranti: Rc<VecModel<SharedString>>,
-    scelte_quadranti: Rc<VecModel<SceltaQuadranteUi>>,
     /// Il volume del PC (M2, Task 7, solo Windows): il thread `audio`, avviato alla prima
     /// richiesta (rotella sulla pillola o prima apertura del pannello) e poi fermo su `recv`;
     /// l'ultimo stato letto (`None`: nessuna uscita audio, o non ancora letto); la rotella
@@ -1053,7 +883,6 @@ pub fn collega(
         dati_delle: RefCell::new(None),
         errori: RefCell::new(HashMap::new()),
         preferiti: Rc::new(VecModel::default()),
-        sensori: Rc::new(VecModel::default()),
         stanze: Rc::new(VecModel::default()),
         dispositivi: Rc::new(VecModel::default()),
         luci: Rc::new(VecModel::default()),
@@ -1094,7 +923,6 @@ pub fn collega(
         ottimismo: RefCell::new(Ottimismo::default()),
         sveglia_ottimismo: slint::Timer::default(),
         traccia_tocco: std::env::var_os("ITSYHOME_TRACCIA_TOCCO").is_some_and(|v| v == "1"),
-        quadranti: Rc::new(VecModel::default()),
         pillola_mostrata: Cell::new(true),
         claude_sessioni: RefCell::new(Sessioni::new()),
         claude_ascolto: RefCell::new(None),
@@ -1123,8 +951,6 @@ pub fn collega(
         isola: RefCell::new(Isola::default()),
         voci_lati: Rc::new(VecModel::default()),
         voci_meteo: Rc::new(VecModel::default()),
-        voci_quadranti: Rc::new(VecModel::default()),
-        scelte_quadranti: Rc::new(VecModel::default()),
         #[cfg(windows)]
         audio: std::cell::OnceCell::new(),
         #[cfg(windows)]
@@ -1408,30 +1234,13 @@ impl Ponte {
         }
     }
 
-    /// Le fonti lente del PC che i quadranti scelti mostrano (per il campionatore del pannello).
-    pub fn fonti_dei_quadranti(&self) -> Fonti {
-        let q = self.casa.con_config(|c| lati::quadranti(&c.quadranti));
-        lati::fonti_dei_quadranti(&q)
-    }
-
-    /// I quadranti configurabili dalla configurazione e dagli ultimi dati (solo a pannello aperto,
-    /// con gli altri modelli della casa).
-    fn ricostruisci_quadranti(&self) {
-        let (q, massimi) = self.casa.con_config(|c| (lati::quadranti(&c.quadranti), c.massimi_quadranti.clone()));
-        let voci = quadranti_ui(&q, self.menu.borrow().as_deref(), &massimi, &self.dati_claude_quadranti());
-        let n = aggiorna_modello(&self.quadranti, voci);
-        self.casa.diagnosi().conta_n(Contatore::ui_righe, n);
-    }
-
     /// Impostazioni › Isola, se la finestra è aperta: riscrive solo ciò che cambia.
     fn riempi_isola(&self, f: &FinestraImpostazioni) {
         let config = self.casa.config();
         let nuova = isola(&config, self.menu.borrow().as_deref(), sorgenti_lati::ha_batteria());
         let nomi = |v: &[(Lato, String)]| v.iter().map(|(_, n)| SharedString::from(n.as_str())).collect::<Vec<_>>();
         aggiorna_modello(&self.voci_lati, nomi(&nuova.lati));
-        aggiorna_modello(&self.voci_quadranti, nomi(&nuova.quadranti));
         aggiorna_modello(&self.voci_meteo, nuova.meteo.iter().map(|(_, n)| SharedString::from(n.as_str())).collect());
-        aggiorna_modello(&self.scelte_quadranti, nuova.scelte_quadranti.clone());
         if f.get_indice_lato_sinistro() != nuova.sinistro {
             f.set_indice_lato_sinistro(nuova.sinistro);
         }
@@ -1471,43 +1280,6 @@ impl Ponte {
         self.aggiorna_pannello();
     }
 
-    /// Un quadrante scelto (posizione 0..2, indice nel catalogo dei quadranti): si salvano sempre
-    /// tutti e tre (quelli di M1 diventano espliciti).
-    fn scegli_quadrante(&self, posizione: i32, indice: i32) {
-        let Some(l) = self.isola.borrow().quadranti.get(indice.max(0) as usize).map(|(l, _)| l.clone()) else { return };
-        let posizione = posizione.clamp(0, 2) as usize;
-        self.casa.aggiorna_config(|c| {
-            let mut q = lati::quadranti(&c.quadranti);
-            q[posizione] = l;
-            c.quadranti = q.iter().map(Lato::come_str).collect();
-        });
-        self.ricostruisci_preferiti();
-        self.aggiorna_pannello();
-    }
-
-    /// Il massimo dell'arco scritto per un quadrante: vuoto = il predefinito. Restituisce l'errore
-    /// da mostrare sotto il campo (vuoto se salvato).
-    fn cambia_massimo(&self, posizione: i32, testo: &str) -> String {
-        let q = self.casa.con_config(|c| lati::quadranti(&c.quadranti));
-        let Some(l) = q.get(posizione.clamp(0, 2) as usize) else { return String::new() };
-        let chiave = l.come_str();
-        match lati::leggi_massimo(testo) {
-            Ok(v) => {
-                self.casa.aggiorna_config(|c| match v {
-                    Some(v) => {
-                        c.massimi_quadranti.insert(chiave, v);
-                    }
-                    None => {
-                        c.massimi_quadranti.remove(&chiave);
-                    }
-                });
-                self.ricostruisci_preferiti();
-                String::new()
-            }
-            Err(e) => e.into(),
-        }
-    }
-
     /// L'utente ha chiesto una connessione (Salva, Connetti, Riprova): il tentativo che parte
     /// adesso fa «pensa» (quelli automatici no, vedi `umore::Cervello`).
     fn azione_utente(&self) {
@@ -1524,19 +1296,16 @@ impl Ponte {
         *self.stato.borrow() == StatoConnessione::Connesso
     }
 
-    /// Preferiti, sensori dei Quadranti, stanze e dispositivi della stanza aperta dai dati più
-    /// recenti, con lo stato ottimistico dei tocchi, gli errori ancora aperti e lo stato della
-    /// connessione.
+    /// Preferiti, stanze e dispositivi della stanza aperta dai dati più recenti, con lo stato
+    /// ottimistico dei tocchi, gli errori ancora aperti e lo stato della connessione.
     fn ricostruisci_preferiti(&self) {
         if !self.modelli_vivi.get() {
             self.modelli_vecchi.set(true);
             return;
         }
-        // I quadranti anche senza dati: quelli del PC si vedono subito.
-        self.ricostruisci_quadranti();
         let connesso = self.connesso();
         let icone = self.casa.con_config(|c| c.area_icons.clone());
-        let (voci, sensori, stanze, dispositivi, luci) = {
+        let (voci, stanze, dispositivi, luci) = {
             let menu = self.menu.borrow();
             let Some(menu) = menu.as_ref() else { return };
             let errori = self.errori.borrow();
@@ -1547,10 +1316,6 @@ impl Ponte {
                 voce_ui(&p, connesso)
             };
             let voci: Vec<PreferitoUi> = preferiti_ui(menu, MASSIMO_PREFERITI).into_iter().map(pronta).collect();
-            let sensori: Vec<SensoreUi> = sensori_quadranti(menu, MASSIMO_PREFERITI, MASSIMO_SENSORI)
-                .into_iter()
-                .map(|(p, frazione)| SensoreUi { voce: voce_ui(&p, connesso), frazione })
-                .collect();
             let stanze = stanze_ui(menu, &icone);
             let dispositivi: Vec<PreferitoUi> = match self.stanza_aperta.borrow().as_deref() {
                 Some(area) => dispositivi_stanza(menu, area).iter().map(|e| pronta(preferito(e))).collect(),
@@ -1567,12 +1332,11 @@ impl Ponte {
                     voce_ui(&p, connesso)
                 })
                 .collect();
-            (voci, sensori, stanze, dispositivi, luci)
+            (voci, stanze, dispositivi, luci)
         };
         let d = self.casa.diagnosi();
         d.conta(Contatore::ui_ricostruzioni);
         d.conta_n(Contatore::ui_righe, aggiorna_modello(&self.preferiti, voci));
-        d.conta_n(Contatore::ui_righe, aggiorna_modello(&self.sensori, sensori));
         // La stanza aperta può aver cambiato posto (ordine) o essere sparita (nascosta).
         let aperta = self.stanza_aperta.borrow().clone();
         if let Some(area) = aperta {
@@ -1949,11 +1713,9 @@ impl Ponte {
             let _ = slint::quit_event_loop();
         });
         f.set_righe_dispositivi(ModelRc::from(self.righe.clone()));
-        // Impostazioni › Isola: lati della pillola, meteo e quadranti.
+        // Impostazioni › Isola: lati della pillola e meteo.
         f.set_scelte_lati(ModelRc::from(self.voci_lati.clone()));
         f.set_scelte_meteo(ModelRc::from(self.voci_meteo.clone()));
-        f.set_scelte_quadranti(ModelRc::from(self.voci_quadranti.clone()));
-        f.set_quadranti_scelti(ModelRc::from(self.scelte_quadranti.clone()));
         f.on_scegli_lato(|quale, indice| {
             if let Some(p) = ponte() {
                 p.scegli_lato(quale, indice);
@@ -1964,12 +1726,6 @@ impl Ponte {
                 p.scegli_meteo(indice);
             }
         });
-        f.on_scegli_quadrante(|posizione, indice| {
-            if let Some(p) = ponte() {
-                p.scegli_quadrante(posizione, indice);
-            }
-        });
-        f.on_cambia_massimo(|posizione, testo| ponte().map(|p| p.cambia_massimo(posizione, &testo)).unwrap_or_default().into());
         f.set_collegamenti(ModelRc::from(self.collegamenti.clone()));
         f.on_controlla_nome_collegamento(|nome| collegamenti::valida_nome(&nome).err().unwrap_or_default().into());
         f.on_controlla_indirizzo_collegamento(|url| collegamenti::valida_indirizzo(&url).err().unwrap_or_default().into());
@@ -2153,14 +1909,13 @@ impl Ponte {
         }
     }
 
-    /// La parte sinistra della riga alta: data breve e meteo secondo il layout. Si riscrive solo
-    /// se cambia (un minuto nuovo, un meteo nuovo, un altro layout); il resto del tempo non tocca
-    /// niente e il pannello non ridisegna.
+    /// La parte sinistra della riga alta: data breve e meteo. Si riscrive solo se cambia (un giorno
+    /// nuovo, un meteo nuovo); il resto del tempo non tocca niente e il pannello non ridisegna.
     pub fn aggiorna_riga_sinistra(&self, p: &Pannello) {
         let data = orologio::data_breve(chrono::Local::now().naive_local());
         let menu = self.menu.borrow();
         let meteo = menu.as_deref().and_then(|m| m.meteo.as_ref());
-        let (testo, nome) = riga_sinistra(Layout::da_indice(p.get_layout()), &data, meteo);
+        let (testo, nome) = riga_sinistra(&data, meteo);
         if p.get_riga_sinistra() != testo.as_str() {
             p.set_riga_sinistra(testo.into());
         }
@@ -2196,19 +1951,14 @@ impl Ponte {
         self.modelli_vivi.set(true);
         if self.modelli_vecchi.replace(false) {
             self.ricostruisci_preferiti();
-        } else {
-            // I quadranti del PC si mostrano anche senza alcun dato della casa.
-            self.ricostruisci_quadranti();
         }
     }
 
-    /// Il pannello appena creato: modelli dei preferiti, dei sensori e delle voci in attesa,
-    /// stato della casa, tocchi e pulsanti.
+    /// Il pannello appena creato: modelli dei preferiti e delle voci in attesa, stato della casa,
+    /// tocchi e pulsanti.
     pub fn riempi(&self, p: &Pannello) {
         self.apri_modelli();
         p.set_preferiti(ModelRc::from(self.preferiti.clone()));
-        p.set_sensori(ModelRc::from(self.sensori.clone()));
-        p.set_quadranti(ModelRc::from(self.quadranti.clone()));
         p.set_stanze(ModelRc::from(self.stanze.clone()));
         p.set_dispositivi(ModelRc::from(self.dispositivi.clone()));
         p.set_luci(ModelRc::from(self.luci.clone()));
@@ -2231,10 +1981,17 @@ impl Ponte {
         });
         p.set_attese(ModelRc::from(self.modello_attese.clone()));
         self.scrivi_moduli_in_attesa(p);
-        // Un permesso aperto nella Coda o il suo «Consenti» che compare: si arma di nuovo.
+        // Un permesso aperto nella Coda, il suo «Consenti» che compare o la voce che ti aspetta
+        // nella Panoramica: si arma di nuovo.
         p.on_consenti_compare(|| {
             if let Some(ponte) = ponte() {
                 ponte.claude_superficie_compare(Instant::now());
+            }
+        });
+        // Un pulsante della voce che ti aspetta: ignorato appena dopo un cambio della voce.
+        p.on_azione_voce(|voce, pulsante| {
+            if let Some(ponte) = ponte() {
+                ponte.azione_voce(&voce, &pulsante, Instant::now());
             }
         });
         self.moduli_nel_pannello(p);
@@ -2598,15 +2355,23 @@ impl Ponte {
         self.aggiorna_umore();
     }
 
-    /// Da quanti moduli vengono le voci in attesa (la testata della Coda): scritto solo se cambia.
+    /// Da quanti moduli vengono le voci in attesa (la testata della Coda) e quante ne dice «N in
+    /// attesa ›» della riga alta (nessuna se la prima, bloccante, ti aspetta al posto
+    /// dell'orologio): scritti solo se cambiano.
     fn scrivi_moduli_in_attesa(&self, p: &Pannello) {
-        let mut moduli: Vec<&str> = self.attese.borrow().ordinate().iter().map(|v| v.fonte.modulo()).collect();
+        let (mut moduli, voci, voce_mostrata) = {
+            let a = self.attese.borrow();
+            let v = a.ordinate();
+            let moduli: Vec<&'static str> = v.iter().map(|v| v.fonte.modulo()).collect();
+            (moduli, v.len(), v.first().is_some_and(|x| x.livello == Livello::Bloccante))
+        };
         moduli.sort_unstable();
         moduli.dedup();
         let n = moduli.len() as i32;
         if p.get_moduli_in_attesa() != n {
             p.set_moduli_in_attesa(n);
         }
+        crate::pannello::scrivi_in_attesa(p, voci, voce_mostrata);
     }
 
     /// Un pulsante di una voce (nella pillola o nel pannello).
@@ -3965,10 +3730,6 @@ pub(crate) mod test {
         assert_eq!(numero_italiano("192.0.2.1"), "192.0.2.1");
         assert_eq!(numero_italiano(".5"), ".5");
         assert_eq!(numero_italiano(""), "");
-        // L'arco usa il valore grezzo: la virgola nel testo non lo cambia.
-        let m = menu(vec![sensore("sensor.t", "20.0", Some("°C"))], vec![]);
-        assert!((sensori_quadranti(&m, 8, 3)[0].1 - 0.5).abs() < 1e-6);
-        assert_eq!(sensori_quadranti(&m, 8, 3)[0].0.valore, "20,0 °C");
     }
 
     /// Il percorso del Ponte: la voce del 19% nasce informazione, «Ho capito» la toglie e la
@@ -4033,67 +3794,35 @@ pub(crate) mod test {
         assert_eq!(voce_attesa_ui(&v, &r, false).sotto, "Aspetta te · Agenti");
     }
 
-    #[test]
-    fn sensori_dei_quadranti_con_arco() {
-        let m = menu(vec![luce("light.a", true), sensore("sensor.t", "20", Some("°C"))], vec![]);
-        let v = sensori_quadranti(&m, MASSIMO_PREFERITI, MASSIMO_SENSORI);
-        assert_eq!(v.len(), 1);
-        assert_eq!(v[0].0.entity_id, "sensor.t");
-        assert!((v[0].1 - 0.5).abs() < 1e-6);
-        let primo = |m: &MenuData| sensori_quadranti(m, 8, 3)[0].1;
-        assert!((primo(&menu(vec![sensore("sensor.u", "48", Some("%"))], vec![])) - 0.48).abs() < 1e-6);
-        assert_eq!(primo(&menu(vec![sensore("sensor.t", "45", Some("°C"))], vec![])), 1.0);
-        assert_eq!(primo(&menu(vec![sensore("sensor.x", "abc", Some("°C"))], vec![])), -1.0);
-        // Fuori dai preferiti mostrati non conta.
-        assert!(sensori_quadranti(&m, 1, 3).is_empty());
-    }
-
-    #[test]
-    fn al_massimo_tre_sensori_nell_ordine() {
-        let s = |i: usize| sensore(&format!("sensor.s{i}"), "20", Some("°C"));
-        let m = menu(vec![s(0), luce("light.a", true), s(1), s(2), s(3)], vec![]);
-        let v = sensori_quadranti(&m, MASSIMO_PREFERITI, MASSIMO_SENSORI);
-        let ids: Vec<&str> = v.iter().map(|(p, _)| p.entity_id.as_str()).collect();
-        assert_eq!(ids, ["sensor.s0", "sensor.s1", "sensor.s2"]);
-    }
-
     fn nuvoloso(temperatura: Option<f64>) -> Meteo {
         Meteo { entity_id: "weather.casa".into(), condizione: "cloudy".into(), temperatura, unita: "°C".into() }
     }
 
+    /// La riga alta della Panoramica: data e temperatura; per Narrator anche la condizione.
     #[test]
-    fn riga_alta_quadranti_con_e_senza_meteo() {
+    fn riga_alta_con_e_senza_meteo() {
         let m = nuvoloso(Some(9.0));
-        let (testo, nome) = riga_sinistra(Layout::Quadranti, "VEN 13 NOV", Some(&m));
+        let (testo, nome) = riga_sinistra("VEN 13 NOV", Some(&m));
         assert_eq!(testo, "VEN 13 NOV · 9°");
         assert_eq!(nome, "venerdì 13 novembre, 9 gradi, nuvoloso");
-        let (testo, nome) = riga_sinistra(Layout::Quadranti, "VEN 13 NOV", None);
+        let (testo, nome) = riga_sinistra("VEN 13 NOV", None);
         assert_eq!((testo.as_str(), nome.as_str()), ("VEN 13 NOV", "venerdì 13 novembre"));
-    }
-
-    #[test]
-    fn riga_alta_orologio_solo_meteo() {
-        let m = nuvoloso(Some(9.0));
-        let (testo, nome) = riga_sinistra(Layout::Orologio, "VEN 13 NOV", Some(&m));
-        assert_eq!((testo.as_str(), nome.as_str()), ("9° · Nuvoloso", "9 gradi, nuvoloso"));
-        assert_eq!(riga_sinistra(Layout::Orologio, "VEN 13 NOV", None), (String::new(), String::new()));
     }
 
     #[test]
     fn meteo_senza_temperatura_niente_gradi() {
         let m = nuvoloso(None);
-        let (testo, nome) = riga_sinistra(Layout::Quadranti, "VEN 13 NOV", Some(&m));
+        let (testo, nome) = riga_sinistra("VEN 13 NOV", Some(&m));
         assert_eq!(testo, "VEN 13 NOV");
         assert!(!testo.contains('°') && !nome.contains("gradi"), "{nome}");
-        // Nell'Orologio resta la sola condizione; condizione sconosciuta e niente temperatura: nulla.
-        assert_eq!(riga_sinistra(Layout::Orologio, "VEN 13 NOV", Some(&m)).0, "Nuvoloso");
+        // Una condizione sconosciuta non lascia il vuoto nel nome.
         let strano = Meteo { condizione: "boh".into(), ..m };
-        assert_eq!(riga_sinistra(Layout::Orologio, "VEN 13 NOV", Some(&strano)).0, "");
+        assert_eq!(riga_sinistra("VEN 13 NOV", Some(&strano)).1, "venerdì 13 novembre");
         let solo_gradi = Meteo { temperatura: Some(-3.0), ..strano };
-        assert_eq!(riga_sinistra(Layout::Orologio, "VEN 13 NOV", Some(&solo_gradi)).0, "-3°");
+        assert_eq!(riga_sinistra("VEN 13 NOV", Some(&solo_gradi)).0, "VEN 13 NOV · -3°");
     }
 
-    // ─── M2, Task 4: quadranti configurabili e Impostazioni › Isola ───
+    // ─── M2, Task 4: Impostazioni › Isola ───
 
     fn potenza(id: &str, valore: &str) -> AppEntity {
         AppEntity::Sensor(SensorEntity {
@@ -4105,28 +3834,6 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn quadranti_configurabili_dai_dati() {
-        let m = menu(vec![sensore("sensor.t", "15", Some("°C")), potenza("sensor.fv", "1500")], vec![]);
-        let q = [Lato::Cpu, Lato::Niente, Lato::Sensore("sensor.t".into())];
-        let v = quadranti_ui(&q, Some(&m), &HashMap::new(), &DatiClaude::default());
-        assert_eq!(v.len(), 2, "«niente» non si mostra");
-        assert_eq!((v[0].fonte, v[0].etichetta.as_str()), (FonteQuadranteUi::Cpu, "CPU"));
-        assert_eq!(v[1].fonte, FonteQuadranteUi::Sensore);
-        assert_eq!(v[1].valore, "15 °C");
-        assert!((v[1].frazione - 0.5).abs() < 1e-6, "15 °C a metà fra −10 e 40");
-        assert_eq!(v[1].dettaglio, "Nome sensor.t");
-        // Watt: 3000 di serie, poi il massimo dell'utente.
-        let fv = [Lato::Sensore("sensor.fv".into())];
-        assert!((quadranti_ui(&fv, Some(&m), &HashMap::new(), &DatiClaude::default())[0].frazione - 0.5).abs() < 1e-6);
-        let massimi = HashMap::from([("sensore:sensor.fv".to_owned(), 6000.0)]);
-        assert!((quadranti_ui(&fv, Some(&m), &massimi, &DatiClaude::default())[0].frazione - 0.25).abs() < 1e-6);
-        // Un sensore sparito resta col trattino; senza dati i quadranti del PC ci sono lo stesso.
-        let sparito = quadranti_ui(&[Lato::Sensore("sensor.via".into())], Some(&m), &HashMap::new(), &DatiClaude::default());
-        assert_eq!((sparito[0].valore.as_str(), sparito[0].frazione), ("", -1.0));
-        assert_eq!(quadranti_ui(&lati::QUADRANTI_DI_M1, None, &HashMap::new(), &DatiClaude::default()).len(), 3);
-    }
-
-    #[test]
     fn isola_scelte_e_indici() {
         let mut m = menu(vec![sensore("sensor.t", "15", Some("°C")), potenza("sensor.fv", "1500")], vec![]);
         m.meteo = Some(nuvoloso(Some(9.0)));
@@ -4135,7 +3842,6 @@ pub(crate) mod test {
             lato_sinistro: "cpu".into(),
             lato_destro: "sensore:sensor.via".into(),
             meteo_entita: Some("weather.casa".into()),
-            quadranti: vec!["ram".into(), "sensore:sensor.fv".into()],
             ..Config::default()
         };
         let i = isola(&config, Some(&m), false);
@@ -4150,24 +3856,13 @@ pub(crate) mod test {
         assert_eq!((i.sinistro, i.destro), (2, attesi.len() as i32 - 1));
         assert_eq!(i.meteo.iter().map(|(_, n)| n.as_str()).collect::<Vec<_>>(), ["Automatico", "Casa"]);
         assert_eq!(i.indice_meteo, 1);
-        // Quadranti: RAM, il fotovoltaico (col massimo, predefinito 3000) e il terzo a niente.
-        assert_eq!(i.scelte_quadranti.len(), 3);
-        let q = &i.scelte_quadranti;
-        assert_eq!(i.quadranti[q[0].indice as usize].0, Lato::Ram);
-        assert_eq!(i.quadranti[q[1].indice as usize].0, Lato::Sensore("sensor.fv".into()));
-        assert!(!q[0].con_massimo && q[1].con_massimo && !q[2].con_massimo);
-        assert_eq!(q[1].predefinito, "3000");
-        assert_eq!(i.quadranti[q[2].indice as usize].0, Lato::Niente);
-        // Senza dati della casa: niente meteo né sensori fra le scelte, i quadranti di M1.
+        // Senza dati della casa: niente meteo né sensori fra le scelte.
         let vuota = isola(&Config::default(), None, true);
         assert!(vuota.lati.iter().any(|(l, _)| *l == Lato::Batteria), "col PC a batteria");
         assert!(!vuota.lati.iter().any(|(l, _)| *l == Lato::Meteo));
-        let m1: Vec<&Lato> = vuota.scelte_quadranti.iter().map(|s| &vuota.quadranti[s.indice as usize].0).collect();
-        assert_eq!(m1, [&Lato::Cpu, &Lato::Ram, &Lato::Disco]);
     }
 
-    /// Scegliere un lato dalle Impostazioni lo salva e lo porta subito nella pillola; un quadrante
-    /// salva tutti e tre.
+    /// Scegliere un lato dalle Impostazioni lo salva e lo porta subito nella pillola.
     #[test]
     fn scelte_dell_isola_salvate() {
         let (_spegni, p, pillola, _dir) = ponte_di_prova();
@@ -4176,14 +3871,6 @@ pub(crate) mod test {
         p.scegli_lato(1, cpu);
         assert_eq!(p.casa.config().lato_destro, "cpu");
         assert_eq!(pillola.get_lato_destro().testo, "CPU —", "subito nella pillola, la CPU arriva dopo");
-        let disco = p.isola.borrow().quadranti.iter().position(|(l, _)| *l == Lato::Disco).unwrap() as i32;
-        p.scegli_quadrante(0, disco);
-        assert_eq!(p.casa.config().quadranti, ["disco", "ram", "disco"]);
-        assert_eq!(p.cambia_massimo(0, "zero"), "Scrivi un numero maggiore di zero");
-        assert_eq!(p.cambia_massimo(0, "4,5"), "");
-        assert_eq!(p.casa.config().massimi_quadranti.get("disco"), Some(&4.5));
-        assert_eq!(p.cambia_massimo(0, ""), "");
-        assert!(p.casa.config().massimi_quadranti.is_empty(), "vuoto: torna il predefinito");
         sorgenti_lati::spegni();
     }
 

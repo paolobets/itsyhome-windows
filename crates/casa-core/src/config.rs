@@ -21,7 +21,8 @@ pub struct Config {
     pub launch_at_login: bool,
     /// L'icona nell'area di notifica (spenta di serie: il menu sta nel «⋯» del pannello).
     pub mostra_icona_barra: bool,
-    pub ultimo_layout: String,
+    // `ultimoLayout`, `quadranti` e `massimiQuadranti` di un file di prima (layout Orologio e
+    // Quadranti, tolti col ridisegno F1) si ignorano leggendo e spariscono al primo salvataggio.
     pub importata_da_v2: bool,
     /// I collegamenti veloci (Task 14f): pagine web delle gestioni, nell'ordine scelto. Un file di
     /// prima, senza la chiave, si legge con l'elenco vuoto.
@@ -37,14 +38,6 @@ pub struct Config {
     pub lato_sinistro: String,
     #[serde(default)]
     pub lato_destro: String,
-    /// Le fonti dei tre quadranti configurabili del layout Quadranti, con le stesse stringhe dei
-    /// lati. Vuoto o mancante = i tre quadranti di M1 (CPU, RAM, disco).
-    #[serde(default)]
-    pub quadranti: Vec<String>,
-    /// Il massimo dell'arco scelto dall'utente per una fonte (chiave: la stringa della fonte), per
-    /// le unità senza una scala naturale (W, kW, ignote).
-    #[serde(default)]
-    pub massimi_quadranti: HashMap<String, f64>,
     /// Il monitor su cui stanno pillola e pannello (M2, Task 6): il nome come lo dà winit
     /// (`MonitorHandle::name()`); `None` = il principale. Resta salvato anche mentre il monitor
     /// non c'è. Un file di prima, senza la chiave, si legge con `None`.
@@ -163,14 +156,11 @@ impl Default for Config {
             cameras_enabled: false,
             launch_at_login: false,
             mostra_icona_barra: false,
-            ultimo_layout: String::new(),
             importata_da_v2: false,
             collegamenti: Vec::new(),
             meteo_entita: None,
             lato_sinistro: String::new(),
             lato_destro: String::new(),
-            quadranti: Vec::new(),
-            massimi_quadranti: HashMap::new(),
             schermo: None,
             volume_rotella: vero(),
             avvisi_bt: vero(),
@@ -185,12 +175,11 @@ impl Default for Config {
 pub const PREFISSO_SENSORE: &str = "sensore:";
 
 impl Config {
-    /// I sensori di Home Assistant scelti per i lati della pillola e per i quadranti: il servizio li
-    /// segue sempre (`subscribe_entities`), anche se un giorno non fossero più fra quelli mostrati.
+    /// I sensori di Home Assistant scelti per i lati della pillola: il servizio li segue sempre
+    /// (`subscribe_entities`), anche se un giorno non fossero più fra quelli mostrati.
     pub fn sensori_scelti(&self) -> BTreeSet<String> {
         [&self.lato_sinistro, &self.lato_destro]
             .into_iter()
-            .chain(&self.quadranti)
             .filter_map(|f| f.strip_prefix(PREFISSO_SENSORE))
             .filter(|id| !id.is_empty())
             .map(str::to_owned)
@@ -345,17 +334,14 @@ pub fn importa_v2(v2: &Path, segreti: &dyn Segreti) -> Result<Option<Config>, St
         launch_at_login: v.get("launchAtLogin").and_then(Value::as_bool).unwrap_or(false),
         // La v2 viveva nella barra; la v3 di serie no (decisione di Paolo del 15/11).
         mostra_icona_barra: false,
-        ultimo_layout: String::new(),
         importata_da_v2: true,
         // La v2 non aveva collegamenti.
         collegamenti: Vec::new(),
         // La v2 non aveva il meteo: automatico.
         meteo_entita: None,
-        // Né i lati della pillola né i quadranti configurabili: niente / niente e quelli di M1.
+        // Né i lati della pillola: niente / niente.
         lato_sinistro: String::new(),
         lato_destro: String::new(),
-        quadranti: Vec::new(),
-        massimi_quadranti: HashMap::new(),
         // La v2 non sceglieva il monitor.
         schermo: None,
         // Né il volume: la rotella sulla pillola accesa, come di serie.

@@ -411,7 +411,7 @@ impl Ponte {
             }
         }
         self.claude_ricorda_limiti(ora);
-        // Limiti e contesto cambiati: avvisi, quadranti e vista Claude (se aperta).
+        // Limiti e contesto cambiati: avvisi e vista Claude (se aperta).
         self.claude_limiti_a(ora);
     }
 
@@ -440,7 +440,7 @@ impl Ponte {
 
     /// Come `claude_limiti_cambiati`, a un'ora data (i test ne passano una). Una sveglia singola
     /// all'azzeramento del primo limite (anche a vista chiusa: toglie la voce d'avviso della
-    /// finestra che si azzera); gli avvisi a soglia, una volta per finestra; poi quadranti e vista.
+    /// finestra che si azzera); gli avvisi a soglia, una volta per finestra; poi la vista.
     pub(super) fn claude_limiti_a(&self, ora: i64) {
         let (cinque, sette) = self.limiti_a(ora);
         self.arma_sveglia_limiti(self.prossimo_azzeramento(ora), ora);
@@ -462,7 +462,6 @@ impl Ponte {
         if let Some(p) = self.pannello.borrow().upgrade() {
             self.aggiorna_soglia_claude(&p);
         }
-        self.claude_quadranti_cambiati();
         self.aggiorna_vista_claude_a(ora);
         // La carta Agenti mostra il limite più alto.
         self.moduli_aggiorna("agenti");
@@ -489,54 +488,11 @@ impl Ponte {
     }
 
     /// La soglia d'avviso dell'utente (80 % di serie) al pannello: da lì l'arco dei limiti e della
-    /// spesa diventa caldo, nella vista Claude e nei quadranti (RC-44). Solo se cambia.
+    /// spesa diventa caldo, nella vista Claude (RC-44). Solo se cambia.
     pub(super) fn aggiorna_soglia_claude(&self, p: &crate::Pannello) {
         let soglia = claude::frazione_soglia(self.casa.con_config(|c| c.claude.soglia_limite));
         if p.get_claude_soglia() != soglia {
             p.set_claude_soglia(soglia);
-        }
-    }
-
-    /// Ciò che i quadranti di Claude leggono: i soli limiti validi di `limiti_a` (PF9: mai un
-    /// limite scaduto né un numero inventato), per le finestre non ancora arrivate quelli
-    /// ricordati che mostra anche la vista Claude (RC-56, tenui), e la spesa dell'ultima lettura
-    /// riuscita.
-    pub(super) fn dati_claude_quadranti(&self) -> crate::lati::DatiClaude {
-        let ora = adesso_unix();
-        let (cinque, sette) = self.limiti_a(ora);
-        let (ricordato_cinque, ricordato_sette) = self.limiti_ricordati(ora);
-        if ricordato_cinque.is_some() || ricordato_sette.is_some() {
-            // Un ricordato mostrato scade con la sveglia singola dei limiti (la stessa della vista,
-            // riarmata solo se l'istante cambia), anche se la vista Claude non si apre mai.
-            self.arma_sveglia_limiti(self.prossimo_azzeramento(ora), ora);
-        }
-        // Solo dati di questo mese (UTC): dopo il cambio di mese il quadrante dice «—» fino alla lettura nuova.
-        let spesa = self.riepilogo_fresco(chrono::Utc::now()).and_then(|r| r.spesa_mese);
-        // «Prima lettura fra poco» solo finché nessuna lettura è mai arrivata: dopo un errore (chiave
-        // sbagliata, rete giù) sarebbe una promessa falsa fino alla lettura di 3 ore dopo.
-        let lettura_attesa = spesa.is_none() && self.sveglia_api.running() && self.api_ultimo.borrow().is_none();
-        let soglia_limite = claude::frazione_soglia(self.casa.con_config(|c| c.claude.soglia_limite));
-        crate::lati::DatiClaude {
-            cinque,
-            sette,
-            spesa,
-            soglia_spesa: self.casa.con_config(|c| c.claude.soglia_spesa),
-            lettura_attesa,
-            soglia_limite,
-            ricordato_cinque,
-            ricordato_sette,
-        }
-    }
-
-    /// Un dato di Claude è cambiato: i quadranti che lo mostrano si riscrivono (solo a modelli
-    /// vivi, cioè a pannello aperto, e solo se uno di loro è una fonte di Claude).
-    pub(super) fn claude_quadranti_cambiati(&self) {
-        use crate::lati::Lato;
-        let serve = self.casa.con_config(|c| {
-            crate::lati::quadranti(&c.quadranti).iter().any(|l| matches!(l, Lato::Limite5h | Lato::Limite7g | Lato::SpesaApi))
-        });
-        if serve && self.modelli_vivi.get() {
-            self.ricostruisci_quadranti();
         }
     }
 
@@ -575,20 +531,17 @@ impl Ponte {
                     self.casa.aggiorna_config(|c| c.claude.soglia_spesa = v);
                     // Sui dati che ci sono (se freschi) e sul fondo scala dell'arco e del campo «Massimo».
                     self.claude_avviso_spesa(chrono::Utc::now());
-                    self.claude_quadranti_cambiati();
-                    self.con_finestra_claude(|f| self.riempi_isola(f));
                 }
                 String::new()
             }
         }
     }
 
-    /// Un riepilogo nuovo (o la chiave tolta): quadranti, avviso di spesa a soglia e di spesa
-    /// insolita. Solo con dati completi e aggiornati.
+    /// Un riepilogo nuovo: avviso di spesa a soglia e di spesa insolita. Solo con dati completi e
+    /// aggiornati.
     pub(super) fn claude_riepilogo_cambiato(&self, adesso: chrono::DateTime<chrono::Utc>) {
         self.claude_avviso_spesa(adesso);
         self.claude_avviso_insolita(adesso);
-        self.claude_quadranti_cambiati();
     }
 
     /// Il riepilogo dell'ultima lettura se è riuscito, ha la spesa del mese e i suoi dati sono di
@@ -901,6 +854,17 @@ impl Ponte {
             arm.pannello = pannello;
         }
         arm.permessi = permessi;
+    }
+
+    /// Un pulsante della voce che ti aspetta, nella Panoramica (ridisegno F1, Task 8): nei 600 ms
+    /// dopo che la voce mostrata è cambiata (o è comparsa) si ignora, anche «Nega» — un doppio clic
+    /// su «Nega» non risponde anche alla voce che prende il suo posto, sotto lo stesso punto. Poi è
+    /// un'`azione` come le altre («Consenti» resta controllato dal suo armamento).
+    pub fn azione_voce(&self, voce: &str, pulsante: &str, ora: Instant) {
+        if ora < self.claude_armamento.borrow().dal.get() {
+            return;
+        }
+        self.azione(voce, pulsante);
     }
 
     /// Una superficie che mostra i permessi compare (pannello aperto, pillola che torna): con un
@@ -2313,34 +2277,71 @@ mod test {
         assert!(p.claude_armamento.borrow().dal.get() > Instant::now(), "rientrando si riarma");
     }
 
-    /// Fix 1 del Task 7 (M2 della revisione): entrare nella Coda dal pannello vero (clic sulla
-    /// riga «In attesa») passa da `vista-cambiata` a `vista_coda` e riarma «Consenti».
-    #[test]
-    fn entrare_nella_coda_dal_pannello_riarma() {
-        use i_slint_backend_testing::ElementHandle;
+    /// Un pannello vero col ponte di prova, agganciato come in `pannello.rs` (senza il
+    /// campionatore del PC), con un permesso in attesa e «Consenti» armato.
+    fn pannello_col_permesso(p: &Rc<Ponte>) -> (crate::Pannello, Receiver<Decisione>) {
         use slint::ComponentHandle;
-        let (_s, p, _pillola, _d) = ponte_di_prova();
         let pannello = crate::Pannello::new().unwrap();
+        crate::pannello::collega_fuoco(&pannello);
         pannello.set_aperto(true);
         pannello.show().unwrap();
         p.riempi(&pannello);
         p.pannello_aperto(&pannello);
-        // Lo stesso aggancio di `pannello.rs` (senza il campionatore del PC).
         let (ponte, debole) = (p.clone(), pannello.as_weak());
         pannello.on_vista_cambiata(move || {
             if let Some(x) = debole.upgrade() {
                 ponte.vista_cambiata(&x);
             }
         });
-        let _rx = permesso(&p, 1, "a");
-        armato(&p);
+        let rx = permesso(p, 1, "a");
         slint::platform::update_timers_and_animations();
+        (pannello, rx)
+    }
+
+    /// Ridisegno F1, Task 8: la voce che ti aspetta compare nella Panoramica (anche tornandoci
+    /// da un'altra vista): «Consenti» si riarma.
+    #[test]
+    fn la_voce_che_compare_nella_panoramica_riarma() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let (pannello, _rx) = pannello_col_permesso(&p);
+        assert!(pannello.get_voce_mostrata(), "la voce ti aspetta al posto dell'orologio");
+        assert!(p.claude_armamento.borrow().dal.get() > Instant::now(), "comparsa: riarmato");
+        pannello.set_vista("pc".into());
+        slint::platform::update_timers_and_animations();
+        armato(&p);
+        pannello.set_vista("panoramica".into());
+        slint::platform::update_timers_and_animations();
+        assert!(p.claude_armamento.borrow().dal.get() > Instant::now(), "tornando nella Panoramica si riarma");
+        p.pannello_chiuso();
+    }
+
+    /// Ridisegno F1, Task 8: un pulsante della voce che ti aspetta premuto nei 600 ms dopo un
+    /// cambio della voce mostrata si ignora, anche «Nega» (il secondo clic di un doppio clic non
+    /// nega la voce che ha preso il posto della prima); dopo, «Nega» nega.
+    #[test]
+    fn azione_voce_ignorata_appena_dopo_il_cambio() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let rx_a = permesso(&p, 1, "a");
+        let id = voce_di(1);
+        assert!(p.claude_armamento.borrow().dal.get() > Instant::now(), "la voce nuova arma");
+        p.azione_voce(&id, PULSANTE_NEGA, Instant::now());
+        assert_eq!(rx_a.try_recv(), Err(TryRecvError::Empty), "«Nega» subito dopo il cambio è ignorato");
+        assert!(p.attese.borrow().contiene(&id));
+        armato(&p);
+        p.azione_voce(&id, PULSANTE_NEGA, Instant::now());
+        assert_eq!(rx_a.try_recv(), Ok(Decisione::Nega), "passato il tempo «Nega» nega");
+    }
+
+    /// Fix 1 del Task 7 (M2 della revisione): entrare nella Coda dal pannello vero passa da
+    /// `vista-cambiata` a `vista_coda` e riarma «Consenti». (Dal Task 8 la riga «In attesa» non
+    /// c'è più: si entra cambiando vista.)
+    #[test]
+    fn entrare_nella_coda_dal_pannello_riarma() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let (pannello, _rx) = pannello_col_permesso(&p);
+        armato(&p);
         assert!(p.claude_armamento.borrow().dal.get() <= Instant::now(), "armato prima di entrare");
-        let titolo = p.attese.borrow().ordinate()[0].titolo.clone();
-        let riga = ElementHandle::find_by_accessible_label(&pannello, &format!("{titolo}, Aspetta te · Agenti"))
-            .next()
-            .expect("la voce nella riga «In attesa»");
-        riga.invoke_accessible_default_action();
+        pannello.set_vista("coda".into());
         slint::platform::update_timers_and_animations();
         assert_eq!(pannello.get_vista(), "coda");
         assert!(p.claude_armamento.borrow().dal.get() > Instant::now(), "entrando nella Coda «Consenti» si riarma");
@@ -2986,7 +2987,7 @@ mod test {
         assert!(pannello.get_claude_spesa_nota().as_str().starts_with("Aggiungi una chiave"));
     }
 
-    // ─── Quadranti e avvisi (Task 12) ────────────────────────────────────────
+    // ─── Avvisi (Task 12) ────────────────────────────────────────────────────
 
     fn ora_adesso() -> i64 {
         chrono::Local::now().timestamp()
@@ -3086,53 +3087,6 @@ mod test {
         assert!(!p.sveglia_limiti.running());
     }
 
-    fn con_quadranti(p: &Ponte, fonti: &[&str]) {
-        p.casa().aggiorna_config(|c| c.quadranti = fonti.iter().map(|s| (*s).to_owned()).collect());
-        p.ricostruisci_quadranti();
-    }
-
-    fn quadrante(p: &Ponte, i: usize) -> crate::QuadranteUi {
-        p.quadranti.row_data(i).expect("il quadrante c'è")
-    }
-
-    #[test]
-    fn i_quadranti_leggono_solo_i_limiti_validi() {
-        let (_s, p, _pillola, _d) = ponte_di_prova();
-        con_quadranti(&p, &["limite_5h", "limite_7g", "spesa_api"]);
-        // PF9: senza dati il trattino, mai «0%» né «0 $».
-        for i in 0..3 {
-            assert_eq!((quadrante(&p, i).valore.as_str(), quadrante(&p, i).frazione), ("—", -1.0), "{i}");
-        }
-        // Arriva una barra: il quadrante si aggiorna da sé.
-        let ora = ora_adesso();
-        p.claude_barra(barra("a", Some((36.6, ora + 600)), None));
-        assert_eq!(quadrante(&p, 0).valore.as_str(), "37%");
-        assert_eq!(quadrante(&p, 1).valore.as_str(), "—", "la finestra dei 7 giorni non c'è");
-        // Il limite scaduto torna «—» (la sveglia ripassa di qui).
-        p.claude_barra(barra("a", Some((36.6, 1000)), None));
-        assert_eq!(quadrante(&p, 0).valore.as_str(), "—");
-    }
-
-    /// m-2 (revisione finale): dopo un riavvio il quadrante mostra il limite ricordato, tenue,
-    /// come la vista Claude (stessa fonte, `limiti_ricordati`); la sveglia singola dei limiti lo
-    /// toglie quando scade anche se la vista Claude non si è mai aperta; il dato fresco lo sostituisce.
-    #[test]
-    fn il_quadrante_mostra_il_limite_ricordato_tenue() {
-        let (_s, p, _pillola, _d) = ponte_di_prova();
-        let _pannello = con_pannello(&p);
-        let ora = ora_adesso();
-        p.casa().aggiorna_config(|c| c.claude.ultimo_cinque_ore = Some(visto(87.0, ora + 600, ora - 300)));
-        con_quadranti(&p, &["limite_5h", "limite_7g"]);
-        let q = quadrante(&p, 0);
-        assert_eq!((q.valore.as_str(), q.tenue), ("87%", true));
-        assert!(q.dettaglio.starts_with("dal"), "{}", q.dettaglio);
-        assert_eq!((quadrante(&p, 1).valore.as_str(), quadrante(&p, 1).tenue), ("—", false));
-        assert_eq!(p.limiti_armati.get(), Some(ora + 600), "la sveglia c'è anche senza la vista Claude");
-        // Arriva il dato fresco: lo sostituisce, non più tenue.
-        p.claude_barra(barra("a", Some((40.0, ora + 900)), None));
-        assert_eq!((quadrante(&p, 0).valore.as_str(), quadrante(&p, 0).tenue), ("40%", false));
-    }
-
     fn riepilogo_con_spesa(spesa: &str, fresco: bool) -> api_claude::Riepilogo {
         api_claude::Riepilogo {
             spesa_mese: api_claude::importo_da(spesa),
@@ -3143,36 +3097,6 @@ mod test {
 
     fn arriva(p: &Ponte, r: api_claude::Riepilogo) {
         p.api_arrivato(p.api_generazione.get(), "14:05".into(), Ok(r));
-    }
-
-    #[test]
-    fn il_quadrante_della_spesa_segue_la_lettura() {
-        let (_s, p, _pillola, _d) = ponte_di_prova();
-        p.api_salva_ui("sk-ant-admin01-di-prova-1a2b");
-        con_quadranti(&p, &["spesa_api"]);
-        assert_eq!(quadrante(&p, 0).valore.as_str(), "—");
-        // RC-51: con la chiave e senza ancora una lettura il quadrante lo dice.
-        assert_eq!(quadrante(&p, 0).dettaglio.as_str(), "prima lettura fra poco");
-        p.casa().aggiorna_config(|c| c.claude.soglia_spesa = Some(1000.0));
-        arriva(&p, riepilogo_con_spesa("41280", true));
-        assert_eq!(quadrante(&p, 0).valore.as_str(), "413 $");
-        assert!((quadrante(&p, 0).frazione - 0.4128).abs() < 1e-4, "0..soglia");
-        // Una lettura fallita: nessun dato, «—».
-        p.api_arrivato(p.api_generazione.get(), "17:05".into(), Err("rete".into()));
-        assert_eq!(quadrante(&p, 0).valore.as_str(), "—");
-    }
-
-    /// Fix round 1 (I1): «prima lettura fra poco» solo finché nessuna lettura è arrivata; dopo una
-    /// lettura fallita (chiave sbagliata, rete giù) il timer gira ancora ma la promessa sarebbe falsa.
-    #[test]
-    fn prima_lettura_non_dopo_una_lettura_fallita() {
-        let (_s, p, _pillola, _d) = ponte_di_prova();
-        p.api_salva_ui("sk-ant-admin01-di-prova-1a2b");
-        con_quadranti(&p, &["spesa_api"]);
-        assert_eq!(quadrante(&p, 0).dettaglio.as_str(), "prima lettura fra poco");
-        p.api_arrivato(p.api_generazione.get(), "17:05".into(), Err("401".into()));
-        p.ricostruisci_quadranti();
-        assert_eq!(quadrante(&p, 0).dettaglio.as_str(), "", "dopo l'errore niente promessa");
     }
 
     fn voce_spesa(p: &Ponte) -> Option<String> {
@@ -3301,19 +3225,6 @@ mod test {
         assert!(!ha_voce_claude(&p, "claude.limite.5h"), "0 vale 50: il 30 % non avvisa");
         p.claude_barra(barra("a", Some((55.0, ora + 600)), None));
         assert!(ha_voce_claude(&p, "claude.limite.5h"));
-    }
-
-    #[test]
-    fn il_quadrante_della_spesa_non_mostra_il_mese_scorso() {
-        let (_s, p, _pillola, _d) = ponte_di_prova();
-        p.api_salva_ui("sk-ant-admin01-di-prova-1a2b");
-        con_quadranti(&p, &["spesa_api"]);
-        let mut vecchia = riepilogo_con_spesa("41280", true);
-        vecchia.aggiornato_a = Some(chrono::Utc::now() - chrono::Duration::days(40));
-        arriva(&p, vecchia);
-        assert_eq!(quadrante(&p, 0).valore.as_str(), "—");
-        arriva(&p, riepilogo_con_spesa("41280", true));
-        assert_eq!(quadrante(&p, 0).valore.as_str(), "413 $");
     }
 
     #[test]

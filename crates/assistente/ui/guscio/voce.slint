@@ -1,0 +1,203 @@
+// La voce che ti aspetta (ridisegno F1, Task 8; spec §5.6): la prima voce bloccante di «In attesa»
+// prende il posto dell'orologio nella Panoramica, 752 × 108 r 20. Capsula «Ti aspetta · {modulo}»,
+// titolo (Inter 700 18, ellissi), la prima riga del dettaglio (mono 13 per un permesso), i
+// pulsanti a destra e «+N in attesa ›» in alto (la Coda).
+//
+// Regole di M3, invariate (spec §7): il fuoco iniziale è su «Nega»; «Nega» e «Consenti» sono
+// entrambi neutri (`RegolaPulsanti`); nessun pulsante si preme dalla sua tastiera (Invio e
+// Ctrl+Invio li governa il pannello: solo Ctrl+Invio esatto concede). Un permesso si concede qui
+// solo se il suo testo intero si legge nella voce (una riga che ci sta: `intera`); altrimenti il
+// secondo pulsante è «Apri» e porta al permesso aperto della Coda, col testo intero e «Consenti»
+// solo dopo il fondo (come nella riga della Coda: mai un consenso a un comando che non si è
+// potuto leggere). I pulsanti stanno in basso a destra, lontani da dove la Coda aperta mette
+// «Nega» e «Consenti» (in alto a destra) e dalle sue righe: un doppio clic non preme mai un
+// pulsante nato sotto il puntatore.
+import { Tema } from "../tema.slint";
+import { Anello, Fuoco, Pulsante, RegolaPulsanti } from "../componenti.slint";
+import { Icone } from "../icone.slint";
+import { VoceAttesaUi, TonoModuloUi } from "../voci.slint";
+import { Permessi } from "../impianti/elenco.slint";
+import { Capsula } from "carta.slint";
+
+export component VoceInAttesa inherits Rectangle {
+    in property <VoceAttesaUi> voce;
+    // Le altre voci in attesa («+N in attesa ›»; 0 = niente).
+    in property <int> altre;
+    // Il bersaglio della Panoramica col fuoco (100 «Nega», 101 l'altro pulsante, 102 «+N») e se
+    // l'anello si vede (da tastiera).
+    in property <int> fuoco: -1;
+    in property <bool> anello;
+    // Il primo pulsante non delicato («Nega»: posto 100) e l'altro (posto 101); -1 se non c'è.
+    out property <int> indice-nega: voce.pulsanti.length > 0 && !voce.pulsanti[0].delicato ? 0
+        : voce.pulsanti.length > 1 && !voce.pulsanti[1].delicato ? 1 : voce.pulsanti.length > 0 ? 0 : -1;
+    out property <int> indice-altro: voce.pulsanti.length > 1 ? (indice-nega == 0 ? 1 : 0) : -1;
+    // È un permesso, e il suo testo intero si legge nella voce (una riga sola, che ci sta).
+    out property <bool> permesso: Permessi.chiede(voce);
+    out property <bool> intera: misura.preferred-height <= una-riga.preferred-height + 0.5px
+        && misura.preferred-width <= scatola.width - 24px;
+    // Un pulsante premuto col mouse o da Narrator: 100 o 101; «+N»: 102.
+    callback scelta(int);
+
+    property <length> margine: 16px;
+
+    width: 752px;
+    height: 108px;
+    border-radius: 20px;
+    background: Tema.g1;
+    border-width: 1px;
+    border-color: Tema.filo;
+    accessible-role: groupbox;
+    accessible-label: "Ti aspetta · " + voce.modulo + ": " + voce.titolo;
+    accessible-description: voce.dettaglio;
+
+    // Misure per `intera`: il dettaglio intero e una riga sola, nello stesso carattere.
+    misura := Text {
+        visible: false;
+        text: root.voce.dettaglio;
+        font-family: root.permesso ? Tema.carattere-mono : Tema.carattere;
+        font-size: Tema.testo-corpo;
+    }
+    una-riga := Text {
+        visible: false;
+        text: "Ag";
+        font-family: root.permesso ? Tema.carattere-mono : Tema.carattere;
+        font-size: Tema.testo-corpo;
+    }
+
+    Capsula {
+        x: margine;
+        y: 14px;
+        tono: TonoModuloUi.aspetta;
+        parola: "Ti aspetta · " + root.voce.modulo;
+        mono: true;
+    }
+
+    // «+N in attesa ›»: la Coda (la freccia è un'icona, non un glifo; Narrator non la legge).
+    altre-el := Rectangle {
+        visible: root.altre > 0;
+        x: parent.width - margine - self.width;
+        y: 10px;
+        height: 28px;
+        width: testo-altre.preferred-width + 6px + 14px + 8px;
+        border-radius: Tema.raggio-m;
+        background: area-altre.has-hover ? Tema.g3 : transparent;
+        accessible-role: button;
+        accessible-label: root.altre == 1 ? "Un'altra voce in attesa" : "Altre " + root.altre + " voci in attesa";
+        accessible-action-default => { root.scelta(102); }
+
+        testo-altre := Text {
+            x: 4px;
+            height: parent.height;
+            text: "+" + root.altre + " in attesa";
+            font-size: Tema.testo-corpo;
+            color: Tema.testo-2;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+
+        Image {
+            x: testo-altre.x + testo-altre.preferred-width + 6px;
+            y: (parent.height - self.height) / 2;
+            width: 14px;
+            height: 14px;
+            source: Icone.destra;
+            colorize: Tema.testo-2;
+            accessible-role: none;
+        }
+
+        area-altre := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.scelta(102); }
+        }
+
+        Fuoco { chiede: root.altre > 0 && root.fuoco == 102; }
+
+        if root.anello && root.fuoco == 102: Anello { raggio: parent.border-radius; }
+    }
+
+    // I pulsanti a posti fissi in basso a destra: l'altro (101) all'estremità, «Nega» (100) prima.
+    property <length> alto-pulsanti: 36px;
+    property <length> larghezza-pulsante: 112px;
+    property <length> y-pulsanti: root.height - 14px - alto-pulsanti;
+
+    altro := Pulsante {
+        visible: root.indice-altro >= 0;
+        x: parent.width - margine - self.width;
+        y: y-pulsanti;
+        // Larghezza fissa: il testo («Consenti» o «Apri») dipende da quanto spazio resta al
+        // dettaglio, che non deve dipendere dal testo.
+        width: larghezza-pulsante;
+        altezza: alto-pulsanti;
+        testo: root.indice-altro < 0 ? "" : root.voce.pulsanti[root.indice-altro].delicato && !root.intera ? "Apri"
+            : root.voce.pulsanti[root.indice-altro].testo;
+        delicato: root.indice-altro >= 0 && root.voce.pulsanti[root.indice-altro].delicato;
+        tipo: RegolaPulsanti.tipo(true, root.indice-altro >= 0 && root.voce.pulsanti[root.indice-altro].delicato);
+        tasti-propri: false;
+        focalizzabile: false;
+        chiede-fuoco: root.indice-altro >= 0 && root.fuoco == 101;
+        anello: root.anello && root.fuoco == 101;
+        premuto => { root.scelta(101); }
+    }
+
+    nega := Pulsante {
+        visible: root.indice-nega >= 0;
+        x: root.indice-altro >= 0 ? altro.x - 8px - self.width : parent.width - margine - self.width;
+        y: y-pulsanti;
+        width: larghezza-pulsante;
+        altezza: alto-pulsanti;
+        testo: root.indice-nega < 0 ? "" : root.voce.pulsanti[root.indice-nega].testo;
+        delicato: root.indice-nega >= 0 && root.voce.pulsanti[root.indice-nega].delicato;
+        tipo: RegolaPulsanti.tipo(root.indice-altro < 0, root.indice-nega >= 0 && root.voce.pulsanti[root.indice-nega].delicato);
+        tasti-propri: false;
+        focalizzabile: false;
+        chiede-fuoco: root.indice-nega >= 0 && root.fuoco == 100;
+        anello: root.anello && root.fuoco == 100;
+        premuto => { root.scelta(100); }
+    }
+
+    // Il testo a sinistra dei pulsanti.
+    property <length> fine-testo: (root.indice-nega >= 0 ? nega.x : root.width - margine) - 12px;
+
+    titolo := Text {
+        x: margine;
+        y: 40px;
+        width: max(0px, fine-testo - margine);
+        height: 24px;
+        text: root.voce.titolo;
+        font-weight: 700;
+        font-size: 18px;
+        letter-spacing: -0.27px;
+        color: Tema.testo;
+        vertical-alignment: center;
+        overflow: elide;
+        accessible-role: none;
+    }
+
+    // La prima riga del dettaglio (per un permesso il comando, in mono): quella che si legge.
+    scatola := Rectangle {
+        x: margine;
+        y: 68px;
+        width: max(0px, fine-testo - margine);
+        height: 26px;
+        border-radius: Tema.raggio-s;
+        background: Tema.nero;
+        border-width: 1px;
+        border-color: Tema.filo;
+        clip: true;
+
+        dettaglio := Text {
+            x: 12px;
+            y: (parent.height - una-riga.preferred-height) / 2;
+            width: parent.width - 24px;
+            height: una-riga.preferred-height;
+            text: root.voce.dettaglio;
+            font-family: root.permesso ? Tema.carattere-mono : Tema.carattere;
+            font-size: Tema.testo-corpo;
+            color: Tema.testo-2;
+            vertical-alignment: top;
+            wrap: no-wrap;
+            overflow: elide;
+            accessible-role: none;
+        }
+    }
+}

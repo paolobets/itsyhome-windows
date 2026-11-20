@@ -1,0 +1,155 @@
+// La Panoramica a griglia (ridisegno F1, Task 8; spec §5.5–§5.6 e §13.8, spike 11 §1–§2): in
+// alto l'orologio grande o, al suo posto, la voce che ti aspetta; sotto le carte dei moduli in
+// una riga (182 × 108, spazio 8, gruppo centrato), che non si spostano mai.
+//
+// Il fuoco da tastiera è un numero (`fuoco`) che il pannello muove con Tab (l'ordine lo calcola
+// Rust, `moduli::panoramica::ordine_tab`): `2k` il corpo della carta k, `2k + 1` il suo bottone
+// d'azione, 100/101/102 «Nega», l'altro pulsante e «+N» della voce. Le costanti sono le stesse di
+// `panoramica.rs` (un test le confronta). I bersagli sono posti fissi, mai dentro `if`/`for`: un
+// elemento distrutto col fuoco addosso lascerebbe il pannello senza tastiera.
+import { Tema } from "../tema.slint";
+import { ModuloUi, VoceAttesaUi } from "../voci.slint";
+import { Posto } from "carta.slint";
+import { VoceInAttesa } from "voce.slint";
+
+export global Bersagli {
+    out property <int> nega: 100;
+    out property <int> consenti: 101;
+    out property <int> altre: 102;
+    out property <int> scheda: 200;
+    out property <int> ricerca: 300;
+    out property <int> volume: 310;
+    out property <int> menu: 320;
+    out property <int> in-attesa: 330;
+}
+
+// L'ora grande (Inter 700 96): cinque celle ferme, ognuna larga come la cifra più larga («0»,
+// misurata) e i due punti come se stessi, il gruppo centrato. Cambiando i minuti nessuna cifra
+// fa ballare le altre (§13.8). Le cifre le dà Rust già divise (Slint non taglia le stringhe).
+export component OrologioGrande inherits Rectangle {
+    in property <string> ora;
+    in property <[string]> cifre;
+
+    property <length> cella: zero.preferred-width;
+    property <length> punti: due-punti.preferred-width;
+    property <length> inizio: (root.width - 4 * cella - punti) / 2;
+
+    accessible-role: text;
+    accessible-label: root.ora;
+
+    zero := Text {
+        visible: false;
+        text: "0";
+        font-weight: 700;
+        font-size: 96px;
+    }
+    due-punti := Text {
+        visible: false;
+        text: ":";
+        font-weight: 700;
+        font-size: 96px;
+    }
+
+    for i in 5: cifra := Text {
+        x: i < 2 ? inizio + i * cella : i == 2 ? inizio + 2 * cella : inizio + (i - 1) * cella + punti;
+        width: i == 2 ? punti : cella;
+        height: root.height;
+        text: i < root.cifre.length ? root.cifre[i] : "";
+        font-weight: 700;
+        font-size: 96px;
+        color: Tema.testo;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        accessible-role: none;
+    }
+}
+
+export component Griglia inherits Rectangle {
+    in property <[ModuloUi]> moduli;
+    in property <string> ora;
+    in property <[string]> cifre-ora;
+    // La voce che ti aspetta (la prima di `attese`, se è bloccante) e quante altre ce ne sono.
+    in property <bool> voce-mostrata;
+    in property <VoceAttesaUi> voce;
+    in property <int> altre;
+    in property <int> fuoco: -1;
+    in property <bool> anello;
+    // Le misure della voce, per il pannello (che decide Invio e Ctrl+Invio).
+    out property <int> indice-nega: voce-el.indice-nega;
+    out property <int> indice-altro: voce-el.indice-altro;
+    out property <bool> voce-intera: voce-el.intera;
+    callback scelta(int);
+    callback ripara(int);
+
+    property <int> carte: min(4, moduli.length);
+    property <length> passo: 182px + 8px;
+    property <length> x0: (root.width - carte * passo + 8px) / 2;
+    property <length> y-carte: root.height - 108px;
+
+    orologio := OrologioGrande {
+        visible: !root.voce-mostrata;
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: y-carte;
+        ora: root.ora;
+        cifre: root.cifre-ora;
+    }
+
+    voce-el := VoceInAttesa {
+        visible: root.voce-mostrata;
+        x: 0;
+        y: 0;
+        voce: root.voce;
+        altre: root.altre;
+        fuoco: root.voce-mostrata ? root.fuoco : -1;
+        anello: root.anello;
+        scelta(id) => { root.scelta(id); }
+    }
+
+    p0 := Posto {
+        k: 0;
+        x: x0;
+        y: y-carte;
+        presente: root.carte > 0;
+        // Fuori dall'elenco Slint dà il modulo vuoto (e il posto non si vede).
+        modulo: root.moduli[0];
+        fuoco: root.fuoco;
+        anello: root.anello;
+        scelta(id) => { root.scelta(id); }
+        ripara(id) => { root.ripara(id); }
+    }
+    p1 := Posto {
+        k: 1;
+        x: x0 + passo;
+        y: y-carte;
+        presente: root.carte > 1;
+        modulo: root.moduli[1];
+        fuoco: root.fuoco;
+        anello: root.anello;
+        scelta(id) => { root.scelta(id); }
+        ripara(id) => { root.ripara(id); }
+    }
+    p2 := Posto {
+        k: 2;
+        x: x0 + 2 * passo;
+        y: y-carte;
+        presente: root.carte > 2;
+        modulo: root.moduli[2];
+        fuoco: root.fuoco;
+        anello: root.anello;
+        scelta(id) => { root.scelta(id); }
+        ripara(id) => { root.ripara(id); }
+    }
+    p3 := Posto {
+        k: 3;
+        x: x0 + 3 * passo;
+        y: y-carte;
+        presente: root.carte > 3;
+        modulo: root.moduli[3];
+        fuoco: root.fuoco;
+        anello: root.anello;
+        scelta(id) => { root.scelta(id); }
+        ripara(id) => { root.ripara(id); }
+    }
+}

@@ -1,13 +1,13 @@
 //! Apertura e chiusura del pannello: la pillola si nasconde e al suo posto scende il pannello,
 //! con gli occhi dove stavano i suoi. L'orologio (un risveglio al minuto) e il campionamento delle
-//! statistiche del PC (un campione ogni 2 s) girano solo a pannello aperto; la GPU (Task 10) solo
-//! se la vista di adesso la mostra (vista PC, o un quadrante «GPU» della Panoramica).
+//! statistiche del PC (un campione ogni 2 s) girano solo a pannello aperto; dischi, reti e GPU
+//! (Task 10) solo nella vista PC, l'unica che li mostra.
 //!
 //! Il pannello nasce a ogni apertura e viene distrutto alla chiusura: da chiuso non restano né
 //! la sua finestra né i suoi buffer né animazioni in sospeso, e la pillola torna al suo peso.
 //! I dati della casa e l'umore arrivano dal `Ponte`, che il pannello riprende a ogni apertura.
 
-use crate::layout::Layout;
+use crate::moduli::panoramica::{in_attesa_non_mostrate, ordine_tab, prossimo, Composizione};
 use crate::moduli::registro::Registro;
 use crate::moduli::{panoramica, Tono};
 use crate::pc_stats::{formatta_usato_totale, formatta_velocita, tinta_batteria, Campionatore, Fonti, StatPc, TintaBatteria};
@@ -17,7 +17,7 @@ use crate::ponte::{DallaPillola, Ponte};
 use crate::sistema::menu::{self, Voce};
 use crate::sistema::servizi;
 use crate::{
-    finestra_impostazioni, finestre, orologio, scelte, Movimento, Pannello, Pillola, SchedaBarraUi, SchermoMenuUi,
+    finestra_impostazioni, finestre, orologio, Movimento, Pannello, Pillola, SchedaBarraUi, SchermoMenuUi,
     StatPcUi, TintaBatteriaUi, VoceMenuUi,
 };
 use slint::winit_030::{winit, EventResult, WinitWindowAccessor};
@@ -45,8 +45,6 @@ pub struct Apertura {
     pillola: slint::Weak<Pillola>,
     ponte: Rc<Ponte>,
     pannello: RefCell<Option<Pannello>>,
-    /// Layout della Panoramica (indice del puntino), ricordato tra un'apertura e l'altra.
-    layout: Cell<i32>,
     /// Vero dalla fine dell'apertura: solo da lì una perdita del fuoco (clic fuori) chiude.
     /// Durante l'apertura il fuoco passa di mano da solo (la pillola appena cliccata si
     /// nasconde e Windows attiva un'altra finestra, il pannello nasce e chiede il fuoco): quei
@@ -62,9 +60,9 @@ pub struct Apertura {
     /// stop e il thread da svegliare.
     campionamento: RefCell<Option<(Arc<AtomicBool>, std::thread::Thread)>>,
     /// Le fonti lente (dischi, reti, GPU) che il campionatore legge: solo quelle che la vista di
-    /// adesso mostra (vista PC, quadranti scelti). Le cambia il thread dell'interfaccia, le legge
-    /// il thread dei campioni a ogni giro. (Il brief del Task 10 chiedeva un `AtomicBool vista_pc`
-    /// per la GPU: è il campo `gpu` di queste fonti, che vale anche per il quadrante «GPU».)
+    /// adesso mostra (solo la vista PC). Le cambia il thread dell'interfaccia, le legge il thread
+    /// dei campioni a ogni giro. (Il brief del Task 10 chiedeva un `AtomicBool vista_pc` per la
+    /// GPU: è il campo `gpu` di queste fonti.)
     fonti: Arc<Mutex<Fonti>>,
 }
 
@@ -127,12 +125,50 @@ pub(crate) fn schede_ui(registro: &Registro, vista: &str) -> Vec<SchedaBarraUi> 
         .collect()
 }
 
+/// L'ora «09:45» nel pannello: la stringa (riga alta, Narrator) e le sue cifre divise per l'ora
+/// grande a celle ferme. Si riscrive solo se cambia: una proprietà invariata non deve ridisegnare.
+pub(crate) fn scrivi_ora(pannello: &Pannello, ora: &str) {
+    if pannello.get_ora() != ora {
+        pannello.set_ora(ora.into());
+        let cifre: Vec<slint::SharedString> = ora.chars().map(|c| c.to_string().into()).collect();
+        pannello.set_ora_cifre(ModelRc::new(VecModel::from(cifre)));
+    }
+}
+
+/// Ciò che la Panoramica mostra adesso, per l'ordine di Tab (`ordine_tab`).
+fn composizione(p: &Pannello) -> Composizione {
+    Composizione {
+        voce: p.get_voce_mostrata(),
+        altre: p.get_voce_altre(),
+        in_attesa: p.get_in_attesa() > 0,
+        azioni: p.get_moduli().iter().map(|m| m.con_azione).collect(),
+        schede: p.get_schede().row_count(),
+        volume: p.get_volume_disponibile(),
+    }
+}
+
+/// Collega Tab nella Panoramica: il pannello chiede il bersaglio dopo (o prima) di quello di
+/// adesso, e Rust lo calcola da ciò che c'è (`ordine_tab`, `prossimo`).
+pub(crate) fn collega_fuoco(p: &Pannello) {
+    let debole = p.as_weak();
+    p.on_prossimo_fuoco(move |attuale, avanti| {
+        let Some(p) = debole.upgrade() else { return attuale };
+        prossimo(&ordine_tab(&composizione(&p)), attuale, avanti)
+    });
+}
+
+/// «N in attesa ›» della riga alta: quante voci in attesa la Panoramica non mostra già (con la
+/// voce che ti aspetta, nessuna: le altre le conta il suo «+N»). Solo se cambia.
+pub(crate) fn scrivi_in_attesa(p: &Pannello, voci: usize, voce_mostrata: bool) {
+    let n = in_attesa_non_mostrate(voci, voce_mostrata) as i32;
+    if p.get_in_attesa() != n {
+        p.set_in_attesa(n);
+    }
+}
+
 fn aggiorna_ora(ponte: &Ponte, pannello: &Pannello) {
     let (ora, data) = orologio::adesso();
-    // Si riscrive solo se cambia: una proprietà invariata non deve ridisegnare nulla.
-    if pannello.get_ora() != ora.as_str() {
-        pannello.set_ora(ora.into());
-    }
+    scrivi_ora(pannello, &ora);
     if pannello.get_data() != data.as_str() {
         pannello.set_data(data.into());
     }
@@ -196,13 +232,13 @@ pub fn tinta_ui(t: TintaBatteria) -> TintaBatteriaUi {
     }
 }
 
-/// Le fonti lente che una vista mostra: la vista PC tutte (dischi, rete e GPU), la Panoramica a
-/// Quadranti quelle dei quadranti scelti (`quadranti`, chiesta solo lì), il resto nessuna.
-fn fonti_della_vista(vista: &str, layout: Layout, quadranti: impl FnOnce() -> Fonti) -> Fonti {
-    match (vista, layout) {
-        ("pc", _) => Fonti::TUTTE,
-        ("panoramica", Layout::Quadranti) => quadranti(),
-        _ => Fonti::default(),
+/// Le fonti lente che una vista mostra: la vista PC tutte (dischi, rete e GPU), il resto nessuna
+/// (la Panoramica a carte non mostra né dischi né reti né GPU).
+fn fonti_della_vista(vista: &str) -> Fonti {
+    if vista == "pc" {
+        Fonti::TUTTE
+    } else {
+        Fonti::default()
     }
 }
 
@@ -320,13 +356,11 @@ fn dopo(apertura: &Weak<Apertura>, f: fn(&Apertura)) {
 
 impl Apertura {
     pub fn collega(pillola: &Pillola, ponte: Rc<Ponte>) -> Rc<Apertura> {
-        let layout = scelte::layout_salvato(ponte.casa()).indice();
         let apertura = Rc::new_cyclic(|io| Apertura {
             io: io.clone(),
             pillola: pillola.as_weak(),
             ponte,
             pannello: RefCell::new(None),
-            layout: Cell::new(layout),
             armato: Cell::new(false),
             fisso: Cell::new(false),
             aperture: Cell::new(0),
@@ -396,9 +430,8 @@ impl Apertura {
         }
     }
 
-    /// L'orologio si sveglia al prossimo minuto (nessun layout mostra i secondi) e si rifasa a
-    /// ogni scatto: un risveglio al minuto invece di 60. Se un layout mostrerà i secondi, qui
-    /// tornerà un timer da 1 s solo per lui.
+    /// L'orologio si sveglia al prossimo minuto (nessuna vista mostra i secondi) e si rifasa a
+    /// ogni scatto: un risveglio al minuto invece di 60.
     fn programma_orologio(&self) {
         let adesso = chrono::Local::now();
         let tra = orologio::al_prossimo_minuto(adesso.second(), adesso.nanosecond());
@@ -412,14 +445,11 @@ impl Apertura {
         });
     }
 
-    /// Le fonti lente che la vista di adesso mostra: la vista PC tutte, i Quadranti quelle dei
-    /// quadranti scelti, il resto nessuna (CPU e RAM si leggono sempre). Se cambiano, il thread
-    /// dei campioni si sveglia subito: la GPU si accende (o il suo lettore si butta) senza
-    /// aspettare i 2 s.
+    /// Le fonti lente che la vista di adesso mostra: la vista PC tutte, il resto nessuna (CPU e
+    /// RAM si leggono sempre). Se cambiano, il thread dei campioni si sveglia subito: la GPU si
+    /// accende (o il suo lettore si butta) senza aspettare i 2 s.
     fn aggiorna_fonti(&self, p: &Pannello) {
-        let fonti = fonti_della_vista(p.get_vista().as_str(), Layout::da_indice(p.get_layout()), || {
-            self.ponte.fonti_dei_quadranti()
-        });
+        let fonti = fonti_della_vista(p.get_vista().as_str());
         let cambiate = match self.fonti.lock() {
             Ok(mut f) => std::mem::replace(&mut *f, fonti) != fonti,
             Err(_) => false,
@@ -443,13 +473,13 @@ impl Apertura {
     fn crea(&self) -> Result<Pannello, slint::PlatformError> {
         let pannello = Pannello::new()?;
         pannello.global::<Movimento>().set_ridotto(servizi::movimento_ridotto());
-        pannello.set_layout(self.layout.get());
         self.ponte.riempi(&pannello);
+        collega_fuoco(&pannello);
 
         let a = self.io.clone();
         pannello.on_chiudi(move || dopo(&a, Apertura::chiudi));
-        // Vista o layout cambiati: il campionatore legge dischi e reti solo se si vedono, e le
-        // radio vivono solo a vista PC aperta.
+        // Vista cambiata: il campionatore legge dischi e reti solo se si vedono, e le radio vivono
+        // solo a vista PC aperta.
         let a = self.io.clone();
         let debole = pannello.as_weak();
         pannello.on_vista_cambiata(move || {
@@ -457,21 +487,6 @@ impl Apertura {
                 a.aggiorna_fonti(&p);
                 a.ponte.vista_cambiata(&p);
             }
-        });
-        let a = self.io.clone();
-        pannello.on_scegli_layout(move |i| {
-            if let Some(a) = a.upgrade() {
-                a.scegli_layout(Layout::da_indice(i));
-            }
-        });
-        let a = self.io.clone();
-        let debole = pannello.as_weak();
-        pannello.on_scorri_layout(move |passo| {
-            let (Some(a), Some(p)) = (a.upgrade(), debole.upgrade()) else { return };
-            let ora = Layout::da_indice(p.get_layout());
-            let nuovo = if passo < 0 { ora.precedente() } else { ora.successivo() };
-            p.set_layout(nuovo.indice());
-            a.scegli_layout(nuovo);
         });
         // La vista la cambia già l'interfaccia (Casa e PC hanno già i loro dati). «Impostazioni»
         // (non più nel dock dal Task 14i: «Apri Impostazioni» della vista Casa vuota) apre la sua
@@ -543,17 +558,6 @@ impl Apertura {
             EventResult::Propagate
         });
         Ok(pannello)
-    }
-
-    /// Il layout scelto: lo si ricorda per la prossima apertura e lo si salva.
-    fn scegli_layout(&self, l: Layout) {
-        self.layout.set(l.indice());
-        scelte::salva_layout(self.ponte.casa(), l);
-        // Nell'Orologio la riga alta ha solo il meteo (la data è già grande al centro).
-        if let Some(p) = self.pannello.borrow().as_ref() {
-            self.ponte.aggiorna_riga_sinistra(p);
-            self.aggiorna_fonti(p);
-        }
     }
 
     /// Il movimento ridotto cambiato a pannello aperto (controllo da 5 s dei servizi).
@@ -787,27 +791,15 @@ mod test {
         assert_eq!(stat_ui(&stat(Some(12.4)), false).cpu_testo, "—");
     }
 
+    /// Ridisegno F1, Task 8: dischi, reti e GPU si leggono solo nella vista PC; la Panoramica a
+    /// carte, la Casa, gli Agenti, i Collegamenti e la Coda non li mostrano.
     #[test]
-    fn fonti_lente_solo_dove_si_vedono() {
-        let solo_disco = || Fonti { disco: true, ..Fonti::default() };
-        assert_eq!(fonti_della_vista("pc", Layout::Orologio, solo_disco), Fonti::TUTTE);
-        assert_eq!(fonti_della_vista("panoramica", Layout::Quadranti, solo_disco), solo_disco());
-        assert_eq!(fonti_della_vista("panoramica", Layout::Orologio, solo_disco), Fonti::default());
-        assert_eq!(fonti_della_vista("casa", Layout::Quadranti, solo_disco), Fonti::default());
-    }
-
-    /// M2, Task 10: la GPU si legge solo nella vista PC o con un quadrante «GPU» nella Panoramica
-    /// a Quadranti; nell'Orologio, nella Casa e nei Collegamenti mai.
-    #[test]
-    fn gpu_solo_dove_si_vede() {
-        let con_gpu = || crate::lati::fonti_dei_quadranti(&[crate::lati::Lato::Gpu]);
-        let senza_gpu = || crate::lati::fonti_dei_quadranti(&[crate::lati::Lato::Cpu]);
-        assert!(fonti_della_vista("pc", Layout::Orologio, senza_gpu).gpu);
-        assert!(fonti_della_vista("panoramica", Layout::Quadranti, con_gpu).gpu);
-        assert!(!fonti_della_vista("panoramica", Layout::Quadranti, senza_gpu).gpu);
-        assert!(!fonti_della_vista("panoramica", Layout::Orologio, con_gpu).gpu);
-        assert!(!fonti_della_vista("casa", Layout::Quadranti, con_gpu).gpu);
-        assert!(!fonti_della_vista("collegamenti", Layout::Quadranti, con_gpu).gpu);
+    fn fonti_lente_solo_nella_vista_pc() {
+        assert_eq!(fonti_della_vista("pc"), Fonti::TUTTE);
+        assert!(fonti_della_vista("pc").gpu);
+        for vista in ["panoramica", "casa", "agenti", "collegamenti", "coda"] {
+            assert_eq!(fonti_della_vista(vista), Fonti::default(), "{vista}");
+        }
     }
 
     #[test]

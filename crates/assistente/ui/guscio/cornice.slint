@@ -109,14 +109,68 @@ export component RigaAlta inherits Rectangle {
     in property <bool> fuoco-menu-chiesto;
     in property <bool> anello-menu;
     in property <bool> menu-aperto;
+    // «N in attesa ›» dopo data e meteo (0 = non c'è): apre la Coda. Fuoco e anello li decide il
+    // pannello.
+    in property <int> in-attesa;
+    in property <bool> fuoco-in-attesa;
+    in property <bool> anello-in-attesa;
     callback menu-premuto(bool);
+    callback in-attesa-premuto();
 
     // Riporta il fuoco vero su «⋯» (chiuso il menu da tastiera).
     public function fuoco-sul-menu() {
         fuoco-menu.focus();
     }
 
-    if root.sinistra-visibile && root.sinistra != "": Text {
+    // Quanto occupa la data a sinistra (0 se non c'è).
+    property <length> fine-sinistra: root.sinistra-visibile && root.sinistra != ""
+        ? 38px + min(sinistra-el.width, sinistra-el.preferred-width) : 26px;
+
+    in-attesa-el := Rectangle {
+        visible: root.in-attesa > 0;
+        x: fine-sinistra + 12px;
+        y: (root.height - self.height) / 2;
+        height: 28px;
+        width: testo-in-attesa.preferred-width + 4px + 14px + 16px;
+        border-radius: Tema.raggio-m;
+        background: area-in-attesa.has-hover ? Tema.g3 : transparent;
+        accessible-role: button;
+        // La freccia non si legge (§13.10).
+        accessible-label: root.in-attesa + " in attesa";
+        accessible-action-default => { root.in-attesa-premuto(); }
+
+        testo-in-attesa := Text {
+            x: 8px;
+            height: parent.height;
+            text: root.in-attesa + " in attesa";
+            vertical-alignment: center;
+            font-size: Tema.testo-piccolo;
+            color: Tema.testo-2;
+            accessible-role: none;
+        }
+
+        Image {
+            x: testo-in-attesa.x + testo-in-attesa.preferred-width + 4px;
+            y: (parent.height - self.height) / 2;
+            width: 14px;
+            height: 14px;
+            source: Icone.destra;
+            colorize: Tema.testo-2;
+            accessible-role: none;
+        }
+
+        area-in-attesa := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.in-attesa-premuto(); }
+        }
+
+        Fuoco { chiede: root.fuoco-in-attesa; }
+
+        if root.anello-in-attesa: Anello { raggio: parent.border-radius; }
+    }
+
+    sinistra-el := Text {
+        visible: root.sinistra-visibile && root.sinistra != "";
         x: 38px;
         y: 0;
         width: max(0px, (root.width - root.ingombro-occhi) / 2 - 38px - 12px);

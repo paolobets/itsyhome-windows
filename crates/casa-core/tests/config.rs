@@ -70,7 +70,7 @@ fn salva_e_rileggi_uguale() {
     let st = ConfigStore::apri(d.path());
     let mut c = Config {
         favorites: vec!["a".into()],
-        ultimo_layout: "isola".into(),
+        lato_sinistro: "ora".into(),
         ..Config::default()
     };
     st.salva(&c).unwrap();
@@ -167,7 +167,6 @@ fn file_senza_collegamenti_si_legge() {
     assert!(c.collegamenti.is_empty());
     assert_eq!(c.favorites, vec!["light.a"]);
     assert!(c.mostra_icona_barra);
-    assert_eq!(c.ultimo_layout, "quadranti");
 }
 
 /// M2 Task 4: un file di M1 (senza le chiavi dei lati) si legge con niente / niente.
@@ -178,27 +177,56 @@ fn config_di_m1_ha_lati_vuoti() {
     let c = ConfigStore::apri(d.path()).leggi();
     assert_eq!(c.lato_sinistro, "");
     assert_eq!(c.lato_destro, "");
-    assert!(c.quadranti.is_empty(), "nessun quadrante scelto: quelli di M1");
-    assert!(c.massimi_quadranti.is_empty());
     assert_eq!(c.favorites, vec!["light.a"], "il resto si legge come prima");
 }
 
-/// M2 Task 4: lati e quadranti salvati e riletti; i sensori scelti sono quelli col prefisso.
+/// Ridisegno F1, Task 8 (Review Focus 4): un file di prima col layout Quadranti, i quadranti
+/// scelti e i loro massimi si legge senza errori e senza perdere gli altri campi; salvato, quelle
+/// chiavi non ci sono più (la Panoramica è la Griglia, i quadranti non esistono).
 #[test]
-fn lati_e_quadranti_salvati_e_sensori_scelti() {
+fn configurazione_coi_quadranti_si_legge() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(
+        d.path().join("assistente.json"),
+        r#"{ "favorites": ["light.a"], "mostraIconaBarra": true, "ultimoLayout": "quadranti",
+             "latoSinistro": "cpu", "latoDestro": "sensore:sensor.sala_t",
+             "quadranti": ["ram", "sensore:sensor.fv"], "massimiQuadranti": { "sensore:sensor.fv": 4500.0 },
+             "collegamenti": [{ "id": "c1", "nome": "NAS", "url": "https://nas.lan" }] }"#,
+    )
+    .unwrap();
+    let st = ConfigStore::apri(d.path());
+    let c = st.leggi();
+    assert_eq!(c.favorites, vec!["light.a"], "letto davvero, non il predefinito");
+    assert!(c.mostra_icona_barra);
+    assert_eq!((c.lato_sinistro.as_str(), c.lato_destro.as_str()), ("cpu", "sensore:sensor.sala_t"));
+    assert_eq!(c.collegamenti.len(), 1);
+    // I sensori seguiti sono solo quelli dei lati della pillola.
+    let scelti: Vec<String> = c.sensori_scelti().into_iter().collect();
+    assert_eq!(scelti, vec!["sensor.sala_t".to_owned()]);
+    st.salva(&c).unwrap();
+    let testo = std::fs::read_to_string(d.path().join("assistente.json")).unwrap();
+    for chiave in ["ultimoLayout", "\"quadranti\"", "massimiQuadranti"] {
+        assert!(!testo.contains(chiave), "«{chiave}» ancora salvato: {testo}");
+    }
+    assert_eq!(st.leggi(), c, "riletto uguale");
+}
+
+/// M2 Task 4: i lati salvati e riletti; i sensori scelti sono quelli col prefisso.
+#[test]
+fn lati_salvati_e_sensori_scelti() {
     let d = tempfile::tempdir().unwrap();
     let st = ConfigStore::apri(d.path());
-    let mut c = Config {
-        lato_sinistro: "cpu".into(),
+    let c = Config {
+        lato_sinistro: "sensore:sensor.fv".into(),
         lato_destro: "sensore:sensor.sala_t".into(),
-        quadranti: vec!["ram".into(), "sensore:sensor.fv".into(), "sensore:".into()],
         ..Config::default()
     };
-    c.massimi_quadranti.insert("sensore:sensor.fv".into(), 4500.0);
     st.salva(&c).unwrap();
     assert_eq!(st.leggi(), c);
     let scelti: Vec<String> = c.sensori_scelti().into_iter().collect();
-    assert_eq!(scelti, vec!["sensor.fv".to_owned(), "sensor.sala_t".to_owned()], "senza id vuoti, senza doppioni");
+    assert_eq!(scelti, vec!["sensor.fv".to_owned(), "sensor.sala_t".to_owned()]);
+    let vuoto = Config { lato_sinistro: "sensore:".into(), lato_destro: "sensore:sensor.fv".into(), ..Config::default() };
+    assert_eq!(vuoto.sensori_scelti().into_iter().collect::<Vec<_>>(), vec!["sensor.fv".to_owned()], "senza id vuoti");
 }
 
 /// M2 Task 6: un file di prima (senza `schermo`) si legge col monitor principale; la scelta si salva

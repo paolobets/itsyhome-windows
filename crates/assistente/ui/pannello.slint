@@ -4,21 +4,26 @@
 // pillola), a sinistra data e meteo (solo nella Panoramica; nelle app resta vuota), l'ora a destra
 // e dopo di lei «⋯» (Task 14i: il menu dell'isola senza «Apri», con Impostazioni in testa); niente
 // «‹ Indietro» (Task 14g: alla Panoramica si torna dalla barra, con Backspace o Alt+←; nella vista
-// Casa «Preferiti» è la prima voce dell'elenco). Corpo 752 × 224 a (34, 44): la Panoramica (riga
-// «In attesa» se c'è qualcosa, poi il layout Orologio o Quadranti, cambiabili con i puntini, le
-// frecce e la rotella) o la vista di un'app. Barra bassa 64: ricerca (inerte in F1), le schede
-// con la capsula che scivola, il volume.
+// Casa «Preferiti» è la prima voce dell'elenco). Corpo 752 × 224 a (34, 44): la Panoramica a
+// griglia (`guscio/panoramica.slint`: l'orologio grande o, al suo posto, la voce che ti aspetta, e
+// sotto le carte dei moduli; «N in attesa ›» nella riga alta) o la vista di un'app. Barra bassa 64:
+// ricerca (inerte in F1), le schede con la capsula che scivola, il volume.
 //
-// Tastiera: Tab / Maiusc+Tab fra «In attesa», contenuto, schede, ricerca, volume (se c'è) e «⋯» (in
+// Tastiera: nella Panoramica Tab / Maiusc+Tab seguono l'ordine che calcola Rust
+// (`prossimo-fuoco`, `moduli::panoramica::ordine_tab`): voce («Nega» → «Consenti» o «Apri» →
+// «+N»), «N in attesa ›», carte (corpo → azione), schede, ricerca, volume, «⋯». Nelle altre viste
+// fra stanze, contenuto, schede, ricerca, volume (se c'è) e «⋯» (in
 // giro: da «⋯» Tab torna in cima; Invio o Spazio lì aprono il menu, che è in Slint dentro il
 // pannello — `menu.slint`, RC-58: con il menu aperto i tasti sono suoi e Esc chiude solo lui);
 // Invio o Spazio sul volume: muto sì/no; frecce dentro la zona
-// (in «In attesa» ←/→ fra le voci, Invio apre la Coda su quella voce; nella Coda ↑/↓ fra le righe,
+// (nella Coda ↑/↓ fra le righe,
 // → ai pulsanti (si entra su «Nega» se c'è, altrimenti sul primo), ← indietro fino alla riga,
 // Invio sul pulsante (mai su un consenso); un permesso si apre (Invio, «Apri», clic) col testo
 // intero: ↑/↓ lo scorrono, «Consenti» c'è solo dopo il fondo del testo e solo con Ctrl+Invio
 // esatto, Esc o Backspace lo richiudono; nella
-// Panoramica ←/→ cambiano layout, nelle schede cambiano scheda; in Casa Tab passa dall'elenco alle
+// Panoramica ←/→ fra i bersagli (voce e carte), ↑/↓ fra la voce e le carte; Invio su una carta
+// apre la sua pagina, sul suo bottone fa l'azione; sulla voce Invio preme «Nega» (mai un consenso:
+// «Consenti» solo con Ctrl+Invio esatto); nelle schede ←/→ cambiano scheda; in Casa Tab passa dall'elenco alle
 // card: ↑/↓ fra «Preferiti» e le stanze e → alle card, le frecce fra le card, ← dalla prima colonna all'elenco
 // e ↑ dalla prima riga a «Riprova» quando c'è; Casa vuota e non connessa: «Apri Impostazioni»);
 // In Collegamenti le frecce fra le card, ↑ dalla prima riga a «Modifica»; Invio apre la pagina.
@@ -29,8 +34,8 @@
 // passano dall'uno all'altro prima di lasciare la vista; sul cursore ←/→ ±2 punti, Home/Fine
 // 0/100, Invio o Spazio muto sì/no; fra riquadri e righe le frecce (← → nella riga, ↑ ↓ fra
 // riquadri e righe), Invio o Spazio accendono/spengono o aprono la pagina di Windows.
-// Invio o Spazio attivano (su una stanza o «Preferiti»: la sceglie e porta alle card; su una voce
-// di «In attesa»: apre la Coda su di lei); Backspace o Alt+← = indietro (prima torna a
+// Invio o Spazio attivano (su una stanza o «Preferiti»: la sceglie e porta alle card; su «N in
+// attesa ›»: apre la Coda); Backspace o Alt+← = indietro (prima torna a
 // «Preferiti»; dalla Coda alla Panoramica); Esc un livello alla volta: torna a «Preferiti», poi
 // chiude il pannello.
 // Un unico FocusScope tiene il fuoco e l'anello (visibile solo da tastiera) segue la
@@ -39,18 +44,16 @@ import { Tema, Movimento } from "tema.slint";
 import { Occhi } from "faccia.slint";
 import { Anello, Fuoco, Fuochi } from "componenti.slint";
 import { ContornoIsola, RigaAlta, Barra } from "guscio/cornice.slint";
-import { SchedaBarraUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, UmoreUi, StanzaUi, CollegamentoUi, QuadranteUi, FonteQuadranteUi, TipoReteUi, TintaBatteriaUi, RigaSessioneUi, LimiteClaudeUi, VoceMenuUi, SchermoMenuUi, Bersaglio, ModuloUi, TonoModuloUi } from "voci.slint";
-import { Attesa, RigaAttesa } from "attesa.slint";
+import { SchedaBarraUi, StatPcUi, PreferitoUi, PulsanteUi, VoceAttesaUi, UmoreUi, StanzaUi, CollegamentoUi, TipoReteUi, TintaBatteriaUi, RigaSessioneUi, LimiteClaudeUi, VoceMenuUi, SchermoMenuUi, ModuloUi, TonoModuloUi, LivelloUi } from "voci.slint";
 import { ImpiantoElenco, Permessi } from "impianti/elenco.slint";
 import { MenuScuro } from "menu.slint";
 import { VistaPc } from "viste/pc.slint";
 import { VistaClaude } from "viste/claude.slint";
 import { VistaCasa } from "viste/casa.slint";
 import { VistaCollegamenti } from "viste/collegamenti.slint";
-import { LayoutOrologio } from "layout/orologio.slint";
-import { LayoutQuadranti } from "layout/quadranti.slint";
+import { Griglia, Bersagli } from "guscio/panoramica.slint";
 
-export { SchedaBarraUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, StanzaUi, RigaSessioneUi, LimiteClaudeUi }
+export { SchedaBarraUi, StatPcUi, PreferitoUi, PulsanteUi, VoceAttesaUi, StanzaUi, RigaSessioneUi, LimiteClaudeUi }
 
 // Zona del pannello col fuoco da tastiera (`dock`: le schede della barra).
 enum Zona { attesa, stanze, contenuto, dock, ricerca, volume, menu }
@@ -59,15 +62,26 @@ export component Pannello inherits Window {
     in property <UmoreUi> umore: UmoreUi.tranquillo;
     in property <string> ora;
     in property <string> data;
+    // Le cifre dell'ora grande, già divise da Rust («0», «9», «:», «4», «5»), scritte con `ora`.
+    in property <[string]> ora-cifre;
     // Parte sinistra della riga alta, solo nella Panoramica (nelle app resta vuota): data breve e
-    // meteo secondo il layout, scritti da Rust solo quando cambiano; il nome è per Narrator.
+    // meteo, scritti da Rust solo quando cambiano; il nome è per Narrator.
     in property <string> riga-sinistra;
     in property <string> riga-sinistra-nome;
-    // Layout della Panoramica (indice del puntino: 0 Orologio, 1 Quadranti, come `layout.rs`).
-    in-out property <int> layout: 0;
-    out property <int> numero-layout: 2;
-    // L'ora piccola della riga alta: nascosta nel layout Orologio della Panoramica (c'è la grande).
-    out property <bool> ora-riga-visibile: !(vista == "panoramica" && layout == 0);
+    // La voce che ti aspetta si vede al posto dell'orologio: la prima voce in attesa, se è
+    // bloccante, nella Panoramica. Le altre voci le conta il suo «+N».
+    out property <bool> voce-mostrata: vista == "panoramica" && attese.length > 0 && attese[0].livello == LivelloUi.bloccante;
+    out property <bool> voce-altre: voce-mostrata && attese.length > 1;
+    // «N in attesa ›» della riga alta (`moduli::panoramica::in_attesa_non_mostrate`, scritto da
+    // Rust solo quando cambia): le voci in attesa che la Panoramica non mostra già.
+    in property <int> in-attesa;
+    // L'ora piccola della riga alta: nascosta quando la Panoramica mostra l'orologio grande.
+    out property <bool> ora-riga-visibile: !(vista == "panoramica" && !voce-mostrata);
+    // Il bersaglio col fuoco nella Panoramica (`Bersagli`: 2k la carta k, 2k + 1 la sua azione,
+    // 100/101/102 la voce, -1 nessuno). Tab lo muove con `prossimo-fuoco` (l'ordine lo decide Rust
+    // da ciò che c'è adesso).
+    in-out property <int> fuoco: -1;
+    callback prossimo-fuoco(int, bool) -> int;
     // L'app mostrata al centro; "panoramica" è la schermata principale. È l'id di un'app del
     // registro (un dato, non uno stato con un nome: resta una stringa); "coda" è la Coda del guscio
     // (le voci in attesa), che non ha una scheda.
@@ -97,7 +111,7 @@ export component Pannello inherits Window {
     in property <LimiteClaudeUi> claude-cinque-ore;
     in property <LimiteClaudeUi> claude-sette-giorni;
     // La soglia d'avviso dell'utente come frazione (80 % di serie): sopra, l'arco dei limiti e
-    // della spesa è caldo, nella vista Claude e nei quadranti (RC-44). La scrive Rust.
+    // della spesa è caldo, nella vista Claude (RC-44). La scrive Rust.
     in property <float> claude-soglia: 0.8;
     in property <string> claude-spesa;
     in property <string> claude-spesa-nota;
@@ -142,21 +156,13 @@ export component Pannello inherits Window {
     in property <string> cuffie-descrizione;
     // Vero mentre il pannello è aperto: guida l'animazione di apertura e il battito degli occhi.
     in-out property <bool> aperto;
-    // Casa: i preferiti (al massimo 8), la riga di stato, i sensori dei Quadranti (al massimo 3).
+    // Casa: i preferiti (al massimo 8) e la riga di stato.
     in property <[PreferitoUi]> preferiti;
-    in property <[SensoreUi]> sensori;
-    // I tre quadranti configurabili (Impostazioni › Isola): di serie quelli di M1. Rust li
-    // riscrive solo quando cambia la scelta o un valore della casa che mostrano.
-    in property <[QuadranteUi]> quadranti: [
-        { fonte: FonteQuadranteUi.cpu, etichetta: "CPU" },
-        { fonte: FonteQuadranteUi.ram, etichetta: "RAM" },
-        { fonte: FonteQuadranteUi.disco, etichetta: "DISCO" },
-    ];
     // Le stanze della vista Casa e i dispositivi della stanza aperta (li dà Rust a `apri-stanza`).
     in property <[StanzaUi]> stanze;
     in property <[PreferitoUi]> dispositivi;
     // Le luci accese adesso (le scrive Rust) e se la vista Casa le mostra al posto dei preferiti:
-    // il clic su «N luci accese» della Panoramica. Una luce spenta esce dall'elenco subito.
+    // il clic sulla carta Casa con luci accese. Una luce spenta esce dall'elenco subito.
     in property <[PreferitoUi]> luci;
     in-out property <bool> filtro-luci: false;
     // «Spegni tutte» nella testata della vista Casa filtrata: un comando per ogni luce accesa.
@@ -165,8 +171,8 @@ export component Pannello inherits Window {
     in-out property <int> stanza-aperta: -1;
     in property <string> stato-casa;
     in property <bool> casa-pronta;
-    // La casa non è configurata (nessun Home Assistant scelto): la riga «Casa» e il quadrante CASA
-    // diventano un invito che porta alle Impostazioni (R1-13).
+    // La casa non è configurata (nessun Home Assistant scelto): la vista Casa vuota invita alle
+    // Impostazioni (R1-13).
     in property <bool> casa-da-configurare;
     // Senza connessione: l'ora degli ultimi dati («dati delle 10:42») e se ha senso «Riprova».
     in property <string> dati-delle;
@@ -180,23 +186,24 @@ export component Pannello inherits Window {
     // Lo stesso in altezza, rispetto al centro della riga alta: la pillola che chiama è più alta.
     in property <length> partenza-occhi-y: 0px;
     // Le voci «In attesa», già in ordine (bloccante, attenzione, informazione; poi le più recenti):
-    // la riga in cima alla Panoramica e la Coda. `moduli-in-attesa`: da quanti moduli vengono (la
-    // testata della Coda), scritto da Rust solo quando cambia.
+    // la voce che ti aspetta della Panoramica e la Coda. `moduli-in-attesa`: da quanti moduli
+    // vengono (la testata della Coda), scritto da Rust solo quando cambia.
     in property <[VoceAttesaUi]> attese;
     in property <int> moduli-in-attesa;
     callback tocca(string);
-    // Un pulsante di una voce in attesa: (id della voce, id del pulsante).
+    // Un pulsante di una voce in attesa nella Coda: (id della voce, id del pulsante).
     callback azione(string, string);
-    // Nella Coda un permesso si apre o il suo «Consenti» compare (fondo del testo visto): Rust
-    // riarma «Consenti» per 600 ms (`claude_superficie_compare`).
+    // Un pulsante della voce che ti aspetta, nella Panoramica (clic, Narrator, Invio, Ctrl+Invio):
+    // Rust lo ignora nei 600 ms dopo che la voce mostrata è cambiata (un doppio clic su «Nega»
+    // non risponde anche alla voce che prende il suo posto), poi è un'`azione`.
+    callback azione-voce(string, string);
+    // Un permesso si apre nella Coda, il suo «Consenti» compare (fondo del testo visto) o la voce
+    // che ti aspetta compare nella Panoramica: Rust riarma «Consenti» per 600 ms
+    // (`claude_superficie_compare`).
     callback consenti-compare();
     // Il bottone d'azione di una carta: (id del modulo, id dell'azione). Lo traduce Rust
-    // (`Ponte::azione_modulo`); le carte che lo chiamano arrivano col Task 8.
+    // (`Ponte::azione_modulo`).
     callback azione-modulo(string, string);
-    // Clic su un puntino: quel layout.
-    callback scegli-layout(int);
-    // Frecce, rotella e Invio sui puntini: +1 il successivo, -1 il precedente (lo decide Rust).
-    callback scorri-layout(int);
     callback apri-app(string);
     // La vista è cambiata (Rust decide quali fonti lente del PC campionare).
     callback vista-cambiata();
@@ -233,35 +240,74 @@ export component Pannello inherits Window {
 
     // Geometria (logica, vedi `finestre.rs`): finestra 820 × 340 = isola 800 più le orecchie di
     // 10; riga alta 44 (gli occhi a metà, 6 sotto quelli della pillola: partono da lì), corpo
-    // 752 × 224 a (34, 44), barra 64 in fondo. Nel corpo: la riga «In attesa», il layout o la
-    // vista, e in fondo la riga dei puntini (solo nella Panoramica).
+    // 752 × 224 a (34, 44), barra 64 in fondo. Nel corpo la Panoramica o la vista.
     out property <length> larghezza-finestra: 820px;
     out property <length> larghezza-isola: 800px;
     out property <length> altezza-pannello: 340px;
     out property <length> altezza-riga: 44px;
     property <length> altezza-barra: 64px;
     property <length> corpo-a: altezza-pannello - altezza-riga - altezza-barra - 8px;
-    property <length> altezza-puntini: 20px;
     out property <length> centro-x: 34px;
     out property <length> centro-y: altezza-riga;
     out property <length> centro-l: larghezza-finestra - 2 * centro-x;
-    property <length> puntini-y: centro-y + corpo-a - altezza-puntini;
-    out property <length> centro-a: puntini-y - 2px - centro-y;
+    // Le viste stanno sopra la vecchia riga dei puntini (20 + 2): le porta a tutto il corpo il
+    // Task 10. La Panoramica a griglia usa già tutto il corpo (`corpo-a`).
+    out property <length> centro-a: corpo-a - 22px;
     // «⋯» nella riga alta: 32 × 32, 22 dal fianco destro dell'isola.
     property <length> piu-x: (larghezza-finestra + larghezza-isola) / 2 - 22px - 32px;
     property <length> piu-y: (altezza-riga - 32px) / 2;
-    // Riga «In attesa» (solo nella Panoramica e solo se c'è qualcosa): il layout sta sotto.
-    property <bool> con-attese: vista == "panoramica" && attese.length > 0;
-    property <length> altezza-attese: 42px;
-    property <length> sotto-attese: con-attese ? altezza-attese + 6px : 0px;
-    // Le voci «In attesa» diminuiscono (3 → 2): il fuoco su «+N», che non c'è più, va alla card più
-    // vicina invece di perdersi. Nella Coda la riga col fuoco è già tenuta dentro le righe che ci
-    // sono (`coda-riga`); qui l'indice scritto la raggiunge, così una riga che arriva dopo non si
-    // prende il fuoco da sola.
+    // Nella Coda la riga col fuoco è già tenuta dentro le righe che ci sono (`coda-riga`); qui
+    // l'indice scritto la raggiunge, così una riga che arriva dopo non si prende il fuoco da sola.
     property <int> n-attese: attese.length;
     changed n-attese => {
-        fuoco-attesa = max(0, min(fuoco-attesa, min(attese.length, Attesa.visibili + 1) - 1));
         fuoco-coda-riga = coda-riga;
+    }
+
+    // ─── Panoramica: il pool di fuoco (spike 11 §1) ───
+    // Il pool vale solo nella Panoramica col fuoco sul contenuto.
+    property <bool> pool-attivo: vista == "panoramica" && zona == Zona.contenuto;
+    property <int> carte: min(4, moduli.length);
+    // La voce compare (anche entrando nella Panoramica): il fuoco va su «Nega» e, se è un permesso,
+    // «Consenti» si arma di nuovo. La voce sparisce col fuoco addosso (permesso risolto nel
+    // terminale): il fuoco va alla prima carta, non si perde.
+    changed voce-mostrata => {
+        if (voce-mostrata) {
+            if (Permessi.chiede(attese[0])) {
+                root.consenti-compare();
+            }
+            if (zona == Zona.contenuto) {
+                fuoco = Bersagli.nega;
+            }
+        } else if (fuoco >= Bersagli.nega && fuoco <= Bersagli.altre) {
+            fuoco = carte > 0 ? 0 : -1;
+        }
+    }
+    // Un'altra voce al posto della prima: mai il fuoco sul consenso o su «+N» di una richiesta che
+    // non si è scelta; torna su «Nega».
+    property <string> voce-id: voce-mostrata ? attese[0].id : "";
+    changed voce-id => {
+        if (voce-mostrata && fuoco > Bersagli.nega && fuoco <= Bersagli.altre) {
+            fuoco = Bersagli.nega;
+        }
+    }
+    // «+N» sparisce col fuoco addosso (le altre voci risolte): il fuoco va su «Nega».
+    changed voce-altre => {
+        if (!voce-altre && fuoco == Bersagli.altre) {
+            fuoco = voce-mostrata ? Bersagli.nega : (carte > 0 ? 0 : -1);
+        }
+    }
+    // Le carte calano col fuoco sull'ultima: il fuoco va alla più vicina.
+    changed carte => {
+        if (fuoco >= 0 && fuoco < 2 * 4 && floor(fuoco / 2) >= carte) {
+            fuoco = carte > 0 ? (carte - 1) * 2 : -1;
+        }
+    }
+    // «N in attesa ›» sparisce col fuoco addosso: il fuoco va al contenuto.
+    changed in-attesa => {
+        if (in-attesa == 0 && zona == Zona.attesa) {
+            zona = Zona.contenuto;
+            fuoco = voce-mostrata ? Bersagli.nega : (carte > 0 ? 0 : -1);
+        }
     }
 
     // ─── Scorrimento fra le viste (280 ms) ───
@@ -286,14 +332,6 @@ export component Pannello inherits Window {
     // Posizione di una vista nella barra (la Panoramica è la prima); sconosciuta: dopo la Panoramica.
     pure function posizione(v: string) -> int {
         return v == "panoramica" ? 0 : scheda-di(v) >= 0 ? scheda-di(v) : 1;
-    }
-
-    // La riga «N luci accese» smette di essere il bersaglio da tastiera (luci spente, casa
-    // disconnessa, altro layout): il fuoco vero torna a `tasti`, non resta su un elemento fermo.
-    changed fuoco-luci-valido => {
-        if (!fuoco-luci-valido && fuoco-luci-el.has-focus) {
-            tasti.focus();
-        }
     }
 
     // L'uscita audio sparisce col fuoco sul volume: il fuoco va al vicino (la ricerca), non si perde.
@@ -334,23 +372,8 @@ export component Pannello inherits Window {
     property <int> colonne-casa: 4;
     // Le card della vista Casa: i dispositivi della stanza aperta, altrimenti i preferiti.
     property <bool> in-stanza: stanza-aperta >= 0 && stanza-aperta < stanze.length;
-    // La riga «N luci accese» della Panoramica si può usare (e raggiungere da tastiera): casa
-    // connessa e almeno una luce accesa. `fuoco-luci`: il fuoco da tastiera è su di lei (↓ o Tab
-    // dal contenuto; Invio o Spazio aprono la Casa filtrata, altrove Invio cambia layout).
+    // La carta Casa porta alla Casa filtrata sulle luci accese: casa connessa e almeno una luce.
     property <bool> luci-cliccabili: casa-pronta && luci.length > 0;
-    // La stessa riga, quando è un invito alle Impostazioni (casa non configurata), si usa allo
-    // stesso modo: clic, Tab, Invio.
-    property <bool> casa-cliccabile: luci-cliccabili || casa-da-configurare;
-    // Il bersaglio della riga da tastiera esiste: nei Quadranti solo il quadrante CASA (senza
-    // sensori) dice «N luci accese».
-    property <bool> luci-da-tastiera: casa-cliccabile && (layout == 0 || sensori.length == 0);
-    property <bool> fuoco-luci: false;
-    property <bool> fuoco-luci-valido: fuoco-luci && luci-da-tastiera && vista == "panoramica" && zona == Zona.contenuto;
-    // La riga (o il quadrante CASA) si usa adesso: il suo pulsante accessibile si mostra.
-    property <bool> bersaglio-luci: luci-da-tastiera && vista == "panoramica";
-    // Dove sta, nel contenuto: lo dice il layout mostrato (`bersaglio` di Orologio e Quadranti),
-    // alla nascita e a ogni cambio.
-    property <Bersaglio> luci-bersaglio;
     // La testata della Casa filtrata ha i suoi pulsanti solo a casa connessa: altrimenti dice lo
     // stato (e «Riprova») come la Casa completa.
     property <bool> testata-filtro: filtro-luci && casa-pronta;
@@ -379,8 +402,6 @@ export component Pannello inherits Window {
         : pc-successivo(fuoco-pc) >= 0 ? pc-successivo(fuoco-pc) : pc-precedente(fuoco-pc);
     // «Riprova» nella testata della vista Casa: casa non connessa che si può riprovare.
     property <bool> riprova-visibile: !casa-pronta && casa-riprovabile && (griglia.length > 0 || stanze.length > 0);
-    // «In attesa»: voce col fuoco (0..1, 2 = «+N», vedi `Attesa.visibili`).
-    property <int> fuoco-attesa: 0;
     // Coda: il fuoco è un indice, come `claude-fuoco`. `fuoco-coda-riga` la riga scritta da tasti e
     // clic, `coda-riga` quella valida (sempre dentro le righe che ci sono: l'ultima tolta col fuoco
     // addosso lo passa alla precedente). Il pulsante col fuoco (-1 = la riga) vale solo per la voce
@@ -411,10 +432,6 @@ export component Pannello inherits Window {
         && fuoco-coda-pulsante < attese[coda-riga].pulsanti.length && attese[coda-riga].id == coda-voce-pulsanti
         && (!coda-aperta-valida || !attese[coda-riga].pulsanti[fuoco-coda-pulsante].delicato || coda-visto)
         ? fuoco-coda-pulsante : -1;
-    // Rotella: spostamento accumulato e pausa dopo un cambio (un touchpad manda molti piccoli passi).
-    property <length> rotella: 0px;
-    property <bool> rotella-ferma: false;
-
     no-frame: true;
     always-on-top: true;
     background: transparent;
@@ -453,7 +470,8 @@ export component Pannello inherits Window {
 
     pure function ha-zona(z: Zona) -> bool {
         if (z == Zona.attesa) {
-            return con-attese;
+            // «N in attesa ›» della riga alta.
+            return vista == "panoramica" && in-attesa > 0;
         }
         if (z == Zona.stanze) {
             return vista == "casa" && stanze.length > 0;
@@ -475,7 +493,8 @@ export component Pannello inherits Window {
         return true;
     }
 
-    // L'ordine di Tab: «In attesa», stanze, contenuto, schede, ricerca, volume, «⋯» (e in giro).
+    // L'ordine di Tab fuori dalla Panoramica: stanze, contenuto, schede, ricerca, volume, «⋯» (e in
+    // giro; «N in attesa ›» c'è solo nella Panoramica).
     pure function zona-dopo(z: Zona, avanti: bool) -> Zona {
         if (avanti) {
             return z == Zona.attesa ? Zona.stanze : z == Zona.stanze ? Zona.contenuto
@@ -490,6 +509,15 @@ export component Pannello inherits Window {
     // Tab nella vista PC: prima gli elementi del contenuto (volume, riquadri, righe), poi la zona
     // seguente; entrando nel contenuto si parte dal primo (o dall'ultimo, all'indietro).
     function premi-tab(avanti: bool) {
+        // Panoramica: l'ordine lo calcola Rust; un bersaglio che non c'è (il secondo pulsante di
+        // una voce che ne ha uno) si salta.
+        if (vista == "panoramica") {
+            let n1 = root.prossimo-fuoco(id-attuale(), avanti);
+            let n2 = esiste(n1) ? n1 : root.prossimo-fuoco(n1, avanti);
+            let n3 = esiste(n2) ? n2 : root.prossimo-fuoco(n2, avanti);
+            vai-a(n3);
+            return;
+        }
         if (zona == Zona.contenuto && vista == "pc") {
             let n = avanti ? pc-successivo(fuoco-pc-valido) : pc-precedente(fuoco-pc-valido);
             if (n >= 0) {
@@ -497,24 +525,128 @@ export component Pannello inherits Window {
                 return;
             }
         }
-        // Panoramica con «N luci accese» cliccabile: dal contenuto Tab va prima a lei, e Maiusc+Tab
-        // da lei torna al layout.
-        if (zona == Zona.contenuto && vista == "panoramica" && luci-da-tastiera) {
-            if (avanti && !fuoco-luci-valido) {
-                fuoco-luci = true;
-                return;
-            }
-            if (!avanti && fuoco-luci-valido) {
-                tasti.focus();
-                fuoco-luci = false;
-                return;
-            }
-        }
         passa-zona(avanti);
-        fuoco-luci = zona == Zona.contenuto && vista == "panoramica" && !avanti && luci-da-tastiera;
         if (zona == Zona.contenuto && vista == "pc") {
             fuoco-pc = avanti ? pc-successivo(-1) : pc-precedente(5);
         }
+    }
+
+    // Il bersaglio di adesso col numero della Panoramica (`Bersagli`).
+    function id-attuale() -> int {
+        return zona == Zona.dock ? Bersagli.scheda + fuoco-dock : zona == Zona.ricerca ? Bersagli.ricerca
+            : zona == Zona.volume ? Bersagli.volume : zona == Zona.menu ? Bersagli.menu
+            : zona == Zona.attesa ? Bersagli.in-attesa : fuoco;
+    }
+
+    // Il bersaglio `id` c'è adesso nella Panoramica.
+    pure function esiste(id: int) -> bool {
+        if (id == Bersagli.nega) {
+            return voce-mostrata && griglia-el.indice-nega >= 0;
+        }
+        if (id == Bersagli.consenti) {
+            return voce-mostrata && griglia-el.indice-altro >= 0;
+        }
+        if (id == Bersagli.altre) {
+            return voce-altre;
+        }
+        if (id >= 0 && id < 2 * 4) {
+            return floor(id / 2) < carte && (mod(id, 2) == 0 || moduli[floor(id / 2)].con-azione);
+        }
+        return true;
+    }
+
+    // Porta il fuoco della Panoramica sul bersaglio `id`.
+    function vai-a(id: int) {
+        if (id >= Bersagli.scheda && id < Bersagli.ricerca) {
+            zona = Zona.dock;
+            fuoco-dock = id - Bersagli.scheda;
+        } else if (id == Bersagli.ricerca) {
+            zona = Zona.ricerca;
+        } else if (id == Bersagli.volume) {
+            zona = Zona.volume;
+        } else if (id == Bersagli.menu) {
+            zona = Zona.menu;
+        } else if (id == Bersagli.in-attesa) {
+            zona = Zona.attesa;
+        } else {
+            zona = Zona.contenuto;
+            fuoco = id;
+        }
+    }
+
+    // ←/→ nella Panoramica: il bersaglio accanto fra voce e carte (le schede e il resto no).
+    function freccia-panoramica(avanti: bool) {
+        let n1 = root.prossimo-fuoco(fuoco, avanti);
+        let n2 = esiste(n1) ? n1 : root.prossimo-fuoco(n1, avanti);
+        if ((n2 >= 0 && n2 < 2 * 4) || (n2 >= Bersagli.nega && n2 <= Bersagli.altre)) {
+            fuoco = n2;
+        }
+    }
+
+    // Invio (o Ctrl+Invio) su un bersaglio della Panoramica.
+    function attiva-panoramica(ctrl: bool) {
+        if (fuoco >= 0 && fuoco < 2 * 4) {
+            if (!ctrl) {
+                scegli-carta(fuoco);
+            }
+        } else if (fuoco == Bersagli.altre) {
+            if (!ctrl) {
+                apri-elenco(1);
+            }
+        } else if (fuoco == Bersagli.nega || fuoco == Bersagli.consenti) {
+            premi-voce(fuoco, ctrl ? 2 : 1);
+        }
+    }
+
+    // Un pulsante della voce che ti aspetta (`id` 100 o 101), con un gesto: 0 clic o Narrator,
+    // 1 Invio, 2 Ctrl+Invio esatto. Un consenso: col clic sì (l'armamento lo controlla Rust), da
+    // tastiera solo con Ctrl+Invio, e solo se il testo intero si legge nella voce; altrimenti il
+    // pulsante è «Apri» e porta al permesso aperto della Coda (il testo intero, «Consenti» dopo
+    // il fondo). Ctrl+Invio su un pulsante che non concede non fa nulla.
+    function premi-voce(id: int, gesto: int) {
+        let i = id == Bersagli.nega ? griglia-el.indice-nega : griglia-el.indice-altro;
+        if (!voce-mostrata || i < 0) {
+            return;
+        }
+        let p = attese[0].pulsanti[i];
+        if (!p.delicato) {
+            if (gesto < 2) {
+                root.azione-voce(attese[0].id, p.id);
+            }
+        } else if (!griglia-el.voce-intera) {
+            if (gesto < 2) {
+                apri-coda(0);
+            }
+        } else if (gesto != 1) {
+            root.azione-voce(attese[0].id, p.id);
+        }
+    }
+
+    // Clic, Narrator o Invio sulla carta k (`2k`) o sul suo bottone (`2k + 1`): la pagina del
+    // modulo (la carta Casa con luci accese: la Casa filtrata), o l'azione.
+    function scegli-carta(id: int) {
+        let k = floor(id / 2);
+        if (k >= carte) {
+            return;
+        }
+        if (mod(id, 2) == 1) {
+            if (moduli[k].con-azione) {
+                root.azione-modulo(moduli[k].id, moduli[k].azione-id);
+            }
+        } else if (moduli[k].id == "casa" && luci-cliccabili) {
+            mostra-luci();
+        } else if (scheda-di(moduli[k].id) >= 0) {
+            apri(scheda-di(moduli[k].id), moduli[k].id);
+        }
+    }
+
+    // La Coda come elenco, col fuoco sulla riga `i` (mai un permesso aperto: «+N» e «N in attesa ›»
+    // stanno dove la Coda aperta mette i suoi pulsanti).
+    function apri-elenco(i: int) {
+        vai("coda");
+        zona = Zona.contenuto;
+        fuoco-coda-riga = max(0, min(i, attese.length - 1));
+        fuoco-coda-pulsante = -1;
     }
 
     // Wi-Fi (0) o Bluetooth (1): l'interruttore si sposta subito (lo stato vero torna da Rust, e
@@ -559,8 +691,8 @@ export component Pannello inherits Window {
         return -1;
     }
 
-    // Apre la Coda sulla voce `i` (clic o Invio su «In attesa», «+N»): il fuoco sulla sua riga.
-    // Un permesso si apre subito col testo intero (dalla pillola «Apri» si arriva qui).
+    // Apre la Coda sulla voce `i`: il fuoco sulla sua riga. Un permesso si apre subito col testo
+    // intero (dalla pillola e da «Apri» della voce che ti aspetta si arriva qui).
     function apri-coda(i: int) {
         vai("coda");
         zona = Zona.contenuto;
@@ -667,17 +799,13 @@ export component Pannello inherits Window {
         }
     }
 
-    // La Casa filtrata sulle luci accese (clic su «N luci accese» della Panoramica): la vista Casa
+    // La Casa filtrata sulle luci accese (clic sulla carta Casa con luci accese): la vista Casa
     // con l'elenco delle luci accese, il fuoco sulla prima.
-    // Casa non configurata: la stessa riga porta alle Impostazioni (R1-13).
     function mostra-luci() {
-        if (casa-da-configurare) {
-            root.apri-app("impostazioni");
-        } else {
-            vai("casa");
-            filtro-luci = true;
-            fuoco-casa = 0;
-        }
+        fuoco-dock = max(0, scheda-di("casa"));
+        vai("casa");
+        filtro-luci = true;
+        fuoco-casa = 0;
     }
 
     // Torna all'elenco completo (Preferiti). Il fuoco da tastiera sta sulle card o nella testata,
@@ -728,8 +856,9 @@ export component Pannello inherits Window {
             root.chiudi-stanza();
         }
         filtro-luci = false;
-        fuoco-luci = false;
         vista = v;
+        // Nella Panoramica il fuoco riparte da «Nega» se la voce ti aspetta, altrimenti da nessuno.
+        fuoco = v == "panoramica" && voce-mostrata ? Bersagli.nega : -1;
         fuoco-casa = 0;
         fuoco-pc = 0;
         fuoco-stanza = -1;
@@ -783,11 +912,6 @@ export component Pannello inherits Window {
         }
     }
 
-    function scegli(i: int) {
-        root.layout = i;
-        root.scegli-layout(i);
-    }
-
     // Il volume scelto da tastiera o dal cursore: subito nel pannello, poi a Rust.
     function cambia-volume(v: float) {
         volume = min(max(v, 0), 1);
@@ -837,22 +961,16 @@ export component Pannello inherits Window {
             } else if (k == Key.LeftArrow && coda-pulsante >= 0) {
                 pulsante-coda(-1);
             }
-        } else if (zona == Zona.attesa) {
-            if (k == Key.LeftArrow) {
-                fuoco-attesa = max(0, min(fuoco-attesa, Attesa.visibili) - 1);
-            } else if (k == Key.RightArrow) {
-                fuoco-attesa = min(min(attese.length, Attesa.visibili + 1) - 1, fuoco-attesa + 1);
-            }
         } else if (zona == Zona.contenuto && vista == "panoramica") {
-            if (k == Key.DownArrow && luci-da-tastiera) {
-                fuoco-luci = true;
-            } else if (k == Key.UpArrow) {
-                tasti.focus();
-                fuoco-luci = false;
-            } else if (k == Key.LeftArrow) {
-                root.scorri-layout(-1);
+            // ←/→ fra voce e carte; ↑ dalle carte alla voce, ↓ dalla voce alle carte.
+            if (k == Key.LeftArrow) {
+                freccia-panoramica(false);
             } else if (k == Key.RightArrow) {
-                root.scorri-layout(1);
+                freccia-panoramica(true);
+            } else if (k == Key.UpArrow && fuoco < Bersagli.nega && voce-mostrata) {
+                fuoco = Bersagli.nega;
+            } else if (k == Key.DownArrow && (fuoco < 0 || fuoco >= Bersagli.nega) && carte > 0) {
+                fuoco = 0;
             }
         } else if (zona == Zona.stanze) {
             if (k == Key.UpArrow) {
@@ -948,16 +1066,19 @@ export component Pannello inherits Window {
     // permesso (su un pulsante delicato Invio e Spazio da soli non fanno nulla).
     function attiva(ctrl: bool) {
         if (ctrl) {
-            // Solo un consenso col fuoco da tastiera nella Coda; altrove Ctrl+Invio non fa nulla.
-            // Solo nel permesso aperto e dopo il fondo del testo (`coda-pulsante` lo controlla).
+            // Solo un consenso col fuoco da tastiera nella Coda (nel permesso aperto e dopo il
+            // fondo del testo: `coda-pulsante` lo controlla) o sulla voce che ti aspetta (col
+            // testo intero nella voce); altrove Ctrl+Invio non fa nulla.
             if (zona == Zona.contenuto && vista == "coda" && coda-aperta-valida && coda-visto && coda-pulsante >= 0
                     && attese[coda-riga].pulsanti[coda-pulsante].delicato) {
                 root.azione(attese[coda-riga].id, attese[coda-riga].pulsanti[coda-pulsante].id);
+            } else if (pool-attivo) {
+                attiva-panoramica(true);
             }
             return;
         }
         if (zona == Zona.attesa) {
-            apri-coda(min(fuoco-attesa, attese.length - 1));
+            apri-elenco(0);
         } else if (zona == Zona.dock) {
             apri(fuoco-dock, schede[fuoco-dock].id);
         } else if (zona == Zona.ricerca) {
@@ -970,10 +1091,8 @@ export component Pannello inherits Window {
             scegli-preferiti(true);
         } else if (zona == Zona.stanze) {
             scegli-stanza(fuoco-stanza-valido, true);
-        } else if (vista == "panoramica" && fuoco-luci-valido) {
-            mostra-luci();
         } else if (vista == "panoramica") {
-            root.scorri-layout(1);
+            attiva-panoramica(false);
         } else if (vista == "agenti") {
             if (fuoco-dettagli-valido) {
                 root.apri-dettagli-claude();
@@ -1149,6 +1268,13 @@ export component Pannello inherits Window {
                 sinistra: root.riga-sinistra;
                 sinistra-nome: root.riga-sinistra-nome;
                 sinistra-visibile: vista == "panoramica";
+                in-attesa: vista == "panoramica" ? root.in-attesa : 0;
+                fuoco-in-attesa: da-tastiera && zona == Zona.attesa && vista == "panoramica" && root.in-attesa > 0;
+                anello-in-attesa: da-tastiera && zona == Zona.attesa;
+                in-attesa-premuto => {
+                    da-tastiera = false;
+                    apri-elenco(0);
+                }
                 ora: root.ora;
                 ora-visibile: ora-riga-visibile;
                 ingombro-occhi: occhi.ingombro;
@@ -1187,102 +1313,43 @@ export component Pannello inherits Window {
                 }
             }
 
-            // «In attesa»: in cima alla Panoramica, solo se c'è qualcosa. Clic su una voce o su «+N»:
-            // la Coda su quella voce.
-            if con-attese: RigaAttesa {
-                x: centro-x;
-                y: centro-y;
-                width: centro-l;
-                height: altezza-attese;
-                voci: root.attese;
-                fuoco: da-tastiera && zona == Zona.attesa ? fuoco-attesa : -1;
-                scelta(i) => {
-                    da-tastiera = false;
-                    apri-coda(i);
-                }
-            }
-
-            // Centro: la Panoramica (solo sintesi, nessun comando), la Coda o la vista dell'app.
+            // Centro: la Panoramica, la Coda o la vista dell'app.
             Rectangle {
                 x: centro-x + scarto-contenuto;
-                y: centro-y + sotto-attese;
+                y: centro-y;
                 width: centro-l;
-                height: centro-a - sotto-attese;
+                height: centro-a;
                 opacity: opacita-contenuto;
 
-                // Il fuoco vero della riga «N luci accese»: un elemento sempre presente (mai dentro un
-                // `if`: distrutto col fuoco addosso, il pannello resterebbe senza tastiera) che i layout
-                // non possiedono. Quando smette di valere il fuoco torna a `tasti`. È anche l'unico
-                // pulsante per Narrator della riga (o del quadrante CASA): sta sul loro posto, che i
-                // layout dicono (`bersaglio-*`), e c'è solo dove la riga si usa (altrove è nascosto,
-                // quindi niente pulsante senza nome nelle altre viste).
-                fuoco-luci-el := Fuoco {
-                    x: luci-bersaglio.x;
-                    y: luci-bersaglio.y;
-                    width: luci-bersaglio.larghezza;
-                    height: luci-bersaglio.altezza;
-                    // Resta visibile finché tiene il fuoco: un elemento nascosto col fuoco addosso
-                    // perde la tastiera al tasto dopo (Slint lo toglie), prima che `changed
-                    // fuoco-luci-valido` riporti il fuoco a `tasti`.
-                    visible: bersaglio-luci || self.has-focus;
-                    chiede: fuoco-luci-valido && da-tastiera;
-                    accessible-role: button;
-                    accessible-label: casa-da-configurare ? (layout == 0 ? "Collega la casa: apri le Impostazioni" : "CASA, Collega la casa: apri le Impostazioni")
-                        : layout == 0 ? "Casa · " + stato-casa + ": mostra le luci accese"
-                        : "CASA, " + stato-casa + ": mostra le luci accese";
-                    accessible-action-default => { mostra-luci(); }
-                }
-                // La rotella sulla Panoramica cambia layout (in giù il successivo). Sta sotto i layout,
-                // che hanno il loro clic («N luci accese»).
-                if vista == "panoramica": TouchArea {
+                // La Panoramica a griglia: sempre presente (i suoi bersagli di fuoco non nascono e
+                // muoiono con la vista), visibile solo nella Panoramica.
+                griglia-el := Griglia {
+                    visible: vista == "panoramica";
+                    x: 0;
+                    y: 0;
                     width: parent.width;
-                    height: parent.height;
-                    scroll-event(evento) => {
-                        if (rotella-ferma) {
-                            return accept;
+                    height: corpo-a;
+                    moduli: root.moduli;
+                    ora: root.ora;
+                    cifre-ora: root.ora-cifre;
+                    voce-mostrata: root.voce-mostrata;
+                    voce: root.attese[0];
+                    altre: root.voce-mostrata ? root.attese.length - 1 : 0;
+                    fuoco: pool-attivo ? root.fuoco : -1;
+                    anello: da-tastiera && pool-attivo;
+                    scelta(id) => {
+                        da-tastiera = false;
+                        zona = Zona.contenuto;
+                        root.fuoco = id;
+                        if (id == Bersagli.altre) {
+                            apri-elenco(1);
+                        } else if (id == Bersagli.nega || id == Bersagli.consenti) {
+                            premi-voce(id, 0);
+                        } else {
+                            scegli-carta(id);
                         }
-                        rotella += abs(evento.delta-x) > abs(evento.delta-y) ? evento.delta-x : evento.delta-y;
-                        silenzio-rotella.running = true;
-                        silenzio-rotella.restart();
-                        if (abs(rotella) >= 24px) {
-                            root.scorri-layout(rotella < 0 ? 1 : -1);
-                            rotella = 0px;
-                            rotella-ferma = true;
-                        }
-                        return accept;
                     }
-                }
-
-                if vista == "panoramica" && layout == 0: LayoutOrologio {
-                    width: parent.width;
-                    height: parent.height;
-                    ora: root.ora;
-                    data: root.data;
-                    stato-casa: root.stato-casa;
-                    casa-pronta: root.casa-pronta;
-                    pc: root.pc;
-                    luci-cliccabili: root.luci-cliccabili;
-                    casa-invito: root.casa-da-configurare;
-                    anello-luci: root.fuoco-luci-valido && root.da-tastiera;
-                    init => { root.luci-bersaglio = self.bersaglio; }
-                    changed bersaglio => { root.luci-bersaglio = self.bersaglio; }
-                    apri-luci => { mostra-luci(); }
-                }
-                if vista == "panoramica" && layout == 1: LayoutQuadranti {
-                    width: parent.width;
-                    height: parent.height;
-                    stat: root.pc;
-                    sensori: root.sensori;
-                    quadranti: root.quadranti;
-                    ora: root.ora;
-                    stato-casa: root.stato-casa;
-                    casa-pronta: root.casa-pronta;
-                    luci-cliccabili: root.luci-cliccabili;
-                    casa-invito: root.casa-da-configurare;
-                    anello-luci: root.fuoco-luci-valido && root.da-tastiera;
-                    init => { root.luci-bersaglio = self.bersaglio; }
-                    changed bersaglio => { root.luci-bersaglio = self.bersaglio; }
-                    apri-luci => { mostra-luci(); }
+                    ripara(id) => { root.fuoco = id; }
                 }
 
                 if vista == "casa": VistaCasa {
@@ -1480,63 +1547,6 @@ export component Pannello inherits Window {
                 }
             }
 
-            // Puntini dei layout, solo nella Panoramica: quello attivo è allungato. Bersagli 24 × 24
-            // (WCAG 2.2), disegno invariato.
-            if vista == "panoramica": HorizontalLayout {
-                x: 0;
-                width: parent.width;
-                y: puntini-y;
-                height: altezza-puntini;
-                alignment: center;
-
-                Rectangle {
-                    // Gruppo dei puntini: l'anello del fuoco li circonda tutti.
-                    accessible-role: tab-list;
-                    accessible-label: "Layout della Panoramica";
-
-                    HorizontalLayout {
-                        for nome[i] in ["Orologio", "Quadranti"]: Rectangle {
-                            property <bool> attivo: i == layout;
-                            width: max(24px, (attivo ? 14px : 6px) + 8px);
-                            height: altezza-puntini;
-                            accessible-role: tab;
-                            accessible-label: "Layout " + nome;
-                            accessible-item-selectable: true;
-                            accessible-item-selected: attivo;
-                            accessible-item-index: i;
-                            accessible-item-count: 2;
-                            accessible-action-default => { scegli(i); }
-
-                            // Il fuoco vero sul layout attivo: ←/→ lo cambiano e il fuoco lo segue.
-                            Fuoco { chiede: attivo && da-tastiera && zona == Zona.contenuto && !fuoco-luci-valido; }
-
-                            Rectangle {
-                                width: attivo ? 14px : 6px;
-                                height: 6px;
-                                border-radius: self.height / 2;
-                                background: attivo ? Tema.testo : Tema.puntino;
-                            }
-
-                            // Più alta della riga (20): 24 × 24 senza spostare dock e layout.
-                            TouchArea {
-                                y: (parent.height - self.height) / 2;
-                                height: 24px;
-                                mouse-cursor: pointer;
-                                clicked => {
-                                    da-tastiera = false;
-                                    scegli(i);
-                                }
-                            }
-                        }
-                    }
-
-                    // Solo ai lati: sopra e sotto c'è appena posto fra layout e dock.
-                    if da-tastiera && zona == Zona.contenuto: Anello {
-                        distanza-y: -2px;
-                        raggio-anello: self.height / 2;
-                    }
-                }
-            }
 
             // La barra bassa: ricerca, schede, volume. Ferma: cambiando pagina si muove solo il corpo.
             Barra {
@@ -1590,15 +1600,6 @@ export component Pannello inherits Window {
         }
     }
 
-    Timer {
-        interval: 400ms;
-        running: rotella-ferma;
-        triggered => {
-            rotella-ferma = false;
-            rotella = 0px;
-        }
-    }
-
     // Fa partire l'arrivo animato del contenuto, 16 ms dopo il punto di partenza.
     arrivo := Timer {
         interval: 16ms;
@@ -1611,19 +1612,14 @@ export component Pannello inherits Window {
         }
     }
 
-    // Dopo un breve silenzio della rotella l'accumulo riparte da zero: piccoli passi di gesti
-    // diversi del touchpad non si sommano fino a cambiare layout. Gira solo durante lo scorrimento.
-    silenzio-rotella := Timer {
-        interval: 250ms;
-        running: false;
-        triggered => {
-            rotella = 0px;
-            self.running = false;
+    // Il fuoco vero sugli elementi solo a pannello sceso (vedi `Fuochi`): l'apertura dura 200 ms.
+    // Se la voce ti aspetta già all'apertura, il fuoco parte da «Nega».
+    init => {
+        Fuochi.pronti = false;
+        if (voce-mostrata) {
+            fuoco = Bersagli.nega;
         }
     }
-
-    // Il fuoco vero sugli elementi solo a pannello sceso (vedi `Fuochi`): l'apertura dura 200 ms.
-    init => { Fuochi.pronti = false; }
     Timer {
         interval: 220ms;
         running: aperto && !Fuochi.pronti;
@@ -1632,7 +1628,7 @@ export component Pannello inherits Window {
 
     // C'è un elemento per la zona e l'indice col fuoco da tastiera? Se no (clic col mouse, voce
     // sparita, Casa svuotata) il fuoco torna a `tasti`, che tiene comunque la tastiera.
-    property <bool> bersaglio: zona == Zona.attesa ? (con-attese && (fuoco-attesa < min(Attesa.visibili, attese.length) || (fuoco-attesa == Attesa.visibili && attese.length > Attesa.visibili)))
+    property <bool> bersaglio: zona == Zona.attesa ? ha-zona(Zona.attesa)
         : zona == Zona.stanze ? ha-zona(Zona.stanze)
         : zona == Zona.contenuto ? ha-zona(Zona.contenuto) && (vista == "panoramica" || vista == "collegamenti" || vista == "agenti" || vista == "pc" || vista == "coda"
             || (griglia.length > 0 ? (fuoco-casa >= 0 || riprova-visibile) : !casa-pronta))

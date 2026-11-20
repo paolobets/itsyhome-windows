@@ -1311,7 +1311,7 @@ async fn preferiti_cambiati_rimappano_senza_rileggere() {
     assert_eq!(ha.get_states(), 1);
 
     // cambio che non tocca preferiti/nascosti/ordini: nessuna rimappatura
-    p.servizio.aggiorna_config(|c| c.ultimo_layout = "compatto".into());
+    p.servizio.aggiorna_config(|c| c.mostra_icona_barra = true);
     sleep(Duration::from_millis(300)).await;
     assert!(p.eventi.try_recv().is_err());
 }
@@ -1359,16 +1359,16 @@ async fn config_non_salvata_arriva_come_evento() {
     std::fs::create_dir(dir.path().join("assistente.json")).unwrap();
     let mut p = prepara_con(dir, None, &[]);
 
-    p.servizio.aggiorna_config(|c| c.ultimo_layout = "compatto".into());
+    p.servizio.aggiorna_config(|c| c.mostra_icona_barra = true);
     match prossimo(&mut p).await {
         CasaEvento::ConfigNonSalvata(msg) => assert!(msg.starts_with("impossibile salvare la configurazione")),
         altro => panic!("atteso ConfigNonSalvata, arrivato {altro:?}"),
     }
     // la modifica resta in memoria
-    assert_eq!(p.servizio.config().ultimo_layout, "compatto");
+    assert!(p.servizio.config().mostra_icona_barra);
 
     // nessuna modifica: nessuna scrittura, nessun evento
-    p.servizio.aggiorna_config(|c| c.ultimo_layout = "compatto".into());
+    p.servizio.aggiorna_config(|c| c.mostra_icona_barra = true);
     sleep(Duration::from_millis(300)).await;
     assert!(p.eventi.try_recv().is_err());
 }
@@ -1773,7 +1773,7 @@ fn potenza_finta(valore: &str) -> Value {
     s
 }
 
-/// Un sensore di potenza scelto per un quadrante: è fra i sensori numerici di `MenuData` (non
+/// Un sensore di potenza scelto per un lato della pillola: è fra i sensori numerici di `MenuData` (non
 /// nelle stanze), entra nell'iscrizione, e il suo valore nuovo si pubblica senza mappatura completa
 /// né letture.
 #[tokio::test]
@@ -1783,7 +1783,7 @@ async fn un_sensore_scelto_si_aggiorna_senza_rimappare_ne_rileggere() {
     ha.contatori.stati.lock().unwrap().insert("sensor.fv".into(), potenza_finta("1500"));
     let diagnosi = Arc::new(Diagnosi::new(true));
     let mut p = prepara_con_diagnosi(&ha.url, diagnosi.clone());
-    p.servizio.aggiorna_config(|c| c.quadranti = vec!["cpu".into(), "sensore:sensor.fv".into()]);
+    p.servizio.aggiorna_config(|c| c.lato_sinistro = "sensore:sensor.fv".into());
     p.servizio.connetti_attivo();
     let d = aspetta_dati(&mut p).await;
     let fv = d.sensori_numerici.iter().find(|n| n.entity_id == "sensor.fv").expect("sensore numerico");

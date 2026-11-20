@@ -1313,13 +1313,13 @@ mod test {
         assert!(seguite.contains("weather.b"), "anche non disponibile: se torna, il suo cambio arriva");
     }
 
-    /// M2 Task 4: un sensore scelto per un quadrante (o un lato) entra nell'insieme seguito, anche
-    /// se l'app non lo mostra (nascosto, o non ancora mappato).
+    /// M2 Task 4: un sensore scelto per un lato della pillola entra nell'insieme seguito, anche se
+    /// l'app non lo mostra (nascosto, o non ancora mappato).
     #[test]
     fn sensore_scelto_e_seguito() {
         let (c, _) = casa(vec![luce("on"), tempo("weather.a", "cloudy", 9.0)]);
         let config = Config {
-            quadranti: vec!["cpu".into(), "sensore:sensor.produzione_fv".into()],
+            lato_sinistro: "sensore:sensor.produzione_fv".into(),
             lato_destro: "sensore:sensor.sala_t".into(),
             ..Config::default()
         };

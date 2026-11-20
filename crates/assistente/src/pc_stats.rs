@@ -1,4 +1,4 @@
-//! Statistiche del PC (CPU, RAM, dischi, rete, batteria, GPU) per i quadranti e la vista PC.
+//! Statistiche del PC (CPU, RAM, dischi, rete, batteria, GPU) per la carta PC e la vista PC.
 //!
 //! Il campionatore nasce all'apertura del pannello e muore alla chiusura: fuori da lì non si
 //! misura nulla, salvo la batteria (`sorveglia_batteria`, ogni 60 s) e, solo se scelte per i lati
@@ -141,7 +141,7 @@ pub struct StatPc {
 }
 
 /// Quali fonti lente legge il campionatore del pannello: dischi, reti e GPU solo se qualcosa li
-/// mostra (la vista PC, o un quadrante scelto). CPU, RAM e batteria si leggono sempre (costano poco).
+/// mostra (la vista PC). CPU, RAM e batteria si leggono sempre (costano poco).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Fonti {
     pub disco: bool,
@@ -344,7 +344,7 @@ impl Campionatore {
         }
     }
 
-    /// Vero se il campionatore legge i dischi (nessun quadrante e nessuna vista li mostra: mai).
+    /// Vero se il campionatore legge i dischi (fuori dalla vista PC: mai).
     #[cfg(test)]
     pub fn legge_dischi(&self) -> bool {
         self.dischi.is_some()
@@ -766,10 +766,10 @@ mod test {
         }
     }
 
-    /// M2 Task 4: nessun quadrante né vista mostra il disco → il campionatore non lo legge
-    /// (l'elenco dei dischi nemmeno si crea); appena una vista lo chiede, lo legge.
+    /// M2 Task 4: nessuna vista mostra il disco → il campionatore non lo legge (l'elenco dei
+    /// dischi nemmeno si crea); appena la vista PC lo chiede, lo legge.
     #[test]
-    fn quadranti_leggono_solo_cio_che_mostrano() {
+    fn si_legge_solo_cio_che_si_mostra() {
         let solo_cpu_ram = Fonti::default();
         let mut c = Campionatore::new(solo_cpu_ram);
         let s = c.campiona(solo_cpu_ram);

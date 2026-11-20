@@ -49,6 +49,8 @@ export struct ModuloUi {
     numerico: bool,
     sec: string,
     con-azione: bool,
+    // L'id dell'azione (`agenti::TERMINALE`…), per `azione-modulo`.
+    azione-id: string,
     azione-testo: string,
     azione-icona: image,
     narratore: string,
@@ -121,12 +123,6 @@ export struct PreferitoUi {
     tenue: bool,
 }
 
-// Un sensore preferito nei Quadranti: la voce e la frazione 0..1 dell'arco (-1 = niente arco).
-export struct SensoreUi {
-    voce: PreferitoUi,
-    frazione: float,
-}
-
 // Un pulsante di una voce «In attesa» (al massimo 2 per voce, anche nella pillola).
 // `delicato`: concede un permesso; nel pannello mai con Invio da solo, solo Ctrl+Invio o clic.
 export struct PulsanteUi {
@@ -137,12 +133,14 @@ export struct PulsanteUi {
 
 // Una voce «In attesa» per la riga in cima alla Panoramica (vedi `attenzione.rs`).
 // `livello`: colore della barretta (la parola è in `sotto`);
-// `sotto`: la riga piccola sotto il titolo, «attenzione · pc»; `icona`: la fonte.
+// `sotto`: la riga piccola sotto il titolo, «attenzione · pc»; `icona`: la fonte; `modulo`: il
+// nome del modulo da cui viene («Agenti»: la capsula della voce che ti aspetta).
 export struct VoceAttesaUi {
     id: string,
     livello: LivelloUi,
     titolo: string,
     sotto: string,
+    modulo: string,
     dettaglio: string,
     icona: image,
     pulsanti: [PulsanteUi],
@@ -227,46 +225,6 @@ export struct ContenutoLatoUi {
     rete: TipoReteUi,
     tacche: int,
     con-rete: bool,
-}
-
-// La fonte di un quadrante configurabile (vedi `lati::Lato`).
-export enum FonteQuadranteUi { niente, cpu, ram, disco, rete-giu, rete-su, batteria, ora, meteo, sensore, gpu, limite-5h, limite-7g, spesa-api }
-
-// Dove sta un bersaglio cliccabile di un layout della Panoramica (la riga o il quadrante CASA),
-// nelle coordinate del layout: il pannello ci mette il pulsante accessibile e il fuoco da tastiera.
-export struct Bersaglio {
-    x: length,
-    y: length,
-    larghezza: length,
-    altezza: length,
-}
-
-// Un quadrante configurabile dei Quadranti (vedi `ponte::quadranti_ui`). Per le fonti del PC e
-// per l'ora i valori li legge l'interfaccia (`StatPcUi`, l'ora del pannello); per meteo, sensori e le fonti
-// di Claude (limiti e spesa, `lati::quadrante_claude`)
-// li scrive Rust: `valore`, `frazione` 0..1 dell'arco (-1 = niente arco), `dettaglio` (il nome),
-// `genere` (l'icona del sensore).
-export struct QuadranteUi {
-    fonte: FonteQuadranteUi,
-    etichetta: string,
-    valore: string,
-    frazione: float,
-    dettaglio: string,
-    genere: GenereUi,
-    // Solo limiti e spesa di Claude: da quale frazione l'arco è caldo (>=, come la voce d'avviso).
-    caldo-da: float,
-    // Solo limiti di Claude: è il valore ricordato da prima del riavvio (RC-56), da mostrare tenue.
-    tenue: bool,
-}
-
-// Una riga «Quadrante n» di Impostazioni › Isola: la scelta (indice in `scelte-quadranti`) e,
-// se l'unità del sensore non ha una scala naturale (W, kW, ignota), il campo «Massimo»
-// (`massimo`: il valore scritto, vuoto = il predefinito, che sta in `predefinito`).
-export struct SceltaQuadranteUi {
-    indice: int,
-    con-massimo: bool,
-    massimo: string,
-    predefinito: string,
 }
 
 // Una sessione di Claude Code nella vista Claude (M3, Task 9). `id`: l'impronta della sessione

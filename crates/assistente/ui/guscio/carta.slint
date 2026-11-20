@@ -1,0 +1,236 @@
+// La carta di un modulo nella Panoramica a griglia (ridisegno F1, Task 8; spec §5.5, §13.5–§13.9,
+// spike 11 §1–§2). Due parti:
+// - `CartaVista`: solo l'aspetto, 182 × 108 r 20. Etichetta (icona 15 + nome mono maiuscolo coi
+//   token di `Tema.etichetta-*`, gli stessi con cui Rust misura; col nome breve se c'è la
+//   capsula), capsula (occhietti + parola nel colore del tono), valore (Inter 700 18, o Mono 500 26
+//   se è un numero) e riga 12. Quando il bottone d'azione si vede, valore e riga si accorciano
+//   di 38 px (§13.6): l'ellissi non finisce mai sotto il bottone. La luce sale dal basso per i
+//   toni che ce l'hanno. Nessun testo è per Narrator: il nome intero lo porta il `Posto`.
+// - `Posto`: uno dei 4 posti fissi del pool di fuoco (mai dentro `if`/`for`, spike 11 §1). Il fuoco
+//   vero sta nel `Fuoco` del corpo (nome per Narrator dal modello) e in quello del bottone
+//   d'azione; il bottone c'è solo se il modulo ha un'azione (§13.9: nessun nodo vuoto per
+//   Narrator) e si vede al passaggio o col fuoco sulla carta (dissolvenza 120 ms).
+import { Tema, Movimento } from "../tema.slint";
+import { Anello, Fuoco } from "../componenti.slint";
+import { ModuloUi, TonoModuloUi } from "../voci.slint";
+import { Luce } from "luce.slint";
+import { Occhietti } from "occhietti.slint";
+
+// La capsula del tono: occhietti e parola nel colore del tono, su un fondo dello stesso colore
+// trasparente. Decorativa: lo stato lo dice il nome per Narrator di chi la contiene.
+export component Capsula inherits Rectangle {
+    in property <TonoModuloUi> tono;
+    in property <string> parola;
+    // Parola in maiuscolo mono (la voce: «TI ASPETTA · AGENTI») o Inter 700 11 (la carta).
+    in property <bool> mono;
+
+    height: 20px;
+    // Margine 5, occhietti 15, spazio 4, parola, margine 8: con «Al lavoro» il nome «AGENTI»
+    // ci sta ancora accanto (spazio della carta 154, preflight C7).
+    width: parola-testo.preferred-width + 5px + 15px + 4px + 8px;
+    border-radius: self.height / 2;
+    background: Tema.colore-tono(root.tono).with-alpha(0.16);
+    accessible-role: none;
+
+    Occhietti {
+        x: 5px;
+        y: (parent.height - self.height) / 2;
+        tono: root.tono;
+    }
+
+    parola-testo := Text {
+        x: 24px;
+        height: parent.height;
+        text: root.mono ? root.parola.to-uppercase() : root.parola;
+        font-family: root.mono ? Tema.carattere-mono : Tema.carattere;
+        font-weight: root.mono ? 500 : 700;
+        font-size: root.mono ? Tema.etichetta-corpo : 11px;
+        letter-spacing: root.mono ? Tema.etichetta-spaziatura : 0px;
+        color: Tema.colore-tono(root.tono);
+        vertical-alignment: center;
+        accessible-role: none;
+    }
+}
+
+export component CartaVista inherits Rectangle {
+    in property <ModuloUi> modulo;
+    // Il puntatore è sopra (fondo un gradino più chiaro).
+    in property <bool> sopra;
+    // Il bottone d'azione si vede: valore e riga lasciano il suo posto.
+    in property <bool> azione-visibile;
+
+    // Spazi della carta (spec §13.6): margine 14, testo pieno 154, col bottone 116.
+    property <length> margine: 14px;
+    property <length> pieno: root.width - 2 * margine;
+    property <length> spazio: azione-visibile ? pieno - 38px : pieno;
+    property <bool> con-capsula: modulo.parola != "";
+
+    width: 182px;
+    height: 108px;
+    border-radius: 20px;
+    clip: true;
+    background: sopra ? Tema.g2 : Tema.g1;
+    accessible-role: none;
+
+    Luce {
+        width: parent.width;
+        height: parent.height;
+        tono: root.modulo.tono;
+    }
+
+    Rectangle {
+        border-radius: parent.border-radius;
+        border-width: 1px;
+        border-color: Tema.filo;
+    }
+
+    Image {
+        x: margine;
+        y: 13px;
+        width: 15px;
+        height: 15px;
+        source: root.modulo.icona;
+        colorize: Tema.icona;
+        image-rendering: smooth;
+        accessible-role: none;
+    }
+
+    nome := Text {
+        x: 36px;
+        y: 12px;
+        height: 18px;
+        width: max(0px, root.width - 36px - margine - (con-capsula ? capsula.width + 6px : 0px));
+        text: (con-capsula ? root.modulo.nome-breve : root.modulo.nome).to-uppercase();
+        font-family: Tema.carattere-mono;
+        font-weight: 500;
+        font-size: Tema.etichetta-corpo;
+        letter-spacing: Tema.etichetta-spaziatura;
+        color: Tema.testo-2;
+        vertical-alignment: center;
+        overflow: elide;
+        accessible-role: none;
+    }
+
+    capsula := Capsula {
+        visible: con-capsula;
+        x: root.width - margine - self.width;
+        y: 11px;
+        tono: root.modulo.tono;
+        parola: root.modulo.parola;
+    }
+
+    valore := Text {
+        x: margine;
+        y: root.modulo.numerico ? root.height - 12px - 16px - 3px - 30px : root.height - 12px - 16px - 3px - 24px;
+        width: spazio;
+        height: root.modulo.numerico ? 30px : 24px;
+        text: root.modulo.titolo;
+        font-family: root.modulo.numerico ? Tema.carattere-mono : Tema.carattere;
+        font-weight: root.modulo.numerico ? 500 : 700;
+        font-size: root.modulo.numerico ? 26px : 18px;
+        letter-spacing: root.modulo.numerico ? -0.52px : -0.27px;
+        color: Tema.testo;
+        vertical-alignment: center;
+        overflow: elide;
+        accessible-role: none;
+    }
+
+    riga := Text {
+        x: margine;
+        y: root.height - 12px - 16px;
+        width: spazio;
+        height: 16px;
+        text: root.modulo.sec;
+        font-size: Tema.testo-piccolo;
+        color: Tema.testo-2;
+        vertical-alignment: center;
+        overflow: elide;
+        accessible-role: none;
+    }
+}
+
+export component Posto inherits Rectangle {
+    // Il posto k: il corpo è il bersaglio `2k`, il bottone d'azione `2k + 1`.
+    in property <int> k;
+    in property <ModuloUi> modulo;
+    in property <bool> presente;
+    // Il bersaglio della Panoramica col fuoco (-1 nessuno) e se l'anello si vede (da tastiera).
+    in property <int> fuoco: -1;
+    in property <bool> anello;
+    out property <bool> sopra: area.has-hover || area-azione.has-hover;
+    // Il bottone si vede al passaggio o col fuoco sulla carta o sul bottone.
+    out property <bool> mostra-azione: modulo.con-azione && (sopra || fuoco == k * 2 || fuoco == k * 2 + 1);
+    // Clic (o Narrator) sul corpo (`2k`) o sul bottone (`2k + 1`).
+    callback scelta(int);
+    // Il bottone d'azione sparisce col fuoco addosso: il pannello porta il fuoco sul corpo.
+    callback ripara(int);
+
+    property <bool> azione-viva: presente && modulo.con-azione;
+    changed azione-viva => {
+        if (!azione-viva && fuoco == k * 2 + 1) {
+            root.ripara(k * 2);
+        }
+    }
+
+    width: 182px;
+    height: 108px;
+    visible: presente;
+
+    vista := CartaVista {
+        modulo: root.modulo;
+        sopra: root.sopra;
+        azione-visibile: root.mostra-azione;
+    }
+
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.scelta(root.k * 2); }
+    }
+
+    corpo := Fuoco {
+        chiede: root.presente && root.fuoco == root.k * 2;
+        accessible-role: button;
+        accessible-label: root.modulo.narratore;
+        accessible-action-default => { root.scelta(root.k * 2); }
+    }
+
+    if root.anello && root.fuoco == root.k * 2: Anello { raggio: 20px; }
+
+    // Il bottone d'azione: bianco 32, l'icona dell'azione in nero. Solo per i moduli con
+    // un'azione; nascosto (trasparente) a riposo, raggiungibile da Tab dopo il corpo.
+    azione := Rectangle {
+        visible: root.modulo.con-azione;
+        x: parent.width - 14px - self.width;
+        y: parent.height - 14px - self.height;
+        width: 32px;
+        height: 32px;
+        border-radius: self.height / 2;
+        background: area-azione.has-hover ? Tema.primario-sopra : Tema.primario;
+        opacity: root.mostra-azione ? 1 : 0;
+        animate opacity { duration: Movimento.ridotto ? 0ms : 120ms; }
+
+        Image {
+            width: 16px;
+            height: 16px;
+            source: root.modulo.azione-icona;
+            colorize: Tema.testo-su-primario;
+            image-rendering: smooth;
+            accessible-role: none;
+        }
+
+        area-azione := TouchArea {
+            enabled: root.mostra-azione;
+            mouse-cursor: pointer;
+            clicked => { root.scelta(root.k * 2 + 1); }
+        }
+
+        Fuoco {
+            chiede: root.presente && root.modulo.con-azione && root.fuoco == root.k * 2 + 1;
+            accessible-role: button;
+            accessible-label: root.modulo.narratore-azione;
+            accessible-action-default => { root.scelta(root.k * 2 + 1); }
+        }
+
+        if root.anello && root.fuoco == root.k * 2 + 1: Anello { raggio: parent.border-radius; }
+    }
+}
