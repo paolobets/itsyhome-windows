@@ -754,76 +754,77 @@ mod accessibilita {
         assert!(ElementHandle::find_by_accessible_label(&p, "AGENTI").next().is_none(), "il nome visibile non è un secondo nome per Narrator");
     }
 
-    #[test]
-    fn voce_chiusa_ed_espansa() {
-        piattaforma_di_prova();
-        let p = pannello();
-        let pulsanti = ModelRc::new(VecModel::from(vec![
-            PulsanteUi { id: "nega".into(), testo: "Nega".into(), delicato: false },
-            PulsanteUi { id: "consenti".into(), testo: "Consenti".into(), delicato: true },
-        ]));
-        p.set_attese(ModelRc::new(VecModel::from(vec![VoceAttesaUi {
-            id: "v".into(),
-            livello: LivelloUi::Bloccante,
-            titolo: "Avviso di prova".into(),
-            sotto: "Aspetta te · prova".into(),
-            dettaglio: "Il testo completo".into(),
-            icona: Default::default(),
-            pulsanti,
-        }])));
-        let chiusa = elemento(&p, "Avviso di prova, Aspetta te · prova");
-        assert_eq!(chiusa.accessible_role(), Some(AccessibleRole::Button));
-        assert_eq!((chiusa.accessible_expandable(), chiusa.accessible_expanded()), (Some(true), Some(false)));
-
-        p.invoke_espandi(0);
-        let espansa = elemento(&p, "Avviso di prova, Aspetta te · prova, voce 1 di 1");
-        assert_eq!(espansa.accessible_role(), Some(AccessibleRole::Groupbox));
-        assert_eq!(espansa.accessible_expanded(), Some(true));
-        assert_eq!(espansa.accessible_description().as_deref(), Some("Il testo completo"));
-        assert_eq!(elemento(&p, "Nega").accessible_role(), Some(AccessibleRole::Button));
-        assert_eq!(elemento(&p, "Consenti").accessible_role(), Some(AccessibleRole::Button));
-    }
-
-    /// 18/11: nella voce espansa il titolo si legge intero (va a capo, niente «…») e la riga sotto
-    /// e il testo scendono di conseguenza; un titolo corto occupa una riga sola.
-    #[test]
-    fn titolo_della_voce_espansa_va_a_capo() {
-        use i_slint_backend_testing::ElementHandle;
-        piattaforma_di_prova();
-        let voce = |titolo: &str| VoceAttesaUi {
-            id: "v".into(),
-            livello: LivelloUi::Bloccante,
+    /// Una voce di prova per la Coda: `permesso` le dà «Nega» e il delicato «Consenti».
+    fn voce_coda(id: &str, titolo: &str, livello: LivelloUi, sotto: &str, permesso: bool) -> VoceAttesaUi {
+        let pulsanti = if permesso {
+            vec![
+                PulsanteUi { id: "nega".into(), testo: "Nega".into(), delicato: false },
+                PulsanteUi { id: "consenti".into(), testo: "Consenti".into(), delicato: true },
+            ]
+        } else {
+            vec![]
+        };
+        VoceAttesaUi {
+            id: id.into(),
+            livello,
             titolo: titolo.into(),
-            sotto: "Aspetta te · Prova".into(),
+            sotto: sotto.into(),
             dettaglio: "Il testo completo".into(),
             icona: Default::default(),
-            pulsanti: ModelRc::new(VecModel::from(Vec::<PulsanteUi>::new())),
-        };
-        let altezza = |p: &Pannello, id: &str| {
-            let e = ElementHandle::find_by_element_id(p, id).next().unwrap_or_else(|| panic!("nessun elemento {id}"));
-            (e.absolute_position().y, e.size().height)
-        };
-        let p = pannello();
-        p.set_attese(ModelRc::new(VecModel::from(vec![voce("Permesso breve")])));
-        p.invoke_espandi(0);
-        let (_, una_riga) = altezza(&p, "VoceEspansa::titolo");
-        let (y_sotto_corto, _) = altezza(&p, "VoceEspansa::sotto-testo");
-
-        let lungo = concat!(
-            "Consentire a un programma di prova di cancellare la cartella dei documenti temporanei ",
-            "e di tutte le sue sottocartelle, compresi i file nascosti e quelli di sistema?"
-        );
-        p.set_attese(ModelRc::new(VecModel::from(vec![voce(lungo)])));
-        let (_, piu_righe) = altezza(&p, "VoceEspansa::titolo");
-        let (y_sotto_lungo, _) = altezza(&p, "VoceEspansa::sotto-testo");
-        assert!(piu_righe > una_riga * 1.5, "titolo lungo a capo: {piu_righe} contro {una_riga}");
-        assert!(y_sotto_lungo > y_sotto_corto, "la riga sotto scende: {y_sotto_lungo} contro {y_sotto_corto}");
+            pulsanti: ModelRc::new(VecModel::from(pulsanti)),
+        }
     }
 
-    /// 18/11 (Paolo): «Nega» e «Consenti» sono entrambi neutri, senza tinta d'azione; la tinta resta
-    /// all'ultimo pulsante di una voce che non è un permesso («Apri», «Riprova»).
+    /// Un pannello aperto sulla Coda con queste voci, la tastiera pronta; restituisce le azioni
+    /// arrivate (id del pulsante).
+    fn pannello_in_coda(voci: ModelRc<VoceAttesaUi>) -> (Pannello, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
+        piattaforma_di_prova();
+        let p = pannello();
+        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        p.global::<crate::Fuochi>().set_pronti(true);
+        p.set_attese(voci);
+        let azioni = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let a = azioni.clone();
+        p.on_azione(move |_, id| a.borrow_mut().push(id.to_string()));
+        p.set_vista("coda".into());
+        (p, azioni)
+    }
+
+    /// Ridisegno F1, Task 7: → su una riga di permesso porta il fuoco vero su «Nega» (mai su
+    /// «Consenti»), qualunque sia l'ordine dei pulsanti; ← torna alla riga. All'ingresso della Coda
+    /// il fuoco è sulla riga, non su un pulsante.
     #[test]
-    fn nega_e_consenti_sono_neutri() {
+    fn coda_entra_su_nega() {
+        use slint::platform::Key;
+        for consenti_primo in [false, true] {
+            let mut voce = voce_coda("p", "Permesso", LivelloUi::Bloccante, "Ti aspetta · Agenti", true);
+            if consenti_primo {
+                let v: Vec<PulsanteUi> = voce.pulsanti.iter().collect();
+                voce.pulsanti = ModelRc::new(VecModel::from(vec![v[1].clone(), v[0].clone()]));
+            }
+            let (p, azioni) = pannello_in_coda(ModelRc::new(VecModel::from(vec![voce])));
+            tasto(&p, Key::DownArrow);
+            assert_eq!(etichetta_col_fuoco(&p), "Permesso, Ti aspetta · Agenti", "consenti_primo={consenti_primo}: la riga");
+            tasto(&p, Key::RightArrow);
+            assert_eq!(etichetta_col_fuoco(&p), "Nega", "consenti_primo={consenti_primo}: si entra su «Nega»");
+            tasto(&p, Key::Return);
+            assert_eq!(*azioni.borrow(), ["nega"], "consenti_primo={consenti_primo}: Invio su «Nega» nega");
+        }
+        // Senza «Nega»: il primo pulsante.
+        let mut voce = voce_coda("r", "Casa non raggiungibile", LivelloUi::Attenzione, "Guarda presto · Casa", false);
+        voce.pulsanti = ModelRc::new(VecModel::from(vec![PulsanteUi { id: "riprova".into(), testo: "Riprova".into(), delicato: false }]));
+        let (p, _) = pannello_in_coda(ModelRc::new(VecModel::from(vec![voce])));
+        tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Riprova");
+        tasto(&p, Key::LeftArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Casa non raggiungibile, Guarda presto · Casa", "← alla riga");
+    }
+
+    /// Ridisegno F1, Task 7 (C1, regola M3): «Nega» e «Consenti» sono entrambi neutri, senza
+    /// tinta d'azione; la tinta resta all'ultimo pulsante di una voce che non è un permesso
+    /// («Apri», «Riprova»). Sostituisce `nega_e_consenti_sono_neutri` (la voce espansa non c'è più).
+    #[test]
+    fn coda_nega_e_consenti_sono_neutri() {
         use crate::{RegolaPulsanti, TipoPulsante};
         piattaforma_di_prova();
         let p = pannello();
@@ -833,15 +834,128 @@ mod accessibilita {
         assert_eq!(regola.invoke_tipo(true, true), TipoPulsante::Neutro, "Consenti");
         // Un'azione sicura in coda la mantiene.
         assert_eq!(regola.invoke_tipo(true, false), TipoPulsante::Azione, "Apri");
-        // La regola vale solo se pannello e pillola la usano davvero: se tornassero a decidere da
+        // La regola vale solo se la Coda e la pillola la usano davvero: se tornassero a decidere da
         // sé (ultimo = azione) questo test deve fallire.
         for (nome, sorgente) in [
-            ("attesa.slint", include_str!("../ui/attesa.slint")),
+            ("impianti/elenco.slint", include_str!("../ui/impianti/elenco.slint")),
             ("pillola.slint", include_str!("../ui/pillola.slint")),
         ] {
             assert!(sorgente.contains("RegolaPulsanti.tipo("), "{nome} non usa RegolaPulsanti.tipo");
-            assert!(!sorgente.contains("? TipoPulsante.azione"), "{nome} decide la tinta da sé");
+            assert!(!sorgente.contains("TipoPulsante.azione"), "{nome} decide la tinta da sé");
         }
+    }
+
+    /// Ridisegno F1, Task 7 (Review Focus 2): il fuoco su «Consenti» dell'ultima riga, e la riga
+    /// sparisce (permesso risolto nel terminale). Il fuoco va sulla riga precedente, non si perde,
+    /// e il tasto ↑ seguente funziona.
+    #[test]
+    fn ultima_voce_tolta_col_fuoco_addosso() {
+        use slint::platform::Key;
+        let voci = std::rc::Rc::new(VecModel::from(vec![
+            voce_coda("a", "Primo", LivelloUi::Bloccante, "Ti aspetta · Agenti", true),
+            voce_coda("b", "Secondo", LivelloUi::Bloccante, "Ti aspetta · Agenti", true),
+            voce_coda("c", "Terzo", LivelloUi::Bloccante, "Ti aspetta · Agenti", true),
+        ]));
+        let (p, azioni) = pannello_in_coda(ModelRc::from(voci.clone()));
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::RightArrow);
+        tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Consenti");
+        voci.remove(2);
+        // I `changed` girano al giro seguente del ciclo d'eventi.
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&p), "Secondo, Ti aspetta · Agenti", "il fuoco va sulla riga precedente");
+        // Una riga che arriva dopo non si prende il fuoco da sola.
+        voci.push(voce_coda("d", "Quarto", LivelloUi::Bloccante, "Ti aspetta · Agenti", true));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&p), "Secondo, Ti aspetta · Agenti", "il fuoco resta dov'era");
+        tasto(&p, Key::UpArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Primo, Ti aspetta · Agenti", "il tasto seguente non si perde");
+        // Una voce diversa al posto di quella col fuoco (stesso numero di righe): il fuoco lascia
+        // «Consenti» e torna sulla riga, mai sul consenso di un'altra richiesta.
+        tasto(&p, Key::RightArrow);
+        tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Consenti");
+        voci.set_row_data(0, voce_coda("z", "Un altro", LivelloUi::Bloccante, "Ti aspetta · Agenti", true));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&p), "Un altro, Ti aspetta · Agenti");
+        con_modificatori(&p, &[Key::Control], Key::Return);
+        assert!(azioni.borrow().is_empty(), "Ctrl+Invio sulla riga non concede: {:?}", azioni.borrow());
+    }
+
+    /// Ridisegno F1, Task 7: la Coda scorre; la riga col fuoco sotto il bordo viene portata in
+    /// vista, e risalendo anche la prima torna dentro.
+    #[test]
+    fn coda_porta_in_vista_la_riga_col_fuoco() {
+        use slint::platform::Key;
+        let (p, _) = pannello_in_coda(voci_attesa(8));
+        let lista = elemento(&p, "In attesa");
+        assert_eq!(lista.accessible_role(), Some(AccessibleRole::List));
+        let (cima, fondo) = (lista.absolute_position().y, lista.absolute_position().y + lista.size().height);
+        // Una riga ritagliata fuori dalla lista non si trova affatto: è fuori vista.
+        let dentro = |i: usize| {
+            ElementHandle::find_by_accessible_label(&p, &format!("Titolo {i}, Quando vuoi · prova")).next().is_some_and(|r| {
+                let y = r.absolute_position().y;
+                y >= cima - 0.5 && y + r.size().height <= fondo + 0.5
+            })
+        };
+        assert!(!dentro(7), "l'ultima riga parte fuori vista");
+        for _ in 0..8 {
+            tasto(&p, Key::DownArrow);
+            slint::platform::update_timers_and_animations();
+        }
+        assert_eq!(etichetta_col_fuoco(&p), "Titolo 7, Quando vuoi · prova");
+        assert!(dentro(7), "la riga col fuoco è in vista");
+        for _ in 0..8 {
+            tasto(&p, Key::UpArrow);
+            slint::platform::update_timers_and_animations();
+        }
+        assert!(dentro(0), "risalendo la prima torna in vista");
+    }
+
+    /// Ridisegno F1, Task 7: la Coda senza voci dice «Niente in attesa» e offre «Torna alla
+    /// Panoramica» (clic, Narrator e tastiera).
+    #[test]
+    fn coda_vuota_ha_lo_stato_vuoto() {
+        use slint::platform::Key;
+        let (p, _) = pannello_in_coda(ModelRc::new(VecModel::from(Vec::<VoceAttesaUi>::new())));
+        assert_eq!(elemento(&p, "Niente in attesa").accessible_role(), Some(AccessibleRole::Text));
+        let torna = elemento(&p, "Torna alla Panoramica");
+        assert_eq!(torna.accessible_role(), Some(AccessibleRole::Button));
+        torna.invoke_accessible_default_action();
+        assert_eq!(p.get_vista(), "panoramica");
+        // Da tastiera: il fuoco è sul pulsante, Invio torna.
+        p.set_vista("coda".into());
+        tasto(&p, Key::DownArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Torna alla Panoramica");
+        tasto(&p, Key::Return);
+        assert_eq!(p.get_vista(), "panoramica");
+    }
+
+    /// Ridisegno F1, Task 7: ogni riga della Coda è una voce d'elenco col nome «{titolo},
+    /// {livello} · {modulo}» e il testo completo come descrizione; la testata si legge come testo.
+    #[test]
+    fn coda_righe_accessibili() {
+        let (p, _) = pannello_in_coda(ModelRc::new(VecModel::from(vec![
+            voce_coda("a", "Claude chiede: Comando ls", LivelloUi::Bloccante, "Ti aspetta · Agenti", true),
+            voce_coda("b", "Casa non raggiungibile", LivelloUi::Attenzione, "Guarda presto · Casa", false),
+            voce_coda("c", "Disco quasi pieno", LivelloUi::Informazione, "Quando vuoi · PC", false),
+        ])));
+        p.set_moduli_in_attesa(3);
+        for (i, nome) in ["Claude chiede: Comando ls, Ti aspetta · Agenti", "Casa non raggiungibile, Guarda presto · Casa", "Disco quasi pieno, Quando vuoi · PC"]
+            .iter()
+            .enumerate()
+        {
+            let riga = elemento(&p, nome);
+            assert_eq!(riga.accessible_role(), Some(AccessibleRole::ListItem), "{nome}");
+            assert_eq!(riga.accessible_item_index(), Some(i), "{nome}");
+            assert_eq!(riga.accessible_description().as_deref(), Some("Il testo completo"), "{nome}");
+        }
+        assert_eq!(elemento(&p, "3 in attesa").accessible_role(), Some(AccessibleRole::Text));
+        assert_eq!(elemento(&p, "da 3 moduli").accessible_role(), Some(AccessibleRole::Text));
+        p.set_moduli_in_attesa(1);
+        assert_eq!(elemento(&p, "da 1 modulo").accessible_role(), Some(AccessibleRole::Text));
     }
 
     /// `n` voci «In attesa» di prova: «Titolo 0», «Titolo 1»… con livello «Quando vuoi».
@@ -917,36 +1031,32 @@ mod accessibilita {
             tasto(&p, Key::RightArrow);
             assert_eq!(etichetta_col_fuoco(&p), piu_n, "{n} voci: «+N» è l'ultimo");
             tasto(&p, Key::Return);
-            assert_eq!(
-                etichetta_col_fuoco(&p),
-                format!("Titolo 2, Quando vuoi · prova, voce 3 di {n}"),
-                "{n} voci: Invio su «+N» apre la prima nascosta"
-            );
+            assert_eq!(p.get_vista(), "coda", "{n} voci: Invio su «+N» apre la Coda");
+            assert_eq!(etichetta_col_fuoco(&p), "Titolo 2, Quando vuoi · prova", "{n} voci: sulla prima nascosta");
         }
     }
 
-    /// R1-12: «‹ 1 di 3 › Riduci» ha la forma di pulsanti (sfondo sempre visibile, bersaglio da
-    /// 28 px), non di etichette che si scoprono col mouse.
+    /// Ridisegno F1, Task 7: il clic su una voce della riga «In attesa» apre la Coda su di lei.
     #[test]
-    fn frecce_e_riduci_sono_pulsanti_veri() {
+    fn la_voce_in_attesa_apre_la_coda() {
+        use slint::platform::Key;
         piattaforma_di_prova();
         let p = pannello();
-        p.set_attese(voci_attesa(3));
-        p.invoke_espandi(0);
-        for nome in ["Voce precedente", "Voce successiva", "Riduci"] {
-            let e = elemento(&p, nome);
-            assert_eq!(e.accessible_role(), Some(AccessibleRole::Button), "{nome}");
-            let l = e.size();
-            assert!(l.width >= 28.0 && l.height >= 28.0, "{nome}: bersaglio {l:?}");
-        }
-        let sorgente = include_str!("../ui/attesa.slint");
-        let inizio = sorgente.find("naviga := HorizontalLayout").expect("la navigazione");
-        let fine = sorgente[inizio..].find("testo := Flickable").expect("il testo");
-        assert!(!sorgente[inizio..inizio + fine].contains("transparent"), "uno sfondo trasparente nasconde il pulsante");
+        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        p.global::<crate::Fuochi>().set_pronti(true);
+        p.set_attese(voci_attesa(2));
+        voce_chiusa(&p, 1).expect("seconda voce").invoke_accessible_default_action();
+        assert_eq!(p.get_vista(), "coda");
+        // Il primo tasto accende la tastiera sulla voce scelta: ↓ va oltre, ↑ torna su di lei.
+        tasto(&p, Key::UpArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Titolo 0, Quando vuoi · prova");
+        // Backspace torna alla Panoramica.
+        tasto(&p, Key::Backspace);
+        assert_eq!(p.get_vista(), "panoramica");
     }
 
     /// R1-14: nel layout Orologio della Panoramica l'ora piccola della riga alta non c'è (c'è la
-    /// grande); negli altri layout, nelle altre viste e con una voce espansa (che copre il centro) sì.
+    /// grande); negli altri layout e nelle altre viste (anche la Coda) sì.
     #[test]
     fn ora_piccola_nascosta_solo_nell_orologio() {
         piattaforma_di_prova();
@@ -958,10 +1068,8 @@ mod accessibilita {
         p.set_layout(0);
         p.set_vista("pc".into());
         assert!(p.get_ora_riga_visibile(), "altre viste");
-        p.set_vista("panoramica".into());
-        p.set_attese(voci_attesa(1));
-        p.invoke_espandi(0);
-        assert!(p.get_ora_riga_visibile(), "voce espansa: il centro è coperto");
+        p.set_vista("coda".into());
+        assert!(p.get_ora_riga_visibile(), "Coda");
     }
 
     /// R1-13: a casa non configurata la riga «Casa» (Orologio) e il quadrante CASA (Quadranti) sono
@@ -2179,30 +2287,19 @@ mod accessibilita {
     fn invio_non_consente_anche_col_fuoco_sul_pulsante() {
         // Il pulsante «Consenti» ha il fuoco vero (e sa premersi con Invio da solo), ma `tasti`
         // intercetta prima: Invio da solo non concede, Ctrl+Invio sì (UX3/FE15).
+        // Ridisegno F1, Task 7: sulla riga della Coda.
         use slint::platform::Key;
-        piattaforma_di_prova();
-        let p = pannello();
-        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
-        p.global::<crate::Fuochi>().set_pronti(true);
-        let pulsanti = ModelRc::new(VecModel::from(vec![
-            PulsanteUi { id: "nega".into(), testo: "Nega".into(), delicato: false },
-            PulsanteUi { id: "consenti".into(), testo: "Consenti".into(), delicato: true },
-        ]));
-        p.set_attese(ModelRc::new(VecModel::from(vec![VoceAttesaUi {
-            id: "v".into(),
-            livello: LivelloUi::Bloccante,
-            titolo: "Permesso".into(),
-            sotto: "Aspetta te · prova".into(),
-            dettaglio: "Posso?".into(),
-            icona: Default::default(),
-            pulsanti,
-        }])));
-        let azioni = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
-        let a = azioni.clone();
-        p.on_azione(move |_, id| a.borrow_mut().push(id.to_string()));
-        p.invoke_espandi(0);
-        // Il fuoco parte da «Nega»: → su «Consenti», poi Invio da solo.
+        let (p, azioni) = pannello_in_coda(ModelRc::new(VecModel::from(vec![voce_coda(
+            "v",
+            "Permesso",
+            LivelloUi::Bloccante,
+            "Ti aspetta · prova",
+            true,
+        )])));
+        // → entra su «Nega», → ancora su «Consenti», poi Invio da solo.
         tasto(&p, Key::RightArrow);
+        tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Consenti", "il fuoco vero è su «Consenti»");
         tasto(&p, Key::Return);
         assert!(azioni.borrow().is_empty(), "Invio da solo ha consentito: {:?}", azioni.borrow());
         // Ctrl+Invio sì.
@@ -2213,32 +2310,20 @@ mod accessibilita {
         assert_eq!(*azioni.borrow(), ["consenti"]);
     }
 
-    /// Un pannello con la voce «Permesso» (Nega / Consenti) espansa e il fuoco vero su «Consenti»;
-    /// restituisce le azioni arrivate.
-    fn pannello_sul_consenso() -> (Pannello, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
+    /// Un pannello sulla Coda con la riga «Permesso» (Nega / Consenti) e il fuoco vero su
+    /// «Consenti» (→ entra su «Nega», → ancora); restituisce le azioni arrivate.
+    fn coda_sul_consenso() -> (Pannello, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
         use slint::platform::Key;
-        piattaforma_di_prova();
-        let p = pannello();
-        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
-        p.global::<crate::Fuochi>().set_pronti(true);
-        let pulsanti = ModelRc::new(VecModel::from(vec![
-            PulsanteUi { id: "nega".into(), testo: "Nega".into(), delicato: false },
-            PulsanteUi { id: "consenti".into(), testo: "Consenti".into(), delicato: true },
-        ]));
-        p.set_attese(ModelRc::new(VecModel::from(vec![VoceAttesaUi {
-            id: "v".into(),
-            livello: LivelloUi::Bloccante,
-            titolo: "Permesso".into(),
-            sotto: "Aspetta te · prova".into(),
-            dettaglio: "Posso?".into(),
-            icona: Default::default(),
-            pulsanti,
-        }])));
-        let azioni = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
-        let a = azioni.clone();
-        p.on_azione(move |_, id| a.borrow_mut().push(id.to_string()));
-        p.invoke_espandi(0);
+        let (p, azioni) = pannello_in_coda(ModelRc::new(VecModel::from(vec![voce_coda(
+            "v",
+            "Permesso",
+            LivelloUi::Bloccante,
+            "Ti aspetta · prova",
+            true,
+        )])));
         tasto(&p, Key::RightArrow);
+        tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Consenti", "il fuoco vero è su «Consenti»");
         (p, azioni)
     }
 
@@ -2255,9 +2340,10 @@ mod accessibilita {
     }
 
     #[test]
-    fn consenti_solo_con_ctrl_invio_esatto() {
+    fn coda_consenti_solo_con_ctrl_invio_esatto() {
         // Giro di correzioni 1, rilievo 1 (bloccante): col fuoco vero su «Consenti» nessuna
-        // combinazione diversa da Ctrl+Invio deve concedere (UX3/FE15).
+        // combinazione diversa da Ctrl+Invio deve concedere (UX3/FE15). Ridisegno F1, Task 7: la
+        // regola rinasce sulla riga della Coda (la voce espansa non c'è più).
         // Ctrl+Alt+Invio: su Windows Slint legge Ctrl+Alt come AltGr e, se non nasce un carattere
         // alfanumerico, toglie tutti e due; nel backend di prova arriva quindi come Invio semplice.
         // Il caso resta (un AltGr non deve concedere), ma NON esercita il `!evento.modifiers.alt`
@@ -2277,24 +2363,20 @@ mod accessibilita {
             ("Maiusc+Ctrl+Invio", &[Key::Shift, Key::Control], Key::Return),
         ];
         for (nome, modificatori, t) in casi {
-            let (p, azioni) = pannello_sul_consenso();
+            let (p, azioni) = coda_sul_consenso();
             con_modificatori(&p, modificatori, t);
             assert!(azioni.borrow().is_empty(), "{nome} ha concesso: {:?}", azioni.borrow());
         }
-        let (p, azioni) = pannello_sul_consenso();
+        let (p, azioni) = coda_sul_consenso();
         con_modificatori(&p, &[Key::Control], Key::Return);
         assert_eq!(*azioni.borrow(), ["consenti"], "Ctrl+Invio concede");
     }
 
     #[test]
     fn invio_da_solo_non_consente() {
-        // La voce vera di un permesso nel pannello: il fuoco parte da «Nega» (Invio = nega), il
-        // consenso solo con Ctrl+Invio.
+        // La voce vera di un permesso nella Coda: → entra su «Nega» (Invio = nega), il consenso solo
+        // con Ctrl+Invio.
         use slint::platform::Key;
-        piattaforma_di_prova();
-        let p = pannello();
-        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
-        p.global::<crate::Fuochi>().set_pronti(true);
         let e = claude_hook::evento::EventoHook {
             sessione: "a".into(),
             tipo: claude_hook::evento::TipoEvento::PermissionRequest,
@@ -2305,19 +2387,19 @@ mod accessibilita {
             riassunto: Some("ls".into()),
         };
         let voce = crate::claude::voce_permesso(1, &e, "", std::time::Instant::now());
-        p.set_attese(ModelRc::new(VecModel::from(vec![VoceAttesaUi {
+        let (p, azioni) = pannello_in_coda(ModelRc::new(VecModel::from(vec![VoceAttesaUi {
             id: voce.id.as_str().into(),
             livello: LivelloUi::Bloccante,
             titolo: voce.titolo.as_str().into(),
-            sotto: "Aspetta te · claude".into(),
+            sotto: "Ti aspetta · Agenti".into(),
             dettaglio: voce.dettaglio.as_str().into(),
             icona: Default::default(),
             pulsanti: crate::pillola::pulsanti_ui(&voce.pulsanti),
         }])));
-        let azioni = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
-        let a = azioni.clone();
-        p.on_azione(move |_, id| a.borrow_mut().push(id.to_string()));
-        p.invoke_espandi(0);
+        // Invio sulla riga entra nei pulsanti come →, sempre su «Nega»: non risponde.
+        tasto(&p, Key::Return);
+        assert!(azioni.borrow().is_empty(), "Invio sulla riga ha risposto: {:?}", azioni.borrow());
+        assert_eq!(etichetta_col_fuoco(&p), "Nega");
         tasto(&p, Key::Return);
         assert_eq!(*azioni.borrow(), ["nega"], "Invio da solo nega, non consente");
         azioni.borrow_mut().clear();

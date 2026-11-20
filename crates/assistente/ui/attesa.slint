@@ -1,10 +1,11 @@
 // La riga «In attesa» in cima alla Panoramica (bozza bozza-in-attesa.html, spec §3bis): le voci di
 // tutte le fonti con i 3 livelli. Barretta colorata per livello e, sotto il titolo, sempre la
 // parola del livello (il colore non basta da solo). Fino a 2 voci larghe visibili più «+N».
-// Clic su una voce = si espande sul posto (testo completo e pulsanti), senza viste nuove.
+// Clic su una voce o su «+N» = la Coda su quella voce (ridisegno F1, Task 7: la voce espansa sul
+// posto non c'è più; la riga stessa se ne va col Task 8).
 import { Tema } from "tema.slint";
-import { VoceAttesaUi, PulsanteUi } from "voci.slint";
-import { Anello, Fuoco, Pulsante, RegolaPulsanti } from "componenti.slint";
+import { VoceAttesaUi } from "voci.slint";
+import { Anello, Fuoco } from "componenti.slint";
 
 // Quante voci «In attesa» stanno chiuse nella riga (R1-22): due card larghe, così i titoli si
 // leggono; da tre voci in su le altre stanno dietro «+N» (indice `visibili` nel fuoco).
@@ -20,13 +21,10 @@ component VoceChiusa inherits Rectangle {
 
     border-radius: Tema.raggio-l;
     background: area.has-hover ? Tema.scheda-sopra : Tema.card-fondo;
-    // Per Narrator: un pulsante che si espande (chiuso), col fuoco vero quando l'anello c'è.
+    // Per Narrator: un pulsante che apre la Coda su questa voce, col fuoco vero quando l'anello c'è.
     accessible-role: button;
     accessible-label: voce.titolo + ", " + voce.sotto;
-    accessible-expandable: true;
-    accessible-expanded: false;
     accessible-action-default => { root.scelta(); }
-    accessible-action-expand => { root.scelta(); }
 
     Fuoco { chiede: anello; }
 
@@ -71,7 +69,7 @@ export component RigaAttesa inherits Rectangle {
     in property <[VoceAttesaUi]> voci;
     // Voce col fuoco da tastiera (-1 = nessuna; `Attesa.visibili` = «+N»).
     in property <int> fuoco: -1;
-    // Clic su una voce (o su «+N»: la prima nascosta, indice `Attesa.visibili`): la si espande.
+    // Clic su una voce (o su «+N»: la prima nascosta, indice `Attesa.visibili`): la Coda su di lei.
     callback scelta(int);
 
     property <int> visibili: min(Attesa.visibili, voci.length);
@@ -116,222 +114,5 @@ export component RigaAttesa inherits Rectangle {
         }
 
         if root.fuoco == Attesa.visibili: Anello { raggio: parent.border-radius; }
-    }
-}
-
-// Una voce espansa sul posto: copre la riga e il centro della Panoramica. Titolo, livello e
-// fonte, testo completo, pulsanti; ‹ › per passare alle altre voci; clic sulla testata o su
-// «Riduci» la richiude.
-export component VoceEspansa inherits Rectangle {
-    in property <VoceAttesaUi> voce;
-    in property <int> posizione;
-    in property <int> totale;
-    // Pulsante col fuoco da tastiera (-1 = nessuno; -2 = la voce stessa).
-    in property <int> fuoco: -1;
-    // Scorrimento del testo da tastiera: il pannello incrementa uno dei due contatori a ogni ↑/↓.
-    in property <int> scorri-su;
-    in property <int> scorri-giu;
-    callback riduci();
-    callback precedente();
-    callback successiva();
-    callback azione(string);
-    // Il testo è (o non è più) in fondo: ↓ passa ai pulsanti solo da lì.
-    callback fondo(bool);
-
-    // Passo di scorrimento da tastiera: circa due righe.
-    property <length> passo: 36px;
-    property <length> scorrimento-minimo: min(0px, testo.height - testo.content-height);
-    property <bool> a-fondo: testo.content-y <= scorrimento-minimo + 0.5px;
-    property <string> id-voce: voce.id;
-    changed scorri-giu => { testo.content-y = max(scorrimento-minimo, testo.content-y - passo); }
-    changed scorri-su => { testo.content-y = min(0px, testo.content-y + passo); }
-    changed a-fondo => { root.fondo(self.a-fondo); }
-    // Un'altra voce riparte dall'inizio del suo testo.
-    changed id-voce => { testo.content-y = 0px; }
-    init => { root.fondo(self.a-fondo); }
-
-    border-radius: Tema.raggio-xl;
-    background: Tema.riquadro-fondo;
-    border-width: 1px;
-    border-color: Tema.vetro-bordo;
-    // Per Narrator: la voce espansa, col titolo come nome e il testo completo come descrizione; col
-    // fuoco sulla voce stessa (non su un pulsante) è lei a riceverlo.
-    accessible-role: groupbox;
-    accessible-label: voce.titolo + ", " + voce.sotto + ", voce " + (posizione + 1) + " di " + totale;
-    accessible-description: voce.dettaglio;
-    accessible-expandable: true;
-    accessible-expanded: true;
-
-    Fuoco { chiede: root.fuoco == -2; }
-
-    // Testata cliccabile: richiude la voce.
-    TouchArea {
-        y: 0;
-        height: 52px;
-        mouse-cursor: pointer;
-        clicked => { root.riduci(); }
-    }
-
-    Rectangle {
-        x: 14px;
-        y: 14px;
-        width: 4px;
-        height: parent.height - 28px;
-        border-radius: self.width / 2;
-        background: Tema.colore-livello(voce.livello);
-    }
-
-    Image {
-        x: 28px;
-        y: 14px;
-        width: 18px;
-        height: 18px;
-        source: voce.icona;
-        colorize: Tema.icona;
-        accessible-role: none;
-        image-rendering: smooth;
-    }
-
-    // Il titolo si legge intero: va a capo (al massimo 3 righe) e il resto scende di conseguenza.
-    titolo := Text {
-        x: 54px;
-        y: 12px;
-        width: naviga.x - self.x - 12px;
-        height: min(self.preferred-height, 57px);
-        text: voce.titolo;
-        wrap: word-wrap;
-        overflow: elide;
-        vertical-alignment: top;
-        font-weight: 500;
-        font-size: Tema.testo-titolo;
-        color: Tema.testo;
-    }
-
-    sotto-testo := Text {
-        x: 54px;
-        y: titolo.y + titolo.height + 2px;
-        width: naviga.x - self.x - 12px;
-        text: voce.sotto;
-        overflow: elide;
-        font-size: Tema.testo-piccolo;
-        color: Tema.testo-tenue;
-    }
-
-    // In alto a destra: ‹ 1 di 4 › (se ci sono altre voci) e «Riduci». Le frecce e «Riduci» hanno
-    // sempre la forma di un pulsante (sfondo tenue, più chiaro al passaggio): si scoprono a colpo
-    // d'occhio, non passandoci sopra (R1-12).
-    naviga := HorizontalLayout {
-        width: self.preferred-width;
-        x: parent.width - self.width - 12px;
-        y: 10px;
-        height: 30px;
-        spacing: 4px;
-
-        if totale > 1: Rectangle {
-            width: 30px;
-            border-radius: Tema.raggio-m;
-            background: area-prec.has-hover ? Tema.neutro-sopra : Tema.neutro-fondo;
-            accessible-role: button;
-            accessible-label: "Voce precedente";
-            accessible-action-default => { root.precedente(); }
-            Text { text: "‹"; font-size: Tema.testo-sottotitolo; color: Tema.testo; }
-            area-prec := TouchArea { mouse-cursor: pointer; clicked => { root.precedente(); } }
-        }
-
-        if totale > 1: Text {
-            text: (posizione + 1) + " di " + totale;
-            vertical-alignment: center;
-            font-size: Tema.testo-piccolo;
-            color: Tema.testo-tenue;
-        }
-
-        if totale > 1: Rectangle {
-            width: 30px;
-            border-radius: Tema.raggio-m;
-            background: area-succ.has-hover ? Tema.neutro-sopra : Tema.neutro-fondo;
-            accessible-role: button;
-            accessible-label: "Voce successiva";
-            accessible-action-default => { root.successiva(); }
-            Text { text: "›"; font-size: Tema.testo-sottotitolo; color: Tema.testo; }
-            area-succ := TouchArea { mouse-cursor: pointer; clicked => { root.successiva(); } }
-        }
-
-        Rectangle {
-            width: riduci-testo.preferred-width + 20px;
-            border-radius: Tema.raggio-m;
-            background: area-riduci.has-hover ? Tema.neutro-sopra : Tema.neutro-fondo;
-            accessible-role: button;
-            accessible-label: "Riduci";
-            accessible-action-default => { root.riduci(); }
-            riduci-testo := Text { text: "Riduci"; font-size: Tema.testo-piccolo; color: Tema.testo; }
-            area-riduci := TouchArea { mouse-cursor: pointer; clicked => { root.riduci(); } }
-            if root.fuoco == -2: Anello { raggio: parent.border-radius; }
-        }
-    }
-
-    // Il testo completo: va a capo e, se è più lungo dell'area, si scorre (rotella, o ↑/↓ col
-    // fuoco sulla voce). Una sfumatura in basso dice che c'è altro da leggere.
-    testo := Flickable {
-        x: 54px;
-        y: sotto-testo.y + 25px;
-        width: parent.width - self.x - 18px;
-        height: parent.height - self.y - (voce.pulsanti.length > 0 ? 52px : 14px);
-        content-height: max(self.height, dettaglio.preferred-height);
-
-        // In alto (senza y e altezza Slint lo centrerebbe nell'area).
-        dettaglio := Text {
-            y: 0px;
-            width: parent.width;
-            height: self.preferred-height;
-            text: voce.dettaglio;
-            wrap: word-wrap;
-            vertical-alignment: top;
-            font-size: Tema.testo-corpo;
-            color: Tema.testo-2;
-        }
-    }
-
-    if !a-fondo: Rectangle {
-        x: testo.x;
-        y: testo.y + testo.height - self.height;
-        width: testo.width;
-        height: 16px;
-        // Dal trasparente al fondo della voce (la carta, `g1`).
-        background: @linear-gradient(180deg, Tema.g1.with-alpha(0) 0%, Tema.g1 100%);
-    }
-
-    // Col fuoco da tastiera su un consenso: Invio da solo non fa nulla, lo si dice accanto.
-    if root.fuoco >= 0 && root.fuoco < voce.pulsanti.length && voce.pulsanti[root.fuoco].delicato: Text {
-        x: 54px;
-        y: pulsanti-voce.y;
-        width: pulsanti-voce.x - self.x - 12px;
-        height: 30px;
-        text: "Ctrl+Invio per consentire";
-        horizontal-alignment: right;
-        vertical-alignment: center;
-        overflow: elide;
-        font-size: Tema.testo-piccolo;
-        color: Tema.testo-tenue;
-    }
-
-    pulsanti-voce := HorizontalLayout {
-        width: self.preferred-width;
-        x: parent.width - self.width - 16px;
-        y: parent.height - 30px - 14px;
-        height: 30px;
-        spacing: 8px;
-
-        // La tinta d'azione va all'ultimo (es. «Apri»), come nella pillola, ma mai a un permesso
-        // (pulsante delicato): «Nega» e «Consenti» sono entrambi neutri.
-        for p[i] in voce.pulsanti: Pulsante {
-            testo: p.testo;
-            tipo: RegolaPulsanti.tipo(i == voce.pulsanti.length - 1, p.delicato);
-            anello: i == root.fuoco;
-            chiede-fuoco: i == root.fuoco;
-            // La tastiera la governa il pannello (Ctrl+Invio per un permesso).
-            tasti-propri: false;
-            delicato: p.delicato;
-            premuto => { root.azione(p.id); }
-        }
     }
 }

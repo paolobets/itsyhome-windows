@@ -3,7 +3,7 @@
 //! Home Assistant, casa irraggiungibile, batteria, prova) e decide umore e aspetto della pillola.
 
 use crate::attenzione::{
-    self, avanzamento_mostrato, livello_massimo, notifica_sistema, prossimo_cambio_aspetto, Attese, Avanzamento, Fonte, Livello, SorveglianzaCasa,
+    self, avanzamento_mostrato, livello_massimo, notifica_sistema, prossimo_cambio_aspetto, AspettoPillola, Attese, Avanzamento, Fonte, Livello, SorveglianzaCasa,
     SorveglianzaBatteria, Voce, ID_BATTERIA, ID_CASA_OFFLINE, ID_CASA_TOKEN, PREFISSO_BT, PREFISSO_NOTIFICA, PREFISSO_SISTEMA,
     PULSANTE_ARCHIVIA, PULSANTE_APRI, PULSANTE_HO_CAPITO, PULSANTE_IMPOSTAZIONI, PULSANTE_RIPROVA,
 };
@@ -47,14 +47,13 @@ use std::time::{Duration, Instant};
 pub(crate) mod con_claude;
 mod con_moduli;
 
-/// Che cosa fa il pannello aperto da un clic sulla pillola.
+/// Dove si apre il pannello da un clic sulla pillola (ridisegno F1, Task 7: la destinazione di ciò
+/// che la pillola mostra).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DallaPillola {
-    /// Si apre espanso su questa voce di «In attesa» (posizione nella riga).
-    Espandi(i32),
-    /// Si apre su questa vista.
+    /// Su questa vista: la pagina di un modulo o la Coda (`coda`).
     Vista(&'static str),
-    /// Si apre sulla Panoramica.
+    /// Sulla Panoramica.
     Panoramica,
 }
 
@@ -944,6 +943,8 @@ pub struct Ponte {
     /// La vista Claude del pannello (Task 9): si vede (pannello aperto su di lei) e il modello delle
     /// sue righe. Chiusa, niente si calcola né si scrive.
     vista_claude: Cell<bool>,
+    /// La Coda si vede (pannello aperto su di lei): entrarci riarma «Consenti».
+    vista_coda: Cell<bool>,
     claude_righe: Rc<VecModel<RigaSessioneUi>>,
     /// L'ordine fermo delle righe (RC-53), per `session_id`: si decide all'apertura della vista e
     /// poi chi c'è tiene il suo posto, chi arriva va in fondo. Vuoto a vista chiusa.
@@ -1100,6 +1101,7 @@ pub fn collega(
         claude_ripiego: RefCell::new(std::collections::HashSet::new()),
         sveglia_terminale: slint::Timer::default(),
         vista_claude: Cell::new(false),
+        vista_coda: Cell::new(false),
         claude_righe: Rc::new(VecModel::default()),
         claude_ordine: RefCell::new(Vec::new()),
         claude_permessi: RefCell::new(HashMap::new()),
@@ -1145,7 +1147,8 @@ pub fn collega(
     });
     PONTE.with(|p| *p.borrow_mut() = Some(ponte.clone()));
     // I pulsanti della pillola allargata agiscono sulla voce che sta chiamando; «Apri» (un
-    // consenso col testo tagliato) apre il pannello su quella voce, come un clic sulla pillola.
+    // consenso col testo tagliato) apre il pannello come un clic sulla pillola: per un permesso la
+    // Panoramica, con la voce nella riga «In attesa».
     pillola.on_azione(|voce, pulsante| {
         if pulsante == PULSANTE_APRI {
             if let Some(pl) = self::ponte().and_then(|p| p.pillola.upgrade()) {
@@ -2224,6 +2227,7 @@ impl Ponte {
             }
         });
         p.set_attese(ModelRc::from(self.modello_attese.clone()));
+        self.scrivi_moduli_in_attesa(p);
         self.moduli_nel_pannello(p);
         // Il bottone d'azione di una carta: (id del modulo, id dell'azione).
         p.on_azione_modulo(|modulo, azione| {
@@ -2296,26 +2300,37 @@ impl Ponte {
         }
     }
 
-    /// Come si apre il pannello da un clic sulla pillola (`attivita_visibile`: la pillola sta
-    /// mostrando l'attività di Claude). Una voce allargata che chiede un permesso si espande sul
-    /// posto, come sempre; una voce di Claude che non è un permesso, o l'attività di Claude, portano
-    /// alla vista Agenti; ogni altro caso resta la Panoramica.
+    /// Dove si apre il pannello da un clic sulla pillola (`attivita_visibile`: la pillola sta
+    /// mostrando l'attività di Claude). Una voce allargata porta alla pagina del suo modulo (Claude
+    /// → Agenti, Casa, PC), tranne un permesso, che apre la Panoramica (la riga «In attesa», poi la
+    /// voce del Task 8: mai una pagina dove il consenso stia a un tasto); il puntino apre la Coda;
+    /// l'attività di Claude, Agenti; a riposo la Panoramica.
     pub fn apertura_dalla_pillola(&self, attivita_visibile: bool) -> DallaPillola {
-        let allargata = self.mostrato.borrow().as_ref().and_then(|v| v.voce_allargata().map(str::to_owned));
+        let (allargata, puntino) = match self.mostrato.borrow().as_ref() {
+            Some(v) => (v.voce_allargata().map(str::to_owned), v.aspetto == AspettoPillola::Puntino),
+            None => (None, false),
+        };
         if let Some(id) = allargata {
             let attese = self.attese.borrow();
-            let ordinate = attese.ordinate();
-            return match ordinate.iter().position(|v| v.id == id) {
+            return match attese.voce(&id) {
                 // Il permesso lo dice l'identità della voce, non i suoi pulsanti (senza risposta dalla
                 // pillola il permesso ha solo «Apri il terminale»).
-                Some(i) if ordinate[i].fonte == Fonte::Claude && !ordinate[i].id.starts_with(crate::claude::PREFISSO_PERMESSO) => {
-                    DallaPillola::Vista("agenti")
-                }
-                Some(i) => DallaPillola::Espandi(i as i32),
+                Some(v) if v.fonte == Fonte::Claude && v.id.starts_with(crate::claude::PREFISSO_PERMESSO) => DallaPillola::Panoramica,
+                Some(v) => match v.fonte {
+                    Fonte::Claude => DallaPillola::Vista("agenti"),
+                    Fonte::Casa => DallaPillola::Vista("casa"),
+                    Fonte::Pc => DallaPillola::Vista("pc"),
+                    // Le voci di prova non hanno una pagina: la Coda le mostra.
+                    Fonte::Prova => DallaPillola::Vista("coda"),
+                },
                 None => DallaPillola::Panoramica,
             };
         }
-        if attivita_visibile {
+        // Il puntino viene prima dell'attività: dice che qualcosa aspetta (l'attività si vede
+        // comunque nella pagina Agenti e nella sua carta).
+        if puntino {
+            DallaPillola::Vista("coda")
+        } else if attivita_visibile {
             DallaPillola::Vista("agenti")
         } else {
             DallaPillola::Panoramica
@@ -2334,6 +2349,7 @@ impl Ponte {
         if let Some(vista) = self.vista_richiesta.take() {
             p.set_vista(vista.into());
             self.vista_claude(vista == "agenti");
+            self.vista_coda(vista == "coda");
         }
         self.attese.borrow_mut().segna_viste();
         // Il pannello compare: un permesso in attesa non si consente al primo istante.
@@ -2351,6 +2367,8 @@ impl Ponte {
         self.vista_pc(false);
         // La vista Claude non c'è più: il timer torna a seguire solo la pillola.
         self.vista_claude(false);
+        // Né la Coda: la prossima apertura riarma «Consenti».
+        self.vista_coda(false);
         *self.pannello.borrow_mut() = slint::Weak::default();
         self.modelli_vivi.set(false);
         self.collegamento_aperto.set(false);
@@ -2541,7 +2559,7 @@ impl Ponte {
         self.attese_cambiate();
     }
 
-    /// Umore, pillola, riga del pannello (e voce espansa) dopo un cambio delle voci.
+    /// Umore, pillola, riga del pannello e Coda dopo un cambio delle voci.
     fn attese_cambiate(&self) {
         let livello = livello_massimo(&self.attese.borrow());
         self.cervello.borrow_mut().ricevi(Segnale::InAttesa(livello), Instant::now());
@@ -2561,19 +2579,20 @@ impl Ponte {
         self.claude_riarma(Instant::now());
         servizi::colora_linea();
         if let Some(p) = self.pannello.borrow().upgrade() {
-            // La voce espansa può aver cambiato posto o essere sparita.
-            let aperta = p.get_voce_aperta().to_string();
-            if !aperta.is_empty() {
-                match self.attese.borrow().ordinate().iter().position(|v| v.id == aperta) {
-                    Some(i) => p.set_indice_aperta(i as i32),
-                    None => {
-                        p.set_voce_aperta("".into());
-                        p.set_indice_aperta(-1);
-                    }
-                }
-            }
+            self.scrivi_moduli_in_attesa(&p);
         }
         self.aggiorna_umore();
+    }
+
+    /// Da quanti moduli vengono le voci in attesa (la testata della Coda): scritto solo se cambia.
+    fn scrivi_moduli_in_attesa(&self, p: &Pannello) {
+        let mut moduli: Vec<&str> = self.attese.borrow().ordinate().iter().map(|v| v.fonte.modulo()).collect();
+        moduli.sort_unstable();
+        moduli.dedup();
+        let n = moduli.len() as i32;
+        if p.get_moduli_in_attesa() != n {
+            p.set_moduli_in_attesa(n);
+        }
     }
 
     /// Un pulsante di una voce (nella pillola o nel pannello).

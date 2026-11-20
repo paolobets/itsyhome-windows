@@ -459,6 +459,8 @@ impl Apertura {
                 a.ponte.vista_pc(p.get_vista() == "pc");
                 // La vista Claude (M3, Task 9) scrive e conta il tempo solo a vista aperta.
                 a.ponte.vista_claude(p.get_vista() == "agenti");
+                // La Coda (ridisegno F1, Task 7): entrandoci «Consenti» si riarma.
+                a.ponte.vista_coda(p.get_vista() == "coda");
                 // La scheda della vista nuova si allarga col nome (la capsula scivola).
                 a.ponte.scrivi_schede(&p);
             }
@@ -617,8 +619,7 @@ impl Apertura {
         }
 
         // Aprendo dalla pillola allargata (che chiama) gli occhi del pannello partono da dove
-        // stanno i suoi e scivolano al centro durante l'apertura; e il pannello si apre su quella
-        // voce, espansa sul posto nella riga «In attesa».
+        // stanno i suoi e scivolano al centro durante l'apertura.
         // In altezza gli occhi della pillola stanno 6 sopra quelli del pannello (riga alta 44 contro
         // la pillola di 32): partono da lì e scendono (`SCARTO_OCCHI_PANNELLO_Y`).
         if pillola.get_aspetto() == crate::AspettoPillolaUi::Allargata {
@@ -629,13 +630,10 @@ impl Apertura {
             pannello.set_partenza_occhi(pillola.get_scarto_occhi_riposo());
             pannello.set_partenza_occhi_y(finestre::SCARTO_OCCHI_PANNELLO_Y);
         }
-        match self.ponte.apertura_dalla_pillola(pillola.get_attivita_visibile()) {
-            // Espande la voce e porta lì il fuoco da tastiera (frecce e Invio agiscono su di lei).
-            DallaPillola::Espandi(indice) => pannello.invoke_espandi(indice),
-            // L'attività o una voce di Claude: il pannello nasce sulla vista Claude
-            // (`pannello_aperto` la mette).
-            DallaPillola::Vista(vista) => self.ponte.chiedi_vista(vista),
-            DallaPillola::Panoramica => {}
+        // La destinazione di ciò che la pillola mostra: la pagina di un modulo o la Coda
+        // (`pannello_aperto` la mette), altrimenti la Panoramica.
+        if let DallaPillola::Vista(vista) = self.ponte.apertura_dalla_pillola(pillola.get_attivita_visibile()) {
+            self.ponte.chiedi_vista(vista);
         }
         // Parte con l'umore della pillola; il ponte glielo aggiorna appena la pillola è sparita.
         pannello.set_umore(pillola.get_umore());

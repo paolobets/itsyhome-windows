@@ -897,6 +897,15 @@ impl Ponte {
         }
     }
 
+    /// La Coda si apre (vero) o si chiude (altra vista, pannello chiuso). È una superficie che
+    /// mostra i permessi: entrandoci, con un permesso in attesa, «Consenti» si arma fra
+    /// `ARMAMENTO_CONSENTI` (il fuoco o il mouse vi arrivano su una riga appena comparsa).
+    pub fn vista_coda(&self, si: bool) {
+        if self.vista_coda.replace(si) != si && si {
+            self.claude_superficie_compare(Instant::now());
+        }
+    }
+
     /// Un nuovo ascolto parte: chi aspettava sul vecchio non c'è più. `Nessuna` a tutti, voci tolte.
     pub(super) fn claude_chiudi_tutti(&self) {
         let tutti: Vec<(u64, Pendente)> = self.claude_permessi.borrow_mut().drain().collect();
@@ -1638,39 +1647,43 @@ mod test {
         }
     }
 
-    /// 18/11 (Paolo): il clic sulla pillola porta al dettaglio giusto. L'attività di Claude, o una
-    /// sua voce che non è un permesso, aprono la vista Claude; un permesso resta espanso in «In
-    /// attesa»; ogni altro caso (anche una voce di un'altra fonte) è come prima.
+    /// Ridisegno F1, Task 7: il clic sulla pillola porta alla destinazione. I sette casi: permesso
+    /// allargato → Panoramica (lo mostra la riga «In attesa», poi la voce del Task 8); voce allargata
+    /// di Claude che non è un permesso → Agenti; di Casa → Casa; del PC → PC; pillola col puntino →
+    /// Coda; attività di Claude → Agenti; riposo → Panoramica. Sostituisce i test di `Espandi`.
     #[test]
-    fn il_clic_sulla_pillola_porta_al_dettaglio_giusto() {
+    fn dalla_pillola_alla_destinazione() {
         use crate::ponte::DallaPillola;
         let (_s, p, pillola, _d) = ponte_di_prova();
-        // Niente: la Panoramica.
-        assert_eq!(p.apertura_dalla_pillola(pillola.get_attivita_visibile()), DallaPillola::Panoramica);
-        // Claude lavora e la pillola lo dice: la vista Claude.
+        let dove = |p: &Ponte| p.apertura_dalla_pillola(pillola.get_attivita_visibile());
+        // Riposo: la Panoramica.
+        assert_eq!(dove(&p), DallaPillola::Panoramica, "riposo");
+        // Claude lavora e la pillola lo dice: Agenti.
         manda(&p, ev("a", TipoEvento::UserPromptSubmit));
         assert!(pillola.get_attivita_visibile());
-        assert_eq!(p.apertura_dalla_pillola(pillola.get_attivita_visibile()), DallaPillola::Vista("agenti"));
-        // Una voce allargata di un'altra fonte: si espande, come sempre (l'attività non si vede).
-        p.metti_voce(voce_di_prova("casa.x", Fonte::Casa, Livello::Attenzione, false), false);
-        assert!(!pillola.get_attivita_visibile(), "allargata: niente attività");
-        assert_eq!(p.apertura_dalla_pillola(pillola.get_attivita_visibile()), DallaPillola::Espandi(0));
-        p.togli_voce("casa.x");
-        // Una voce di Claude che non è un permesso: la vista Claude, non la voce espansa.
-        p.metti_voce(voce_di_prova("claude.x.fatto", Fonte::Claude, Livello::Attenzione, false), false);
-        assert_eq!(p.apertura_dalla_pillola(pillola.get_attivita_visibile()), DallaPillola::Vista("agenti"));
-        p.togli_voce("claude.x.fatto");
-        // Un permesso: espanso nella riga «In attesa», come oggi.
+        assert_eq!(dove(&p), DallaPillola::Vista("agenti"), "attività di Claude");
+        // Voci allargate (attenzione appena arrivata): la pagina del loro modulo.
+        for (id, fonte, vista) in [("casa.x", Fonte::Casa, "casa"), ("pc.x", Fonte::Pc, "pc"), ("claude.x.fatto", Fonte::Claude, "agenti")] {
+            p.metti_voce(voce_di_prova(id, fonte, Livello::Attenzione, false), false);
+            assert!(!pillola.get_attivita_visibile(), "{id}: allargata, niente attività");
+            assert_eq!(dove(&p), DallaPillola::Vista(vista), "{id}");
+            p.togli_voce(id);
+        }
+        // Un permesso allargato: la Panoramica (mai una pagina dove il consenso stia a un tasto).
         p.metti_voce(voce_di_prova("claude.permesso.7", Fonte::Claude, Livello::Bloccante, true), false);
-        assert_eq!(p.apertura_dalla_pillola(pillola.get_attivita_visibile()), DallaPillola::Espandi(0));
+        assert_eq!(dove(&p), DallaPillola::Panoramica, "permesso");
         p.togli_voce("claude.permesso.7");
         // Senza risposta dalla pillola il permesso ha solo «Apri il terminale»: è ancora un permesso.
         p.metti_voce(voce_di_prova("claude.permesso.8", Fonte::Claude, Livello::Bloccante, false), false);
-        assert_eq!(p.apertura_dalla_pillola(pillola.get_attivita_visibile()), DallaPillola::Espandi(0));
+        assert_eq!(dove(&p), DallaPillola::Panoramica, "permesso senza risposta dalla pillola");
         p.togli_voce("claude.permesso.8");
-        // Finita l'attività, torna la Panoramica.
         manda(&p, ev("a", TipoEvento::SessionEnd));
-        assert_eq!(p.apertura_dalla_pillola(pillola.get_attivita_visibile()), DallaPillola::Panoramica);
+        // Il puntino (una sola informazione: non allarga): la Coda.
+        p.metti_voce(voce_di_prova("casa.info", Fonte::Casa, Livello::Informazione, false), false);
+        assert_eq!(p.mostrato.borrow().as_ref().map(|v| v.aspetto.clone()), Some(crate::attenzione::AspettoPillola::Puntino));
+        assert_eq!(dove(&p), DallaPillola::Vista("coda"), "puntino");
+        p.togli_voce("casa.info");
+        assert_eq!(dove(&p), DallaPillola::Panoramica, "di nuovo a riposo");
     }
 
     /// La vista chiesta dalla pillola vale per il pannello che si apre, una volta sola, su ogni
@@ -2246,6 +2259,29 @@ mod test {
         let b = PROSSIMO_PERMESSO.fetch_add(1, Ordering::Relaxed);
         assert!(b > a);
         spegni();
+    }
+
+    /// Ridisegno F1, Task 7: aprire la Coda con un permesso in attesa è una superficie che compare:
+    /// «Consenti» si arma di nuovo fra `ARMAMENTO_CONSENTI`. Restare nella Coda non riarma; uscirne
+    /// e rientrare sì.
+    #[test]
+    fn coda_riarma_consenti() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let rx = permesso(&p, 1, "a");
+        armato(&p);
+        let prima = Instant::now();
+        p.vista_coda(true);
+        let dal = p.claude_armamento.borrow().dal.get();
+        assert!(dal >= prima + ARMAMENTO_CONSENTI && dal <= Instant::now() + ARMAMENTO_CONSENTI, "armamento spostato");
+        p.claude_decidi(1, Decisione::Consenti, dal - Duration::from_millis(1));
+        assert_eq!(rx.try_recv(), Err(TryRecvError::Empty), "Consenti subito è ignorato");
+        // Già nella Coda: un secondo avviso della stessa vista non sposta nulla.
+        armato(&p);
+        p.vista_coda(true);
+        assert!(p.claude_armamento.borrow().dal.get() <= Instant::now(), "nessun riarmo restando nella Coda");
+        p.vista_coda(false);
+        p.vista_coda(true);
+        assert!(p.claude_armamento.borrow().dal.get() > Instant::now(), "rientrando si riarma");
     }
 
     #[test]

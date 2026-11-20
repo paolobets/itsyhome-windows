@@ -1,0 +1,245 @@
+// L'impianto Elenco (spec §5.7, ridisegno F1 Task 7): righe uniformi da 40 con segno, icona del
+// modulo, titolo che decide, «livello · modulo» e fino a 2 pulsanti; testata col totale scritto;
+// scorrimento con la riga col fuoco portata in vista. Oggi lo usa la Coda minima («In attesa»);
+// in F2 lo riusa la pagina Agenti.
+//
+// La tastiera la governa il pannello (`tasti`): qui arrivano solo gli indici della riga e del
+// pulsante col fuoco, già validi, e il fuoco vero si sposta da sé (`Fuoco`, `Pulsante.chiede-fuoco`)
+// perché Narrator legga ruolo e nome. Nessun pulsante si preme dalla sua tastiera: «Consenti»
+// (delicato) lo concede solo Ctrl+Invio esatto, nel pannello, o il clic. «Nega» e «Consenti»
+// sono entrambi neutri (regola M3, `RegolaPulsanti`): il colore inviterebbe a concedere.
+import { Tema } from "../tema.slint";
+import { VoceAttesaUi, LivelloUi, TonoModuloUi } from "../voci.slint";
+import { Anello, Fuoco, Pulsante, RegolaPulsanti } from "../componenti.slint";
+import { Occhietti } from "../guscio/occhietti.slint";
+
+// La testata di una pagina: titolo (Inter 700 18) e, accanto, una riga tenue. Due testi: Narrator
+// li legge come testo, uno dopo l'altro.
+export component TestataPagina inherits Rectangle {
+    in property <string> titolo;
+    in property <string> sotto;
+
+    height: 28px;
+
+    HorizontalLayout {
+        alignment: start;
+        spacing: 10px;
+
+        Text {
+            text: root.titolo;
+            vertical-alignment: center;
+            font-weight: 700;
+            font-size: 18px;
+            color: Tema.testo;
+        }
+
+        if root.sotto != "": Text {
+            text: root.sotto;
+            vertical-alignment: center;
+            font-size: Tema.testo-piccolo;
+            color: Tema.testo-tenue;
+        }
+    }
+}
+
+// Una riga dell'elenco: alta 40. Il segno del livello dice lo stato con la forma oltre che col
+// colore (occhietti tondi per «ti aspetta», a mandorla per «guarda presto», un trattino per
+// «quando vuoi»). Per Narrator è una voce d'elenco «{titolo}, {livello} · {modulo}» col testo
+// completo come descrizione.
+export component RigaElenco inherits Rectangle {
+    in property <VoceAttesaUi> voce;
+    in property <int> indice;
+    in property <int> totale;
+    // Il fuoco da tastiera è sulla riga (vero) o su un suo pulsante (indice, -1 nessuno).
+    in property <bool> fuoco-riga;
+    in property <int> fuoco-pulsante: -1;
+    callback scelta();
+    callback azione(string);
+
+    // Col fuoco su un consenso la riga sotto dice come si concede (Invio da solo non lo fa).
+    property <bool> su-consenso: fuoco-pulsante >= 0 && fuoco-pulsante < voce.pulsanti.length && voce.pulsanti[fuoco-pulsante].delicato;
+
+    height: 40px;
+    border-radius: Tema.raggio-m;
+    background: area.has-hover || fuoco-riga || fuoco-pulsante >= 0 ? Tema.scheda-sopra : transparent;
+    accessible-role: list-item;
+    accessible-label: voce.titolo + ", " + voce.sotto;
+    accessible-description: voce.dettaglio;
+    accessible-item-index: indice;
+    accessible-item-count: totale;
+    accessible-action-default => { root.scelta(); }
+
+    Fuoco { chiede: root.fuoco-riga; }
+
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.scelta(); }
+    }
+
+    // Il segno del livello, a sinistra, centrato sulla riga.
+    if voce.livello == LivelloUi.bloccante || voce.livello == LivelloUi.attenzione: Occhietti {
+        x: 10px;
+        y: (parent.height - self.height) / 2;
+        dock: true;
+        tono: voce.livello == LivelloUi.bloccante ? TonoModuloUi.aspetta : TonoModuloUi.guarda;
+        colore: Tema.colore-livello(voce.livello);
+    }
+    if voce.livello == LivelloUi.informazione: Rectangle {
+        x: 12px;
+        y: (parent.height - self.height) / 2;
+        width: 11px;
+        height: 2px;
+        border-radius: 1px;
+        background: Tema.colore-livello(voce.livello);
+    }
+
+    Image {
+        x: 34px;
+        y: (parent.height - self.height) / 2;
+        width: 16px;
+        height: 16px;
+        source: voce.icona;
+        colorize: Tema.icona;
+        image-rendering: smooth;
+        accessible-role: none;
+    }
+
+    Text {
+        x: 60px;
+        y: 4px;
+        width: pulsanti.x - self.x - 12px;
+        text: voce.titolo;
+        overflow: elide;
+        font-weight: 700;
+        font-size: Tema.testo-medio;
+        color: Tema.testo;
+        accessible-role: none;
+    }
+
+    Text {
+        x: 60px;
+        y: 22px;
+        width: pulsanti.x - self.x - 12px;
+        text: root.su-consenso ? "Ctrl+Invio per consentire" : voce.sotto;
+        overflow: elide;
+        font-size: Tema.testo-piccolo;
+        color: Tema.testo-tenue;
+        accessible-role: none;
+    }
+
+    pulsanti := HorizontalLayout {
+        width: self.preferred-width;
+        x: parent.width - self.width - 4px;
+        y: 4px;
+        height: 32px;
+        spacing: 8px;
+
+        for p[i] in voce.pulsanti: Pulsante {
+            testo: p.testo;
+            tipo: RegolaPulsanti.tipo(i == voce.pulsanti.length - 1, p.delicato);
+            altezza: 32px;
+            raggio: 9px;
+            largo-min: 72px;
+            anello: i == root.fuoco-pulsante;
+            chiede-fuoco: i == root.fuoco-pulsante;
+            // La tastiera la governa il pannello (Ctrl+Invio per un permesso).
+            tasti-propri: false;
+            delicato: p.delicato;
+            premuto => { root.azione(p.id); }
+        }
+    }
+
+    // L'anello sul bordo della riga (dentro: la lista ritaglia ai suoi lati).
+    if fuoco-riga: Anello {
+        raggio: parent.border-radius;
+        distanza: -2px;
+    }
+}
+
+export component ImpiantoElenco inherits Rectangle {
+    in property <[VoceAttesaUi]> voci;
+    // Da quanti moduli vengono le voci (lo conta Rust).
+    in property <int> moduli;
+    // Riga col fuoco (indice valido) e suo pulsante (-1 = la riga), decisi dal pannello.
+    in property <int> fuoco-riga;
+    in property <int> fuoco-pulsante: -1;
+    // Il fuoco da tastiera è qui (altrimenti nessun anello e nessun fuoco vero).
+    in property <bool> con-fuoco;
+    // Un pulsante premuto col clic: (id della voce, id del pulsante).
+    callback azione(string, string);
+    // Una riga scelta col clic.
+    callback riga-scelta(int);
+    // «Torna alla Panoramica» dello stato vuoto.
+    callback torna();
+
+    property <length> alto-riga: 40px;
+    property <length> passo: alto-riga + 4px;
+    property <length> sotto-testata: 36px;
+
+    // La riga col fuoco fuori vista (sopra o sotto) torna dentro, di quanto basta.
+    changed fuoco-riga => { root.porta-in-vista(); }
+    function porta-in-vista() {
+        let cima = fuoco-riga * passo;
+        if (cima + lista.content-y < 0) {
+            lista.content-y = -cima;
+        } else if (cima + alto-riga + lista.content-y > lista.height) {
+            lista.content-y = lista.height - cima - alto-riga;
+        }
+    }
+
+    if voci.length > 0: TestataPagina {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        titolo: voci.length + " in attesa";
+        sotto: "da " + moduli + (moduli == 1 ? " modulo" : " moduli");
+    }
+
+    lista := Flickable {
+        x: 0;
+        y: sotto-testata;
+        width: parent.width;
+        height: parent.height - self.y;
+        content-height: max(self.height, voci.length * passo - 4px);
+        accessible-role: list;
+        accessible-label: "In attesa";
+
+        for v[i] in voci: RigaElenco {
+            x: 0;
+            y: i * root.passo;
+            width: lista.width;
+            voce: v;
+            indice: i;
+            totale: root.voci.length;
+            fuoco-riga: root.con-fuoco && i == root.fuoco-riga && root.fuoco-pulsante < 0;
+            fuoco-pulsante: root.con-fuoco && i == root.fuoco-riga ? root.fuoco-pulsante : -1;
+            scelta => { root.riga-scelta(i); }
+            azione(id) => { root.azione(v.id, id); }
+        }
+    }
+
+    // Vuota: lo dice e porta indietro.
+    if voci.length == 0: VerticalLayout {
+        alignment: center;
+        spacing: 14px;
+
+        Text {
+            text: "Niente in attesa";
+            horizontal-alignment: center;
+            font-size: Tema.testo-sottotitolo;
+            color: Tema.testo-2;
+        }
+
+        HorizontalLayout {
+            alignment: center;
+
+            Pulsante {
+                testo: "Torna alla Panoramica";
+                anello: root.con-fuoco;
+                chiede-fuoco: root.con-fuoco;
+                tasti-propri: false;
+                premuto => { root.torna(); }
+            }
+        }
+    }
+}
