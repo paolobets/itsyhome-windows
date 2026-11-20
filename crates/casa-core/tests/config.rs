@@ -290,3 +290,37 @@ fn ultimi_limiti_visti_nel_file_di_configurazione() {
     assert_eq!(riletto.claude.ultimo_cinque_ore, c.claude.ultimo_cinque_ore);
     assert_eq!(riletto.claude.ultimo_sette_giorni, None);
 }
+
+/// Ridisegno F1, Task 3: l'ordine dei moduli. Un file di prima (senza `moduli`) si legge vuoto
+/// (= l'ordine del registro); l'elenco si salva e si rilegge uguale, in camelCase come il resto;
+/// una voce senza `id` o senza `fissato` non fa rileggere tutta la configurazione come nuova.
+#[test]
+fn moduli_salvati_e_file_di_prima() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("assistente.json"), r#"{ "favorites": ["light.a"] }"#).unwrap();
+    let st = ConfigStore::apri(d.path());
+    let mut c = st.leggi();
+    assert!(c.moduli.is_empty(), "file di prima: l'ordine del registro");
+    assert!(Config::default().moduli.is_empty());
+    c.moduli = vec![
+        ConfigModulo { id: "collegamenti".into(), fissato: true },
+        ConfigModulo { id: "agenti".into(), fissato: false },
+    ];
+    st.salva(&c).unwrap();
+    assert_eq!(st.leggi(), c);
+    let testo = std::fs::read_to_string(d.path().join("assistente.json")).unwrap();
+    assert!(testo.contains(r#""moduli""#) && testo.contains(r#""fissato": false"#), "{testo}");
+
+    std::fs::write(
+        d.path().join("assistente.json"),
+        r#"{ "favorites": ["light.b"], "moduli": [ { "fissato": false }, { "id": "casa" } ] }"#,
+    )
+    .unwrap();
+    let malformato = st.leggi();
+    assert_eq!(malformato.favorites, vec!["light.b"], "il resto del file si legge");
+    assert_eq!(
+        malformato.moduli,
+        vec![ConfigModulo { id: String::new(), fissato: false }, ConfigModulo { id: "casa".into(), fissato: true }],
+        "senza `fissato`: fissato"
+    );
+}

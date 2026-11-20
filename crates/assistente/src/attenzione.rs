@@ -63,13 +63,15 @@ pub enum Fonte {
 }
 
 impl Fonte {
-    /// Il nome per l'utente, sotto le voci «In attesa» («Quando vuoi · PC»).
-    pub fn nome(self) -> &'static str {
+    /// Il modulo del pannello a cui la voce appartiene (`moduli::MODULI`): il suo nome va sotto le
+    /// voci «In attesa» («Aspetta te · Agenti») e la voce alza il tono della sua carta. «prova»
+    /// non è un modulo (`Registro::nome` dice «Prova»).
+    pub fn modulo(self) -> &'static str {
         match self {
-            Fonte::Casa => "Casa",
-            Fonte::Pc => "PC",
-            Fonte::Claude => "Claude Code",
-            Fonte::Prova => "Prova",
+            Fonte::Casa => "casa",
+            Fonte::Pc => "pc",
+            Fonte::Claude => "agenti",
+            Fonte::Prova => "prova",
         }
     }
 }

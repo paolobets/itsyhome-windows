@@ -22,7 +22,6 @@ mod pannello;
 mod pc_stats;
 mod pillola;
 mod ponte;
-mod registro;
 mod scelte;
 mod sistema;
 mod sorgenti_lati;

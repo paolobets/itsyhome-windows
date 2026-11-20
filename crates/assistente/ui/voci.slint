@@ -16,11 +16,35 @@ export enum GenereUi { casa, luce, presa, scena, termo, goccia, sensore }
 // Tono di uno stato nelle Impostazioni: decide solo il colore del pallino (la parola c'è sempre).
 export enum TonoUi { spento, ok, attesa, errore }
 
-// Una app del registro, come la vede l'interfaccia (le icone del dock).
+// Una app del dock (la Panoramica e i moduli del registro, nell'ordine), come la vede l'interfaccia.
 export struct VoceAppUi {
     id: string,
     nome: string,
     icona: image,
+}
+
+// Il tono di un modulo (spec §5.3, `moduli::Tono`): vocabolario chiuso, uguale per ogni modulo.
+export enum TonoModuloUi { vuoto, calmo, attivo, guarda, aspetta, fatto, errore, fermo }
+
+// Un modulo per le carte della Panoramica (ridisegno F1), già pronto da `Registro::moduli_ui`.
+// `tono` è quello effettivo (il riassunto alzato dalle voci in attesa); `parola` la capsula («» se
+// calmo o vuoto); `titolo` e `sec` già nei limiti in pixel; `numerico`: il titolo è un numero (mono).
+// `narratore`: il nome intero per Narrator; `narratore-azione`: «{azione}, {nome}».
+export struct ModuloUi {
+    id: string,
+    nome: string,
+    nome-breve: string,
+    icona: image,
+    tono: TonoModuloUi,
+    parola: string,
+    titolo: string,
+    numerico: bool,
+    sec: string,
+    con-azione: bool,
+    azione-testo: string,
+    azione-icona: image,
+    narratore: string,
+    narratore-azione: string,
 }
 
 // Una riga del menu «⋯» del pannello (Task 8), nell'ordine di `voci_pannello`. `id` è quello che

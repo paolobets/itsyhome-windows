@@ -24,9 +24,10 @@ use crate::pillola::{self, VistaPillola};
 use crate::umore::{Cervello, Segnale, Umore};
 use crate::dispositivi::{self, Riga, TipoRiga};
 use crate::collegamenti;
+use crate::moduli::registro::Registro;
 use crate::{
-    AmbienteUi, CollegamentoUi, FinestraImpostazioni, FonteQuadranteUi, GenereUi, Pannello, Pillola, PreferitoUi, QuadranteUi,
-    RigaDispositivoUi, RigaSessioneUi, SceltaQuadranteUi, SensoreUi, StanzaUi, TipoRigaUi, TonoUi, VoceAttesaUi,
+    AmbienteUi, CollegamentoUi, FinestraImpostazioni, FonteQuadranteUi, GenereUi, ModuloUi, Pannello, Pillola, PreferitoUi,
+    QuadranteUi, RigaDispositivoUi, RigaSessioneUi, SceltaQuadranteUi, SensoreUi, StanzaUi, TipoRigaUi, TonoUi, VoceAttesaUi,
 };
 use casa_core::config::Config;
 use casa_core::diagnosi::Contatore;
@@ -43,6 +44,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub(crate) mod con_claude;
+mod con_moduli;
 
 /// Che cosa fa il pannello aperto da un clic sulla pillola.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -779,9 +781,10 @@ pub fn batteria(lettura: LetturaBatteria) {
 }
 
 /// Una voce «In attesa» per la riga del pannello.
+/// Sotto il titolo il livello e il nome del modulo a cui la voce appartiene (dal registro).
 /// `non_archiviata`: l'ultimo «Archivia» non è riuscito (lo dice la riga sotto il titolo).
-fn voce_attesa_ui(v: &Voce, non_archiviata: bool) -> VoceAttesaUi {
-    let mut sotto = format!("{} · {}", v.livello.parola(), v.fonte.nome());
+fn voce_attesa_ui(v: &Voce, registro: &Registro, non_archiviata: bool) -> VoceAttesaUi {
+    let mut sotto = format!("{} · {}", v.livello.parola(), registro.nome(v.fonte.modulo()));
     if non_archiviata {
         sotto.push_str(" · archiviazione non riuscita");
     }
@@ -866,6 +869,10 @@ pub struct Ponte {
     /// Le voci «In attesa» e il loro modello per il pannello (sopravvive al pannello).
     attese: RefCell<Attese>,
     modello_attese: Rc<VecModel<VoceAttesaUi>>,
+    /// I moduli del pannello (ridisegno F1): ordine, ultimi riassunti e livelli delle voci, e il
+    /// modello delle carte (sopravvive al pannello). Vedi `con_moduli`.
+    registro: RefCell<Registro>,
+    modello_moduli: Rc<VecModel<ModuloUi>>,
     /// I lavori in corso: la linea della ritirata si riempie con quello più urgente.
     avanzamenti: RefCell<Vec<Avanzamento>>,
     /// Il timer di `--prova-avanzamento` (fermo se la prova non c'è).
@@ -1012,6 +1019,8 @@ pub fn collega(
     umore_fisso: Option<Umore>,
     errore_import: Option<String>,
 ) -> Rc<Ponte> {
+    // L'ordine dei moduli scelto dall'utente (vuoto: quello del registro).
+    let registro = casa.con_config(|c| Registro::nuovo(&c.moduli));
     let ponte = Rc::new(Ponte {
         casa,
         pillola: pillola.as_weak(),
@@ -1047,6 +1056,8 @@ pub fn collega(
         sveglia: slint::Timer::default(),
         attese: RefCell::new(Attese::default()),
         modello_attese: Rc::new(VecModel::default()),
+        registro: RefCell::new(registro),
+        modello_moduli: Rc::new(VecModel::default()),
         avanzamenti: RefCell::new(Vec::new()),
         prova_avanzamento: slint::Timer::default(),
         sorveglianza: RefCell::new(SorveglianzaCasa::new(Instant::now())),
@@ -2181,6 +2192,7 @@ impl Ponte {
             }
         });
         p.set_attese(ModelRc::from(self.modello_attese.clone()));
+        self.moduli_nel_pannello(p);
         self.riempi_stato(p);
         p.on_tocca(|id| {
             if let Some(ponte) = ponte() {
@@ -2246,7 +2258,7 @@ impl Ponte {
     /// Come si apre il pannello da un clic sulla pillola (`attivita_visibile`: la pillola sta
     /// mostrando l'attività di Claude). Una voce allargata che chiede un permesso si espande sul
     /// posto, come sempre; una voce di Claude che non è un permesso, o l'attività di Claude, portano
-    /// alla vista Claude; ogni altro caso resta la Panoramica.
+    /// alla vista Agenti; ogni altro caso resta la Panoramica.
     pub fn apertura_dalla_pillola(&self, attivita_visibile: bool) -> DallaPillola {
         let allargata = self.mostrato.borrow().as_ref().and_then(|v| v.voce_allargata().map(str::to_owned));
         if let Some(id) = allargata {
@@ -2256,14 +2268,14 @@ impl Ponte {
                 // Il permesso lo dice l'identità della voce, non i suoi pulsanti (senza risposta dalla
                 // pillola il permesso ha solo «Apri il terminale»).
                 Some(i) if ordinate[i].fonte == Fonte::Claude && !ordinate[i].id.starts_with(crate::claude::PREFISSO_PERMESSO) => {
-                    DallaPillola::Vista("claude")
+                    DallaPillola::Vista("agenti")
                 }
                 Some(i) => DallaPillola::Espandi(i as i32),
                 None => DallaPillola::Panoramica,
             };
         }
         if attivita_visibile {
-            DallaPillola::Vista("claude")
+            DallaPillola::Vista("agenti")
         } else {
             DallaPillola::Panoramica
         }
@@ -2280,7 +2292,7 @@ impl Ponte {
         *self.pannello.borrow_mut() = p.as_weak();
         if let Some(vista) = self.vista_richiesta.take() {
             p.set_vista(vista.into());
-            self.vista_claude(vista == "claude");
+            self.vista_claude(vista == "agenti");
         }
         self.attese.borrow_mut().segna_viste();
         // Il pannello compare: un permesso in attesa non si consente al primo istante.
@@ -2494,11 +2506,12 @@ impl Ponte {
         self.cervello.borrow_mut().ricevi(Segnale::InAttesa(livello), Instant::now());
         let voci: Vec<VoceAttesaUi> = {
             let non_archiviate = self.non_archiviate.borrow();
+            let registro = self.registro.borrow();
             self.attese
                 .borrow()
                 .ordinate()
                 .into_iter()
-                .map(|v| voce_attesa_ui(v, non_archiviate.contains(&v.id)))
+                .map(|v| voce_attesa_ui(v, &registro, non_archiviate.contains(&v.id)))
                 .collect()
         };
         aggiorna_modello(&self.modello_attese, voci);
@@ -3870,21 +3883,28 @@ pub(crate) mod test {
 
     #[test]
     fn sotto_il_titolo_la_parola_del_livello() {
+        let r = Registro::nuovo(&[]);
         let v = attenzione::voce_di_prova(Livello::Attenzione, false, Instant::now());
-        assert_eq!(voce_attesa_ui(&v, false).sotto, "Guarda presto · Prova");
-        assert_eq!(voce_attesa_ui(&v, true).sotto, "Guarda presto · Prova · archiviazione non riuscita");
+        assert_eq!(voce_attesa_ui(&v, &r, false).sotto, "Guarda presto · Prova");
+        assert_eq!(voce_attesa_ui(&v, &r, true).sotto, "Guarda presto · Prova · archiviazione non riuscita");
         // Il nome interno resta per il colore.
-        assert_eq!(voce_attesa_ui(&v, false).livello, crate::LivelloUi::Attenzione);
+        assert_eq!(voce_attesa_ui(&v, &r, false).livello, crate::LivelloUi::Attenzione);
     }
 
+    /// Ridisegno F1, Task 3: sotto la voce il nome del modulo a cui appartiene («Agenti», non più
+    /// «Claude Code»), mai l'identificativo.
     #[test]
     fn sotto_il_titolo_il_nome_per_l_utente_non_l_identificativo() {
         use crate::attenzione::Fonte;
-        let nomi: Vec<_> = [Fonte::Casa, Fonte::Pc, Fonte::Claude, Fonte::Prova].iter().map(|f| f.nome()).collect();
-        assert_eq!(nomi, ["Casa", "PC", "Claude Code", "Prova"]);
+        let r = Registro::nuovo(&[]);
+        let nomi: Vec<_> = [Fonte::Casa, Fonte::Pc, Fonte::Claude, Fonte::Prova].iter().map(|f| r.nome(f.modulo())).collect();
+        assert_eq!(nomi, ["Casa", "PC", "Agenti", "Prova"]);
         let mut v = attenzione::voce_di_prova(Livello::Informazione, false, Instant::now());
         v.fonte = Fonte::Pc;
-        assert_eq!(voce_attesa_ui(&v, false).sotto, "Quando vuoi · PC");
+        assert_eq!(voce_attesa_ui(&v, &r, false).sotto, "Quando vuoi · PC");
+        v.fonte = Fonte::Claude;
+        v.livello = Livello::Bloccante;
+        assert_eq!(voce_attesa_ui(&v, &r, false).sotto, "Aspetta te · Agenti");
     }
 
     #[test]

@@ -70,6 +70,23 @@ pub struct Config {
     /// scollegato.
     #[serde(default)]
     pub claude: ConfigClaude,
+    /// L'ordine dei moduli del pannello (ridisegno F1) e quali sono fissati nella barra. Vuoto o
+    /// mancante = l'ordine del registro, tutti fissati. L'id `claude` di prima si legge come
+    /// `agenti` (lo fa il registro dell'assistente).
+    #[serde(default)]
+    pub moduli: Vec<ConfigModulo>,
+}
+
+/// Un modulo nell'ordine scelto dall'utente. Entrambi i campi hanno un valore di serie: una voce
+/// scritta male si legge (e il registro scarta un id sconosciuto) invece di far rileggere tutta la
+/// configurazione come nuova.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigModulo {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default = "vero")]
+    pub fissato: bool,
 }
 
 /// Le scelte su Claude Code (M3). Nessun segreto e nessuna porta: il canale è il tubo protetto.
@@ -159,6 +176,7 @@ impl Default for Config {
             avvisi_bt: vero(),
             bt_avvisati: HashMap::new(),
             claude: ConfigClaude::default(),
+            moduli: Vec::new(),
         }
     }
 }
@@ -338,5 +356,7 @@ pub fn importa_v2(v2: &Path, segreti: &dyn Segreti) -> Result<Option<Config>, St
         bt_avvisati: HashMap::new(),
         // La v2 non aveva Claude Code: scollegato.
         claude: ConfigClaude::default(),
+        // Né i moduli del pannello: l'ordine del registro.
+        moduli: Vec::new(),
     }))
 }

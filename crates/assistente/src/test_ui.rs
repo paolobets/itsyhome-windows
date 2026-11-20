@@ -529,13 +529,14 @@ mod accessibilita {
         let voce = |id: &str, nome: &str| VoceAppUi { id: id.into(), nome: nome.into(), icona: Default::default() };
         ModelRc::new(VecModel::from(vec![
             voce("panoramica", "Panoramica"),
+            voce("agenti", "Agenti"),
             voce("casa", "Casa"),
-            voce("claude", "Claude"),
             voce("pc", "PC"),
             voce("collegamenti", "Collegamenti"),
         ]))
     }
 
+    /// Ridisegno F1, Task 3: l'ordine del registro mette Agenti per primo dopo la Panoramica.
     #[test]
     fn dock_e_puntini_sono_schede_con_lo_stato() {
         piattaforma_di_prova();
@@ -545,9 +546,13 @@ mod accessibilita {
         assert_eq!(panoramica.accessible_role(), Some(AccessibleRole::Tab));
         assert_eq!(panoramica.accessible_item_selected(), Some(true));
         assert_eq!((panoramica.accessible_item_index(), panoramica.accessible_item_count()), (Some(0), Some(5)));
+        let agenti = elemento(&p, "Agenti");
+        assert_eq!(agenti.accessible_role(), Some(AccessibleRole::Tab));
+        assert_eq!(agenti.accessible_item_selected(), Some(false));
+        assert_eq!(agenti.accessible_item_index(), Some(1));
         let casa = elemento(&p, "Casa");
         assert_eq!(casa.accessible_item_selected(), Some(false));
-        assert_eq!(casa.accessible_item_index(), Some(1));
+        assert_eq!(casa.accessible_item_index(), Some(2));
 
         let orologio = elemento(&p, "Layout Orologio");
         assert_eq!(orologio.accessible_role(), Some(AccessibleRole::Tab));
@@ -556,6 +561,9 @@ mod accessibilita {
         assert_eq!(elemento(&p, "Layout Orologio").accessible_item_selected(), Some(false));
         assert_eq!(elemento(&p, "Layout Quadranti").accessible_item_selected(), Some(true));
         assert_eq!(elemento(&p, "Pannello di ItsyHome").accessible_role(), Some(AccessibleRole::Groupbox));
+        // La vista `agenti` è la scheda Agenti.
+        p.set_vista("agenti".into());
+        assert_eq!(elemento(&p, "Agenti").accessible_item_selected(), Some(true));
     }
 
     #[test]
@@ -1266,11 +1274,12 @@ mod accessibilita {
         let chiuso = std::rc::Rc::new(std::cell::Cell::new(false));
         let c = chiuso.clone();
         p.on_chiudi(move || c.set(true));
-        // Contenuto (puntini) → Tab al dock → → su «Casa» → Invio: si apre la vista Casa.
+        // Contenuto (puntini) → Tab al dock → → su «Agenti» (il primo modulo, ridisegno F1) → Invio:
+        // si apre la vista Agenti.
         tasto(&p, Key::Tab);
         tasto(&p, Key::RightArrow);
         tasto(&p, Key::Return);
-        assert_eq!(p.get_vista(), "casa");
+        assert_eq!(p.get_vista(), "agenti");
         // Backspace torna alla Panoramica; Esc chiude.
         tasto(&p, Key::Backspace);
         assert_eq!(p.get_vista(), "panoramica");
@@ -1285,7 +1294,7 @@ mod accessibilita {
         use slint::platform::{PointerEventButton, WindowEvent};
         piattaforma_di_prova();
         let p = pannello();
-        p.set_app(crate::pannello::voci_app());
+        p.set_app(crate::pannello::voci_app(&crate::moduli::registro::Registro::nuovo(&[])));
         let menu = std::rc::Rc::new(std::cell::Cell::new(0u32));
         let m = menu.clone();
         p.on_menu(move || m.set(m.get() + 1));
@@ -1469,7 +1478,7 @@ mod accessibilita {
     #[test]
     fn nessun_indietro_nelle_viste() {
         let (p, _) = pannello_casa();
-        for vista in ["casa", "claude", "pc", "collegamenti", "panoramica"] {
+        for vista in ["casa", "agenti", "pc", "collegamenti", "panoramica"] {
             p.set_vista(vista.into());
             assert!(ElementHandle::find_by_accessible_label(&p, "Indietro").next().is_none(), "«Indietro» in {vista}");
         }
@@ -2385,7 +2394,7 @@ mod accessibilita {
         let (e1, e2) = (eventi.clone(), eventi.clone());
         p.on_apri_sessione(move |id| e1.borrow_mut().push(format!("apri {id}")));
         p.on_gestisci_claude(move || e2.borrow_mut().push("gestisci".into()));
-        p.set_vista("claude".into());
+        p.set_vista("agenti".into());
         (p, eventi)
     }
 

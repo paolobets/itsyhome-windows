@@ -7,7 +7,7 @@
 import "../assets/font/Inter-Medium.ttf";
 import "../assets/font/Inter-Bold.ttf";
 import "../assets/font/JetBrainsMonoNL-Medium.ttf";
-import { LivelloUi } from "voci.slint";
+import { LivelloUi, TonoModuloUi } from "voci.slint";
 
 // Movimento ridotto (impostazione di Windows «Effetti di animazione», scritta da Rust in ogni
 // finestra: vedi `sistema::movimento`). Vero: niente pulsazioni né scivolamenti, solo cambi
@@ -168,6 +168,27 @@ export global Tema {
         if (livello == LivelloUi.attenzione) { return attenzione; }
         if (livello == LivelloUi.informazione) { return informazione; }
         return testo-tenue;
+    }
+
+    // Il colore di un tono di modulo (capsula, segni): i cinque toni coi loro colori; calmo col
+    // testo secondario, vuoto e fermo col terziario (tenue: lo dice anche la parola).
+    public pure function colore-tono(t: TonoModuloUi) -> color {
+        if (t == TonoModuloUi.attivo) { return attivo; }
+        if (t == TonoModuloUi.aspetta) { return aspetta; }
+        if (t == TonoModuloUi.guarda) { return guarda; }
+        if (t == TonoModuloUi.fatto) { return fatto; }
+        if (t == TonoModuloUi.errore) { return errore; }
+        if (t == TonoModuloUi.calmo) { return testo-2; }
+        return testo-tenue;
+    }
+
+    // La luce dal basso di un tono (spec §13.3): solo al lavoro, guarda e aspetta (`Tono::luce`);
+    // gli altri toni non hanno luce (trasparente).
+    public pure function luce-tono(t: TonoModuloUi) -> color {
+        if (t == TonoModuloUi.attivo) { return luce-attivo; }
+        if (t == TonoModuloUi.aspetta) { return luce-aspetta; }
+        if (t == TonoModuloUi.guarda) { return luce-guarda; }
+        return transparent;
     }
 
     // I colori dei cerchi dei collegamenti (iniziale del nome): sei toni, i petali (mai i caldi:

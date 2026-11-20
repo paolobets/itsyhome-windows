@@ -8,7 +8,7 @@
 //! I dati della casa e l'umore arrivano dal `Ponte`, che il pannello riprende a ogni apertura.
 
 use crate::layout::Layout;
-use crate::registro::app_disponibili;
+use crate::moduli::registro::Registro;
 use crate::pc_stats::{formatta_usato_totale, formatta_velocita, tinta_batteria, Campionatore, Fonti, StatPc, TintaBatteria};
 #[cfg(test)]
 use crate::pc_stats::{LetturaBatteria, StatoBatteria};
@@ -74,8 +74,10 @@ thread_local! {
 }
 
 /// Le icone che Rust passa all'interfaccia: un solo elenco, nome e SVG insieme.
-const ICONE_SVG: [(&str, &[u8]); 6] = [
+const ICONE_SVG: [(&str, &[u8]); 7] = [
     ("panoramica", include_bytes!("../assets/icone/panoramica.svg")),
+    // Il modulo Agenti (ridisegno F1): il terminale di Lucide (ISC).
+    ("agenti", include_bytes!("../assets/icone/lucide/terminal.svg")),
     ("casa", include_bytes!("../assets/icone/casa.svg")),
     ("pc", include_bytes!("../assets/icone/pc.svg")),
     // La catena di Lucide (ISC), come le card della vista Collegamenti.
@@ -95,10 +97,18 @@ pub fn icona(nome: &str) -> Image {
     })
 }
 
-pub(crate) fn voci_app() -> ModelRc<VoceAppUi> {
-    let voci: Vec<VoceAppUi> = app_disponibili()
-        .into_iter()
-        .map(|a| VoceAppUi { id: a.id.into(), nome: a.nome.into(), icona: icona(a.icona) })
+/// Le icone del dock: la Panoramica (la schermata principale) e poi i moduli nell'ordine del
+/// registro. Le Impostazioni non sono un'app del dock (Task 14i): si aprono dal menu «⋯» in alto
+/// a destra del pannello e dalla tray.
+pub(crate) fn voci_app(registro: &Registro) -> ModelRc<VoceAppUi> {
+    let panoramica = VoceAppUi { id: "panoramica".into(), nome: "Panoramica".into(), icona: icona("panoramica") };
+    let voci: Vec<VoceAppUi> = std::iter::once(panoramica)
+        .chain(
+            registro
+                .ordine()
+                .into_iter()
+                .map(|m| VoceAppUi { id: m.id.into(), nome: m.nome.into(), icona: icona(m.icona) }),
+        )
         .collect();
     ModelRc::new(VecModel::from(voci))
 }
@@ -413,7 +423,7 @@ impl Apertura {
     fn crea(&self) -> Result<Pannello, slint::PlatformError> {
         let pannello = Pannello::new()?;
         pannello.global::<Movimento>().set_ridotto(servizi::movimento_ridotto());
-        pannello.set_app(voci_app());
+        pannello.set_app(voci_app(&self.ponte.registro()));
         pannello.set_layout(self.layout.get());
         self.ponte.riempi(&pannello);
 
@@ -429,7 +439,7 @@ impl Apertura {
                 // Wi-Fi e Bluetooth (M2, Task 8) si seguono solo a vista PC aperta.
                 a.ponte.vista_pc(p.get_vista() == "pc");
                 // La vista Claude (M3, Task 9) scrive e conta il tempo solo a vista aperta.
-                a.ponte.vista_claude(p.get_vista() == "claude");
+                a.ponte.vista_claude(p.get_vista() == "agenti");
             }
         });
         let a = self.io.clone();
@@ -844,10 +854,15 @@ mod test {
 
     #[test]
     fn ogni_app_del_registro_ha_la_sua_icona() {
-        for app in app_disponibili() {
-            let dimensioni = icona(app.icona).size();
+        let voci = voci_app(&Registro::nuovo(&[]));
+        let ids: Vec<String> = voci.iter().map(|v| v.id.to_string()).collect();
+        assert_eq!(ids, ["panoramica", "agenti", "casa", "pc", "collegamenti"]);
+        for app in voci.iter() {
+            let dimensioni = app.icona.size();
             assert!(dimensioni.width > 0 && dimensioni.height > 0, "icona di {}", app.id);
         }
+        // Agenti ha il terminale di Lucide, non la stella di Claude (che resta per le voci).
+        assert_ne!(icona("agenti"), icona("claude"));
         // Tutte le icone dell'elenco si leggono, comprese quelle che non sono app («avviso»).
         for (nome, _) in ICONE_SVG {
             let dimensioni = icona(nome).size();
