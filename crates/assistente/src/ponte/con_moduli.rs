@@ -10,9 +10,9 @@
 use super::con_claude::adesso_unix;
 use super::{aggiorna_modello, Ponte};
 use crate::claude;
-use crate::finestra_impostazioni::{apri_alla_sezione, SEZIONE_CASA, SEZIONE_CLAUDE};
+use crate::finestra_impostazioni::{apri_alla_sezione, SEZIONE_CASA, SEZIONE_CLAUDE, SEZIONE_COLLEGAMENTI};
 use crate::moduli::registro::{tono_ui, Registro};
-use crate::moduli::{agenti, casa, pc, Riassunto};
+use crate::moduli::{agenti, casa, collegamenti, pc, Riassunto};
 use crate::{Pannello, TonoModuloUi};
 use slint::ModelRc;
 use std::cell::Ref;
@@ -53,7 +53,7 @@ impl Ponte {
     /// dell'isola, scritti una volta sola.
     pub fn moduli_nel_pannello(&self, p: &Pannello) {
         if self.moduli_vecchi.replace(false) {
-            for id in ["agenti", "casa"] {
+            for id in ["agenti", "casa", "collegamenti"] {
                 if let Some(r) = self.riassunto_di(id) {
                     self.moduli_accetta(id, r);
                 }
@@ -79,6 +79,7 @@ impl Ponte {
                 let (stato, menu, dati) = (self.stato.borrow(), self.menu.borrow(), self.dati_delle.borrow());
                 Some(casa::riassunto(&stato, menu.as_deref(), dati.as_deref()))
             }
+            "collegamenti" => Some(self.casa.con_config(|c| collegamenti::riassunto(&c.collegamenti))),
             _ => None,
         }
     }
@@ -147,6 +148,17 @@ impl Ponte {
             ("casa", casa::SPEGNI) => self.spegni_tutte(),
             ("casa", casa::RIPROVA) => self.riprova_casa(),
             ("casa", casa::COLLEGA) => apri_alla_sezione(SEZIONE_CASA, || self.chiedi_impostazioni()),
+            ("collegamenti", collegamenti::APRI) => {
+                // Il più usato di adesso (lo stesso della carta), aperto come il clic sulla sua
+                // card: se il browser parte il pannello si chiude, se no resta aperto con l'errore.
+                let id = self.casa.con_config(|c| collegamenti::piu_usato(&c.collegamenti).map(|c| c.id.clone()));
+                if id.is_some_and(|id| self.apri_collegamento(&id)) {
+                    if let Some(chiudi) = self.chiudi_pannello.borrow().as_ref() {
+                        chiudi();
+                    }
+                }
+            }
+            ("collegamenti", collegamenti::AGGIUNGI) => apri_alla_sezione(SEZIONE_COLLEGAMENTI, || self.chiedi_impostazioni()),
             _ => eprintln!("azione di modulo sconosciuta: {modulo} {azione}"),
         }
     }
@@ -223,6 +235,54 @@ mod test {
         ponte.claude_evento(evento("a", TipoEvento::UserPromptSubmit), 1, Instant::now());
         assert_eq!(titolo(&p, 0), "1 al lavoro");
         assert_eq!(p.get_moduli().row_data(0).map(|m| m.tono), Some(TonoModuloUi::Attivo));
+    }
+
+    /// La carta dei Collegamenti segue l'elenco e i lanci; «Apri {nome}» apre il più usato come il
+    /// clic sulla sua card, conta il lancio e chiude il pannello solo se il browser è partito.
+    #[test]
+    fn carta_dei_collegamenti_apre_il_piu_usato() {
+        use std::cell::{Cell, RefCell};
+        use std::rc::Rc;
+        let (_spegni, ponte, _pillola, _cartella) = ponte_di_prova();
+        let p = Pannello::new().expect("pannello");
+        ponte.riempi(&p);
+        ponte.pannello_aperto(&p);
+        assert_eq!((titolo(&p, 3).as_str(), p.get_moduli().row_data(3).map(|m| m.tono)), ("Nessun link", Some(TonoModuloUi::Vuoto)));
+
+        let aperti = Rc::new(RefCell::new(Vec::<String>::new()));
+        let a = aperti.clone();
+        ponte.su_apri_url(move |url| {
+            a.borrow_mut().push(url.to_owned());
+            Ok(())
+        });
+        let chiusure = Rc::new(Cell::new(0));
+        let c = chiusure.clone();
+        ponte.su_chiudi_pannello(move || c.set(c.get() + 1));
+        ponte.casa().aggiorna_config(|c| {
+            for (id, nome) in [("nas", "NAS"), ("pve", "Proxmox")] {
+                c.collegamenti.push(casa_core::config::Collegamento { id: id.into(), nome: nome.into(), url: format!("https://{id}.esempio.lan/"), ..Default::default() });
+            }
+        });
+        ponte.moduli_aggiorna("collegamenti");
+        assert_eq!(titolo(&p, 3), "2 link");
+        assert_eq!(p.get_moduli().row_data(3).map(|m| m.narratore.to_string()).as_deref(), Some("Collegamenti, 2 link, Più usato: NAS, modulo 4 di 4, azione: Apri NAS"));
+
+        // Tutti a zero: il primo. Il bottone apre quello e il pannello si chiude.
+        ponte.azione_modulo("collegamenti", crate::moduli::collegamenti::APRI);
+        assert_eq!(*aperti.borrow(), ["https://nas.esempio.lan/"]);
+        assert_eq!(chiusure.get(), 1);
+        assert_eq!(ponte.casa().config().collegamenti[0].lanci, 1);
+        // Proxmox con più lanci di NAS (1): diventa il più usato e la carta lo dice.
+        ponte.casa().aggiorna_config(|c| c.collegamenti[1].lanci = 5);
+        ponte.moduli_aggiorna("collegamenti");
+        assert!(p.get_moduli().row_data(3).is_some_and(|m| m.narratore.contains("Più usato: Proxmox")));
+        // Il browser non parte: il pannello resta aperto e il conteggio non sale. (Un tocco
+        // appena fatto blocca i doppi clic fino alla chiusura: qui il pannello è «chiuso».)
+        ponte.pannello_chiuso();
+        ponte.su_apri_url(|_| Err("ShellExecuteW: 2".into()));
+        ponte.azione_modulo("collegamenti", crate::moduli::collegamenti::APRI);
+        assert_eq!(chiusure.get(), 1, "nessuna chiusura se il browser non è partito");
+        assert_eq!(ponte.casa().config().collegamenti[1].lanci, 5);
     }
 
     fn evento(id: &str, tipo: TipoEvento) -> EventoHook {

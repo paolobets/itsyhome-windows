@@ -326,6 +326,8 @@ impl Apertura {
         pillola.on_cliccata(move || dopo(&a, Apertura::apri));
         let a = Rc::downgrade(&apertura);
         apertura.ponte.su_apri_impostazioni(move || dopo(&a, Apertura::apri_impostazioni));
+        let a = Rc::downgrade(&apertura);
+        apertura.ponte.su_chiudi_pannello(move || dopo(&a, Apertura::chiudi));
         apertura
     }
 

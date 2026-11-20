@@ -907,6 +907,9 @@ pub struct Ponte {
     /// Apre la finestra delle Impostazioni chiudendo il pannello (lo collega `Apertura`): icona
     /// del dock e pulsante «Impostazioni» della voce del token.
     apri_impostazioni: RefCell<Option<Box<dyn Fn()>>>,
+    /// Chiude il pannello (lo collega `Apertura`): l'azione «Apri {nome}» di una carta, dopo che il
+    /// browser è partito.
+    chiudi_pannello: RefCell<Option<Box<dyn Fn()>>>,
     /// Acceso/spento mostrati subito dopo un tocco, finché Home Assistant non conferma.
     ottimismo: RefCell<Ottimismo<bool>>,
     /// Suona alla scadenza della prossima attesa di conferma (solo se ce ne sono).
@@ -1078,6 +1081,7 @@ pub fn collega(
         prova: Cell::new(0),
         finestra: RefCell::new(slint::Weak::default()),
         apri_impostazioni: RefCell::new(None),
+        chiudi_pannello: RefCell::new(None),
         ottimismo: RefCell::new(Ottimismo::default()),
         sveglia_ottimismo: slint::Timer::default(),
         traccia_tocco: std::env::var_os("ITSYHOME_TRACCIA_TOCCO").is_some_and(|v| v == "1"),
@@ -1776,6 +1780,7 @@ impl Ponte {
         match esito {
             Ok(id) => {
                 self.aggiorna_collegamenti();
+                self.moduli_aggiorna("collegamenti");
                 self.fuoco_collegamento(&id, "modifica");
                 String::new()
             }
@@ -1791,6 +1796,7 @@ impl Ponte {
             collegamenti::elimina(c, id);
         });
         self.aggiorna_collegamenti();
+        self.moduli_aggiorna("collegamenti");
         let n = self.collegamenti.row_count();
         let resta = indice.filter(|_| n > 0).and_then(|i| self.collegamenti.row_data(i.min(n - 1)));
         match resta {
@@ -1806,6 +1812,8 @@ impl Ponte {
             collegamenti::sposta(c, id, verso);
         });
         self.aggiorna_collegamenti();
+        // L'ordine conta a parità di lanci (tutti a zero: il primo).
+        self.moduli_aggiorna("collegamenti");
         let n = self.collegamenti.row_count();
         let Some(i) = (0..n).find(|i| self.collegamenti.row_data(*i).is_some_and(|r| r.id == id)) else { return };
         let azione = match verso {
@@ -1843,6 +1851,13 @@ impl Ponte {
             Ok(()) => {
                 self.collegamento_aperto.set(true);
                 self.scrivi_errore_collegamento("");
+                // Il browser è partito: un lancio in più, salvato col resto della configurazione
+                // (solo qui, in locale; il conteggio decide il «più usato» della carta).
+                let ora = con_claude::adesso_unix();
+                self.casa.aggiorna_config(|c| {
+                    collegamenti::conta_lancio(c, id, ora);
+                });
+                self.moduli_aggiorna("collegamenti");
                 return true;
             }
             Err(e) => e,
@@ -1867,6 +1882,11 @@ impl Ponte {
     /// `Apertura` dice come aprire la finestra delle Impostazioni (chiudendo il pannello).
     pub fn su_apri_impostazioni(&self, f: impl Fn() + 'static) {
         *self.apri_impostazioni.borrow_mut() = Some(Box::new(f));
+    }
+
+    /// Chi chiude il pannello al giro dopo (lo collega `Apertura`).
+    pub fn su_chiudi_pannello(&self, f: impl Fn() + 'static) {
+        *self.chiudi_pannello.borrow_mut() = Some(Box::new(f));
     }
 
     /// Icona del dock o pulsante di una voce: la finestra delle Impostazioni. Falso se nessuno sa
@@ -3717,6 +3737,44 @@ pub(crate) mod test {
         p.su_apri_url(|_| Err("ShellExecuteW: 2".into()));
         assert!(!p.apri_collegamento("proxmox"));
         assert!(p.errore_collegamento.borrow().as_deref().is_some_and(|e| e.contains("ShellExecuteW: 2")));
+    }
+
+    /// Ridisegno F1, Task 5: ogni apertura riuscita porta `lanci` a +1 (e scrive l'ora) nella
+    /// configurazione, in memoria e sul disco; se il browser non parte il conteggio non sale.
+    #[test]
+    fn aprire_conta_e_salva() {
+        let (_spegni, p, _pillola, cartella) = ponte_di_prova();
+        p.su_apri_url(|_| Ok(()));
+        assert_eq!(p.salva_collegamento("", "NAS", "nas.esempio.lan"), "");
+        assert_eq!(p.casa.config().collegamenti[0].lanci, 0);
+        let prima = crate::ponte::con_claude::adesso_unix();
+        assert!(p.apri_collegamento("nas"));
+        let c = p.casa.config().collegamenti[0].clone();
+        assert_eq!(c.lanci, 1);
+        assert!(c.ultimo_lancio >= prima, "l'ora dell'apertura: {} contro {prima}", c.ultimo_lancio);
+        // Il servizio salva sul suo thread: il file arriva poco dopo, con il conteggio.
+        let file = cartella.path().join("assistente.json");
+        let fine = Instant::now() + Duration::from_secs(5);
+        loop {
+            let testo = std::fs::read_to_string(&file).unwrap_or_default();
+            if testo.contains("\"lanci\": 1") && testo.contains("\"ultimoLancio\"") {
+                break;
+            }
+            assert!(Instant::now() < fine, "conteggio non salvato: {testo}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        // Un secondo giro (pannello richiuso) conta ancora.
+        p.pannello_chiuso();
+        assert!(p.apri_collegamento("nas"));
+        assert_eq!(p.casa.config().collegamenti[0].lanci, 2);
+        // Il browser non parte: il conteggio non sale.
+        p.pannello_chiuso();
+        p.su_apri_url(|_| Err("ShellExecuteW: 2".into()));
+        assert!(!p.apri_collegamento("nas"));
+        assert_eq!(p.casa.config().collegamenti[0].lanci, 2);
+        // Un id che non c'è non conta e non scrive nulla.
+        assert!(!p.apri_collegamento("sparito"));
+        assert_eq!(p.casa.config().collegamenti.len(), 1);
     }
 
     #[test]

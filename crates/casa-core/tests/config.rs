@@ -142,8 +142,8 @@ fn collegamenti_salvati_e_riletti_nell_ordine() {
     let st = ConfigStore::apri(d.path());
     let c = Config {
         collegamenti: vec![
-            Collegamento { id: "proxmox".into(), nome: "Proxmox".into(), url: "https://esempio.lan:8006".into() },
-            Collegamento { id: "nas".into(), nome: "NAS".into(), url: "http://nas.esempio.lan/admin?x=1".into() },
+            Collegamento { id: "proxmox".into(), nome: "Proxmox".into(), url: "https://esempio.lan:8006".into(), ..Collegamento::default() },
+            Collegamento { id: "nas".into(), nome: "NAS".into(), url: "http://nas.esempio.lan/admin?x=1".into(), ..Collegamento::default() },
         ],
         ..Config::default()
     };
@@ -323,4 +323,33 @@ fn moduli_salvati_e_file_di_prima() {
         vec![ConfigModulo { id: String::new(), fissato: false }, ConfigModulo { id: "casa".into(), fissato: true }],
         "senza `fissato`: fissato"
     );
+}
+
+/// Ridisegno F1, Task 5: un `assistente.json` di prima (collegamenti con `id`, `nome`, `url`) si
+/// legge con i contatori a zero; i contatori si scrivono in camelCase e si rileggono uguali, con
+/// la scrittura atomica di sempre (`.tmp` poi rename: nessun `.tmp` resta).
+#[test]
+fn configurazione_senza_contatori() {
+    let d = tempfile::tempdir().unwrap();
+    let st = ConfigStore::apri(d.path());
+    let file = d.path().join("assistente.json");
+    std::fs::write(
+        &file,
+        r#"{ "favorites": ["a"], "collegamenti": [ { "id": "nas", "nome": "NAS", "url": "http://nas.esempio.lan/" } ] }"#,
+    )
+    .unwrap();
+    let c = st.leggi();
+    assert_eq!(c.favorites, vec!["a"], "gli altri campi non si perdono");
+    assert_eq!(c.collegamenti.len(), 1);
+    assert_eq!((c.collegamenti[0].lanci, c.collegamenti[0].ultimo_lancio), (0, 0));
+
+    let mut c = c;
+    c.collegamenti[0].lanci = 7;
+    c.collegamenti[0].ultimo_lancio = 1_763_600_000;
+    st.salva(&c).unwrap();
+    let testo = std::fs::read_to_string(&file).unwrap();
+    assert!(testo.contains("\"ultimoLancio\": 1763600000"), "camelCase come il resto: {testo}");
+    assert!(testo.contains("\"lanci\": 7"), "{testo}");
+    assert_eq!(st.leggi(), c);
+    assert!(!d.path().join("assistente.json.tmp").exists(), "scrittura atomica: il .tmp è stato rinominato");
 }

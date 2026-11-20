@@ -10,6 +10,7 @@
 
 pub mod agenti;
 pub mod casa;
+pub mod collegamenti;
 pub mod misura;
 pub mod pc;
 pub mod registro;

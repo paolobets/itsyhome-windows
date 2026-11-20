@@ -201,11 +201,20 @@ impl Config {
 /// Un collegamento veloce: si apre nel browser predefinito. `url` è già controllato e
 /// normalizzato dalle Impostazioni (solo http/https), ma chi lo apre lo ricontrolla: il file si
 /// può scrivere anche a mano.
+///
+/// `lanci` e `ultimo_lancio` sono gli unici dati nuovi del ridisegno F1: quante volte il
+/// collegamento è stato aperto dal pannello e quando l'ultima (secondi Unix). Restano solo nella
+/// configurazione locale, mai in rete; un file di prima, senza le chiavi, li legge a zero.
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct Collegamento {
     pub id: String,
     pub nome: String,
     pub url: String,
+    #[serde(default)]
+    pub lanci: u32,
+    #[serde(default)]
+    pub ultimo_lancio: i64,
 }
 
 pub struct ConfigStore {

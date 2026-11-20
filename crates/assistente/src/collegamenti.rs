@@ -208,7 +208,7 @@ pub fn salva(config: &mut Config, id: &str, nome: &str, url: &str) -> Result<Str
     let url = valida_indirizzo(url)?;
     if id.is_empty() {
         let id = nuovo_id(config, &nome);
-        config.collegamenti.push(Collegamento { id: id.clone(), nome, url });
+        config.collegamenti.push(Collegamento { id: id.clone(), nome, url, ..Collegamento::default() });
         return Ok(id);
     }
     let Some(c) = config.collegamenti.iter_mut().find(|c| c.id == id) else {
@@ -273,6 +273,15 @@ pub fn ripara(config: &mut Config) -> bool {
 /// Collegamenti finti con questi id (per `nuovo_id` durante la riparazione).
 fn voci_con_id(ids: &[String]) -> Vec<Collegamento> {
     ids.iter().map(|id| Collegamento { id: id.clone(), ..Collegamento::default() }).collect()
+}
+
+/// Conta un lancio riuscito di `id` all'ora `ora` (secondi Unix): un lancio in più (saturante) e
+/// l'ora dell'ultimo. Falso, senza toccare nulla, se il collegamento non c'è più.
+pub fn conta_lancio(config: &mut Config, id: &str, ora: i64) -> bool {
+    let Some(c) = config.collegamenti.iter_mut().find(|c| c.id == id) else { return false };
+    c.lanci = c.lanci.saturating_add(1);
+    c.ultimo_lancio = ora;
+    true
 }
 
 /// L'indirizzo da aprire per `id`, ricontrollato (il file si può scrivere a mano): `None` se il
@@ -454,7 +463,7 @@ mod test {
         Config {
             collegamenti: collegamenti
                 .iter()
-                .map(|(id, nome)| Collegamento { id: (*id).into(), nome: (*nome).into(), url: format!("https://{id}.esempio.lan") })
+                .map(|(id, nome)| Collegamento { id: (*id).into(), nome: (*nome).into(), url: format!("https://{id}.esempio.lan"), ..Collegamento::default() })
                 .collect(),
             ..Config::default()
         }
@@ -475,13 +484,55 @@ mod test {
         assert_eq!(c.collegamenti[0].url, "https://esempio.lan:8006/", "salvato normalizzato");
         // Modifica: stesso id e stesso posto, nome e indirizzo nuovi.
         assert_eq!(salva(&mut c, "proxmox-2", "Router", "HTTP://Router.esempio.lan/"), Ok("proxmox-2".into()));
-        assert_eq!(c.collegamenti[1], Collegamento { id: "proxmox-2".into(), nome: "Router".into(), url: "http://router.esempio.lan/".into() });
+        assert_eq!(c.collegamenti[1], Collegamento { id: "proxmox-2".into(), nome: "Router".into(), url: "http://router.esempio.lan/".into(), ..Collegamento::default() });
         assert_eq!(salva(&mut c, "sparito", "X", "x.lan"), Err("Questo collegamento non esiste più".into()));
         assert!(elimina(&mut c, "proxmox"));
         assert!(!elimina(&mut c, "proxmox"));
         assert_eq!(ids(&c), ["proxmox-2"]);
         assert_eq!(nuovo_id(&c, "Città d'arte!"), "citt-d-arte");
         assert_eq!(nuovo_id(&c, "∞"), "collegamento");
+    }
+
+    #[test]
+    fn lancio_contato() {
+        let mut c = con(&[("a", "A"), ("b", "B")]);
+        assert_eq!((c.collegamenti[0].lanci, c.collegamenti[0].ultimo_lancio), (0, 0));
+        assert!(conta_lancio(&mut c, "a", 1_000));
+        assert_eq!((c.collegamenti[0].lanci, c.collegamenti[0].ultimo_lancio), (1, 1_000));
+        assert!(conta_lancio(&mut c, "a", 2_000));
+        assert_eq!((c.collegamenti[0].lanci, c.collegamenti[0].ultimo_lancio), (2, 2_000));
+        assert_eq!(c.collegamenti[1].lanci, 0, "gli altri non si toccano");
+        // Un id che non c'è: falso e nulla cambia.
+        let prima = c.clone();
+        assert!(!conta_lancio(&mut c, "sparito", 3_000));
+        assert_eq!(c, prima);
+        // Al tetto non trabocca (e l'ora si aggiorna lo stesso).
+        c.collegamenti[0].lanci = u32::MAX;
+        assert!(conta_lancio(&mut c, "a", 4_000));
+        assert_eq!((c.collegamenti[0].lanci, c.collegamenti[0].ultimo_lancio), (u32::MAX, 4_000));
+    }
+
+    #[test]
+    fn modifica_e_riparazione_tengono_il_conteggio() {
+        let mut c = Config::default();
+        let id = salva(&mut c, "", "Proxmox", "esempio.lan:8006").unwrap();
+        conta_lancio(&mut c, &id, 500);
+        conta_lancio(&mut c, &id, 600);
+        // Modifica di nome e indirizzo: il conteggio resta.
+        salva(&mut c, &id, "Proxmox VE", "https://altro.esempio.lan").unwrap();
+        assert_eq!((c.collegamenti[0].lanci, c.collegamenti[0].ultimo_lancio), (2, 600));
+        // Riparazione di un nome sporco e di un id vuoto: il conteggio resta anche con l'id nuovo.
+        c.collegamenti[0].nome = "  Proxmox\u{202e} VE ".into();
+        c.collegamenti[0].id = String::new();
+        assert!(ripara(&mut c));
+        assert_eq!((c.collegamenti[0].lanci, c.collegamenti[0].ultimo_lancio), (2, 600));
+        // Uno tolto se ne va col suo conteggio, gli altri tengono il loro.
+        let altro = salva(&mut c, "", "NAS", "nas.esempio.lan").unwrap();
+        conta_lancio(&mut c, &altro, 700);
+        let primo = c.collegamenti[0].id.clone();
+        assert!(elimina(&mut c, &primo));
+        assert_eq!(c.collegamenti.len(), 1);
+        assert_eq!((c.collegamenti[0].lanci, c.collegamenti[0].ultimo_lancio), (1, 700));
     }
 
     #[test]
