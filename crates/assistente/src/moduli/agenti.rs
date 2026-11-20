@@ -73,7 +73,8 @@ pub fn riassunto(collegato: bool, s: &Sessioni, limiti: (Option<&Limite>, Option
     let nome = nome_visto(&una.titolo, &una.cartella);
     match una.stato {
         // Il tono della voce «Claude ti aspetta» (attenzione); un permesso (bloccante) lo alza.
-        Stato::TiAspetta => con_nome(Tono::Guarda, "Ti aspetta", ("", &nome, ""), ""),
+        // Titolo «Tocca a te»: «Ti aspetta» è la parola del tono Aspetta (vocabolario chiuso).
+        Stato::TiAspetta => con_nome(Tono::Guarda, "Tocca a te", ("", &nome, ""), ""),
         // «{nome}: {frase}» per Narrator; nella carta, accanto al bottone, anche la frase più corta
         // («Limite raggiunto») non lascia al nome lo spazio minimo: resta la frase.
         Stato::Errore => {
@@ -169,7 +170,8 @@ mod test {
 
         let aspetta = sessioni(&[("a", TipoEvento::Stop), ("b", TipoEvento::PermissionRequest)]);
         let r = riassunto(true, &aspetta, limiti);
-        assert_eq!(vista(&r), (Tono::Guarda, "Ti aspetta", "prog-b", Some("Apri il terminale")));
+        // «Tocca a te»: non «Ti aspetta», che è la parola del tono Aspetta (vocabolario chiuso).
+        assert_eq!(vista(&r), (Tono::Guarda, "Tocca a te", "prog-b", Some("Apri il terminale")));
 
         // Ferme: i «fatto» già visti.
         let mut ferme = sessioni(&[("a", TipoEvento::Stop), ("b", TipoEvento::Stop)]);

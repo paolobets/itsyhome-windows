@@ -52,17 +52,19 @@ fn dentro(menu: &MenuData) -> Option<String> {
 }
 
 /// La riga delle temperature, con quelle che ci sono: «21,5° dentro, 9° fuori»; se tutte e due
-/// non stanno accanto al bottone resta quella di dentro. `None` senza temperature.
-fn temperature(menu: &MenuData, con_azione: bool) -> Option<String> {
+/// non stanno accanto al bottone, nella carta resta quella di dentro. (riga della carta, riga
+/// intera per Narrator); `None` senza temperature.
+fn temperature(menu: &MenuData, con_azione: bool) -> Option<(String, String)> {
     let fuori = menu.meteo.as_ref().and_then(temperatura_breve);
     match (dentro(menu), fuori) {
         (Some(d), Some(f)) => {
             let tutte = format!("{d} dentro, {f} fuori");
             let spazio = if con_azione { misura::SPAZIO_CON_AZIONE } else { misura::SPAZIO_PIENO } - misura::MARGINE;
-            Some(if misura::larghezza(&tutte, misura::Stile::Riga) <= spazio { tutte } else { format!("{d} dentro") })
+            let carta = if misura::larghezza(&tutte, misura::Stile::Riga) <= spazio { tutte.clone() } else { format!("{d} dentro") };
+            Some((carta, tutte))
         }
-        (Some(d), None) => Some(format!("{d} dentro")),
-        (None, Some(f)) => Some(format!("{f} fuori")),
+        (Some(d), None) => Some((format!("{d} dentro"), format!("{d} dentro"))),
+        (None, Some(f)) => Some((format!("{f} fuori"), format!("{f} fuori"))),
         (None, None) => None,
     }
 }
@@ -79,13 +81,16 @@ pub fn riassunto(stato: &StatoConnessione, menu: Option<&MenuData>, dati_delle: 
         (StatoConnessione::Connesso, Some(m)) => {
             let accese = luci_accese(m).len();
             let spegni = (accese > 0).then(|| azione(SPEGNI, "Spegni tutte", "luce")).flatten();
-            let temperature = temperature(m, spegni.is_some()).unwrap_or_else(|| "Nessun sensore".into());
+            let (temperature, intere) = temperature(m, spegni.is_some())
+                .unwrap_or_else(|| ("Nessun sensore".into(), "Nessun sensore".into()));
             let titolo = match accese {
                 0 => "Luci spente".to_owned(),
                 1 => "1 luce".to_owned(),
                 n => format!("{n} luci"),
             };
-            fisso(Tono::Calmo, titolo, &temperature, spegni)
+            let mut r = fisso(Tono::Calmo, titolo, &temperature, spegni);
+            r.sec_intera = intere;
+            r
         }
         (StatoConnessione::Errore(_) | StatoConnessione::Disconnesso | StatoConnessione::TokenNonValido | StatoConnessione::TokenMancante, _) => {
             let azione = if riprovabile(stato) { azione(RIPROVA, "Riprova", "collegamenti") } else { collega() };
@@ -161,7 +166,9 @@ mod test {
         assert_eq!(vista(&r), (Tono::Calmo, "4 luci", "9° dentro, 9° fuori", Some("Spegni tutte")));
         assert_eq!(r.azione.map(|a| a.id), Some(SPEGNI));
         let m = casa(4, Some("21.53"), Some(9.4));
-        assert_eq!(riassunto(&S::Connesso, Some(&m), None).sec, "21,5° dentro");
+        let r = riassunto(&S::Connesso, Some(&m), None);
+        assert_eq!(r.sec, "21,5° dentro");
+        assert_eq!(r.sec_intera, "21,5° dentro, 9° fuori", "Narrator le legge tutte e due");
         assert_eq!(riassunto(&S::Connesso, Some(&casa(0, Some("21.53"), Some(9.4))), None).sec, "21,5° dentro, 9° fuori");
         assert_eq!(riassunto(&S::Connesso, Some(&casa(1, Some("21"), None)), None).titolo, "1 luce");
         assert_eq!(riassunto(&S::Connesso, Some(&casa(1, Some("21"), None)), None).sec, "21° dentro");

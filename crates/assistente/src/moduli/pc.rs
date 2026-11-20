@@ -25,7 +25,8 @@ pub fn riassunto(stat: Option<&StatPc>) -> Riassunto {
     let misure = match (&cpu_testo, &ram_testo) {
         (Some(c), Some(r)) => format!("{c}, {r}"),
         (Some(m), None) | (None, Some(m)) => m.clone(),
-        (None, None) => "Misure non lette".into(),
+        // Nessuna misura: assenza, non calma (spec Review Focus 3).
+        (None, None) => return Riassunto::primo_avvio("Misure non lette"),
     };
     // La misura più carica sopra la soglia nel titolo, l'altra sotto.
     let carica = [(cpu, &cpu_testo, &ram_testo), (ram, &ram_testo, &cpu_testo)]
@@ -112,7 +113,8 @@ mod test {
         let mut senza = stat(None, 40, None);
         senza.ram_totale = 0;
         let r = riassunto(Some(&senza));
-        assert_eq!(vista(&r), (Tono::Calmo, "Tutto regolare", "Misure non lette"));
+        // Nessuna misura letta: «—» col motivo (vuoto), non «Tutto regolare».
+        assert_eq!(vista(&r), (Tono::Vuoto, "—", "Misure non lette"));
         let r = riassunto(Some(&stat(None, 40, None)));
         assert_eq!(r.sec, "RAM 40 %", "CPU non letta: solo la RAM");
     }
