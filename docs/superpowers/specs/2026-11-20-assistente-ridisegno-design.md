@@ -487,3 +487,27 @@ Panoramica in F1.
 2. Collegamenti: **il più usato con conteggio salvato** (contatore locale dei lanci + ora dell'ultimo, §5.6); niente
    elenco sul posto.
 3. Luce **ferma**: cambia solo al cambio di stato, nessun respiro da nessuna parte.
+
+## 13. Esiti dello spike (20/11) — correzioni vincolanti
+
+Rapporto completo: `.superpowers/ux/studio/11-spike.md` (§2 decisioni, §3 punti smentiti). Le scelte qui sotto sono
+del coordinatore e prevalgono sui punti corrispondenti di questa spec:
+
+1. **Fuoco**: ogni contenitore che fa sparire un bersaglio (voce, posti del pool, velo, menu, ricerca) ha una regola
+   esplicita in `changed` che sposta il fuoco sul più vicino; chiudere un velo da Rust lo riporta su `tasti`. Test col
+   backend di prova dopo `update_timers_and_animations()`.
+2. **AltGr**: escluso leggendo lo stato vero di Alt (`GetKeyState(VK_MENU)`, falso fuori da Windows) prima di
+   scorciatoie e «comincia a scrivere». Ctrl+K senza badare alle maiuscole; Ctrl+Maiusc+K vale come Ctrl+K.
+3. **Luce dal basso**: cerchio radiale stirato con `transform-scale-x` dentro un genitore con `clip`; animata (1,2 s)
+   solo al cambio di tono, alfa nel colore. Niente ripiego lineare (viola il contrasto). Sostituisce «scale-y 1,25».
+4. **Contorno di isola e pillola** in un solo `Path` con le orecchie; niente «rettangolo + cerchio».
+5. **Etichetta della carta**: con la capsula di stato si mostra il `nome_breve` del modulo; la capsula ha una larghezza
+   massima misurata e parole brevi («Aspetta», «Guarda», «Al lavoro», «Fatto», «Fermo» al posto di «Non risponde»).
+6. **Azione visibile**: valore e riga si accorciano entrambi dello spazio del bottone; i testi delle scale stanno nei
+   limiti anche così.
+7. **Limiti dei testi in pixel** (non solo in caratteri), misurati con i caratteri incorporati nel `Registro` e nei test.
+8. **Orologio a celle fisse** (cifre centrate in celle larghe quanto la cifra più larga): nessun salto.
+9. **Narrator**: i `Text` decorativi delle carte fuori dall'albero; il bottone d'azione di una carta senza azione non
+   esiste nemmeno per Narrator.
+10. **Simboli** sempre SVG/`Path`, mai glifi Unicode. Caratteri: **Inter 500/700** e **JetBrains Mono NL 500**, dalle
+    release ufficiali, al posto di Inter Tight e JetBrains Mono.
