@@ -95,6 +95,8 @@ impl Registro {
     }
 
     /// Il tono mostrato da un modulo (riassunto alzato dalle voci); `Vuoto` per un id sconosciuto.
+    /// Solo i test lo chiedono per id (l'interfaccia lo legge da `moduli_ui`).
+    #[cfg(test)]
     pub fn tono_effettivo(&self, id: &str) -> Tono {
         self.posto(id).map_or(Tono::Vuoto, Posto::tono)
     }
@@ -113,13 +115,16 @@ impl Registro {
     }
 
     /// Il nome per Narrator della carta in `posizione` (da 0): «{nome}, {titolo}, {riga intera}
-    /// [, {tono}], modulo {i} di {n}[, azione: {azione}]».
+    /// [, {tono}], modulo {i} di {n}[, azione: {azione}]». Il «—» dell'assenza non si legge (il
+    /// motivo accanto basta, spec §13.10).
     pub fn nome_narrator(&self, posizione: usize) -> String {
         let Some(posto) = self.posti.get(posizione) else { return String::new() };
         let r = &posto.riassunto;
-        let mut parti = vec![posto.identita.nome, r.titolo.as_str()];
-        if !r.sec_intera.is_empty() {
-            parti.push(&r.sec_intera);
+        let mut parti = vec![posto.identita.nome];
+        for testo in [&r.titolo, &r.sec_intera] {
+            if !testo.is_empty() && testo != "—" {
+                parti.push(testo);
+            }
         }
         let tono = posto.tono().per_narrator();
         if !tono.is_empty() {
@@ -314,6 +319,12 @@ mod test {
         lungo.sec_intera = "Il più usato: Posta dell'ufficio".into();
         r.aggiorna("collegamenti", lungo).unwrap();
         assert_eq!(r.nome_narrator(3), "Collegamenti, 3 link, Il più usato: Posta dell'ufficio, modulo 4 di 4");
+        // Il «—» dell'assenza non si legge: solo il motivo.
+        assert_eq!(r.nome_narrator(2), "PC, In attesa di dati, modulo 3 di 4");
+        let mut collego = calmo("Mi collego", "—");
+        collego.sec_intera = "—".into();
+        r.aggiorna("casa", collego).unwrap();
+        assert_eq!(r.nome_narrator(1), "Casa, Mi collego, modulo 2 di 4");
     }
 
     #[test]

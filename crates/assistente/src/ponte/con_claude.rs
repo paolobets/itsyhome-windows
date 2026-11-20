@@ -354,7 +354,7 @@ impl Gestore for GestoreIsola {
 }
 
 /// Adesso, in secondi dall'epoca (i limiti dell'abbonamento e il file di stato parlano così).
-fn adesso_unix() -> i64 {
+pub(super) fn adesso_unix() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
@@ -461,6 +461,8 @@ impl Ponte {
         }
         self.claude_quadranti_cambiati();
         self.aggiorna_vista_claude_a(ora);
+        // La carta Agenti mostra il limite più alto.
+        self.moduli_aggiorna("agenti");
     }
 
     /// Il primo azzeramento fra i limiti mostrati: quelli arrivati e, finché non ne arriva uno
@@ -954,6 +956,7 @@ impl Ponte {
         }
         self.arma_sveglia_claude(ora);
         self.aggiorna_claude_pillola();
+        self.moduli_aggiorna("agenti");
     }
 
     fn togli_voci_sessione(&self, id: &str) {
@@ -1011,6 +1014,7 @@ impl Ponte {
         }
         self.arma_sveglia_claude(ora);
         self.aggiorna_claude_pillola();
+        self.moduli_aggiorna("agenti");
     }
 
     /// Il pannello si è chiuso: l'elenco è stato guardato, i «fatto» sono visti e le loro voci
@@ -1026,6 +1030,8 @@ impl Ponte {
             self.voci_sessione(id, ora);
         }
         self.aggiorna_claude_pillola();
+        // «Ha finito» visto: la carta torna alle sessioni ferme (a pannello chiuso: all'apertura).
+        self.moduli_aggiorna("agenti");
     }
 
     /// Il timer da un secondo serve solo se almeno una sessione lavora **e** qualcosa mostra la
@@ -1310,6 +1316,13 @@ thread_local! {
 fn porta_davanti_il_terminale(salvata: &[(u32, String)]) -> Esito {
     PORTATI_DAVANTI.with(|v| v.borrow_mut().push(salvata.to_vec()));
     ESITO_PROVA.with(Cell::get)
+}
+
+/// Le catene portate davanti finora in questo thread (e le dimentica): per i test degli altri
+/// pezzi del ponte che arrivano al terminale (l'azione della carta Agenti).
+#[cfg(test)]
+pub(super) fn portati_davanti_prova() -> Vec<Vec<(u32, String)>> {
+    PORTATI_DAVANTI.with(|v| std::mem::take(&mut *v.borrow_mut()))
 }
 
 #[cfg(test)]

@@ -84,7 +84,7 @@ pub fn id_permesso_da_voce(voce: &str) -> Option<u64> {
 /// Il nome con cui si mostra una sessione: il suo titolo (dalla barra di stato) se ne ha uno, poi la
 /// cartella, poi «Claude». Testo non fidato, quindi ripulito: un titolo fatto di soli invisibili
 /// vale come assente.
-fn nome_visto(titolo: &str, cartella: &str) -> String {
+pub fn nome_visto(titolo: &str, cartella: &str) -> String {
     [titolo, cartella]
         .into_iter()
         .map(testo_pulito)

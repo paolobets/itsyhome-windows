@@ -5,15 +5,17 @@
 //! stanno nei limiti in pixel della carta (spec §13.6–§13.7): `controlla` li misura coi caratteri
 //! incorporati, e il `Registro` scarta un riassunto che non ci sta.
 //!
-//! Finché i moduli non hanno chiamanti nel programma vero (Task 4) il modulo intero è permesso
-//! come codice morto fuori dai test; il Task 4 toglie questo attributo e clippy lo prova.
-#![cfg_attr(not(test), allow(dead_code))]
+//! I riassunti dei moduli sono funzioni pure (`agenti`, `casa`, `pc`): il ponte le chiama quando
+//! cambia un loro dato (`ponte::con_moduli`).
 
+pub mod agenti;
+pub mod casa;
 pub mod misura;
+pub mod pc;
 pub mod registro;
 
 use crate::attenzione::Livello;
-use misura::{larghezza, Stile, MARGINE, SPAZIO_CON_AZIONE, SPAZIO_PIENO};
+use misura::{accorcia, larghezza, Stile, MARGINE, SPAZIO_CON_AZIONE, SPAZIO_PIENO};
 use std::fmt;
 
 /// Lo stato di un modulo, uguale per tutti (spec §5.3).
@@ -72,7 +74,9 @@ impl Tono {
         }
     }
 
-    /// La luce che sale dal basso (spec §13.3): solo per al lavoro, guarda e aspetta.
+    /// La luce che sale dal basso (spec §13.3): solo per al lavoro, guarda e aspetta. La applica
+    /// `Tema.luce-tono` in Slint; qui la regola per il test.
+    #[cfg(test)]
     pub fn luce(self) -> bool {
         matches!(self, Tono::Attivo | Tono::Guarda | Tono::Aspetta)
     }
@@ -159,11 +163,38 @@ impl fmt::Display for FuoriMisura {
     }
 }
 
+/// Lo spazio di un testo della carta: quello della carta (meno il bottone, se c'è l'azione) meno
+/// il margine fra questa misura e la resa di Slint.
+fn massimo(con_azione: bool) -> f32 {
+    (if con_azione { SPAZIO_CON_AZIONE } else { SPAZIO_PIENO }) - MARGINE
+}
+
+/// Il nome dell'utente sotto questa larghezza non si legge più: meglio la riga senza.
+const MINIMO_NOME: f32 = 32.0;
+
+/// Una riga della carta accorciata con «…» se non ci sta (rete di sicurezza: i testi fissi delle
+/// scale ci stanno già, lo provano i test di ogni modulo).
+pub fn riga(testo: &str, con_azione: bool) -> String {
+    accorcia(testo, Stile::Riga, massimo(con_azione))
+}
+
+/// Una riga col nome dell'utente in mezzo (`{prima}{nome}{dopo}`): il nome si accorcia allo
+/// spazio che le altre parti lasciano. `None` se per il nome restano meno di `MINIMO_NOME` px (chi
+/// chiama sceglie un'altra riga). La riga intera, per Narrator, la compone chi chiama.
+pub fn riga_con_nome(prima: &str, nome: &str, dopo: &str, con_azione: bool) -> Option<String> {
+    let massimo = massimo(con_azione);
+    let intera = format!("{prima}{nome}{dopo}");
+    if larghezza(&intera, Stile::Riga) <= massimo {
+        return Some(intera);
+    }
+    let spazio = massimo - larghezza(prima, Stile::Riga) - larghezza(dopo, Stile::Riga);
+    (spazio >= MINIMO_NOME).then(|| format!("{prima}{}{dopo}", accorcia(nome, Stile::Riga, spazio)))
+}
+
 /// Titolo e riga stanno nello spazio della carta (meno quello del bottone, se c'è l'azione),
 /// col margine fra questa misura e la resa di Slint.
 pub fn controlla(id: &'static str, r: &Riassunto) -> Result<(), FuoriMisura> {
-    let spazio = if r.azione.is_some() { SPAZIO_CON_AZIONE } else { SPAZIO_PIENO };
-    let massimo = spazio - MARGINE;
+    let massimo = massimo(r.azione.is_some());
     let stile_titolo = if r.titolo_numerico { Stile::TitoloNumerico } else { Stile::Titolo };
     for (campo, testo, stile) in [("titolo", &r.titolo, stile_titolo), ("sec", &r.sec, Stile::Riga)] {
         let l = larghezza(testo, stile);

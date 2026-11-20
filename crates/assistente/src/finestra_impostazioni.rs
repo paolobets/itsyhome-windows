@@ -22,7 +22,9 @@ thread_local! {
 
 /// Sezioni delle Impostazioni: 0 Home Assistant, 1 Dispositivi, 2 Collegamenti, 3 Isola, 4 Claude,
 /// 5 Sistema, 6 Informazioni. «Informazioni» la chiede il menu, «Collegamenti» il pannello,
-/// «Claude» la voce «il collegamento va aggiornato».
+/// «Claude» la voce «il collegamento va aggiornato» e la carta Agenti, le case (Home Assistant)
+/// la carta Casa.
+pub const SEZIONE_CASA: i32 = 0;
 pub const SEZIONE_COLLEGAMENTI: i32 = 2;
 pub const SEZIONE_CLAUDE: i32 = 4;
 // Fuori da Windows non c'è il menu che la chiede: resta per i test.

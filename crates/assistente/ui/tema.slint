@@ -171,12 +171,14 @@ export global Tema {
     }
 
     // Il colore di un tono di modulo (capsula, segni): i cinque toni coi loro colori; calmo col
-    // testo secondario, vuoto e fermo col terziario (tenue: lo dice anche la parola).
+    // testo secondario, vuoto e fermo col terziario (tenue: lo dice anche la parola). Una carta
+    // dice «Fatto» solo finché non è visto: blu `petalo-3` (spec §5.2, «fatto non visto»); il verde
+    // acqua `fatto` è del fatto visto, che sulla carta torna calmo.
     public pure function colore-tono(t: TonoModuloUi) -> color {
         if (t == TonoModuloUi.attivo) { return attivo; }
         if (t == TonoModuloUi.aspetta) { return aspetta; }
         if (t == TonoModuloUi.guarda) { return guarda; }
-        if (t == TonoModuloUi.fatto) { return fatto; }
+        if (t == TonoModuloUi.fatto) { return petalo-3; }
         if (t == TonoModuloUi.errore) { return errore; }
         if (t == TonoModuloUi.calmo) { return testo-2; }
         return testo-tenue;

@@ -213,6 +213,7 @@ impl Ponte {
             c.claude.collegato = true;
             c.claude.aggiornamento_ignorato = false;
         });
+        self.moduli_aggiorna("agenti");
         self.togli_voce(ID_AGGIORNA);
         if let Some(tubo) = cx.tubo.clone() {
             super::avvia_con(self, tubo);
@@ -258,6 +259,7 @@ impl Ponte {
             c.claude.collegato = false;
             c.claude.aggiornamento_ignorato = false;
         });
+        self.moduli_aggiorna("agenti");
         self.togli_voce(ID_AGGIORNA);
         self.togli_voce(crate::claude::ID_COLLEGAMENTO);
     }

@@ -873,6 +873,10 @@ pub struct Ponte {
     /// modello delle carte (sopravvive al pannello). Vedi `con_moduli`.
     registro: RefCell<Registro>,
     modello_moduli: Rc<VecModel<ModuloUi>>,
+    /// Da chiuso è cambiato un dato dei moduli (sessioni, casa, voci): riassunti e livelli si
+    /// ricalcolano all'apertura, una volta. Vero all'avvio (nessun riassunto ancora calcolato).
+    /// Separato da `modelli_vecchi`: un evento di Claude non deve rifare i modelli della Casa.
+    moduli_vecchi: Cell<bool>,
     /// I lavori in corso: la linea della ritirata si riempie con quello più urgente.
     avanzamenti: RefCell<Vec<Avanzamento>>,
     /// Il timer di `--prova-avanzamento` (fermo se la prova non c'è).
@@ -1058,6 +1062,7 @@ pub fn collega(
         modello_attese: Rc::new(VecModel::default()),
         registro: RefCell::new(registro),
         modello_moduli: Rc::new(VecModel::default()),
+        moduli_vecchi: Cell::new(true),
         avanzamenti: RefCell::new(Vec::new()),
         prova_avanzamento: slint::Timer::default(),
         sorveglianza: RefCell::new(SorveglianzaCasa::new(Instant::now())),
@@ -1253,6 +1258,7 @@ impl Ponte {
                 self.ricostruisci_preferiti();
                 self.aggiorna_ambienti();
                 self.aggiorna_pannello();
+                self.moduli_aggiorna("casa");
                 self.aggiorna_casa_offline();
             }
             CasaEvento::Dati(menu) => {
@@ -1275,6 +1281,7 @@ impl Ponte {
                 *self.dati_delle.borrow_mut() = Some(adesso_hh_mm());
                 self.ricostruisci_preferiti();
                 self.aggiorna_pannello();
+                self.moduli_aggiorna("casa");
             }
             CasaEvento::NotificaAggiunta { id, titolo, messaggio } => {
                 let silenziosa = self.appena_connesso.get();
@@ -2193,6 +2200,12 @@ impl Ponte {
         });
         p.set_attese(ModelRc::from(self.modello_attese.clone()));
         self.moduli_nel_pannello(p);
+        // Il bottone d'azione di una carta: (id del modulo, id dell'azione).
+        p.on_azione_modulo(|modulo, azione| {
+            if let Some(ponte) = ponte() {
+                ponte.azione_modulo(&modulo, &azione);
+            }
+        });
         self.riempi_stato(p);
         p.on_tocca(|id| {
             if let Some(ponte) = ponte() {
@@ -2515,6 +2528,8 @@ impl Ponte {
                 .collect()
         };
         aggiorna_modello(&self.modello_attese, voci);
+        // Le voci alzano il tono delle carte dei loro moduli (e la luce dell'isola).
+        self.moduli_livelli();
         self.claude_riarma(Instant::now());
         servizi::colora_linea();
         if let Some(p) = self.pannello.borrow().upgrade() {
@@ -3240,10 +3255,18 @@ pub(crate) mod test {
     }
 
     pub(crate) fn ponte_di_prova() -> (Spegni, Rc<Ponte>, crate::Pillola, tempfile::TempDir) {
+        ponte_di_prova_con(None)
+    }
+
+    /// Come `ponte_di_prova`, con un `assistente.json` già scritto nella cartella (`config`).
+    pub(crate) fn ponte_di_prova_con(config: Option<&str>) -> (Spegni, Rc<Ponte>, crate::Pillola, tempfile::TempDir) {
         use casa_core::config::ConfigStore;
         use casa_core::segreti::MemoriaSegreti;
         crate::test_ui::piattaforma_di_prova();
         let cartella = tempfile::tempdir().unwrap();
+        if let Some(testo) = config {
+            std::fs::write(cartella.path().join("assistente.json"), testo).unwrap();
+        }
         let segreti: Arc<dyn Segreti> = Arc::new(MemoriaSegreti::new());
         let store = Arc::new(ConfigStore::apri(cartella.path()));
         let casa = Rc::new(CasaService::avvia(store, segreti.clone(), Arc::new(|_| {})));

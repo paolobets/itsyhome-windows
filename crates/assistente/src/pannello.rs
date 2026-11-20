@@ -74,7 +74,7 @@ thread_local! {
 }
 
 /// Le icone che Rust passa all'interfaccia: un solo elenco, nome e SVG insieme.
-const ICONE_SVG: [(&str, &[u8]); 7] = [
+const ICONE_SVG: [(&str, &[u8]); 8] = [
     ("panoramica", include_bytes!("../assets/icone/panoramica.svg")),
     // Il modulo Agenti (ridisegno F1): il terminale di Lucide (ISC).
     ("agenti", include_bytes!("../assets/icone/lucide/terminal.svg")),
@@ -86,6 +86,8 @@ const ICONE_SVG: [(&str, &[u8]); 7] = [
     ("avviso", include_bytes!("../assets/icone/avviso.svg")),
     // Fonte «Claude» delle voci in attesa (M3): una stella a otto raggi, disegnata qui.
     ("claude", include_bytes!("../assets/icone/claude.svg")),
+    // L'azione «Spegni tutte» della carta Casa (ridisegno F1).
+    ("luce", include_bytes!("../assets/icone/luce.svg")),
 ];
 
 /// L'icona SVG di un'app del registro (bianca: il colore lo dà l'interfaccia), dalla cache;
@@ -357,6 +359,10 @@ impl Apertura {
                         let nuovo = stat_ui(&stat, pronta);
                         if p.get_pc() != nuovo {
                             p.set_pc(nuovo);
+                        }
+                        // La carta PC dallo stesso campione (prima che la CPU sia pronta: «—»).
+                        if let Some(ponte) = crate::ponte::ponte() {
+                            ponte.moduli_aggiorna_con("pc", crate::moduli::pc::riassunto(pronta.then_some(&stat)));
                         }
                     }
                 });

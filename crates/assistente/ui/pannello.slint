@@ -253,6 +253,9 @@ export component Pannello inherits Window {
     callback tocca(string);
     // Un pulsante di una voce in attesa: (id della voce, id del pulsante).
     callback azione(string, string);
+    // Il bottone d'azione di una carta: (id del modulo, id dell'azione). Lo traduce Rust
+    // (`Ponte::azione_modulo`); le carte che lo chiamano arrivano col Task 8.
+    callback azione-modulo(string, string);
     // Clic su un puntino: quel layout.
     callback scegli-layout(int);
     // Frecce, rotella e Invio sui puntini: +1 il successivo, -1 il precedente (lo decide Rust).
