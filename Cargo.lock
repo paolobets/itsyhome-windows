@@ -310,6 +310,7 @@ dependencies = [
  "sysinfo",
  "tempfile",
  "tray-icon",
+ "ttf-parser",
  "url",
  "windows",
  "windows-core",

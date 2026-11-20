@@ -15,6 +15,7 @@ mod gestione;
 mod impostazioni;
 mod lati;
 mod layout;
+mod moduli;
 mod orologio;
 mod ottimismo;
 mod pannello;

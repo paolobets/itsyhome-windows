@@ -456,6 +456,37 @@ fn misure_slint_e_rust() {
 }
 
 #[test]
+fn misura_rust_come_slint() {
+    // La misura dei testi in Rust (somma degli avanzamenti) sta entro `MARGINE` dalla resa di Slint.
+    use crate::moduli::misura::{larghezza, Stile, MARGINE};
+    piattaforma_di_prova();
+    let misura = crate::MisuraTesto::new().expect("misura creata col backend di prova");
+    let stili = [Stile::Titolo, Stile::TitoloNumerico, Stile::Riga, Stile::Etichetta, Stile::Capsula];
+    let testi = [
+        "Tutto regolare.",
+        "4 luci accese",
+        "AGENTI",
+        "Al lavoro",
+        "88:88:88",
+        "Collega Claude",
+        "7 giorni 61 %",
+        "Perché è già così? Àèìòù",
+    ];
+    for (indice, stile) in stili.into_iter().enumerate() {
+        for testo in testi {
+            misura.set_testo(testo.into());
+            misura.set_stile(indice as i32);
+            let slint = misura.get_larghezza();
+            let rust = larghezza(testo, stile);
+            assert!(
+                (rust - slint).abs() <= MARGINE,
+                "«{testo}» {stile:?}: Rust {rust}, Slint {slint}"
+            );
+        }
+    }
+}
+
+#[test]
 fn linea_riempita_a_meta() {
     // M2 Task 5: a pillola ritirata con riempimento 0.5 il riempimento è largo metà linea (150 px);
     // senza avanzamento (1.0) è tutta la linea, come in M1.
