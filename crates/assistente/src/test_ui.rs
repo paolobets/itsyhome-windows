@@ -708,6 +708,31 @@ mod accessibilita {
         assert!(ElementHandle::find_by_accessible_label(&p, "Volume 40 %").next().is_some());
     }
 
+    /// Review Focus 2: l'uscita audio sparisce col fuoco sul volume (cuffie staccate). Il fuoco va
+    /// sulla ricerca, il vicino, e il Tab seguente non si perde: porta a «Altre opzioni».
+    #[test]
+    fn volume_che_sparisce_col_fuoco_addosso() {
+        use slint::platform::Key;
+        piattaforma_di_prova();
+        let p = pannello();
+        p.set_schede(schede());
+        p.set_volume_disponibile(true);
+        p.set_volume(0.4);
+        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        p.global::<crate::Fuochi>().set_pronti(true);
+        // Contenuto → schede → ricerca → volume.
+        for _ in 0..3 {
+            tasto(&p, Key::Tab);
+        }
+        assert_eq!(etichetta_col_fuoco(&p), "Volume 40 %");
+        p.set_volume_disponibile(false);
+        // I `changed` girano al giro seguente del ciclo d'eventi.
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&p), "Cerca, in arrivo", "il fuoco va al vicino");
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Altre opzioni", "il Tab seguente non si perde");
+    }
+
     /// La scheda col segno: «Agenti, ti aspetta, scheda 2 di 5», selezionata quando la vista è
     /// `agenti`, allargata col nome breve; la capsula sta sotto di lei.
     #[test]
@@ -3982,8 +4007,13 @@ mod accessibilita {
 
         p.set_volume_disponibile(true);
         p.set_volume(0.4);
-        let altoparlante = elemento(&p, "Volume 40%");
+        // Lo stesso nome del pulsante della barra («Volume 40 %»): quello della vista ha anche la
+        // descrizione.
+        let altoparlante = ElementHandle::find_by_accessible_label(&p, "Volume 40 %")
+            .find(|e| e.accessible_description().as_deref() == Some("Disattiva l'audio"))
+            .expect("altoparlante della vista PC");
         assert_eq!(altoparlante.accessible_role(), Some(AccessibleRole::Button));
+        assert_eq!(ElementHandle::find_by_accessible_label(&p, "Volume 40 %").count(), 2, "barra e vista, un solo formato");
         let cursore = elemento(&p, "Volume");
         assert_eq!(cursore.accessible_role(), Some(AccessibleRole::Slider));
         assert_eq!(cursore.accessible_value().as_deref(), Some("40%"));
@@ -3995,7 +4025,7 @@ mod accessibilita {
         altoparlante.invoke_accessible_default_action();
         assert_eq!(*muti.borrow(), [true]);
         p.set_volume_muto(true);
-        assert!(ElementHandle::find_by_accessible_label(&p, "Volume 40%, muto").next().is_some());
+        assert!(ElementHandle::find_by_accessible_label(&p, "Volume 40 %, muto").next().is_some());
 
         p.set_volume_disponibile(false);
         assert_eq!(elementi_volume(&p), 0, "dispositivo sparito: la riga sparisce");

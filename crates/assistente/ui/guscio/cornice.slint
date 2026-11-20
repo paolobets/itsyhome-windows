@@ -206,6 +206,8 @@ export component SchedaBarra inherits Rectangle {
         width: max(0px, root.width - 38px);
         text: root.scheda.nome;
         font-family: Tema.carattere-mono;
+        // Lo stesso peso di `Stile::Etichetta` (mono 500): scritto, non ereditato.
+        font-weight: 500;
         font-size: Tema.etichetta-corpo;
         letter-spacing: Tema.etichetta-spaziatura;
         color: Tema.testo;

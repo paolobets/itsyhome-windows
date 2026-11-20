@@ -192,7 +192,8 @@ component RigaVolume inherits Rectangle {
         border-radius: Tema.raggio-s;
         background: tocco-altoparlante.has-hover ? Tema.scheda-sopra : transparent;
         accessible-role: button;
-        accessible-label: "Volume " + pct + "%" + (muto ? ", muto" : "");
+        // Lo stesso nome del pulsante della barra («Volume 40 %», con lo spazio).
+        accessible-label: "Volume " + pct + " %" + (muto ? ", muto" : "");
         accessible-description: muto ? "Riattiva l'audio" : "Disattiva l'audio";
         accessible-action-default => { root.cambia-muto(!muto); }
 

@@ -93,7 +93,6 @@ export global Tema {
     // Traccia degli archi e delle barre: grigio pieno, la scala si legge anche con un valore piccolo.
     out property <color> traccia: g4;
     out property <color> vetro-bordo: filo;
-    out property <color> capsula: g1;
     out property <color> scheda-sopra: g2;
     out property <color> scheda-attiva: g3;
     // Fondo delle card (voci chiuse, righe delle Impostazioni, card tenui della Casa) e dei
@@ -213,12 +212,11 @@ export global Tema {
 
     // ─── Scale (FE11): raggi e corpi del testo, pochi valori e sempre gli stessi ───
     // Raggi: pulsanti della pillola e suggerimenti 8, pulsanti 10, voci e card piccole 12, card
-    // e riquadri 16, il pannello 22. Le forme a capsula usano metà dell'altezza.
+    // e riquadri 16. Le forme a capsula usano metà dell'altezza.
     out property <length> raggio-s: 8px;
     out property <length> raggio-m: 10px;
     out property <length> raggio-l: 12px;
     out property <length> raggio-xl: 16px;
-    out property <length> raggio-pannello: 22px;
     // Angoli bassi dell'isola (TwoCode): proporzionali all'altezza, 34.
     out property <length> raggio-isola: 34px;
     // Corpi del testo: etichette e righe piccole 12, testo 13, campi e nomi 14, titoli 15,
