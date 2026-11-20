@@ -277,7 +277,7 @@ export component VoceAperta inherits Rectangle {
     titolo := Text {
         x: 60px;
         y: 10px;
-        width: torna.x - self.x - 12px;
+        width: pulsanti-voce.x - self.x - 12px;
         height: min(self.preferred-height, 57px);
         text: voce.titolo;
         wrap: word-wrap;
@@ -292,7 +292,7 @@ export component VoceAperta inherits Rectangle {
     sotto-testo := Text {
         x: 60px;
         y: titolo.y + titolo.height + 2px;
-        width: torna.x - self.x - 12px;
+        width: pulsanti-voce.x - self.x - 12px;
         text: voce.sotto;
         overflow: elide;
         font-size: Tema.testo-piccolo;
@@ -300,9 +300,10 @@ export component VoceAperta inherits Rectangle {
         accessible-role: none;
     }
 
+    // In basso a sinistra (sotto il testo): richiude il permesso. Mai dove nasce «Consenti».
     torna := Pulsante {
-        x: parent.width - self.width - 12px;
-        y: 10px;
+        x: 60px;
+        y: parent.height - self.height - 10px;
         testo: "Torna all'elenco";
         altezza: 28px;
         largo-min: 60px;
@@ -317,7 +318,7 @@ export component VoceAperta inherits Rectangle {
         x: 60px;
         y: sotto-testo.y + sotto-testo.height + 6px;
         width: parent.width - self.x - 18px;
-        height: parent.height - self.y - 52px;
+        height: torna.y - self.y - 8px;
         content-height: max(self.height, dettaglio.preferred-height);
 
         dettaglio := Text {
@@ -342,12 +343,12 @@ export component VoceAperta inherits Rectangle {
         background: @linear-gradient(180deg, Tema.g1.with-alpha(0) 0%, Tema.g1 100%);
     }
 
-    // Accanto ai pulsanti: perché «Consenti» non c'è ancora, o come si concede.
+    // In basso a destra: perché «Consenti» non c'è ancora, o come si concede (solo testo).
     if Permessi.chiede(voce) && (!visto || (fuoco >= 0 && fuoco < voce.pulsanti.length && voce.pulsanti[fuoco].delicato)): Text {
-        x: 60px;
-        y: pulsanti-voce.y;
-        width: pulsanti-voce.x - self.x - 12px;
-        height: 32px;
+        x: torna.x + torna.width + 12px;
+        y: torna.y;
+        width: parent.width - self.x - 18px;
+        height: torna.height;
         text: !visto ? "Leggi fino in fondo per consentire" : "Ctrl+Invio per consentire";
         horizontal-alignment: right;
         vertical-alignment: center;
@@ -356,36 +357,52 @@ export component VoceAperta inherits Rectangle {
         color: Tema.testo-tenue;
     }
 
+    // I pulsanti in alto a destra, a posti fissi dall'apertura (fix 2, N1): il posto di
+    // «Consenti» c'è anche quando è nascosto (invisibile e inerte, senza nome per Narrator), così
+    // «Nega» non si sposta mai e «Consenti» non nasce dove un attimo prima c'era un altro bersaglio.
+    // In alto, sopra la prima riga dell'elenco (che parte a 36): mai dove c'era «Apri» di una riga.
     pulsanti-voce := HorizontalLayout {
         width: self.preferred-width;
-        x: parent.width - self.width - 14px;
-        y: parent.height - 32px - 12px;
+        x: parent.width - self.width - 12px;
+        y: 2px;
         height: 32px;
         spacing: 8px;
 
-        if root.mostra(0): Pulsante {
+        if voce.pulsanti.length > 0: Pulsante {
+            visible: root.mostra(0);
             testo: root.voce.pulsanti[0].testo;
             tipo: RegolaPulsanti.tipo(root.voce.pulsanti.length == 1, root.voce.pulsanti[0].delicato);
             altezza: 32px;
             raggio: 9px;
             largo-min: 72px;
-            anello: root.fuoco == 0;
-            chiede-fuoco: root.fuoco == 0;
+            anello: root.mostra(0) && root.fuoco == 0;
+            chiede-fuoco: root.mostra(0) && root.fuoco == 0;
+            focalizzabile: root.mostra(0);
             tasti-propri: false;
             delicato: root.voce.pulsanti[0].delicato;
-            premuto => { root.azione(root.voce.pulsanti[0].id); }
+            premuto => {
+                if (root.mostra(0)) {
+                    root.azione(root.voce.pulsanti[0].id);
+                }
+            }
         }
-        if root.mostra(1): Pulsante {
+        if voce.pulsanti.length > 1: Pulsante {
+            visible: root.mostra(1);
             testo: root.voce.pulsanti[1].testo;
             tipo: RegolaPulsanti.tipo(true, root.voce.pulsanti[1].delicato);
             altezza: 32px;
             raggio: 9px;
             largo-min: 72px;
-            anello: root.fuoco == 1;
-            chiede-fuoco: root.fuoco == 1;
+            anello: root.mostra(1) && root.fuoco == 1;
+            chiede-fuoco: root.mostra(1) && root.fuoco == 1;
+            focalizzabile: root.mostra(1);
             tasti-propri: false;
             delicato: root.voce.pulsanti[1].delicato;
-            premuto => { root.azione(root.voce.pulsanti[1].id); }
+            premuto => {
+                if (root.mostra(1)) {
+                    root.azione(root.voce.pulsanti[1].id);
+                }
+            }
         }
     }
 

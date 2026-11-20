@@ -863,6 +863,76 @@ mod accessibilita {
         assert!(sorgente[inizio..inizio + 400].contains("font-family: Tema.carattere-mono"), "il comando in mono");
     }
 
+    /// Un clic sinistro (premuto e rilasciato) in questo punto della finestra.
+    fn clic_in(p: &Pannello, x: f32, y: f32) {
+        use slint::platform::{PointerEventButton, WindowEvent};
+        let posizione = slint::LogicalPosition::new(x, y);
+        p.window().dispatch_event(WindowEvent::PointerMoved { position: posizione });
+        p.window().dispatch_event(WindowEvent::PointerPressed { position: posizione, button: PointerEventButton::Left });
+        p.window().dispatch_event(WindowEvent::PointerReleased { position: posizione, button: PointerEventButton::Left });
+    }
+
+    /// Il centro di un elemento, in coordinate della finestra.
+    fn centro(e: &ElementHandle) -> (f32, f32) {
+        let (pos, lato) = (e.absolute_position(), e.size());
+        (pos.x + lato.width / 2.0, pos.y + lato.height / 2.0)
+    }
+
+    /// Fix 2 del Task 7 (N1): nel permesso aperto «Nega» non si sposta mai. Prima del fondo del
+    /// testo il posto di «Consenti» resta vuoto e inerte (nessun clic, nessun nome per Narrator);
+    /// quando il fondo si vede «Consenti» nasce lì, e «Nega» è dove era. Un clic dove c'era «Nega»
+    /// nega sempre.
+    #[test]
+    fn nega_non_si_sposta_quando_compare_consenti() {
+        use slint::platform::Key;
+        let (p, azioni) = pannello_in_coda(ModelRc::new(VecModel::from(vec![permesso_lungo(12)])));
+        tasto(&p, Key::Return);
+        lascia_girare(&p);
+        let nega_prima = elemento(&p, "Nega");
+        let (prima, lato_prima) = (nega_prima.absolute_position(), nega_prima.size());
+        assert!(ElementHandle::find_by_accessible_label(&p, "Consenti").next().is_none());
+        tasto(&p, Key::UpArrow);
+        for _ in 0..40 {
+            if ElementHandle::find_by_accessible_label(&p, "Consenti").next().is_some() {
+                break;
+            }
+            tasto(&p, Key::DownArrow);
+            lascia_girare(&p);
+        }
+        let consenti = elemento(&p, "Consenti");
+        let nega = elemento(&p, "Nega");
+        assert_eq!((nega.absolute_position(), nega.size()), (prima, lato_prima), "«Nega» non si è spostato");
+        // Il clic dove si era visto «Nega» nega.
+        clic_in(&p, prima.x + lato_prima.width / 2.0, prima.y + lato_prima.height / 2.0);
+        assert_eq!(*azioni.borrow(), ["nega"], "il clic dove era «Nega» nega");
+        // «Consenti» non sta sopra «Nega».
+        let (cx, _) = centro(&consenti);
+        assert!(cx > prima.x + lato_prima.width || cx < prima.x, "«Consenti» accanto, non sopra");
+    }
+
+    /// Fix 2 del Task 7 (N1, caso secondario): un doppio clic su «Apri» di una riga bassa non
+    /// concede mai: il secondo clic non trova «Consenti» dove c'era «Apri».
+    #[test]
+    fn doppio_clic_su_apri_non_consente() {
+        let mut voci: Vec<VoceAttesaUi> =
+            (0..3).map(|i| voce_coda(&format!("i{i}"), &format!("Avviso {i}"), LivelloUi::Informazione, "Quando vuoi · PC", false)).collect();
+        voci.push(voce_coda("claude.permesso.9", "Permesso basso", LivelloUi::Bloccante, "Aspetta te · Agenti", true));
+        let (p, azioni) = pannello_in_coda(ModelRc::new(VecModel::from(voci)));
+        let apri = elemento(&p, "Apri");
+        let (x, y) = centro(&apri);
+        clic_in(&p, x, y);
+        lascia_girare(&p);
+        assert!(ElementHandle::find_by_element_id(&p, "VoceAperta::dettaglio").next().is_some(), "il primo clic apre");
+        clic_in(&p, x, y);
+        lascia_girare(&p);
+        assert!(azioni.borrow().iter().all(|a| a != "consenti"), "il doppio clic ha concesso: {:?}", azioni.borrow());
+        // Anche il posto di «Consenti» non è mai dove era «Apri».
+        let consenti = elemento(&p, "Consenti");
+        let (pos, lato) = (consenti.absolute_position(), consenti.size());
+        let dentro = x >= pos.x && x <= pos.x + lato.width && y >= pos.y && y <= pos.y + lato.height;
+        assert!(!dentro, "«Consenti» sta dove era «Apri»");
+    }
+
     /// Fix 1 del Task 7 (C1, dec. 11): dalla pillola («Apri» o clic su un permesso) il pannello
     /// nasce sulla Coda col permesso già aperto e il testo intero, il fuoco su «Nega».
     #[test]

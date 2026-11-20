@@ -2231,6 +2231,12 @@ impl Ponte {
         });
         p.set_attese(ModelRc::from(self.modello_attese.clone()));
         self.scrivi_moduli_in_attesa(p);
+        // Un permesso aperto nella Coda o il suo «Consenti» che compare: si arma di nuovo.
+        p.on_consenti_compare(|| {
+            if let Some(ponte) = ponte() {
+                ponte.claude_superficie_compare(Instant::now());
+            }
+        });
         self.moduli_nel_pannello(p);
         // Il bottone d'azione di una carta: (id del modulo, id dell'azione).
         p.on_azione_modulo(|modulo, azione| {

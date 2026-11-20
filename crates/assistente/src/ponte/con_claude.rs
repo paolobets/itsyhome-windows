@@ -2347,6 +2347,38 @@ mod test {
         p.pannello_chiuso();
     }
 
+    /// Fix 2 del Task 7 (N1): dentro la Coda già armata, aprire un permesso (dove «Consenti»
+    /// compare) riarma: un «Consenti» premuto subito dopo l'apertura è ignorato e il canale resta.
+    #[test]
+    fn aprire_il_permesso_nella_coda_riarma() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::ComponentHandle;
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let pannello = crate::Pannello::new().unwrap();
+        pannello.set_aperto(true);
+        pannello.show().unwrap();
+        p.riempi(&pannello);
+        p.pannello_aperto(&pannello);
+        let rx = permesso(&p, 1, "a");
+        pannello.set_vista("coda".into());
+        slint::platform::update_timers_and_animations();
+        // Nella Coda da più di 600 ms.
+        armato(&p);
+        let apri = ElementHandle::find_by_accessible_label(&pannello, "Apri").next().expect("«Apri» del permesso");
+        apri.invoke_accessible_default_action();
+        let _ = ElementHandle::find_by_element_id(&pannello, "VoceAperta::titolo").count();
+        slint::platform::update_timers_and_animations();
+        let _ = ElementHandle::find_by_element_id(&pannello, "VoceAperta::titolo").count();
+        slint::platform::update_timers_and_animations();
+        assert!(p.claude_armamento.borrow().dal.get() > Instant::now(), "«Consenti» comparso: riarmato");
+        // Il clic su «Consenti» subito dopo non concede.
+        let consenti = ElementHandle::find_by_accessible_label(&pannello, "Consenti").next().expect("«Consenti» (testo corto)");
+        consenti.invoke_accessible_default_action();
+        assert_eq!(rx.try_recv(), Err(TryRecvError::Empty), "consenso entro 600 ms ignorato");
+        assert!(ha_voce(&p, &voce_di(1)), "il permesso resta");
+        p.pannello_chiuso();
+    }
+
     /// Fix 1 del Task 7 (I1): la Coda mostra tutti i «Consenti». Tolto il permesso di mezzo, quello
     /// più vecchio sale al suo posto (sotto il puntatore): si arma di nuovo, anche se la prima voce
     /// e il bloccante più vecchio non cambiano. Toglierne uno senza spostare gli altri no.

@@ -187,6 +187,9 @@ export component Pannello inherits Window {
     callback tocca(string);
     // Un pulsante di una voce in attesa: (id della voce, id del pulsante).
     callback azione(string, string);
+    // Nella Coda un permesso si apre o il suo «Consenti» compare (fondo del testo visto): Rust
+    // riarma «Consenti» per 600 ms (`claude_superficie_compare`).
+    callback consenti-compare();
     // Il bottone d'azione di una carta: (id del modulo, id dell'azione). Lo traduce Rust
     // (`Ponte::azione_modulo`); le carte che lo chiamano arrivano col Task 8.
     callback azione-modulo(string, string);
@@ -586,6 +589,9 @@ export component Pannello inherits Window {
         fuoco-coda-riga = coda-riga;
         coda-voce-pulsanti = coda-aperta;
         fuoco-coda-pulsante = primo-non-delicato(coda-riga);
+        // Una superficie col permesso compare: «Consenti» si arma di nuovo (anche contro il
+        // secondo clic di un doppio clic su «Apri»).
+        root.consenti-compare();
     }
 
     // Chiude il permesso aperto: di nuovo l'elenco, il fuoco sulla sua riga.
@@ -1377,9 +1383,11 @@ export component Pannello inherits Window {
                         da-tastiera = false;
                         chiudi-permesso();
                     }
+                    // «Consenti» compare: Rust lo arma di nuovo fra 600 ms (fix 2, N1).
                     visto-fondo => {
                         if (coda-aperta-valida) {
                             coda-visto = true;
+                            root.consenti-compare();
                         }
                     }
                     // Come nelle altre viste, il fuoco chiede anche la vista (lasciandola non si
