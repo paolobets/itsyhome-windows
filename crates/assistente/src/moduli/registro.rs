@@ -95,8 +95,7 @@ impl Registro {
     }
 
     /// Il tono mostrato da un modulo (riassunto alzato dalle voci); `Vuoto` per un id sconosciuto.
-    /// Solo i test lo chiedono per id (l'interfaccia lo legge da `moduli_ui`).
-    #[cfg(test)]
+    /// Le carte lo leggono da `moduli_ui`, le schede della barra da qui (`pannello::schede_ui`).
     pub fn tono_effettivo(&self, id: &str) -> Tono {
         self.posto(id).map_or(Tono::Vuoto, Posto::tono)
     }

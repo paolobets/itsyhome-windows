@@ -232,6 +232,14 @@ export global Tema {
     out property <length> testo-vuoto: 17px;
     out property <length> testo-intestazione: 20px;
     out property <length> testo-ora-grande: 68px;
+    // Etichetta mono maiuscola (nome della scheda della barra e della carta): JetBrains Mono NL
+    // 500, 11 px, tracking .07em. Gli stessi valori di `Stile::Etichetta` in `moduli/misura.rs`
+    // (che ne misura la larghezza) e di `MisuraTesto`: chi la disegna usa questi token, così
+    // misura e disegno non si separano. Non è il componente `Etichetta` (12 px, delle sezioni).
+    out property <length> etichetta-corpo: 11px;
+    out property <length> etichetta-spaziatura: 0.77px;
+    // Mono maiuscolo della riga alta (data e meteo), 12 px: tracking .07em.
+    out property <length> riga-alta-spaziatura: 0.84px;
 
     // ─── Pixel fisici (FE27) ───
     // Scala della finestra (1, 1,25, 1,75…): la scrive Rust per ogni finestra, all'avvio e quando

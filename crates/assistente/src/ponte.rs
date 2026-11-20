@@ -27,7 +27,8 @@ use crate::collegamenti;
 use crate::moduli::registro::Registro;
 use crate::{
     AmbienteUi, CollegamentoUi, FinestraImpostazioni, FonteQuadranteUi, GenereUi, ModuloUi, Pannello, Pillola, PreferitoUi,
-    QuadranteUi, RigaDispositivoUi, RigaSessioneUi, SceltaQuadranteUi, SensoreUi, StanzaUi, TipoRigaUi, TonoUi, VoceAttesaUi,
+    QuadranteUi, RigaDispositivoUi, RigaSessioneUi, SceltaQuadranteUi, SchedaBarraUi, SensoreUi, StanzaUi, TipoRigaUi, TonoUi,
+    VoceAttesaUi,
 };
 use casa_core::config::Config;
 use casa_core::diagnosi::Contatore;
@@ -873,6 +874,9 @@ pub struct Ponte {
     /// modello delle carte (sopravvive al pannello). Vedi `con_moduli`.
     registro: RefCell<Registro>,
     modello_moduli: Rc<VecModel<ModuloUi>>,
+    /// Le schede della barra (ridisegno F1, Task 6): geometria, segni e nomi per Narrator, scritti
+    /// da `scrivi_schede` (solo le righe cambiate).
+    modello_schede: Rc<VecModel<SchedaBarraUi>>,
     /// Da chiuso è cambiato un dato dei moduli (sessioni, casa, voci): riassunti e livelli si
     /// ricalcolano all'apertura, una volta. Vero all'avvio (nessun riassunto ancora calcolato).
     /// Separato da `modelli_vecchi`: un evento di Claude non deve rifare i modelli della Casa.
@@ -1065,6 +1069,7 @@ pub fn collega(
         modello_attese: Rc::new(VecModel::default()),
         registro: RefCell::new(registro),
         modello_moduli: Rc::new(VecModel::default()),
+        modello_schede: Rc::new(VecModel::default()),
         moduli_vecchi: Cell::new(true),
         avanzamenti: RefCell::new(Vec::new()),
         prova_avanzamento: slint::Timer::default(),
@@ -2262,6 +2267,9 @@ impl Ponte {
         {
             self.avvia_volume();
             self.scrivi_volume(p);
+            // La rotella sul pulsante del volume della barra segue la stessa impostazione di
+            // quella sulla pillola.
+            p.set_rotella_volume(self.casa.con_config(|c| c.volume_rotella));
             p.on_imposta_volume(|v| {
                 if let Some(ponte) = ponte() {
                     ponte.imposta_volume(v);
@@ -3061,11 +3069,15 @@ impl Ponte {
         }
     }
 
-    /// Impostazioni › Isola: la rotella sulla pillola accesa o spenta, salvata e subito in vigore.
+    /// Impostazioni › Isola: la rotella sulla pillola (e sul pulsante del volume del pannello)
+    /// accesa o spenta, salvata e subito in vigore.
     fn cambia_volume_rotella(&self, si: bool) {
         self.casa.aggiorna_config(|c| c.volume_rotella = si);
         if let Some(pl) = self.pillola.upgrade() {
             pl.set_rotella_attiva(si);
+        }
+        if let Some(p) = self.pannello.borrow().upgrade().filter(|p| p.get_rotella_volume() != si) {
+            p.set_rotella_volume(si);
         }
     }
 }

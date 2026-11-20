@@ -448,9 +448,18 @@ fn misure_slint_e_rust() {
         "linea della ritirata"
     );
 
+    // Ridisegno F1: finestra 820 × 340 (isola 800 più le orecchie), riga alta 44.
     let pannello = Pannello::new().expect("pannello creato col backend di prova");
-    assert_eq!(pannello.get_larghezza_pannello(), finestre::LARGHEZZA_PANNELLO, "larghezza del pannello");
+    assert_eq!(pannello.get_larghezza_finestra(), finestre::LARGHEZZA_FINESTRA_PANNELLO, "finestra del pannello");
+    assert_eq!(pannello.get_larghezza_finestra(), 820.0);
+    assert_eq!(pannello.get_larghezza_isola(), finestre::LARGHEZZA_PANNELLO, "isola del pannello");
+    assert_eq!(pannello.get_altezza_pannello(), finestre::ALTEZZA_PANNELLO, "altezza del pannello");
+    assert_eq!(pannello.get_altezza_pannello(), 340.0);
     assert_eq!(pannello.get_altezza_riga(), finestre::ALTEZZA_RIGA_PANNELLO, "riga alta del pannello");
+    assert_eq!(pannello.get_altezza_riga(), 44.0);
+    // Il corpo: 752 × 224 a (34, 44); la vista sta sopra la riga dei puntini (20 + 2).
+    assert_eq!((pannello.get_centro_x(), pannello.get_centro_y(), pannello.get_centro_l()), (34.0, 44.0, 752.0));
+    assert_eq!(pannello.get_centro_a(), 224.0 - 20.0 - 2.0);
     assert_eq!(pannello.get_numero_layout() as usize, layout::TUTTI.len(), "layout della Panoramica");
     drop((pillola, pannello));
 }
@@ -504,7 +513,7 @@ mod accessibilita {
     //! FE13/FE16: ruoli, nomi e stati che Narrator legge (UI Automation li riceve da AccessKit).
     use super::piattaforma_di_prova;
     use crate::{
-        AspettoPillolaUi, FinestraImpostazioni, LivelloUi, Pannello, Pillola, PulsanteUi, StatPcUi, VoceAppUi,
+        AspettoPillolaUi, FinestraImpostazioni, LivelloUi, Pannello, Pillola, PulsanteUi, SchedaBarraUi, StatPcUi,
         VoceAttesaUi,
     };
     use i_slint_backend_testing::{AccessibleRole, ElementHandle};
@@ -525,34 +534,32 @@ mod accessibilita {
         p
     }
 
-    fn app() -> ModelRc<VoceAppUi> {
-        let voce = |id: &str, nome: &str| VoceAppUi { id: id.into(), nome: nome.into(), icona: Default::default() };
-        ModelRc::new(VecModel::from(vec![
-            voce("panoramica", "Panoramica"),
-            voce("agenti", "Agenti"),
-            voce("casa", "Casa"),
-            voce("pc", "PC"),
-            voce("collegamenti", "Collegamenti"),
-        ]))
+    /// Le schede della barra di un registro nuovo (Panoramica, Agenti, Casa, PC, Collegamenti), con
+    /// la vista `vista` aperta.
+    fn schede_di(vista: &str) -> ModelRc<SchedaBarraUi> {
+        let registro = crate::moduli::registro::Registro::nuovo(&[]);
+        ModelRc::new(VecModel::from(crate::pannello::schede_ui(&registro, vista)))
     }
 
-    /// Ridisegno F1, Task 3: l'ordine del registro mette Agenti per primo dopo la Panoramica.
+    fn schede() -> ModelRc<SchedaBarraUi> {
+        schede_di("panoramica")
+    }
+
+    /// Ridisegno F1, Task 3: l'ordine del registro mette Agenti per primo dopo la Panoramica; i
+    /// nomi per Narrator dicono la posizione («scheda 2 di 5»).
     #[test]
     fn dock_e_puntini_sono_schede_con_lo_stato() {
         piattaforma_di_prova();
         let p = pannello();
-        p.set_app(app());
-        let panoramica = elemento(&p, "Panoramica");
+        p.set_schede(schede());
+        let panoramica = elemento(&p, "Panoramica, scheda 1 di 5");
         assert_eq!(panoramica.accessible_role(), Some(AccessibleRole::Tab));
         assert_eq!(panoramica.accessible_item_selected(), Some(true));
-        assert_eq!((panoramica.accessible_item_index(), panoramica.accessible_item_count()), (Some(0), Some(5)));
-        let agenti = elemento(&p, "Agenti");
+        let agenti = elemento(&p, "Agenti, scheda 2 di 5");
         assert_eq!(agenti.accessible_role(), Some(AccessibleRole::Tab));
         assert_eq!(agenti.accessible_item_selected(), Some(false));
-        assert_eq!(agenti.accessible_item_index(), Some(1));
-        let casa = elemento(&p, "Casa");
+        let casa = elemento(&p, "Casa, scheda 3 di 5");
         assert_eq!(casa.accessible_item_selected(), Some(false));
-        assert_eq!(casa.accessible_item_index(), Some(2));
 
         let orologio = elemento(&p, "Layout Orologio");
         assert_eq!(orologio.accessible_role(), Some(AccessibleRole::Tab));
@@ -563,7 +570,163 @@ mod accessibilita {
         assert_eq!(elemento(&p, "Pannello di ItsyHome").accessible_role(), Some(AccessibleRole::Groupbox));
         // La vista `agenti` è la scheda Agenti.
         p.set_vista("agenti".into());
-        assert_eq!(elemento(&p, "Agenti").accessible_item_selected(), Some(true));
+        assert_eq!(elemento(&p, "Agenti, scheda 2 di 5").accessible_item_selected(), Some(true));
+    }
+
+    /// Ridisegno F1, Task 6: nella barra le schede (ruolo Tab, i nomi del modello), la ricerca
+    /// inerte («Cerca, in arrivo») e il volume («Volume 40 %») sono pulsanti; Tab dalle schede
+    /// arriva a ricerca, volume e «⋯», nell'ordine.
+    #[test]
+    fn barra_con_schede_ricerca_e_volume() {
+        use slint::platform::Key;
+        piattaforma_di_prova();
+        let p = pannello();
+        p.set_schede(schede());
+        p.set_volume_disponibile(true);
+        p.set_volume(0.4);
+        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        p.global::<crate::Fuochi>().set_pronti(true);
+        for nome in ["Panoramica, scheda 1 di 5", "Agenti, scheda 2 di 5", "Casa, scheda 3 di 5", "PC, scheda 4 di 5", "Collegamenti, scheda 5 di 5"] {
+            assert_eq!(elemento(&p, nome).accessible_role(), Some(AccessibleRole::Tab), "{nome}");
+        }
+        let cerca = elemento(&p, "Cerca, in arrivo");
+        assert_eq!(cerca.accessible_role(), Some(AccessibleRole::Button));
+        let volume = elemento(&p, "Volume 40 %");
+        assert_eq!(volume.accessible_role(), Some(AccessibleRole::Button));
+        // Barra in fondo: ricerca a sinistra, volume a destra, schede al centro.
+        let y = cerca.absolute_position().y;
+        assert!(y > 340.0 - 64.0 && y + cerca.size().height <= 340.0, "ricerca nella barra: {y}");
+        assert!(cerca.absolute_position().x < 100.0 && volume.absolute_position().x > 700.0);
+        let agenti = elemento(&p, "Agenti, scheda 2 di 5");
+        let centro_schede = (elemento(&p, "Panoramica, scheda 1 di 5").absolute_position().x
+            + elemento(&p, "Collegamenti, scheda 5 di 5").absolute_position().x
+            + 36.0)
+            / 2.0;
+        assert!((centro_schede - 410.0).abs() <= 1.0, "schede centrate: {centro_schede}");
+        assert!(agenti.absolute_position().y > 340.0 - 64.0);
+
+        // Contenuto → Tab: schede → Tab: ricerca → Tab: volume → Tab: «⋯».
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Panoramica, scheda 1 di 5");
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Cerca, in arrivo");
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Volume 40 %");
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Altre opzioni");
+        // E indietro.
+        con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Volume 40 %");
+        con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Cerca, in arrivo");
+        // La ricerca è inerte: Invio non cambia nulla.
+        tasto(&p, Key::Return);
+        assert_eq!(p.get_vista(), "panoramica");
+        assert_eq!(etichetta_col_fuoco(&p), "Cerca, in arrivo");
+    }
+
+    /// Il pulsante del volume: clic = muto sì/no; la rotella in su ±2 punti per scatto (con
+    /// l'impostazione accesa), fermo al limite; spenta l'impostazione la rotella passa.
+    #[test]
+    fn volume_clic_muto_e_rotella() {
+        use slint::platform::{PointerEventButton, WindowEvent};
+        piattaforma_di_prova();
+        let p = pannello();
+        p.set_schede(schede());
+        p.set_volume_disponibile(true);
+        p.set_volume(0.40);
+        p.set_rotella_volume(true);
+        let muti = std::rc::Rc::new(std::cell::RefCell::new(Vec::<bool>::new()));
+        let m = muti.clone();
+        p.on_muto_volume(move |si| m.borrow_mut().push(si));
+        let livelli = std::rc::Rc::new(std::cell::RefCell::new(Vec::<i32>::new()));
+        let l = livelli.clone();
+        p.on_imposta_volume(move |v| l.borrow_mut().push((v * 100.0).round() as i32));
+
+        let volume = elemento(&p, "Volume 40 %");
+        let (pos, lato) = (volume.absolute_position(), volume.size());
+        let centro = slint::LogicalPosition::new(pos.x + lato.width / 2.0, pos.y + lato.height / 2.0);
+        p.window().dispatch_event(WindowEvent::PointerMoved { position: centro });
+        p.window().dispatch_event(WindowEvent::PointerPressed { position: centro, button: PointerEventButton::Left });
+        p.window().dispatch_event(WindowEvent::PointerReleased { position: centro, button: PointerEventButton::Left });
+        assert_eq!(*muti.borrow(), [true], "il clic chiede il muto");
+
+        // Uno scatto della rotella (60 px) in su: +2 punti.
+        volume.scroll(0.0, 60.0);
+        assert_eq!(*livelli.borrow(), [42]);
+        assert!((p.get_volume() - 0.42).abs() < 1e-6, "il pannello lo mostra subito");
+        volume.scroll(0.0, -60.0);
+        assert_eq!(*livelli.borrow(), [42, 40]);
+        // Al limite resta lì, senza comandi.
+        p.set_volume(1.0);
+        elemento(&p, "Volume 100 %").scroll(0.0, 60.0);
+        assert_eq!(p.get_volume(), 1.0);
+        assert_eq!(*livelli.borrow(), [42, 40], "a 100 nessun comando");
+        // Impostazione spenta: la rotella non cambia il volume.
+        p.set_rotella_volume(false);
+        p.set_volume(0.40);
+        elemento(&p, "Volume 40 %").scroll(0.0, 60.0);
+        assert_eq!(*livelli.borrow(), [42, 40]);
+    }
+
+    /// Senza uscita audio (o fuori da Windows) il pulsante non c'è (nessun elemento «Volume…») e
+    /// le schede restano dove sono.
+    #[test]
+    fn volume_assente_geometria_ferma() {
+        piattaforma_di_prova();
+        let p = pannello();
+        p.set_schede(schede());
+        p.set_volume_disponibile(true);
+        p.set_volume(0.4);
+        let posti = |p: &Pannello| -> Vec<f32> {
+            ["Panoramica, scheda 1 di 5", "Agenti, scheda 2 di 5", "Collegamenti, scheda 5 di 5"]
+                .iter()
+                .map(|n| elemento(p, n).absolute_position().x)
+                .collect()
+        };
+        let con_volume = posti(&p);
+        assert!(elementi_volume(&p) > 0);
+        p.set_volume_disponibile(false);
+        assert_eq!(elementi_volume(&p), 0, "nessun elemento «Volume…»");
+        assert_eq!(posti(&p), con_volume, "schede ferme");
+        assert!(ElementHandle::find_by_accessible_label(&p, "Cerca, in arrivo").next().is_some());
+    }
+
+    /// Il muto premuto da fuori (tastiera del PC): il nome per Narrator diventa «Volume, muto».
+    #[test]
+    fn volume_muto_da_fuori_cambia_il_nome() {
+        piattaforma_di_prova();
+        let p = pannello();
+        p.set_volume_disponibile(true);
+        p.set_volume(0.4);
+        assert!(ElementHandle::find_by_accessible_label(&p, "Volume 40 %").next().is_some());
+        p.set_volume_muto(true);
+        let muto = elemento(&p, "Volume, muto");
+        assert_eq!(muto.accessible_role(), Some(AccessibleRole::Button));
+        assert!(ElementHandle::find_by_accessible_label(&p, "Volume 40 %").next().is_none());
+        p.set_volume_muto(false);
+        assert!(ElementHandle::find_by_accessible_label(&p, "Volume 40 %").next().is_some());
+    }
+
+    /// La scheda col segno: «Agenti, ti aspetta, scheda 2 di 5», selezionata quando la vista è
+    /// `agenti`, allargata col nome breve; la capsula sta sotto di lei.
+    #[test]
+    fn scheda_attiva_ha_il_nome_e_lo_stato() {
+        piattaforma_di_prova();
+        let p = pannello();
+        let mut registro = crate::moduli::registro::Registro::nuovo(&[]);
+        registro.livelli_voci(&[("agenti", crate::attenzione::Livello::Bloccante)]);
+        p.set_schede(ModelRc::new(VecModel::from(crate::pannello::schede_ui(&registro, "panoramica"))));
+        let agenti = elemento(&p, "Agenti, ti aspetta, scheda 2 di 5");
+        assert_eq!(agenti.accessible_role(), Some(AccessibleRole::Tab));
+        assert_eq!(agenti.accessible_item_selected(), Some(false));
+        assert_eq!(agenti.size().width, 36.0);
+        p.set_vista("agenti".into());
+        p.set_schede(ModelRc::new(VecModel::from(crate::pannello::schede_ui(&registro, "agenti"))));
+        let agenti = elemento(&p, "Agenti, ti aspetta, scheda 2 di 5");
+        assert_eq!(agenti.accessible_item_selected(), Some(true));
+        assert!(agenti.size().width > 36.0, "attiva: col nome");
+        assert!(ElementHandle::find_by_accessible_label(&p, "AGENTI").next().is_none(), "il nome visibile non è un secondo nome per Narrator");
     }
 
     #[test]
@@ -1267,7 +1430,7 @@ mod accessibilita {
         use slint::platform::Key;
         piattaforma_di_prova();
         let p = pannello();
-        p.set_app(app());
+        p.set_schede(schede());
         p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
         // Apertura finita (nel backend di prova il timer non gira): il fuoco vero va sugli elementi.
         p.global::<crate::Fuochi>().set_pronti(true);
@@ -1294,7 +1457,7 @@ mod accessibilita {
         use slint::platform::{PointerEventButton, WindowEvent};
         piattaforma_di_prova();
         let p = pannello();
-        p.set_app(crate::pannello::voci_app(&crate::moduli::registro::Registro::nuovo(&[])));
+        p.set_schede(schede());
         let menu = std::rc::Rc::new(std::cell::Cell::new(0u32));
         let m = menu.clone();
         p.on_menu(move || m.set(m.get() + 1));
@@ -1303,8 +1466,15 @@ mod accessibilita {
         let (pos, lato) = (piu.absolute_position(), piu.size());
         assert!(lato.width >= 28.0 && lato.height >= 28.0, "bersaglio di almeno 28 × 28: {lato:?}");
         assert!(pos.x > 700.0 && pos.y < 10.0, "in alto a destra: {pos:?}");
-        assert!(ElementHandle::find_by_accessible_label(&p, "Collegamenti").next().is_some(), "il dock vero è caricato");
-        assert!(ElementHandle::find_by_accessible_label(&p, "Impostazioni").next().is_none(), "niente Impostazioni nel dock");
+        assert!(ElementHandle::find_by_accessible_label(&p, "Collegamenti, scheda 5 di 5").next().is_some(), "le schede vere sono caricate");
+        assert!(
+            !i_slint_backend_testing::ElementQuery::from_root(&p)
+                .match_descendants()
+                .find_all()
+                .iter()
+                .any(|e| e.accessible_role() == Some(AccessibleRole::Tab) && e.accessible_label().is_some_and(|l| l.starts_with("Impostazioni"))),
+            "niente Impostazioni fra le schede"
+        );
 
         piu.invoke_accessible_default_action();
         assert_eq!(menu.get(), 1, "Narrator lo preme: Rust è chiesto delle voci");
@@ -1328,7 +1498,7 @@ mod accessibilita {
         use slint::platform::Key;
         piattaforma_di_prova();
         let p = pannello();
-        p.set_app(app());
+        p.set_schede(schede());
         p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
         p.global::<crate::Fuochi>().set_pronti(true);
         let eventi = std::rc::Rc::new(std::cell::RefCell::new(Vec::<&str>::new()));
@@ -1337,7 +1507,8 @@ mod accessibilita {
         p.on_chiudi(move || e2.borrow_mut().push("chiudi"));
         let e3 = eventi.clone();
         p.on_scorri_layout(move |_| e3.borrow_mut().push("layout"));
-        // Contenuto → Tab: dock → Tab: «⋯» → Invio.
+        // Contenuto → Tab: schede → Tab: ricerca → Tab: «⋯» (senza volume) → Invio.
+        tasto(&p, Key::Tab);
         tasto(&p, Key::Tab);
         tasto(&p, Key::Tab);
         tasto(&p, Key::Return);
@@ -1384,7 +1555,7 @@ mod accessibilita {
     fn pannello_casa() -> (Pannello, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
         piattaforma_di_prova();
         let p = pannello();
-        p.set_app(app());
+        p.set_schede(schede());
         p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
         p.global::<crate::Fuochi>().set_pronti(true);
         p.set_casa_pronta(true);
@@ -2242,7 +2413,7 @@ mod accessibilita {
     fn pannello_collegamenti(voci: ModelRc<crate::CollegamentoUi>) -> (Pannello, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
         piattaforma_di_prova();
         let p = pannello();
-        p.set_app(app());
+        p.set_schede(schede());
         p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
         p.global::<crate::Fuochi>().set_pronti(true);
         p.set_collegamenti(voci);
@@ -2254,13 +2425,13 @@ mod accessibilita {
         (p, eventi)
     }
 
-    /// Il dock ha «Collegamenti»; la vista mostra le card (nome e indirizzo accorciato per
-    /// Narrator, pulsanti) nell'ordine dato; un tocco chiede di aprire quell'id.
+    /// La barra ha «Collegamenti» (ultima scheda); la vista mostra le card (nome e indirizzo
+    /// accorciato per Narrator, pulsanti) nell'ordine dato; un tocco chiede di aprire quell'id.
     #[test]
     fn vista_collegamenti_card_accessibili() {
         let (p, eventi) = pannello_collegamenti(quattro_collegamenti());
-        let scheda = elemento(&p, "Collegamenti");
-        assert_eq!((scheda.accessible_role(), scheda.accessible_item_index()), (Some(AccessibleRole::Tab), Some(4)));
+        let scheda = elemento(&p, "Collegamenti, scheda 5 di 5");
+        assert_eq!(scheda.accessible_role(), Some(AccessibleRole::Tab));
         scheda.invoke_accessible_default_action();
         assert_eq!(p.get_vista(), "collegamenti");
         let proxmox = elemento(&p, "Proxmox, esempio.lan:8006");
@@ -2294,8 +2465,10 @@ mod accessibilita {
         }
         tasto(&p, Key::Return);
         assert_eq!(p.get_vista(), "collegamenti");
-        // Il fuoco va sul contenuto (dal dock Tab passa da «⋯» e poi al contenuto: «Indietro» non
-        // c'è più): prima card; ↓ porta alla quarta (sotto la prima), Invio.
+        // Il fuoco va sul contenuto (dalle schede Tab passa dalla ricerca e da «⋯», senza volume,
+        // e poi al contenuto: «Indietro» non c'è più): prima card; ↓ porta alla quarta (sotto la
+        // prima), Invio.
+        tasto(&p, Key::Tab);
         tasto(&p, Key::Tab);
         tasto(&p, Key::Tab);
         tasto(&p, Key::DownArrow);
@@ -2385,7 +2558,7 @@ mod accessibilita {
     ) -> (Pannello, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
         piattaforma_di_prova();
         let p = pannello();
-        p.set_app(app());
+        p.set_schede(schede());
         p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
         p.global::<crate::Fuochi>().set_pronti(true);
         p.set_claude_collegato(collegato);
@@ -2608,7 +2781,8 @@ mod accessibilita {
                 e.accessible_label().unwrap_or_default()
             );
         }
-        assert!(cp.x >= 0.0 && cp.y >= 0.0 && cp.x + cs.width <= 800.0 && cp.y + cs.height <= 300.0);
+        // Dentro il corpo della cornice: 752 × 224 a (34, 44).
+        assert!(cp.x >= 34.0 && cp.y >= 44.0 && cp.x + cs.width <= 34.0 + 752.0 && cp.y + cs.height <= 44.0 + 224.0, "{cp:?} {cs:?}");
     }
 
     /// Le righe di una vista con `n` sessioni che lavorano («s0», «s1»…).
@@ -3834,7 +4008,7 @@ mod accessibilita {
         use slint::platform::Key;
         piattaforma_di_prova();
         let p = pannello();
-        p.set_app(app());
+        p.set_schede(schede());
         p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
         p.global::<crate::Fuochi>().set_pronti(true);
         p.set_volume_disponibile(true);
@@ -3953,7 +4127,7 @@ mod accessibilita {
     /// rete veloce, Wi-Fi acceso e Bluetooth spento.
     fn pannello_connessioni() -> Pannello {
         let p = pannello();
-        p.set_app(app());
+        p.set_schede(schede());
         p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
         p.global::<crate::Fuochi>().set_pronti(true);
         p.set_pc(StatPcUi {
@@ -3996,7 +4170,7 @@ mod accessibilita {
         p
     }
 
-    /// Il pannello è 800 × 300 fisso: nella vista PC, col caso più pieno (batteria, volume muto,
+    /// Il pannello è 820 × 340 fisso (corpo 752 × 224): nella vista PC, col caso più pieno (batteria, volume muto,
     /// rete veloce, nome della rete lungo, riga del rifiuto, GPU al 100%), nulla esce dalla card né
     /// dalla sua colonna.
     #[test]
@@ -4036,7 +4210,8 @@ mod accessibilita {
         };
         dentro(&vista, "la vista PC");
         let (pos, lato) = (vista.absolute_position(), vista.size());
-        assert!(pos.x >= 0.0 && pos.y >= 0.0 && pos.x + lato.width <= 800.0 && pos.y + lato.height <= 300.0);
+        // Dentro il corpo della cornice: 752 × 224 a (34, 44).
+        assert!(pos.x >= 34.0 && pos.y >= 44.0 && pos.x + lato.width <= 34.0 + 752.0 && pos.y + lato.height <= 44.0 + 224.0, "{pos:?} {lato:?}");
         for colonna in ["Sistema", "Energia e audio", "Connessioni"] {
             dentro(&elemento(&p, colonna), colonna);
         }
@@ -4762,7 +4937,7 @@ mod accessibilita {
         let dentro = |t: &str| {
             let r = riga_menu(&p, t).unwrap_or_else(|| panic!("manca «{t}»"));
             let (a, l) = (r.absolute_position(), r.size());
-            a.y >= 0.0 && a.y + l.height <= 300.0
+            a.y >= 0.0 && a.y + l.height <= p.get_altezza_pannello()
         };
         assert!(dentro("Monitor 0"), "la prima si vede all'apertura");
         tasto(&p, Key::UpArrow);
@@ -4770,7 +4945,7 @@ mod accessibilita {
         assert!(dentro("Monitor 11"), "l'ultima si vede quando ha il fuoco");
     }
 
-    /// Il menu sta dentro il pannello (800 × 300, nessuna finestra nuova), sotto «⋯» e a filo del
+    /// Il menu sta dentro l'isola (800 × 340, nessuna finestra nuova), sotto «⋯» e a filo del
     /// suo bordo destro, anche col sottomenu aperto.
     #[test]
     fn il_menu_sta_dentro_il_pannello_sotto_il_pulsante() {
@@ -4786,7 +4961,7 @@ mod accessibilita {
         for testo in ["Impostazioni", "Esci", "Schermo principale", "Schermo 2 · 2560×1440"] {
             let r = riga_menu(&p, testo).expect("riga");
             let (a, l) = (r.absolute_position(), r.size());
-            assert!(a.x >= 0.0 && a.y >= 0.0 && a.x + l.width <= 800.0 && a.y + l.height <= 300.0, "{testo} dentro il pannello: {a:?} {l:?}");
+            assert!(a.x >= 10.0 && a.y >= 0.0 && a.x + l.width <= 810.0 && a.y + l.height <= 340.0, "{testo} dentro l'isola: {a:?} {l:?}");
         }
         let sotto = riga_menu(&p, "Schermo 2 · 2560×1440").expect("riga");
         assert!(sotto.absolute_position().x + sotto.size().width <= esci.absolute_position().x, "il sottomenu sta a sinistra del menu");

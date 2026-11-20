@@ -11,11 +11,11 @@ use super::con_claude::adesso_unix;
 use super::{aggiorna_modello, Ponte};
 use crate::claude;
 use crate::finestra_impostazioni::{apri_alla_sezione, SEZIONE_CASA, SEZIONE_CLAUDE, SEZIONE_COLLEGAMENTI};
-use crate::moduli::registro::{tono_ui, Registro};
+use crate::moduli::registro::tono_ui;
 use crate::moduli::{agenti, casa, collegamenti, pc, Riassunto};
+use crate::pannello::schede_ui;
 use crate::{Pannello, TonoModuloUi};
 use slint::ModelRc;
-use std::cell::Ref;
 
 /// Scrive il tono dell'isola solo se cambia.
 fn scrivi_tono_isola(p: &Pannello, tono: TonoModuloUi) {
@@ -25,8 +25,9 @@ fn scrivi_tono_isola(p: &Pannello, tono: TonoModuloUi) {
 }
 
 impl Ponte {
-    /// Il registro dei moduli (il dock ne legge l'ordine).
-    pub fn registro(&self) -> Ref<'_, Registro> {
+    /// Il registro dei moduli, per i test (le schede lo leggono da `scrivi_schede`).
+    #[cfg(test)]
+    pub fn registro(&self) -> std::cell::Ref<'_, crate::moduli::registro::Registro> {
         self.registro.borrow()
     }
 
@@ -45,7 +46,17 @@ impl Ponte {
         aggiorna_modello(&self.modello_moduli, voci);
         if let Some(p) = p {
             scrivi_tono_isola(p, tono);
+            // Il tono di un modulo dà il segno e il nome per Narrator della sua scheda.
+            self.scrivi_schede(p);
         }
+    }
+
+    /// Riscrive le schede della barra per la vista di adesso (geometria, segni, nomi per Narrator)
+    /// e restituisce le righe riscritte: solo quelle cambiate (`aggiorna_modello`). La chiamano il
+    /// cambio di vista (`vista-cambiata`) e `moduli_scrivi`.
+    pub fn scrivi_schede(&self, p: &Pannello) -> u64 {
+        let schede = schede_ui(&self.registro.borrow(), p.get_vista().as_str());
+        aggiorna_modello(&self.modello_schede, schede)
     }
 
     /// Il pannello appena creato: i riassunti cambiati da chiuso si ricalcolano (una volta), il PC
@@ -63,6 +74,7 @@ impl Ponte {
         }
         self.moduli_accetta("pc", pc::riassunto(None));
         p.set_moduli(ModelRc::from(self.modello_moduli.clone()));
+        p.set_schede(ModelRc::from(self.modello_schede.clone()));
         self.moduli_scrivi_in(Some(p));
     }
 
@@ -357,11 +369,37 @@ mod test {
         let (_spegni, ponte, _pillola, _cartella) = ponte_di_prova_con(Some(config));
         let ordine: Vec<&str> = ponte.registro().ordine().iter().map(|m| m.id).collect();
         assert_eq!(ordine, ["collegamenti", "agenti", "casa", "pc"]);
-        let dock: Vec<String> = crate::pannello::voci_app(&ponte.registro()).iter().map(|v| v.id.to_string()).collect();
-        assert_eq!(dock, ["panoramica", "collegamenti", "agenti", "casa", "pc"]);
         let p = Pannello::new().expect("pannello");
         ponte.moduli_nel_pannello(&p);
+        let schede: Vec<String> = p.get_schede().iter().map(|v| v.id.to_string()).collect();
+        assert_eq!(schede, ["panoramica", "collegamenti", "agenti", "casa", "pc"]);
         let carte: Vec<String> = p.get_moduli().iter().map(|m| m.id.to_string()).collect();
         assert_eq!(carte, ["collegamenti", "agenti", "casa", "pc"]);
+    }
+
+    /// Le schede si riscrivono solo se cambiano: due chiamate di fila senza cambi non toccano
+    /// nulla; un cambio di vista tocca solo le due schede che cambiano larghezza e quelle che si
+    /// spostano; un tono alzato da una voce cambia segno e nome della sua scheda.
+    #[test]
+    fn schede_riscritte_solo_se_cambiano() {
+        let (_spegni, ponte, _pillola, _cartella) = ponte_di_prova();
+        let p = Pannello::new().expect("pannello");
+        ponte.moduli_nel_pannello(&p);
+        assert_eq!(p.get_schede().row_count(), 5);
+        assert_eq!(ponte.scrivi_schede(&p), 0, "già scritte da `moduli_nel_pannello`");
+        assert_eq!(ponte.scrivi_schede(&p), 0, "di nuovo: nulla");
+
+        p.set_vista("casa".into());
+        assert!(ponte.scrivi_schede(&p) > 0, "la vista cambia la geometria");
+        assert_eq!(ponte.scrivi_schede(&p), 0);
+        let larghezze: Vec<f32> = p.get_schede().iter().map(|s| s.larghezza).collect();
+        assert!(larghezze[2] > 36.0 && larghezze[0] == 36.0, "Casa larga, Panoramica 36: {larghezze:?}");
+
+        *ponte.pannello.borrow_mut() = p.as_weak();
+        assert!(ponte.registro.borrow_mut().livelli_voci(&[("agenti", Livello::Bloccante)]));
+        ponte.moduli_scrivi();
+        let agenti = p.get_schede().row_data(1).expect("scheda Agenti");
+        assert_eq!((agenti.segno, agenti.narratore.as_str()), (1, "Agenti, ti aspetta, scheda 2 di 5"));
+        assert_eq!(ponte.scrivi_schede(&p), 0, "scritte una volta sola");
     }
 }

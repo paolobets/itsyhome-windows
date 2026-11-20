@@ -12,7 +12,8 @@ export component MisuraTesto inherits Window {
         text: root.testo;
         font-family: (root.stile == 1 || root.stile == 3) ? Tema.carattere-mono : Tema.carattere;
         font-weight: (root.stile == 0 || root.stile == 4) ? 700 : 500;
-        font-size: root.stile == 0 ? 18px : (root.stile == 1 ? 26px : (root.stile == 2 ? 12px : 11px));
-        letter-spacing: root.stile == 0 ? -0.27px : (root.stile == 1 ? -0.52px : (root.stile == 3 ? 0.77px : 0px));
+        // L'etichetta (3) coi token che usa anche chi la disegna (`SchedaBarra`).
+        font-size: root.stile == 0 ? 18px : (root.stile == 1 ? 26px : (root.stile == 2 ? 12px : root.stile == 3 ? Tema.etichetta-corpo : 11px));
+        letter-spacing: root.stile == 0 ? -0.27px : (root.stile == 1 ? -0.52px : (root.stile == 3 ? Tema.etichetta-spaziatura : 0px));
     }
 }

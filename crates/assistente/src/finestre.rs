@@ -61,26 +61,39 @@ pub const LARGHEZZA_FINESTRA_PILLOLA: f32 = LARGHEZZA_BLOCCANTE + 2.0 * MARGINE_
 pub const ALTEZZA_FINESTRA_PILLOLA: f32 = ALTEZZA_BLOCCANTE + 2.0 * MARGINE_AURA;
 /// Centro degli occhi della pillola che chiama rispetto a quello degli occhi del pannello appena
 /// aperto, `(x, y)` logici (`scarto-occhi-attenzione` / `scarto-occhi-bloccante` in
-/// pillola.slint): x rispetto al centro della finestra, y rispetto al centro della riga alta del
-/// pannello. Il pannello aperto da lì fa partire gli occhi da qui. Occhi a 36 dal bordo sinistro
-/// della pillola (dopo l'icona della fonte), ingombro 21: x = -larghezza/2 + 46,5; y = metà
-/// della pillola meno metà della riga del pannello.
+/// pillola.slint): x rispetto al centro della finestra, y rispetto agli occhi della pillola a
+/// riposo. Il pannello aperto da lì fa partire gli occhi da qui (più `SCARTO_OCCHI_PANNELLO_Y`).
+/// Occhi a 36 dal bordo sinistro della pillola (dopo l'icona della fonte), ingombro 21:
+/// x = -larghezza/2 + 46,5; y = metà della pillola meno metà della pillola a riposo.
 #[cfg_attr(not(test), allow(dead_code))] // confrontata con Slint in `test_ui`
 pub const SCARTO_OCCHI_ATTENZIONE: (f32, f32) = (-153.5, 2.0);
 #[cfg_attr(not(test), allow(dead_code))] // confrontata con Slint in `test_ui`
 pub const SCARTO_OCCHI_BLOCCANTE: (f32, f32) = (-173.5, 4.0);
-/// Altezza della riga alta del pannello (`altezza-riga` in pannello.slint): quanto la pillola a
-/// riposo, così gli occhi del pannello cadono sui suoi.
+/// Altezza della riga alta del pannello (`altezza-riga` in pannello.slint, ridisegno F1): 44,
+/// più alta della pillola a riposo (32). Gli occhi del pannello stanno a metà (22), quelli della
+/// pillola a 16: all'apertura partono da lì (`SCARTO_OCCHI_PANNELLO_Y`) e scendono al loro posto.
 #[cfg_attr(not(test), allow(dead_code))] // confrontata con Slint in `test_ui`
-pub const ALTEZZA_RIGA_PANNELLO: f32 = ALTEZZA_PILLOLA;
-/// Larghezza logica del pannello (`width` di pannello.slint).
+pub const ALTEZZA_RIGA_PANNELLO: f32 = 44.0;
+/// Gli occhi della pillola a riposo (metà dei suoi 32) rispetto a quelli del pannello (metà della
+/// riga alta): la partenza degli occhi del pannello aperto dalla pillola, in altezza.
+pub const SCARTO_OCCHI_PANNELLO_Y: f32 = ALTEZZA_PILLOLA / 2.0 - ALTEZZA_RIGA_PANNELLO / 2.0;
+/// Larghezza logica dell'isola nera del pannello (`larghezza-isola` in pannello.slint).
+#[cfg_attr(not(test), allow(dead_code))] // confrontata con Slint in `test_ui`
 pub const LARGHEZZA_PANNELLO: f32 = 800.0;
+/// Le orecchie dell'isola (raccordi concavi in alto, ai due lati): 10 logici per parte.
+const ORECCHIO: f32 = 10.0;
+/// Larghezza logica della finestra del pannello (`width` di pannello.slint): l'isola più le
+/// orecchie.
+pub const LARGHEZZA_FINESTRA_PANNELLO: f32 = LARGHEZZA_PANNELLO + 2.0 * ORECCHIO;
+/// Altezza logica del pannello (`height` di pannello.slint), uguale per ogni vista.
+#[cfg_attr(not(test), allow(dead_code))] // confrontata con Slint in `test_ui`
+pub const ALTEZZA_PANNELLO: f32 = 340.0;
 
 /// Angolo in alto a sinistra (pixel fisici) del pannello: centrato come la pillola e con il
 /// bordo alto dove sta il bordo alto della pillola (cioè sul bordo alto dell'area di lavoro),
-/// così la riga degli occhi (alta quanto la pillola) cade esattamente sugli occhi della pillola.
+/// così gli occhi del pannello cadono sotto quelli della pillola (6 px più in basso: la partenza).
 pub fn posizione_pannello(area: RettangoloFisico, scala: f32) -> (i32, i32) {
-    let larghezza = (LARGHEZZA_PANNELLO * scala).round() as i32;
+    let larghezza = (LARGHEZZA_FINESTRA_PANNELLO * scala).round() as i32;
     let x = area.x + (area.larghezza - larghezza) / 2;
     let y = area.y + ((MARGINE_LOGICO + MARGINE_AURA) * scala).round() as i32;
     (x, y)
@@ -525,28 +538,35 @@ mod test {
         // La finestra: la bloccante più l'aura (8) tutt'intorno.
         assert_eq!(MARGINE_AURA, 8.0);
         assert_eq!((LARGHEZZA_FINESTRA_PILLOLA, ALTEZZA_FINESTRA_PILLOLA), (456.0, 56.0));
-        // La riga alta del pannello è alta quanto la pillola a riposo.
-        assert_eq!(ALTEZZA_RIGA_PANNELLO, 32.0);
     }
 
+    /// Ridisegno F1: finestra 820 × 340 (isola 800 più le orecchie di 10), centrata come la
+    /// pillola; gli occhi del pannello (a metà della riga alta, 22) partono dove stavano quelli
+    /// della pillola a riposo (16): `SCARTO_OCCHI_PANNELLO_Y` = 16 − 22. Al pixel fisico.
     #[test]
-    fn occhi_del_pannello_sugli_occhi_della_pillola() {
-        // Gli occhi della pillola stanno al centro della sua finestra (umore tranquillo) e a metà
-        // altezza della pillola; quelli del pannello al centro e a metà della riga alta. Si
-        // confrontano al pixel fisico (gli arrotondamenti valgono mezzo pixel).
-        for (a, scala) in aree() {
+    fn pannello_820_per_340_e_occhi_alla_partenza() {
+        assert_eq!((LARGHEZZA_FINESTRA_PANNELLO, ALTEZZA_PANNELLO), (820.0, 340.0));
+        assert_eq!((LARGHEZZA_PANNELLO, ALTEZZA_RIGA_PANNELLO), (800.0, 44.0));
+        assert_eq!(SCARTO_OCCHI_PANNELLO_Y, 16.0 - 22.0);
+        for (a, scala) in aree().into_iter().chain([(area(0, 0, 1920, 1040), 1.25)]) {
             let (px, py) = posizione_pillola(a, scala, LARGHEZZA_FINESTRA_PILLOLA, MARGINE_LOGICO);
             let (qx, qy) = posizione_pannello(a, scala);
+            let larghezza = (820.0 * scala).round() as i32;
+            assert_eq!(qx, a.x + (a.larghezza - larghezza) / 2, "centrata per 820 a scala {scala}");
             let centro_pillola = px as f32 + (LARGHEZZA_FINESTRA_PILLOLA * scala).round() / 2.0;
-            let centro_pannello = qx as f32 + (LARGHEZZA_PANNELLO * scala).round() / 2.0;
+            let centro_pannello = qx as f32 + larghezza as f32 / 2.0;
             assert!((centro_pillola - centro_pannello).abs() <= 1.0, "x a scala {scala}: {centro_pillola} vs {centro_pannello}");
-            // Occhi a metà della pillola a riposo (32: 16 sotto il bordo alto) e a metà della riga.
+            // Gli occhi della pillola a riposo: 16 sotto il suo bordo alto; quelli del pannello
+            // partono da metà riga più lo scarto.
             let occhi_pillola = py as f32 + (MARGINE_AURA + 16.0) * scala;
-            let occhi_pannello = qy as f32 + ALTEZZA_RIGA_PANNELLO / 2.0 * scala;
-            assert!((occhi_pillola - occhi_pannello).abs() <= 1.0, "y a scala {scala}: {occhi_pillola} vs {occhi_pannello}");
-            // Il pannello resta dentro l'area di lavoro, anche largo 800.
+            let partenza = qy as f32 + (ALTEZZA_RIGA_PANNELLO / 2.0 + SCARTO_OCCHI_PANNELLO_Y) * scala;
+            assert!((occhi_pillola - partenza).abs() <= 1.0, "y a scala {scala}: {occhi_pillola} vs {partenza}");
+            // Il pannello resta dentro l'area di lavoro.
             assert!(qx >= a.x && qy >= a.y);
-            assert!(qx + (LARGHEZZA_PANNELLO * scala).round() as i32 <= a.x + a.larghezza);
+            assert!(qx + larghezza <= a.x + a.larghezza);
+        }
+        for scala in [1.0, 1.25, 1.75] {
+            assert_eq!(posizione_pannello(area(0, 0, 1920, 1040), scala).0, (1920 - (820.0 * scala).round() as i32) / 2);
         }
     }
 
@@ -567,11 +587,13 @@ mod test {
                 let (qx, qy) = posizione_pannello(a, scala);
                 let bordo_pillola = px as f32 + (LARGHEZZA_FINESTRA_PILLOLA - larghezza) / 2.0 * scala;
                 let occhi_x = bordo_pillola + occhi_dal_bordo * scala;
-                let centro_pannello = qx as f32 + (LARGHEZZA_PANNELLO * scala).round() / 2.0;
+                let centro_pannello = qx as f32 + (LARGHEZZA_FINESTRA_PANNELLO * scala).round() / 2.0;
                 let partenza_x = centro_pannello + scarto.0 * scala;
                 assert!((occhi_x - partenza_x).abs() <= 1.0, "{nome} x a scala {scala}: {occhi_x} vs {partenza_x}");
+                // Lo scarto della pillola è rispetto ai suoi occhi a riposo; il pannello ci somma
+                // `SCARTO_OCCHI_PANNELLO_Y` (la sua riga alta è più alta della pillola).
                 let occhi_y = py as f32 + (MARGINE_AURA + altezza / 2.0) * scala;
-                let partenza_y = qy as f32 + (ALTEZZA_RIGA_PANNELLO / 2.0 + scarto.1) * scala;
+                let partenza_y = qy as f32 + (ALTEZZA_RIGA_PANNELLO / 2.0 + SCARTO_OCCHI_PANNELLO_Y + scarto.1) * scala;
                 assert!((occhi_y - partenza_y).abs() <= 1.0, "{nome} y a scala {scala}: {occhi_y} vs {partenza_y}");
             }
         }
@@ -616,12 +638,6 @@ mod test {
         assert_eq!(regione_linea(456, 56, 1.0), (78, 8, 378, 13));
         // A 1,75 (798 × 98): 525 × 9, sotto i 14 px di aura che sporgono.
         assert_eq!(regione_linea(798, 98, 1.75), (136, 14, 661, 23));
-    }
-
-    #[test]
-    fn pannello_largo_800_centrato() {
-        assert_eq!(LARGHEZZA_PANNELLO, 800.0);
-        assert_eq!(posizione_pannello(area(0, 0, 1920, 1040), 1.0), ((1920 - 800) / 2, 0));
     }
 
     fn monitor(nome: &str, principale: bool, x: i32, larghezza_px: u32, altezza_px: u32) -> InfoMonitor {

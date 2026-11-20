@@ -1,16 +1,20 @@
-// Il pannello unico dell'assistente (spec §3bis). Riga alta: occhi al centro (dove stavano quelli
-// della pillola), a sinistra data e meteo (solo nella Panoramica; nelle app resta vuota), l'ora a
-// destra e dopo di lei «⋯» (Task 14i: il menu dell'isola senza «Apri», con
-// Impostazioni in testa); niente «‹ Indietro» (Task 14g: alla Panoramica si torna dal
-// dock, con Backspace o Alt+←; nella vista Casa «Preferiti» è la prima voce dell'elenco). Centro: la
-// Panoramica (riga «In attesa» se c'è qualcosa, poi il layout Orologio o Quadranti, cambiabili
-// con i puntini, le frecce e la rotella) o la vista di un'app. In basso il dock di sole app, solo icone.
+// Il pannello unico dell'assistente (spec §3bis), nella cornice nera del ridisegno F1
+// (`guscio/cornice.slint`): isola 800 × 340 con le orecchie (finestra 820 × 340), la luce del tono
+// più urgente dal basso. Riga alta 44: occhi al centro (partono da dove stavano quelli della
+// pillola), a sinistra data e meteo (solo nella Panoramica; nelle app resta vuota), l'ora a destra
+// e dopo di lei «⋯» (Task 14i: il menu dell'isola senza «Apri», con Impostazioni in testa); niente
+// «‹ Indietro» (Task 14g: alla Panoramica si torna dalla barra, con Backspace o Alt+←; nella vista
+// Casa «Preferiti» è la prima voce dell'elenco). Corpo 752 × 224 a (34, 44): la Panoramica (riga
+// «In attesa» se c'è qualcosa, poi il layout Orologio o Quadranti, cambiabili con i puntini, le
+// frecce e la rotella) o la vista di un'app. Barra bassa 64: ricerca (inerte in F1), le schede
+// con la capsula che scivola, il volume.
 //
-// Tastiera: Tab / Maiusc+Tab fra «In attesa», contenuto, dock e «⋯» (in giro: da «⋯» Tab torna in
-// cima; Invio o Spazio lì aprono il menu, che è in Slint dentro il pannello — `menu.slint`, RC-58: con
-// il menu aperto i tasti sono suoi e Esc chiude solo lui); frecce dentro la zona
+// Tastiera: Tab / Maiusc+Tab fra «In attesa», contenuto, schede, ricerca, volume (se c'è) e «⋯» (in
+// giro: da «⋯» Tab torna in cima; Invio o Spazio lì aprono il menu, che è in Slint dentro il
+// pannello — `menu.slint`, RC-58: con il menu aperto i tasti sono suoi e Esc chiude solo lui);
+// Invio o Spazio sul volume: muto sì/no; frecce dentro la zona
 // (in «In attesa» ←/→ fra le voci e, a voce espansa, ↓ ai pulsanti e ↑ di nuovo alla voce; nella
-// Panoramica ←/→ cambiano layout, nel dock cambiano icona; in Casa Tab passa dall'elenco alle
+// Panoramica ←/→ cambiano layout, nelle schede cambiano scheda; in Casa Tab passa dall'elenco alle
 // card: ↑/↓ fra «Preferiti» e le stanze e → alle card, le frecce fra le card, ← dalla prima colonna all'elenco
 // e ↑ dalla prima riga a «Riprova» quando c'è; Casa vuota e non connessa: «Apri Impostazioni»);
 // In Collegamenti le frecce fra le card, ↑ dalla prima riga a «Modifica»; Invio apre la pagina.
@@ -29,10 +33,10 @@
 // Un unico FocusScope tiene il fuoco e l'anello (visibile solo da tastiera) segue la
 // zona scelta.
 import { Tema, Movimento } from "tema.slint";
-import { Faccia, Occhi } from "faccia.slint";
+import { Occhi } from "faccia.slint";
 import { Anello, Fuoco, Fuochi } from "componenti.slint";
-import { Icone } from "icone.slint";
-import { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, UmoreUi, StanzaUi, CollegamentoUi, QuadranteUi, FonteQuadranteUi, TipoReteUi, TintaBatteriaUi, RigaSessioneUi, LimiteClaudeUi, VoceMenuUi, SchermoMenuUi, Bersaglio, ModuloUi, TonoModuloUi } from "voci.slint";
+import { ContornoIsola, RigaAlta, Barra } from "guscio/cornice.slint";
+import { SchedaBarraUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, UmoreUi, StanzaUi, CollegamentoUi, QuadranteUi, FonteQuadranteUi, TipoReteUi, TintaBatteriaUi, RigaSessioneUi, LimiteClaudeUi, VoceMenuUi, SchermoMenuUi, Bersaglio, ModuloUi, TonoModuloUi } from "voci.slint";
 import { Attesa, RigaAttesa, VoceEspansa } from "attesa.slint";
 import { MenuScuro } from "menu.slint";
 import { VistaPc } from "viste/pc.slint";
@@ -42,84 +46,10 @@ import { VistaCollegamenti } from "viste/collegamenti.slint";
 import { LayoutOrologio } from "layout/orologio.slint";
 import { LayoutQuadranti } from "layout/quadranti.slint";
 
-export { VoceAppUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, StanzaUi, RigaSessioneUi, LimiteClaudeUi }
+export { SchedaBarraUi, StatPcUi, PreferitoUi, SensoreUi, PulsanteUi, VoceAttesaUi, StanzaUi, RigaSessioneUi, LimiteClaudeUi }
 
-// Una scheda del dock: solo l'icona (bersaglio 36 × 32, icona 20); quella attiva sta in una
-// capsula "vetro" e diventa bianca. Il nome compare in un suggerimento dopo una breve sosta del
-// mouse, o subito quando la scheda ha il fuoco da tastiera.
-component Scheda inherits Rectangle {
-    in property <image> icona;
-    in property <string> nome;
-    in property <bool> attiva;
-    in property <bool> anello;
-    // Posizione nel dock (per Narrator: «scheda 2 di 4»).
-    in property <int> indice;
-    in property <int> quante;
-    callback scelta();
-    property <bool> sosta: false;
-
-    width: 36px;
-    height: 32px;
-    border-radius: self.height / 2;
-    background: attiva ? Tema.scheda-attiva : area.has-hover ? Tema.scheda-sopra : transparent;
-    accessible-role: tab;
-    accessible-label: nome;
-    accessible-item-selectable: true;
-    accessible-item-selected: attiva;
-    accessible-item-index: indice;
-    accessible-item-count: quante;
-    accessible-action-default => { root.scelta(); }
-
-    Fuoco { chiede: anello; }
-
-    Image {
-        source: icona;
-        width: 20px;
-        height: 20px;
-        accessible-role: none;
-        colorize: attiva ? Tema.icona-attiva : Tema.icona;
-        image-rendering: smooth;
-    }
-
-    area := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.scelta(); }
-        changed has-hover => {
-            if (!self.has-hover) {
-                root.sosta = false;
-            }
-        }
-    }
-
-    // Gira solo mentre il mouse è fermo sopra la scheda e il suggerimento non c'è ancora.
-    Timer {
-        interval: 600ms;
-        running: area.has-hover && !root.sosta;
-        triggered => { root.sosta = true; }
-    }
-
-    if anello: Anello { raggio: parent.border-radius; }
-
-    if (sosta && area.has-hover) || anello: Rectangle {
-        y: -32px;
-        height: 24px;
-        width: suggerimento.preferred-width + 18px;
-        x: (parent.width - self.width) / 2;
-        border-radius: Tema.raggio-s;
-        background: Tema.suggerimento;
-        border-width: 1px;
-        border-color: Tema.vetro-bordo;
-
-        suggerimento := Text {
-            text: root.nome;
-            font-size: Tema.testo-piccolo;
-            color: Tema.testo;
-        }
-    }
-}
-
-// Zona del pannello col fuoco da tastiera.
-enum Zona { attesa, stanze, contenuto, dock, menu }
+// Zona del pannello col fuoco da tastiera (`dock`: le schede della barra).
+enum Zona { attesa, stanze, contenuto, dock, ricerca, volume, menu }
 
 export component Pannello inherits Window {
     in property <UmoreUi> umore: UmoreUi.tranquillo;
@@ -137,12 +67,12 @@ export component Pannello inherits Window {
     // L'app mostrata al centro; "panoramica" è la schermata principale. È l'id di un'app del
     // registro (un dato, non uno stato con un nome: resta una stringa).
     in-out property <string> vista: "panoramica";
-    // L'app aperta per ultima dal dock (indice in `app`) e se non ha una vista sua (oggi nessuna:
-    // le Impostazioni hanno una finestra loro).
-    property <int> indice-vista: 0;
-    property <bool> vista-vuota: vista != "panoramica" && vista != "casa" && vista != "agenti" && vista != "pc" && vista != "collegamenti"
-        && indice-vista >= 0 && indice-vista < app.length && app[indice-vista].id == vista;
-    in property <[VoceAppUi]> app;
+    // Le schede della barra (la Panoramica e i moduli del registro, nell'ordine): nome, geometria,
+    // segno e nome per Narrator li scrive Rust (`Ponte::scrivi_schede`) all'apertura, a ogni cambio
+    // di vista e quando cambia il tono di un modulo; solo le righe cambiate.
+    in property <[SchedaBarraUi]> schede;
+    // La rotella sul pulsante del volume (impostazione «volume con la rotella», solo Windows).
+    in property <bool> rotella-volume;
     // I moduli per le carte della Panoramica (ridisegno F1), nell'ordine del registro, e il tono
     // più urgente fra tutti (la luce dell'isola). Li scrive Rust (`Ponte::moduli_scrivi`), solo
     // quando cambiano; le carte che li mostrano arrivano col Task 8.
@@ -168,9 +98,10 @@ export component Pannello inherits Window {
     in property <string> claude-spesa-nota;
     // La chiave da amministratore c'è: la vista mostra «Dettagli» (schede delle API).
     in property <bool> claude-dettagli;
-    // Il volume del PC nella vista PC (M2, Task 7): `volume-disponibile` solo su Windows con
-    // un'uscita audio (altrimenti la riga non c'è); `volume` 0..1 lo scrive Rust (stato letto) e
-    // il cursore (subito, senza aspettare Windows).
+    // Il volume del PC nella vista PC (M2, Task 7) e nella barra (ridisegno F1):
+    // `volume-disponibile` solo su Windows con un'uscita audio (altrimenti la riga e il pulsante
+    // non ci sono); `volume` 0..1 lo scrive Rust (stato letto) e il cursore o la rotella (subito,
+    // senza aspettare Windows).
     in property <bool> volume-disponibile: false;
     in-out property <float> volume: 0;
     in property <bool> volume-muto: false;
@@ -294,20 +225,25 @@ export component Pannello inherits Window {
     in property <[SchermoMenuUi]> schermi-menu;
     in property <int> menu-schermo-scelto: -1;
 
-    // Geometria (logica). La riga alta è alta quanto la pillola a riposo, così gli occhi cadono dove
-    // stavano i suoi (vedi `posizione_pannello` in finestre.rs). Pannello 800 × 300: zona
-    // centrale 764 × 188, poi la riga dei puntini (solo nella Panoramica) e il dock.
-    out property <length> larghezza-pannello: 800px;
-    property <length> margine: 18px;
-    out property <length> altezza-riga: Faccia.altezza-pillola;
-    property <length> altezza-dock: 38px;
-    property <length> dock-y: root.height - altezza-dock - 12px;
+    // Geometria (logica, vedi `finestre.rs`): finestra 820 × 340 = isola 800 più le orecchie di
+    // 10; riga alta 44 (gli occhi a metà, 6 sotto quelli della pillola: partono da lì), corpo
+    // 752 × 224 a (34, 44), barra 64 in fondo. Nel corpo: la riga «In attesa», il layout o la
+    // vista, e in fondo la riga dei puntini (solo nella Panoramica).
+    out property <length> larghezza-finestra: 820px;
+    out property <length> larghezza-isola: 800px;
+    out property <length> altezza-pannello: 340px;
+    out property <length> altezza-riga: 44px;
+    property <length> altezza-barra: 64px;
+    property <length> corpo-a: altezza-pannello - altezza-riga - altezza-barra - 8px;
     property <length> altezza-puntini: 20px;
-    property <length> puntini-y: dock-y - altezza-puntini - 4px;
-    out property <length> centro-x: margine;
-    out property <length> centro-y: altezza-riga + 4px;
-    out property <length> centro-l: root.width - 2 * margine;
+    out property <length> centro-x: 34px;
+    out property <length> centro-y: altezza-riga;
+    out property <length> centro-l: larghezza-finestra - 2 * centro-x;
+    property <length> puntini-y: centro-y + corpo-a - altezza-puntini;
     out property <length> centro-a: puntini-y - 2px - centro-y;
+    // «⋯» nella riga alta: 32 × 32, 22 dal fianco destro dell'isola.
+    property <length> piu-x: (larghezza-finestra + larghezza-isola) / 2 - 22px - 32px;
+    property <length> piu-y: (altezza-riga - 32px) / 2;
     // Riga «In attesa» (solo nella Panoramica e solo se c'è qualcosa): il layout sta sotto.
     property <bool> con-attese: vista == "panoramica" && attese.length > 0;
     property <length> altezza-attese: 42px;
@@ -321,8 +257,8 @@ export component Pannello inherits Window {
     property <bool> espansa: con-attese && indice-aperta >= 0 && indice-aperta < attese.length;
 
     // ─── Scorrimento fra le viste (280 ms) ───
-    // Cambiando vista il contenuto (non la riga alta né il dock) parte da 26 px verso il lato
-    // della scheda scelta (più a destra nel dock: da destra; più a sinistra, e la Panoramica che è
+    // Cambiando vista il contenuto (non la riga alta né la barra) parte da 26 px verso il lato
+    // della scheda scelta (più a destra nella barra: da destra; più a sinistra, e la Panoramica che è
     // la prima: da sinistra) e arriva al suo posto dissolvendosi dentro. Con «Effetti di animazione»
     // spento niente scarto, solo una dissolvenza da 120 ms. Il `Timer` gira solo i 16 ms del cambio:
     // fuori dall'animazione non c'è nulla da ridisegnare.
@@ -333,11 +269,15 @@ export component Pannello inherits Window {
     animate scarto-contenuto { duration: in-arrivo ? 280ms : 0ms; easing: ease-out; }
     animate opacita-contenuto { duration: in-arrivo ? (Movimento.ridotto ? 120ms : 280ms) : 0ms; easing: ease-out; }
 
-    // Posizione di una vista nel dock (la Panoramica è la prima); sconosciuta: dopo la Panoramica.
+    // Posizione di una vista fra le schede (-1: nessuna scheda la mostra).
+    pure function scheda-di(v: string) -> int {
+        return schede[0].id == v ? 0 : schede[1].id == v ? 1 : schede[2].id == v ? 2 : schede[3].id == v ? 3
+            : schede[4].id == v ? 4 : schede[5].id == v ? 5 : schede[6].id == v ? 6 : schede[7].id == v ? 7 : -1;
+    }
+
+    // Posizione di una vista nella barra (la Panoramica è la prima); sconosciuta: dopo la Panoramica.
     pure function posizione(v: string) -> int {
-        return v == "panoramica" ? 0
-            : app[0].id == v ? 0 : app[1].id == v ? 1 : app[2].id == v ? 2 : app[3].id == v ? 3
-            : app[4].id == v ? 4 : app[5].id == v ? 5 : app[6].id == v ? 6 : app[7].id == v ? 7 : 1;
+        return v == "panoramica" ? 0 : scheda-di(v) >= 0 ? scheda-di(v) : 1;
     }
 
     // La riga «N luci accese» smette di essere il bersaglio da tastiera (luci spente, casa
@@ -345,6 +285,13 @@ export component Pannello inherits Window {
     changed fuoco-luci-valido => {
         if (!fuoco-luci-valido && fuoco-luci-el.has-focus) {
             tasti.focus();
+        }
+    }
+
+    // L'uscita audio sparisce col fuoco sul volume: il fuoco va al vicino (la ricerca), non si perde.
+    changed volume-disponibile => {
+        if (!volume-disponibile && zona == Zona.volume) {
+            zona = Zona.ricerca;
         }
     }
 
@@ -443,8 +390,8 @@ export component Pannello inherits Window {
     title: "ItsyHome — pannello";
     default-font-family: Tema.carattere;
     default-font-weight: 500;
-    width: larghezza-pannello;
-    height: 300px;
+    width: larghezza-finestra;
+    height: altezza-pannello;
     forward-focus: tasti;
 
     // Vista PC: l'elemento `i` c'è (e prende il fuoco). Un riquadro senza radio («Non presente»)
@@ -493,15 +440,22 @@ export component Pannello inherits Window {
                 || (vista == "agenti" && (!claude-collegato || claude-righe.length > 0 || claude-dettagli))
                 || (vista == "pc" && pc-successivo(-1) >= 0);
         }
+        if (z == Zona.volume) {
+            // Senza uscita audio il pulsante non c'è.
+            return volume-disponibile;
+        }
         return true;
     }
 
+    // L'ordine di Tab: «In attesa», stanze, contenuto, schede, ricerca, volume, «⋯» (e in giro).
     pure function zona-dopo(z: Zona, avanti: bool) -> Zona {
         if (avanti) {
             return z == Zona.attesa ? Zona.stanze : z == Zona.stanze ? Zona.contenuto
-                : z == Zona.contenuto ? Zona.dock : z == Zona.dock ? Zona.menu : Zona.attesa;
+                : z == Zona.contenuto ? Zona.dock : z == Zona.dock ? Zona.ricerca
+                : z == Zona.ricerca ? Zona.volume : z == Zona.volume ? Zona.menu : Zona.attesa;
         }
-        return z == Zona.menu ? Zona.dock : z == Zona.dock ? Zona.contenuto : z == Zona.contenuto ? Zona.stanze
+        return z == Zona.menu ? Zona.volume : z == Zona.volume ? Zona.ricerca : z == Zona.ricerca ? Zona.dock
+            : z == Zona.dock ? Zona.contenuto : z == Zona.contenuto ? Zona.stanze
             : z == Zona.stanze ? Zona.attesa : Zona.menu;
     }
 
@@ -548,7 +502,8 @@ export component Pannello inherits Window {
         }
     }
 
-    // Tab: la zona seguente che esiste in questa vista (dock e «⋯» ci sono sempre).
+    // Tab: la zona seguente che esiste in questa vista (schede, ricerca e «⋯» ci sono sempre: al
+    // più tre zone di fila mancano).
     function passa-zona(avanti: bool) {
         zona = zona-dopo(zona, avanti);
         if (!ha-zona(zona)) {
@@ -694,7 +649,7 @@ export component Pannello inherits Window {
     function vai(v: string) {
         // La vista che se ne va (con «In attesa»; «Indietro» non c'è più) può avere l'elemento col fuoco:
         // distrutto lui, il pannello resterebbe senza fuoco e senza tastiera. Il fuoco passa prima
-        // a `tasti`; l'elemento scelto nella vista nuova lo riprende da sé (`Fuoco`). Il dock resta.
+        // a `tasti`; l'elemento scelto nella vista nuova lo riprende da sé (`Fuoco`). Le schede restano.
         if (zona != Zona.dock) {
             tasti.focus();
         }
@@ -728,9 +683,17 @@ export component Pannello inherits Window {
 
     function apri(i: int, id: string) {
         fuoco-dock = i;
-        indice-vista = i;
         vai(id);
         root.apri-app(id);
+    }
+
+    // La rotella sul pulsante del volume: ±`punti` dal punto intero di adesso, nei limiti (al
+    // limite nessun comando).
+    function rotella-volume-passo(punti: int) {
+        let nuovo = min(max((round(volume * 100) + punti) / 100, 0), 1);
+        if (nuovo != volume) {
+            cambia-volume(nuovo);
+        }
     }
 
     // «⋯»: il menu sotto il pulsante, al suo bordo destro. Chiuso il menu senza scelta il fuoco
@@ -765,7 +728,7 @@ export component Pannello inherits Window {
             if (k == Key.LeftArrow) {
                 fuoco-dock = max(0, fuoco-dock - 1);
             } else if (k == Key.RightArrow) {
-                fuoco-dock = min(app.length - 1, fuoco-dock + 1);
+                fuoco-dock = min(schede.length - 1, fuoco-dock + 1);
             }
         } else if (zona == Zona.attesa && espansa) {
             if (fuoco-pulsante >= 0) {
@@ -916,7 +879,11 @@ export component Pannello inherits Window {
         } else if (zona == Zona.attesa) {
             apri-voce(min(fuoco-attesa, attese.length - 1));
         } else if (zona == Zona.dock) {
-            apri(fuoco-dock, app[fuoco-dock].id);
+            apri(fuoco-dock, schede[fuoco-dock].id);
+        } else if (zona == Zona.ricerca) {
+            // La ricerca arriva in F5: per ora non fa nulla.
+        } else if (zona == Zona.volume) {
+            root.muto-volume(!volume-muto);
         } else if (zona == Zona.menu) {
             apri-menu(true);
         } else if (zona == Zona.stanze && fuoco-stanza-valido < 0) {
@@ -1065,16 +1032,39 @@ export component Pannello inherits Window {
             opacity: aperto ? 1 : 0;
             animate height { duration: Movimento.ridotto ? 0ms : 200ms; easing: ease-out; }
             animate opacity { duration: Movimento.ridotto ? 120ms : 200ms; easing: ease-out; }
-            // Nero vero, angoli bassi a raggio 34 (isola di TwoCode). Senza l'anello dei petali e
-            // senza i bagliori: il contorno nuovo arriva con la cornice (Task 6).
-            border-top-left-radius: Tema.raggio-pannello;
-            border-top-right-radius: Tema.raggio-pannello;
-            border-bottom-left-radius: Tema.raggio-isola;
-            border-bottom-right-radius: Tema.raggio-isola;
             clip: true;
-            background: Tema.nero;
 
-            // Riga alta: occhi al centro, ora a destra e poi «⋯».
+            // L'isola nera con le orecchie e la luce del tono più urgente (ferma: si accende e si
+            // spegne solo al cambio di tono).
+            ContornoIsola {
+                x: 0;
+                y: 0;
+                width: root.larghezza-finestra;
+                height: root.altezza-pannello;
+                tono: root.tono-isola;
+            }
+
+            // Riga alta: data e meteo a sinistra, ora e «⋯» a destra; gli occhi al centro.
+            riga-alta := RigaAlta {
+                x: 0;
+                y: 0;
+                width: root.larghezza-finestra;
+                height: altezza-riga;
+                sinistra: root.riga-sinistra;
+                sinistra-nome: root.riga-sinistra-nome;
+                sinistra-visibile: vista == "panoramica";
+                ora: root.ora;
+                ora-visibile: ora-riga-visibile;
+                ingombro-occhi: occhi.ingombro;
+                piu-x: root.piu-x;
+                piu-y: root.piu-y;
+                fuoco-menu-chiesto: da-tastiera && zona == Zona.menu && !menu-scuro.aperto;
+                anello-menu: da-tastiera && zona == Zona.menu && !menu-scuro.aperto;
+                menu-aperto: menu-scuro.aperto;
+                // Col mouse senza anello; da Narrator come da tastiera.
+                menu-premuto(narratore) => { apri-menu(narratore); }
+            }
+
             // Il battito di ciglia (dentro Occhi) solo a pannello aperto.
             occhi := Occhi {
                 umore: root.umore;
@@ -1098,82 +1088,6 @@ export component Pannello inherits Window {
                     width: parent.width + 24px;
                     mouse-cursor: pointer;
                     clicked => { root.chiudi(); }
-                }
-            }
-
-            // Data e meteo, a sinistra degli occhi, solo nella Panoramica.
-            if vista == "panoramica" && riga-sinistra != "": Text {
-                x: 12px;
-                y: 0;
-                width: max(0px, (parent.width - occhi.ingombro) / 2 - 12px - 8px);
-                height: altezza-riga;
-                text: riga-sinistra;
-                overflow: elide;
-                vertical-alignment: center;
-                font-family: Tema.carattere-mono;
-                font-size: Tema.testo-piccolo;
-                color: Tema.testo-tenue;
-                accessible-role: text;
-                accessible-label: riga-sinistra-nome;
-            }
-
-            // L'ora piccola in alto a destra: nel layout Orologio della Panoramica c'è già quella
-            // grande al centro, ripeterla è rumore (R1-14); una voce espansa copre il centro e la
-            // riporta.
-            Text {
-                visible: ora-riga-visibile;
-                x: 0;
-                y: 0;
-                width: piu.x - 6px;
-                height: altezza-riga;
-                text: ora;
-                horizontal-alignment: right;
-                vertical-alignment: center;
-                font-family: Tema.carattere-mono;
-                font-size: Tema.testo-corpo;
-                color: Tema.testo-2;
-            }
-
-            // «⋯» (Task 14i): il menu dell'isola senza «Apri», con Impostazioni in testa. Bersaglio
-            // 28 × 28, capsula tenue al passaggio come le schede del dock, anello da tastiera.
-            piu := Rectangle {
-                width: 28px;
-                height: 28px;
-                x: parent.width - 12px - self.width;
-                y: (altezza-riga - self.height) / 2;
-                border-radius: self.height / 2;
-                background: area-piu.has-hover ? Tema.scheda-sopra : transparent;
-                accessible-role: button;
-                accessible-label: "Altre opzioni";
-                // Narrator annuncia che il menu si è aperto (o chiuso).
-                accessible-expandable: true;
-                accessible-expanded: menu-scuro.aperto;
-                accessible-action-default => { apri-menu(true); }
-
-                // Col menu aperto il fuoco vero è sulle sue righe e l'anello è il loro.
-                fuoco-menu := Fuoco { chiede: da-tastiera && zona == Zona.menu && !menu-scuro.aperto; }
-
-                Image {
-                    source: Icone.altre-opzioni;
-                    width: 18px;
-                    height: 18px;
-                    accessible-role: none;
-                    colorize: Tema.icona;
-                    image-rendering: smooth;
-                }
-
-                area-piu := TouchArea {
-                    mouse-cursor: pointer;
-                    clicked => {
-                        da-tastiera = false;
-                        apri-menu(false);
-                    }
-                }
-
-                // Dentro la riga alta (il corpo ritaglia): l'anello sta a filo del bersaglio.
-                if da-tastiera && zona == Zona.menu && !menu-scuro.aperto: Anello {
-                    raggio: parent.border-radius;
-                    distanza: 0px;
                 }
             }
 
@@ -1455,37 +1369,6 @@ export component Pannello inherits Window {
                         root.muto-volume(si);
                     }
                 }
-
-                // Vista di un'app senza contenuti propri: solo il titolo (oggi nessuna; le Impostazioni
-                // hanno una finestra loro).
-                // Una sola, e creata solo se serve (FE4): l'app è quella scelta per ultima nel dock.
-                if vista-vuota: VerticalLayout {
-                    width: parent.width;
-                    height: parent.height;
-                    alignment: center;
-                    spacing: 10px;
-
-                    HorizontalLayout {
-                        alignment: center;
-
-                        Image {
-                            source: app[indice-vista].icona;
-                            accessible-role: none;
-                            width: 38px;
-                            height: 38px;
-                            colorize: Tema.icona;
-                            image-rendering: smooth;
-                        }
-                    }
-
-                    Text {
-                        text: app[indice-vista].nome;
-                        horizontal-alignment: center;
-                        font-weight: 500;
-                        font-size: Tema.testo-vuoto;
-                        color: Tema.testo;
-                    }
-                }
             }
 
             // Puntini dei layout, solo nella Panoramica e non sotto una voce espansa (il layout è
@@ -1546,44 +1429,29 @@ export component Pannello inherits Window {
                 }
             }
 
-            // Dock centrato: solo le app del registro, solo icone (il nome nel suggerimento).
-            HorizontalLayout {
-                x: 0;
-                width: parent.width;
-                y: dock-y;
-                height: altezza-dock;
-                alignment: center;
-
-                Rectangle {
-                    border-radius: altezza-dock / 2;
-                    background: Tema.capsula;
-                    accessible-role: tab-list;
-                    accessible-label: "App";
-                    // Mezzo pixel come prima: `sul-pixel` lo porterebbe a 1 px pieno a scala 1.
-                    border-width: 0.5px;
-                    border-color: Tema.vetro-bordo;
-
-                    HorizontalLayout {
-                        padding-left: 6px;
-                        padding-right: 6px;
-                        padding-top: 3px;
-                        padding-bottom: 3px;
-                        spacing: 4px;
-
-                        for voce[i] in app: Scheda {
-                            icona: voce.icona;
-                            nome: voce.nome;
-                            indice: i;
-                            quante: app.length;
-                            attiva: vista == voce.id;
-                            anello: da-tastiera && zona == Zona.dock && fuoco-dock == i;
-                            scelta => {
-                                da-tastiera = false;
-                                apri(i, voce.id);
-                            }
-                        }
-                    }
+            // La barra bassa: ricerca, schede, volume. Ferma: cambiando pagina si muove solo il corpo.
+            Barra {
+                x: (root.larghezza-finestra - root.larghezza-isola) / 2;
+                y: root.altezza-pannello - self.height;
+                width: root.larghezza-isola;
+                schede: root.schede;
+                attiva: scheda-di(vista);
+                fuoco-scheda: da-tastiera && zona == Zona.dock ? fuoco-dock : -1;
+                fuoco-ricerca: da-tastiera && zona == Zona.ricerca;
+                fuoco-volume: da-tastiera && zona == Zona.volume && volume-disponibile;
+                volume: root.volume;
+                volume-muto: root.volume-muto;
+                volume-disponibile: root.volume-disponibile;
+                rotella-volume: root.rotella-volume;
+                scelta(i) => {
+                    da-tastiera = false;
+                    apri(i, root.schede[i].id);
                 }
+                muto-volume(si) => {
+                    da-tastiera = false;
+                    root.muto-volume(si);
+                }
+                passo-volume(punti) => { rotella-volume-passo(punti); }
             }
 
             // Il menu «⋯» sopra tutto il resto (ultimo figlio): sotto il pulsante, a filo del suo
@@ -1596,15 +1464,15 @@ export component Pannello inherits Window {
                 voci: root.voci-menu;
                 schermi: root.schermi-menu;
                 schermo-scelto: root.menu-schermo-scelto;
-                destra: piu.x + piu.width;
-                alto: piu.y + piu.height + 4px;
+                destra: root.piu-x + 32px;
+                alto: root.piu-y + 32px + 4px;
                 anello: da-tastiera;
                 scelta(id) => { root.scelta-menu(id); }
                 usato-mouse => { da-tastiera = false; }
                 cerca-iniziale(lettera, sotto, da) => { return root.cerca-iniziale-menu(lettera, sotto, da); }
                 rilascia-fuoco => {
                     if (da-tastiera) {
-                        fuoco-menu.focus();
+                        riga-alta.fuoco-sul-menu();
                     } else {
                         tasti.focus();
                     }
@@ -1659,6 +1527,7 @@ export component Pannello inherits Window {
         : zona == Zona.stanze ? ha-zona(Zona.stanze)
         : zona == Zona.contenuto ? ha-zona(Zona.contenuto) && (vista == "panoramica" || vista == "collegamenti" || vista == "agenti" || vista == "pc"
             || (griglia.length > 0 ? (fuoco-casa >= 0 || riprova-visibile) : !casa-pronta))
+        : zona == Zona.volume ? volume-disponibile
         : true;
     property <bool> fuoco-su-elemento: da-tastiera && bersaglio;
     changed fuoco-su-elemento => {

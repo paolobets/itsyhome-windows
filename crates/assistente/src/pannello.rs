@@ -9,6 +9,7 @@
 
 use crate::layout::Layout;
 use crate::moduli::registro::Registro;
+use crate::moduli::{panoramica, Tono};
 use crate::pc_stats::{formatta_usato_totale, formatta_velocita, tinta_batteria, Campionatore, Fonti, StatPc, TintaBatteria};
 #[cfg(test)]
 use crate::pc_stats::{LetturaBatteria, StatoBatteria};
@@ -16,8 +17,8 @@ use crate::ponte::{DallaPillola, Ponte};
 use crate::sistema::menu::{self, Voce};
 use crate::sistema::servizi;
 use crate::{
-    finestra_impostazioni, finestre, orologio, scelte, Movimento, Pannello, Pillola, SchermoMenuUi, StatPcUi,
-    TintaBatteriaUi, VoceAppUi, VoceMenuUi,
+    finestra_impostazioni, finestre, orologio, scelte, Movimento, Pannello, Pillola, SchedaBarraUi, SchermoMenuUi,
+    StatPcUi, TintaBatteriaUi, VoceMenuUi,
 };
 use slint::winit_030::{winit, EventResult, WinitWindowAccessor};
 use slint::{ComponentHandle, Image, Model, ModelRc, VecModel};
@@ -99,20 +100,31 @@ pub fn icona(nome: &str) -> Image {
     })
 }
 
-/// Le icone del dock: la Panoramica (la schermata principale) e poi i moduli nell'ordine del
-/// registro. Le Impostazioni non sono un'app del dock (Task 14i): si aprono dal menu «⋯» in alto
-/// a destra del pannello e dalla tray.
-pub(crate) fn voci_app(registro: &Registro) -> ModelRc<VoceAppUi> {
-    let panoramica = VoceAppUi { id: "panoramica".into(), nome: "Panoramica".into(), icona: icona("panoramica") };
-    let voci: Vec<VoceAppUi> = std::iter::once(panoramica)
-        .chain(
-            registro
-                .ordine()
-                .into_iter()
-                .map(|m| VoceAppUi { id: m.id.into(), nome: m.nome.into(), icona: icona(m.icona) }),
-        )
+/// Le schede della barra con la vista `vista` aperta: la Panoramica (la schermata principale) e poi
+/// i moduli nell'ordine del registro. Sulla scheda il nome breve maiuscolo (spec C12: «LINK», non
+/// «COLLEGAMENTI»), per Narrator il nome intero col tono effettivo; la geometria la dà
+/// `panoramica::geometria_schede` (la scheda della vista aperta è larga, col nome). Le Impostazioni
+/// non sono una scheda (Task 14i): si aprono dal menu «⋯» in alto a destra e dalla tray.
+pub(crate) fn schede_ui(registro: &Registro, vista: &str) -> Vec<SchedaBarraUi> {
+    let voci: Vec<(&str, &str, String, &str, Tono)> = std::iter::once(("panoramica", "Panoramica", "PANORAMICA".to_owned(), "panoramica", Tono::Calmo))
+        .chain(registro.ordine().into_iter().map(|m| (m.id, m.nome, m.nome_breve.to_uppercase(), m.icona, registro.tono_effettivo(m.id))))
         .collect();
-    ModelRc::new(VecModel::from(voci))
+    let nomi: Vec<&str> = voci.iter().map(|v| v.2.as_str()).collect();
+    let attiva = voci.iter().position(|v| v.0 == vista).unwrap_or(usize::MAX);
+    let geometria = panoramica::geometria_schede(&nomi, attiva);
+    voci.iter()
+        .zip(geometria)
+        .enumerate()
+        .map(|(i, (&(id, nome, ref breve, icona_id, tono), (x, larghezza)))| SchedaBarraUi {
+            id: id.into(),
+            nome: breve.as_str().into(),
+            icona: icona(icona_id),
+            x,
+            larghezza,
+            segno: panoramica::segno(tono),
+            narratore: panoramica::narratore(nome, tono, i, voci.len()).into(),
+        })
+        .collect()
 }
 
 fn aggiorna_ora(ponte: &Ponte, pannello: &Pannello) {
@@ -431,7 +443,6 @@ impl Apertura {
     fn crea(&self) -> Result<Pannello, slint::PlatformError> {
         let pannello = Pannello::new()?;
         pannello.global::<Movimento>().set_ridotto(servizi::movimento_ridotto());
-        pannello.set_app(voci_app(&self.ponte.registro()));
         pannello.set_layout(self.layout.get());
         self.ponte.riempi(&pannello);
 
@@ -448,6 +459,8 @@ impl Apertura {
                 a.ponte.vista_pc(p.get_vista() == "pc");
                 // La vista Claude (M3, Task 9) scrive e conta il tempo solo a vista aperta.
                 a.ponte.vista_claude(p.get_vista() == "agenti");
+                // La scheda della vista nuova si allarga col nome (la capsula scivola).
+                a.ponte.scrivi_schede(&p);
             }
         });
         let a = self.io.clone();
@@ -606,12 +619,15 @@ impl Apertura {
         // Aprendo dalla pillola allargata (che chiama) gli occhi del pannello partono da dove
         // stanno i suoi e scivolano al centro durante l'apertura; e il pannello si apre su quella
         // voce, espansa sul posto nella riga «In attesa».
+        // In altezza gli occhi della pillola stanno 6 sopra quelli del pannello (riga alta 44 contro
+        // la pillola di 32): partono da lì e scendono (`SCARTO_OCCHI_PANNELLO_Y`).
         if pillola.get_aspetto() == crate::AspettoPillolaUi::Allargata {
             pannello.set_partenza_occhi(pillola.get_scarto_occhi_allerta());
-            pannello.set_partenza_occhi_y(pillola.get_scarto_occhi_allerta_y());
+            pannello.set_partenza_occhi_y(pillola.get_scarto_occhi_allerta_y() + finestre::SCARTO_OCCHI_PANNELLO_Y);
         } else {
             // A riposo con un lato solo gli occhi non stanno al centro (M2, Task 4): partono da lì.
             pannello.set_partenza_occhi(pillola.get_scarto_occhi_riposo());
+            pannello.set_partenza_occhi_y(finestre::SCARTO_OCCHI_PANNELLO_Y);
         }
         match self.ponte.apertura_dalla_pillola(pillola.get_attivita_visibile()) {
             // Espande la voce e porta lì il fuoco da tastiera (frecce e Invio agiscono su di lei).
@@ -862,9 +878,13 @@ mod test {
 
     #[test]
     fn ogni_app_del_registro_ha_la_sua_icona() {
-        let voci = voci_app(&Registro::nuovo(&[]));
+        let voci = schede_ui(&Registro::nuovo(&[]), "panoramica");
         let ids: Vec<String> = voci.iter().map(|v| v.id.to_string()).collect();
         assert_eq!(ids, ["panoramica", "agenti", "casa", "pc", "collegamenti"]);
+        // Sulla scheda il nome breve maiuscolo, per Narrator il nome intero.
+        let nomi: Vec<String> = voci.iter().map(|v| v.nome.to_string()).collect();
+        assert_eq!(nomi, ["PANORAMICA", "AGENTI", "CASA", "PC", "LINK"]);
+        assert_eq!(voci[4].narratore, "Collegamenti, scheda 5 di 5");
         for app in voci.iter() {
             let dimensioni = app.icona.size();
             assert!(dimensioni.width > 0 && dimensioni.height > 0, "icona di {}", app.id);

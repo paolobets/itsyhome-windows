@@ -9,9 +9,9 @@ pub enum Stile {
     TitoloNumerico,
     /// Inter 500, 12 px.
     Riga,
-    /// JetBrains Mono NL 500, 11 px, tracking +0,77 (.07em). Per ora solo i test (la capsula
-    /// accanto al nome breve); le schede della barra la misureranno (Task 6).
-    #[cfg(test)]
+    /// JetBrains Mono NL 500, 11 px, tracking +0,77 (.07em): il nome della scheda della barra
+    /// (`panoramica::geometria_schede`) e della carta. In Slint gli stessi valori sono
+    /// `Tema.etichetta-corpo` e `Tema.etichetta-spaziatura`.
     Etichetta,
     /// Inter 700, 11 px. Solo i test lo misurano (la capsula la dimensiona Slint).
     #[cfg(test)]
@@ -62,7 +62,6 @@ impl Stile {
             Stile::Titolo => (1, 18.0, -0.27),
             Stile::TitoloNumerico => (2, 26.0, -0.52),
             Stile::Riga => (0, 12.0, 0.0),
-            #[cfg(test)]
             Stile::Etichetta => (2, 11.0, 0.77),
             #[cfg(test)]
             Stile::Capsula => (1, 11.0, 0.0),

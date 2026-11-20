@@ -16,11 +16,19 @@ export enum GenereUi { casa, luce, presa, scena, termo, goccia, sensore }
 // Tono di uno stato nelle Impostazioni: decide solo il colore del pallino (la parola c'è sempre).
 export enum TonoUi { spento, ok, attesa, errore }
 
-// Una app del dock (la Panoramica e i moduli del registro, nell'ordine), come la vede l'interfaccia.
-export struct VoceAppUi {
+// Una scheda della barra della cornice (ridisegno F1): la Panoramica e i moduli del registro,
+// nell'ordine. Tutto lo calcola Rust (`Ponte::scrivi_schede`): `nome` è il nome breve maiuscolo
+// mostrato sulla scheda attiva, `x` e `larghezza` la geometria (`panoramica::geometria_schede`,
+// la capsula scivola fra una e l'altra), `segno` gli occhietti (0 nessuno, 1 ti aspetta, 2 guarda
+// presto), `narratore` il nome intero per Narrator («Agenti, ti aspetta, scheda 2 di 5»).
+export struct SchedaBarraUi {
     id: string,
     nome: string,
     icona: image,
+    x: length,
+    larghezza: length,
+    segno: int,
+    narratore: string,
 }
 
 // Il tono di un modulo (spec §5.3, `moduli::Tono`): vocabolario chiuso, uguale per ogni modulo.

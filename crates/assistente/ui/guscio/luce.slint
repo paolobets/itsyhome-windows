@@ -1,0 +1,42 @@
+// La luce che sale dal basso (spec §13.3, spike 11 §5, tecnica t1): un cerchio radiale stirato in
+// ellisse con `transform-scale-x`, dentro un genitore che ritaglia (`clip`). Colore e forza si
+// animano 1,2 s solo quando il tono cambia (0 ms col movimento ridotto): a riposo nessun
+// ridisegno. La trasparenza sta nel colore (`with-alpha`), mai in `opacity`.
+// Il tono senza luce (calmo, vuoto, fatto, errore, fermo) ha `Tema.luce-tono` trasparente: la
+// forza va a 0 e la luce si spegne in dissolvenza.
+import { Tema, Movimento } from "../tema.slint";
+import { TonoModuloUi } from "../voci.slint";
+
+export component Luce inherits Rectangle {
+    in property <TonoModuloUi> tono;
+    // Raggi dell'ellisse e altezza del centro, in frazioni del rettangolo; forze ai tre gradini
+    // (k1 al centro, k2 a p2, 0 a p3).
+    in property <float> rx-pct: 0.66;
+    in property <float> ry-pct: 0.82;
+    in property <float> cy-pct: 1.24;
+    in property <float> k1: 0.72;
+    in property <float> k2: 0.28;
+    in property <float> p2: 0.42;
+    in property <float> p3: 0.76;
+
+    // Spegnendosi il colore va verso il trasparente (nero) mentre la forza cala: sul nero non si
+    // vede differenza.
+    property <color> tinta: Tema.luce-tono(tono);
+    property <color> c: tinta;
+    property <float> forza: tinta == transparent ? 0 : 1;
+    animate c, forza { duration: Movimento.ridotto ? 0ms : 1200ms; }
+    property <length> rx: root.width * root.rx-pct;
+    property <length> ry: root.height * root.ry-pct;
+    property <length> cx: root.width / 2;
+    property <length> cy: root.height * root.cy-pct;
+
+    Rectangle {
+        visible: root.forza > 0;
+        x: root.cx - root.ry;
+        y: root.cy - root.ry;
+        width: 2 * root.ry;
+        height: 2 * root.ry;
+        transform-scale-x: root.rx / root.ry;
+        background: @radial-gradient(circle root.ry, root.c.with-alpha(root.k1 * root.forza) 0%, root.c.with-alpha(root.k2 * root.forza) root.p2 * 100%, root.c.with-alpha(0) root.p3 * 100%);
+    }
+}

@@ -1,0 +1,63 @@
+// Gli occhietti: il segno di stato della variante 5 «misto» (studio 10 §9, bozze/tc-stati.html),
+// disegnati come `Path` (mai glifi). Due forme:
+// - `dock` (15 × 8, sulla scheda della barra): solo «ti aspetta» (tondi pieni, ti guardano) e
+//   «guarda presto» (a mandorla inclinate, angoli interni in su: preoccupati); per gli altri toni
+//   niente.
+// - carta (15 × 9, nella capsula della carta e nella riga della Coda): al lavoro socchiusi, ti
+//   aspetta tondi, guarda tondi alti con le sopracciglia in giù, fatto «^ ^», errore «× ×»,
+//   calmo e fermo tondi alti; vuoto niente.
+// Il colore è quello del tono (`Tema.colore-tono`). Nessun nome per Narrator: lo stato lo dice il
+// nome di chi li contiene.
+import { Tema } from "../tema.slint";
+import { TonoModuloUi } from "../voci.slint";
+
+export component Occhietti inherits Rectangle {
+    in property <TonoModuloUi> tono;
+    in property <bool> dock;
+    in property <color> colore: Tema.colore-tono(tono);
+
+    width: 15px;
+    height: dock ? 8px : 9px;
+
+    // Le forme piene (gli occhi).
+    property <string> pieni: dock
+        ? (tono == TonoModuloUi.aspetta
+            ? "M 1 5 A 3.6 3.6 0 1 0 8.2 5 A 3.6 3.6 0 1 0 1 5 Z M 9.8 5 A 3.6 3.6 0 1 0 17 5 A 3.6 3.6 0 1 0 9.8 5 Z"
+            : tono == TonoModuloUi.guarda
+            ? "M 0.946 7.027 A 4 2 -24 1 0 8.254 3.773 A 4 2 -24 1 0 0.946 7.027 Z M 9.746 3.773 A 4 2 24 1 0 17.054 7.027 A 4 2 24 1 0 9.746 3.773 Z"
+            : "")
+        : tono == TonoModuloUi.attivo
+            ? "M 2.9 7 A 2.6 1.5 0 1 0 8.1 7 A 2.6 1.5 0 1 0 2.9 7 Z M 11.9 7 A 2.6 1.5 0 1 0 17.1 7 A 2.6 1.5 0 1 0 11.9 7 Z"
+        : tono == TonoModuloUi.aspetta
+            ? "M 2.3 6.5 A 3.2 3.2 0 1 0 8.7 6.5 A 3.2 3.2 0 1 0 2.3 6.5 Z M 11.3 6.5 A 3.2 3.2 0 1 0 17.7 6.5 A 3.2 3.2 0 1 0 11.3 6.5 Z"
+        : tono == TonoModuloUi.guarda
+            ? "M 3.4 7.3 A 2.1 2.9 0 1 0 7.6 7.3 A 2.1 2.9 0 1 0 3.4 7.3 Z M 12.4 7.3 A 2.1 2.9 0 1 0 16.6 7.3 A 2.1 2.9 0 1 0 12.4 7.3 Z"
+        : (tono == TonoModuloUi.calmo || tono == TonoModuloUi.fermo)
+            ? "M 3.5 6.5 A 2 3.2 0 1 0 7.5 6.5 A 2 3.2 0 1 0 3.5 6.5 Z M 12.5 6.5 A 2 3.2 0 1 0 16.5 6.5 A 2 3.2 0 1 0 12.5 6.5 Z"
+        : "";
+    // Le forme a tratto (sopracciglia, «^ ^», «× ×»): solo nella carta.
+    property <string> tratti: dock ? ""
+        : tono == TonoModuloUi.guarda ? "M 2.6 2.6 L 7.6 1.2 M 17.4 2.6 L 12.4 1.2"
+        : tono == TonoModuloUi.fatto ? "M 3 8.2 A 2.6 2.6 0 0 1 8.2 8.2 M 11.8 8.2 A 2.6 2.6 0 0 1 17 8.2"
+        : tono == TonoModuloUi.errore ? "M 3.5 4.5 L 7.5 8.5 M 7.5 4.5 L 3.5 8.5 M 12.5 4.5 L 16.5 8.5 M 16.5 4.5 L 12.5 8.5"
+        : "";
+
+    if root.pieni != "": Path {
+        width: root.width;
+        height: root.height;
+        viewbox-width: root.dock ? 18 : 20;
+        viewbox-height: root.dock ? 10 : 12;
+        commands: root.pieni;
+        fill: root.colore;
+    }
+    if root.tratti != "": Path {
+        width: root.width;
+        height: root.height;
+        viewbox-width: 20;
+        viewbox-height: 12;
+        commands: root.tratti;
+        stroke: root.colore;
+        stroke-width: 1.3px;
+        stroke-line-cap: round;
+    }
+}

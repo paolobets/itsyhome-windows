@@ -1,0 +1,406 @@
+// La cornice ferma del pannello (ridisegno F1, Task 6; spec §5.4 e §13, spike 11 §5–§7): l'isola
+// nera 800 × 340 con le orecchie di 10 (finestra 820 × 340), la riga alta 44 e la barra bassa 64.
+// Cambiando pagina si muove solo il corpo (752 × 224 a (34, 44)): riga alta e barra restano.
+// I simboli sono `Path` o SVG, mai glifi. Il fuoco vero lo portano i `Fuoco` interni, chiesti dal
+// pannello (che tiene i tasti in `tasti`); qui nessun tasto si gestisce.
+import { Tema } from "../tema.slint";
+import { Anello, Fuoco } from "../componenti.slint";
+import { Icone } from "../icone.slint";
+import { SchedaBarraUi, TonoModuloUi } from "../voci.slint";
+import { Luce } from "luce.slint";
+import { Occhietti } from "occhietti.slint";
+
+// Il contorno dell'isola in un solo `Path` (spike 11 §6: un orecchio separato lascerebbe un filo
+// a 125 e 175 %): orecchie concave di 10 in alto ai due lati, fianchi, angoli bassi di 34. La
+// luce del tono più urgente sta in un rettangolo interno trasparente che ritaglia coi raggi bassi.
+export component ContornoIsola inherits Rectangle {
+    in property <TonoModuloUi> tono;
+
+    width: 820px;
+    height: 340px;
+
+    Path {
+        width: root.width;
+        height: root.height;
+        viewbox-width: 820;
+        viewbox-height: 340;
+        commands: "M 0 0 L 820 0 A 10 10 0 0 0 810 10 L 810 306 A 34 34 0 0 1 776 340 L 44 340 A 34 34 0 0 1 10 306 L 10 10 A 10 10 0 0 0 0 0 Z";
+        fill: Tema.nero;
+    }
+
+    Rectangle {
+        x: 10px;
+        width: 800px;
+        height: root.height;
+        border-bottom-left-radius: Tema.raggio-isola;
+        border-bottom-right-radius: Tema.raggio-isola;
+        clip: true;
+
+        // Valori dello spike (`spike.slint`, isola): ellisse larga, centro sotto il bordo basso;
+        // il picco resta sotto il 30 % alla quota delle scritte della barra.
+        Luce {
+            x: -120px;
+            width: 1040px;
+            height: parent.height;
+            tono: root.tono;
+            k1: root.tono == TonoModuloUi.aspetta ? 0.78 : 0.72;
+            k2: root.tono == TonoModuloUi.aspetta ? 0.30 : 0.28;
+            p2: 0.42;
+            p3: 0.76;
+            rx-pct: 0.66;
+            ry-pct: 0.82;
+            cy-pct: 1.24;
+        }
+    }
+}
+
+// Un pulsante tondo d'icona della cornice (32, cerchio al passaggio): «⋯» e volume.
+component PulsanteTondo inherits Rectangle {
+    in property <image> icona;
+    in property <bool> anello;
+    in property <string> nome;
+    // Vero: da Narrator; falso: col mouse.
+    callback premuto(bool);
+    // La rotella sopra il pulsante: vero se l'ha usata (chi non la gestisce la lascia passare).
+    callback rotella(length) -> bool;
+
+    width: 32px;
+    height: 32px;
+    border-radius: self.height / 2;
+    background: area.has-hover ? Tema.g3 : transparent;
+    accessible-role: button;
+    accessible-label: nome;
+    accessible-action-default => { root.premuto(true); }
+
+    @children
+
+    Image {
+        source: root.icona;
+        width: 18px;
+        height: 18px;
+        accessible-role: none;
+        colorize: area.has-hover ? Tema.icona-attiva : Tema.icona;
+        image-rendering: smooth;
+    }
+
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.premuto(false); }
+        scroll-event(evento) => {
+            return root.rotella(evento.delta-y) ? EventResult.accept : EventResult.reject;
+        }
+    }
+
+    if root.anello: Anello { raggio: parent.border-radius; }
+}
+
+// La riga alta (44): a sinistra data e meteo (mono maiuscolo 12, `testo-2`, solo dove il pannello
+// li dà), a destra l'ora (mono 13, `testo`) e «⋯». Gli occhi, al centro, li mette il pannello.
+export component RigaAlta inherits Rectangle {
+    in property <string> sinistra;
+    in property <string> sinistra-nome;
+    in property <bool> sinistra-visibile;
+    in property <string> ora;
+    in property <bool> ora-visibile;
+    // Posto degli occhi (per non scriverci sopra) e di «⋯».
+    in property <length> ingombro-occhi;
+    in property <length> piu-x;
+    in property <length> piu-y;
+    in property <bool> fuoco-menu-chiesto;
+    in property <bool> anello-menu;
+    in property <bool> menu-aperto;
+    callback menu-premuto(bool);
+
+    // Riporta il fuoco vero su «⋯» (chiuso il menu da tastiera).
+    public function fuoco-sul-menu() {
+        fuoco-menu.focus();
+    }
+
+    if root.sinistra-visibile && root.sinistra != "": Text {
+        x: 38px;
+        y: 0;
+        width: max(0px, (root.width - root.ingombro-occhi) / 2 - 38px - 12px);
+        height: root.height;
+        text: root.sinistra.to-uppercase();
+        overflow: elide;
+        vertical-alignment: center;
+        font-family: Tema.carattere-mono;
+        font-size: Tema.testo-piccolo;
+        letter-spacing: Tema.riga-alta-spaziatura;
+        color: Tema.testo-2;
+        accessible-role: text;
+        accessible-label: root.sinistra-nome;
+    }
+
+    // L'ora piccola: 10 px prima di «⋯».
+    Text {
+        visible: root.ora-visibile;
+        x: 0;
+        y: 0;
+        width: root.piu-x - 10px;
+        height: root.height;
+        text: root.ora;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+        font-family: Tema.carattere-mono;
+        font-size: Tema.testo-corpo;
+        color: Tema.testo;
+    }
+
+    // «⋯» (Task 14i): il menu dell'isola senza «Apri», con Impostazioni in testa.
+    PulsanteTondo {
+        x: root.piu-x;
+        y: root.piu-y;
+        icona: Icone.altre-opzioni;
+        nome: "Altre opzioni";
+        anello: root.anello-menu;
+        // Narrator annuncia che il menu si è aperto (o chiuso).
+        accessible-expandable: true;
+        accessible-expanded: root.menu-aperto;
+        premuto(narratore) => { root.menu-premuto(narratore); }
+
+        // Col menu aperto il fuoco vero è sulle sue righe e l'anello è il loro.
+        fuoco-menu := Fuoco { chiede: root.fuoco-menu-chiesto; }
+    }
+}
+
+// Una scheda della barra: inattiva solo l'icona (36), attiva icona e nome breve maiuscolo nella
+// capsula (la capsula la disegna la barra, che la fa scivolare). Il nome usa i token
+// dell'etichetta (`Tema.etichetta-*`), gli stessi con cui Rust ne misura la larghezza.
+// Gli occhietti (variante «misto») solo per «ti aspetta» e «guarda presto», e non sulla scheda
+// attiva (la pagina lo dice già).
+export component SchedaBarra inherits Rectangle {
+    in property <SchedaBarraUi> scheda;
+    in property <bool> attiva;
+    in property <bool> anello;
+    callback scelta();
+
+    x: scheda.x;
+    width: scheda.larghezza;
+    animate x, width { duration: 200ms; easing: ease-out; }
+    height: 36px;
+    border-radius: self.height / 2;
+    background: !attiva && area.has-hover ? Tema.scheda-sopra : transparent;
+    accessible-role: tab;
+    accessible-label: scheda.narratore;
+    accessible-item-selectable: true;
+    accessible-item-selected: attiva;
+    accessible-action-default => { root.scelta(); }
+
+    Fuoco { chiede: root.anello; }
+
+    Image {
+        x: root.attiva ? 12px : 9px;
+        animate x { duration: 200ms; easing: ease-out; }
+        y: 9px;
+        width: 18px;
+        height: 18px;
+        source: root.scheda.icona;
+        accessible-role: none;
+        colorize: root.attiva || area.has-hover ? Tema.icona-attiva : Tema.icona;
+        image-rendering: smooth;
+    }
+
+    Text {
+        x: 38px;
+        width: max(0px, root.width - 38px);
+        text: root.scheda.nome;
+        font-family: Tema.carattere-mono;
+        font-size: Tema.etichetta-corpo;
+        letter-spacing: Tema.etichetta-spaziatura;
+        color: Tema.testo;
+        opacity: root.attiva ? 1 : 0;
+        animate opacity { duration: 160ms; }
+        vertical-alignment: center;
+        overflow: clip;
+        accessible-role: none;
+    }
+
+    if root.scheda.segno > 0 && !root.attiva: Occhietti {
+        x: root.width - self.width;
+        y: 2px;
+        dock: true;
+        tono: root.scheda.segno == 1 ? TonoModuloUi.aspetta : TonoModuloUi.guarda;
+    }
+
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.scelta(); }
+    }
+
+    if root.anello: Anello { raggio: parent.border-radius; }
+}
+
+// La ricerca (F1: inerte, arriva in F5): lente come `Path` e «Ctrl K». Si raggiunge con Tab e
+// Narrator la chiama «Cerca, in arrivo»; il clic e Invio non fanno nulla.
+export component PulsanteRicerca inherits Rectangle {
+    in property <bool> anello;
+    in property <bool> fuoco-chiesto;
+
+    height: 32px;
+    width: 10px + 16px + 8px + kbd.width + 6px;
+    border-radius: self.height / 2;
+    background: Tema.scheda-sopra;
+    accessible-role: button;
+    accessible-label: "Cerca, in arrivo";
+
+    Fuoco { chiede: root.fuoco-chiesto; }
+
+    Path {
+        x: 10px;
+        y: 8px;
+        width: 16px;
+        height: 16px;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        commands: "M 11 4 A 7 7 0 1 0 11 18 A 7 7 0 1 0 11 4 Z M 16 16 L 21 21";
+        stroke: Tema.icona;
+        stroke-width: 1.8px;
+    }
+
+    kbd := Rectangle {
+        x: 34px;
+        y: 6px;
+        height: 20px;
+        width: testo-kbd.preferred-width + 12px;
+        border-radius: 6px;
+        background: Tema.g3;
+
+        testo-kbd := Text {
+            text: "Ctrl K";
+            font-family: Tema.carattere-mono;
+            font-size: Tema.testo-piccolo;
+            color: Tema.testo-2;
+            accessible-role: none;
+        }
+    }
+
+    if root.anello: Anello { raggio: parent.border-radius; }
+}
+
+// Il volume del PC (spec §5.4): clic = muto sì/no (lo stato nell'icona e nel nome per Narrator),
+// rotella ±2 % a scatto (30 px a punto, come la pillola) se l'impostazione «volume con la
+// rotella» è accesa. Senza uscita audio (o fuori da Windows) non si vede, e la barra resta com'è.
+export component PulsanteVolume inherits Rectangle {
+    in property <float> volume;
+    in property <bool> muto;
+    in property <bool> disponibile;
+    in property <bool> rotella;
+    in property <bool> anello;
+    in property <bool> fuoco-chiesto;
+    callback muto-chiesto(bool);
+    // Punti percentuali da aggiungere (negativi in giù).
+    callback passo(int);
+    // Il resto della rotella fra uno scatto e l'altro (un touchpad manda passi piccoli).
+    property <length> resto;
+
+    visible: disponibile;
+    width: 32px;
+    height: 32px;
+
+    PulsanteTondo {
+        icona: root.muto ? Icone.altoparlante-muto : Icone.altoparlante;
+        nome: root.muto ? "Volume, muto" : "Volume " + round(root.volume * 100) + " %";
+        anello: root.anello;
+        premuto => { root.muto-chiesto(!root.muto); }
+        rotella(delta) => {
+            if (!root.rotella || delta == 0) {
+                return false;
+            }
+            // Cambiando verso il resto riparte da zero.
+            if ((root.resto > 0 && delta < 0) || (root.resto < 0 && delta > 0)) {
+                root.resto = 0px;
+            }
+            let totale = root.resto + delta;
+            let punti = totale > 0 ? floor(totale / 30px) : ceil(totale / 30px);
+            root.resto = totale - punti * 30px;
+            if (punti != 0) {
+                root.passo(punti);
+            }
+            return true;
+        }
+
+        Fuoco { chiede: root.fuoco-chiesto; }
+    }
+}
+
+// La barra bassa (64): ricerca a sinistra, schede al centro con la capsula che scivola (200 ms) e
+// il divisore dopo la Panoramica, volume a destra. La geometria delle schede viene da Rust; la
+// barra le centra. Senza volume il suo posto resta vuoto: le schede non si spostano.
+export component Barra inherits Rectangle {
+    in property <[SchedaBarraUi]> schede;
+    // Posizione della scheda della vista di adesso (-1: nessuna, la capsula non c'è).
+    in property <int> attiva;
+    // Scheda col fuoco da tastiera (-1 nessuna), ricerca e volume col fuoco.
+    in property <int> fuoco-scheda: -1;
+    in property <bool> fuoco-ricerca;
+    in property <bool> fuoco-volume;
+    in property <float> volume;
+    in property <bool> volume-muto;
+    in property <bool> volume-disponibile;
+    in property <bool> rotella-volume;
+    callback scelta(int);
+    callback muto-volume(bool);
+    callback passo-volume(int);
+
+    height: 64px;
+
+    PulsanteRicerca {
+        x: 22px;
+        y: 12px;
+        anello: root.fuoco-ricerca;
+        fuoco-chiesto: root.fuoco-ricerca;
+    }
+
+    Rectangle {
+        property <length> totale: root.schede.length == 0 ? 0px
+            : root.schede[root.schede.length - 1].x + root.schede[root.schede.length - 1].larghezza;
+        x: (root.width - self.totale) / 2;
+        animate x { duration: 200ms; easing: ease-out; }
+        y: 10px;
+        width: self.totale;
+        height: 36px;
+        accessible-role: tab-list;
+        accessible-label: "Moduli";
+
+        // La capsula della scheda attiva.
+        if root.attiva >= 0 && root.attiva < root.schede.length: Rectangle {
+            x: root.schede[root.attiva].x;
+            width: root.schede[root.attiva].larghezza;
+            animate x, width { duration: 200ms; easing: ease-out; }
+            height: 36px;
+            border-radius: self.height / 2;
+            background: Tema.scheda-attiva;
+        }
+
+        // Il divisore dopo la Panoramica.
+        if root.schede.length > 1: Rectangle {
+            x: root.schede[1].x - 7px;
+            animate x { duration: 200ms; easing: ease-out; }
+            y: 9px;
+            width: 1px;
+            height: 18px;
+            background: Tema.g4;
+        }
+
+        for scheda[i] in root.schede: SchedaBarra {
+            scheda: scheda;
+            attiva: i == root.attiva;
+            anello: i == root.fuoco-scheda;
+            scelta => { root.scelta(i); }
+        }
+    }
+
+    PulsanteVolume {
+        x: root.width - 22px - self.width;
+        y: 12px;
+        volume: root.volume;
+        muto: root.volume-muto;
+        disponibile: root.volume-disponibile;
+        rotella: root.rotella-volume;
+        anello: root.fuoco-volume;
+        fuoco-chiesto: root.fuoco-volume;
+        muto-chiesto(si) => { root.muto-volume(si); }
+        passo(punti) => { root.passo-volume(punti); }
+    }
+}
