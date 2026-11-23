@@ -240,11 +240,20 @@ export component Pulsante inherits FocusScope {
         mouse-cursor: root.inerte ? MouseCursor.default : MouseCursor.pointer;
         // Contano solo i movimenti a pulsante del mouse alzato (ruling I1-bis): la pressione non dà
         // il punto di partenza, e trascinare a pulsante premuto (un secondo clic che trema) non è
-        // un gesto. Conseguenza voluta: un tocco sullo schermo non decide mai un permesso
-        // (restano tastiera e Narrator). In coordinate della finestra: durante lo scivolamento
+        // un gesto. Un tocco sullo schermo arriva come pressione e rilascio, senza movimenti a dito
+        // alzato: tocchi ripetuti, anche in punti appena diversi, non decidono un permesso (lo
+        // fanno tastiera e Narrator). In coordinate della finestra: durante lo scivolamento
         // d'arrivo della vista il pulsante si sposta sotto un puntatore fermo, e quello non è un
         // gesto.
         pointer-event(e) => {
+            // Slint manda dopo ogni rilascio un movimento finto nel punto del rilascio, a pulsante
+            // già alzato (i-slint-core 1.18.1, input.rs:1615-1623): il punto di partenza si
+            // riancora lì, così quel movimento non è mai un gesto (ri-revisione 2, I1-bis).
+            if (e.kind == PointerEventKind.up && !root.mosso) {
+                root.punto-x = self.absolute-position.x + self.mouse-x;
+                root.punto-y = self.absolute-position.y + self.mouse-y;
+                root.con-punto = true;
+            }
             if (e.kind == PointerEventKind.move && !self.pressed) {
                 let x = self.absolute-position.x + self.mouse-x;
                 let y = self.absolute-position.y + self.mouse-y;

@@ -5115,6 +5115,60 @@ mod accessibilita {
         }
     }
 
+    /// La Panoramica con la carta Agenti al 4° posto, aperta col clic sulla carta nel punto dove
+    /// nasce `nome` («Nega» o «Consenti») del permesso scelto, passati 700 ms. Restituisce il punto.
+    fn carta_agenti_aperta_su(nome: &str) -> (Pannello, Registro, f32, f32) {
+        let p = pannello_panoramica(ModelRc::new(VecModel::from(vec![
+            modulo("casa", "Casa", "4 luci", None),
+            modulo("pc", "PC", "Tutto regolare", None),
+            modulo("collegamenti", "Collegamenti", "6 link", None),
+            modulo("agenti", "Agenti", "1 ti aspetta", None),
+        ])));
+        let eventi: Registro = Default::default();
+        let e = eventi.clone();
+        p.on_azione_voce(move |voce, id| e.borrow_mut().push(format!("{voce} {id}")));
+        p.set_attese(ModelRc::new(VecModel::from(vec![VoceAttesaUi { livello: LivelloUi::Attenzione, ..permesso_con_dati(VOCE_P, "npm test") }])));
+        p.set_elenco_stato(pagina_piena());
+        p.set_elenco_righe(ModelRc::new(VecModel::from(vec![riga_col_permesso("pppp", "my-shop", VOCE_P, 0)])));
+        fine_arrivo();
+        let (x, y) = if nome == "Consenti" { (730.0, 248.0) } else { (610.0, 248.0) };
+        clic_in(&p, x, y);
+        assert_eq!(p.get_vista().as_str(), "agenti");
+        fine_arrivo();
+        avanza(700);
+        slint::platform::update_timers_and_animations();
+        let r = rettangolo(&elemento(&p, nome));
+        assert!(x > r.0 && x < r.2 && y > r.1 && y < r.3, "«{nome}» {r:?} è nato sotto il clic");
+        (p, eventi, x, y)
+    }
+
+    /// Ri-revisione 2 del Task 7, I1-bis: Slint manda un movimento finto (a pulsante alzato) nel
+    /// punto di ogni rilascio. Nello scenario della carta al 4° posto: un clic che trema (premuto
+    /// fermo, +1 px a pulsante premuto, rilasciato) e poi un clic fermo non decidono; nemmeno due
+    /// tocchi in punti appena diversi e un terzo. Un passaggio vero a pulsante alzato sì.
+    #[test]
+    fn carta_agenti_clic_che_trema_non_decide() {
+        use slint::platform::{PointerEventButton, WindowEvent};
+        for (nome, atteso) in [("Consenti", "consenti"), ("Nega", "nega")] {
+            let (p, eventi, x, y) = carta_agenti_aperta_su(nome);
+            let punto = |x: f32| slint::LogicalPosition::new(x, y);
+            p.window().dispatch_event(WindowEvent::PointerPressed { position: punto(x), button: PointerEventButton::Left });
+            p.window().dispatch_event(WindowEvent::PointerMoved { position: punto(x + 1.0) });
+            p.window().dispatch_event(WindowEvent::PointerReleased { position: punto(x + 1.0), button: PointerEventButton::Left });
+            clic_fermo(&p, x + 1.0, y);
+            assert!(eventi.borrow().is_empty(), "«{nome}»: clic che trema poi fermo ha deciso: {:?}", eventi.borrow());
+            // Tre tocchi (pressione e rilascio, nessun movimento a pulsante alzato) in punti appena diversi.
+            clic_fermo(&p, x + 2.0, y);
+            clic_fermo(&p, x + 3.0, y);
+            clic_fermo(&p, x + 3.0, y);
+            assert!(eventi.borrow().is_empty(), "«{nome}»: tocchi in punti diversi hanno deciso: {:?}", eventi.borrow());
+            // Un passaggio vero sopra il pulsante, poi il clic.
+            p.window().dispatch_event(WindowEvent::PointerMoved { position: punto(x + 6.0) });
+            clic_in(&p, x + 8.0, y);
+            assert_eq!(*eventi.borrow(), [format!("{VOCE_P} {atteso}")], "«{nome}» dopo un passaggio vero");
+        }
+    }
+
     /// Ruling del Task 7, I1-bis: conta solo un movimento a pulsante del mouse alzato. Premuto sul
     /// punto fermo, trascinato di 1 px e rilasciato (un secondo clic un po' tremolante) non decide,
     /// né su «Consenti» né su «Nega»; un passaggio sopra il pulsante e poi il clic sì.
