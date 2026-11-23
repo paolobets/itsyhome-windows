@@ -3,7 +3,7 @@
 // Cambiando pagina si muove solo il corpo (752 × 224 a (34, 44)): riga alta e barra restano.
 // I simboli sono `Path` o SVG, mai glifi. Il fuoco vero lo portano i `Fuoco` interni, chiesti dal
 // pannello (che tiene i tasti in `tasti`); qui nessun tasto si gestisce.
-import { Tema } from "../tema.slint";
+import { Tema, Movimento } from "../tema.slint";
 import { Anello, Fuoco } from "../componenti.slint";
 import { Icone } from "../icone.slint";
 import { SchedaBarraUi, TonoModuloUi } from "../voci.slint";
@@ -231,7 +231,7 @@ export component SchedaBarra inherits Rectangle {
 
     x: scheda.x;
     width: scheda.larghezza;
-    animate x, width { duration: 200ms; easing: ease-out; }
+    animate x, width { duration: Movimento.ridotto ? 0ms : 200ms; easing: ease-out; }
     height: 36px;
     border-radius: self.height / 2;
     background: !attiva && area.has-hover ? Tema.scheda-sopra : transparent;
@@ -243,9 +243,9 @@ export component SchedaBarra inherits Rectangle {
 
     Fuoco { chiede: root.anello; }
 
-    Image {
+    icona := Image {
         x: root.attiva ? 12px : 9px;
-        animate x { duration: 200ms; easing: ease-out; }
+        animate x { duration: Movimento.ridotto ? 0ms : 200ms; easing: ease-out; }
         y: 9px;
         width: 18px;
         height: 18px;
@@ -380,7 +380,8 @@ export component PulsanteVolume inherits Rectangle {
     }
 }
 
-// La barra bassa (64): ricerca a sinistra, schede al centro con la capsula che scivola (200 ms) e
+// La barra bassa (64): ricerca a sinistra, schede al centro con la capsula che scivola (200 ms;
+// col movimento ridotto salta, come le schede, le icone, il gruppo e il divisore) e
 // il divisore dopo la Panoramica, volume a destra. La geometria delle schede viene da Rust; la
 // barra le centra. Senza volume il suo posto resta vuoto: le schede non si spostano.
 export component Barra inherits Rectangle {
@@ -412,7 +413,7 @@ export component Barra inherits Rectangle {
         property <length> totale: root.schede.length == 0 ? 0px
             : root.schede[root.schede.length - 1].x + root.schede[root.schede.length - 1].larghezza;
         x: (root.width - self.totale) / 2;
-        animate x { duration: 200ms; easing: ease-out; }
+        animate x { duration: Movimento.ridotto ? 0ms : 200ms; easing: ease-out; }
         y: 10px;
         width: self.totale;
         height: 36px;
@@ -420,19 +421,19 @@ export component Barra inherits Rectangle {
         accessible-label: "Moduli";
 
         // La capsula della scheda attiva.
-        if root.attiva >= 0 && root.attiva < root.schede.length: Rectangle {
+        if root.attiva >= 0 && root.attiva < root.schede.length: capsula := Rectangle {
             x: root.schede[root.attiva].x;
             width: root.schede[root.attiva].larghezza;
-            animate x, width { duration: 200ms; easing: ease-out; }
+            animate x, width { duration: Movimento.ridotto ? 0ms : 200ms; easing: ease-out; }
             height: 36px;
             border-radius: self.height / 2;
             background: Tema.scheda-attiva;
         }
 
         // Il divisore dopo la Panoramica.
-        if root.schede.length > 1: Rectangle {
+        if root.schede.length > 1: divisore := Rectangle {
             x: root.schede[1].x - 7px;
-            animate x { duration: 200ms; easing: ease-out; }
+            animate x { duration: Movimento.ridotto ? 0ms : 200ms; easing: ease-out; }
             y: 9px;
             width: 1px;
             height: 18px;

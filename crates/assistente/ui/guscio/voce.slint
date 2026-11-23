@@ -27,10 +27,13 @@ export component VoceInAttesa inherits Rectangle {
     // l'anello si vede (da tastiera).
     in property <int> fuoco: -1;
     in property <bool> anello;
-    // Il primo pulsante non delicato («Nega»: posto 100) e l'altro (posto 101); -1 se non c'è.
+    // Il primo pulsante non delicato («Nega»: posto 100, col fuoco iniziale) e l'altro (posto
+    // 101); -1 se non c'è. Senza un pulsante non delicato il posto 100 resta vuoto e un pulsante
+    // delicato va solo sul 101: mai un consenso sul posto del fuoco iniziale (ondata finale, m3).
     out property <int> indice-nega: voce.pulsanti.length > 0 && !voce.pulsanti[0].delicato ? 0
-        : voce.pulsanti.length > 1 && !voce.pulsanti[1].delicato ? 1 : voce.pulsanti.length > 0 ? 0 : -1;
-    out property <int> indice-altro: voce.pulsanti.length > 1 ? (indice-nega == 0 ? 1 : 0) : -1;
+        : voce.pulsanti.length > 1 && !voce.pulsanti[1].delicato ? 1 : -1;
+    out property <int> indice-altro: indice-nega < 0 ? (voce.pulsanti.length > 0 ? 0 : -1)
+        : voce.pulsanti.length > 1 ? (indice-nega == 0 ? 1 : 0) : -1;
     // È un permesso, e il suo testo intero si legge nella voce (una riga sola, che ci sta).
     out property <bool> permesso: Permessi.chiede(voce);
     out property <bool> intera: misura.preferred-height <= una-riga.preferred-height + 0.5px
@@ -64,20 +67,24 @@ export component VoceInAttesa inherits Rectangle {
         font-size: Tema.testo-corpo;
     }
 
+    // Capsula e «+N» sulla stessa riga, centrata a 20 px (vedi sotto il perché così in alto).
     Capsula {
         x: margine;
-        y: 14px;
+        y: 10px;
         tono: TonoModuloUi.aspetta;
         parola: "Ti aspetta · " + root.voce.modulo;
         mono: true;
     }
 
     // «+N in attesa ›»: la Coda (la freccia è un'icona, non un glifo; Narrator non la legge).
+    // Alto 24 e finisce a y 32 della voce: a pannello aperto il suo bordo basso resta ad almeno
+    // 8 px dal «Nega» della prima riga della Coda che apre (y ≥ 84), così un doppio clic con un
+    // po' di deriva non preme un «Nega» non armato (ondata finale F1, m1).
     altre-el := Rectangle {
         visible: root.altre > 0;
         x: parent.width - margine - self.width;
-        y: 10px;
-        height: 28px;
+        y: 8px;
+        height: 24px;
         width: testo-altre.preferred-width + 6px + 14px + 8px;
         border-radius: Tema.raggio-m;
         background: area-altre.has-hover ? Tema.g3 : transparent;
@@ -145,7 +152,9 @@ export component VoceInAttesa inherits Rectangle {
         y: y-pulsanti;
         width: larghezza-pulsante;
         altezza: alto-pulsanti;
-        testo: root.indice-nega < 0 ? "" : root.voce.pulsanti[root.indice-nega].testo;
+        // «Apri» anche qui per un pulsante delicato (oggi non ci arriva: `indice-nega` lo esclude).
+        testo: root.indice-nega < 0 ? "" : root.voce.pulsanti[root.indice-nega].delicato && !root.intera ? "Apri"
+            : root.voce.pulsanti[root.indice-nega].testo;
         delicato: root.indice-nega >= 0 && root.voce.pulsanti[root.indice-nega].delicato;
         tipo: RegolaPulsanti.tipo(root.indice-altro < 0, root.indice-nega >= 0 && root.voce.pulsanti[root.indice-nega].delicato);
         tasti-propri: false;

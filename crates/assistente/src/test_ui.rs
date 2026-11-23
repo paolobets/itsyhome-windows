@@ -901,6 +901,56 @@ mod accessibilita {
         assert!(ElementHandle::find_by_accessible_label(&p, "AGENTI").next().is_none(), "il nome visibile non è un secondo nome per Narrator");
     }
 
+    /// Ondata finale F1 (I1): col movimento ridotto la barra non scivola. Cambiando pagina le
+    /// schede, le icone, il gruppo centrato, la capsula e il divisore sono subito al loro posto
+    /// finale (0 ms); con le animazioni accese, subito dopo il cambio sono ancora a metà strada.
+    #[test]
+    fn barra_salta_senza_scivolare_col_movimento_ridotto() {
+        piattaforma_di_prova();
+        // Posizione e larghezza di ogni pezzo della barra che si muove cambiando pagina.
+        let geometria = |p: &Pannello| -> Vec<(String, f32, f32)> {
+            let mut v = Vec::new();
+            for nome in ["Panoramica, scheda 1 di 5", "Agenti, scheda 2 di 5", "Casa, scheda 3 di 5", "PC, scheda 4 di 5", "Collegamenti, scheda 5 di 5", "Moduli"] {
+                let e = elemento(p, nome);
+                v.push((nome.to_string(), e.absolute_position().x, e.size().width));
+            }
+            for id in ["SchedaBarra::icona", "Barra::capsula", "Barra::divisore"] {
+                let mut trovati = 0;
+                for e in ElementHandle::find_by_element_id(p, id) {
+                    v.push((id.to_string(), e.absolute_position().x, e.size().width));
+                    trovati += 1;
+                }
+                assert!(trovati > 0, "nessun «{id}»");
+            }
+            v
+        };
+        for ridotto in [false, true] {
+            let p = pannello();
+            p.global::<crate::Movimento>().set_ridotto(ridotto);
+            p.set_schede(schede_di("panoramica"));
+            avanza(400);
+            let prima = geometria(&p);
+            p.set_vista("agenti".into());
+            p.set_schede(schede_di("agenti"));
+            slint::platform::update_timers_and_animations();
+            let subito = geometria(&p);
+            avanza(400);
+            let fine = geometria(&p);
+            assert_ne!(prima, fine, "ridotto={ridotto}: la pagina nuova cambia la barra");
+            if ridotto {
+                let diversi: Vec<_> = subito.iter().zip(&fine).filter(|(a, b)| a != b).collect();
+                assert!(diversi.is_empty(), "col movimento ridotto la barra scivola ancora: {diversi:?}");
+            } else {
+                // Ogni pezzo che si muove è ancora in viaggio subito dopo il cambio (la prova
+                // può fallire: senza animazione `subito` sarebbe già `fine`).
+                for id in ["Agenti, scheda 2 di 5", "Moduli", "SchedaBarra::icona", "Barra::capsula", "Barra::divisore"] {
+                    let in_viaggio = subito.iter().zip(&fine).zip(&prima).any(|((a, b), c)| a.0 == id && a != b && b != c);
+                    assert!(in_viaggio, "con le animazioni «{id}» dovrebbe scivolare");
+                }
+            }
+        }
+    }
+
     /// Una voce di prova per la Coda: `permesso` le dà «Nega» e il delicato «Consenti».
     fn voce_coda(id: &str, titolo: &str, livello: LivelloUi, sotto: &str, permesso: bool) -> VoceAttesaUi {
         let pulsanti = if permesso {
@@ -1144,6 +1194,35 @@ mod accessibilita {
         lascia_girare(&p);
         assert!(ElementHandle::find_by_accessible_label(&p, "Consenti").next().is_none());
         assert_eq!(p.get_vista(), "coda");
+    }
+
+    /// Ondata finale F1 (Task 7 n2): il fondo di un testo LUNGO riarma «Consenti» da solo. Aprire
+    /// il permesso chiede un riarmo; scorrere fino in fondo, dove «Consenti» nasce, ne chiede un
+    /// altro (i 600 ms ripartono da lì, non dall'apertura). Senza `consenti-compare` in
+    /// `visto-fondo` la seconda richiesta manca.
+    #[test]
+    fn fondo_del_testo_lungo_riarma_il_consenso() {
+        use slint::platform::Key;
+        let (p, azioni) = pannello_in_coda(ModelRc::new(VecModel::from(vec![permesso_lungo(12)])));
+        let riarmi = std::rc::Rc::new(std::cell::Cell::new(0u32));
+        let r = riarmi.clone();
+        p.on_consenti_compare(move || r.set(r.get() + 1));
+        tasto(&p, Key::Return);
+        lascia_girare(&p);
+        let all_apertura = riarmi.get();
+        assert_eq!(all_apertura, 1, "aprire il permesso riarma una volta");
+        tasto(&p, Key::UpArrow);
+        let mut passi = 0;
+        while ElementHandle::find_by_accessible_label(&p, "Consenti").next().is_none() {
+            assert_eq!(riarmi.get(), all_apertura, "riarmato prima del fondo (passo {passi})");
+            tasto(&p, Key::DownArrow);
+            lascia_girare(&p);
+            passi += 1;
+            assert!(passi < 40, "il fondo del testo non arriva");
+        }
+        assert!(passi > 1, "il testo doveva scorrere: {passi} passi");
+        assert_eq!(riarmi.get(), all_apertura + 1, "il fondo del testo riarma «Consenti»");
+        assert!(azioni.borrow().is_empty());
     }
 
     /// Ridisegno F1, Task 7 (C1, regola M3): «Nega» e «Consenti» sono entrambi neutri, senza
@@ -1628,6 +1707,77 @@ mod accessibilita {
         clic_in(&p, x, y);
         lascia_girare(&p);
         assert!(azioni.borrow().is_empty(), "il doppio clic su «+N» ha risposto: {:?}", azioni.borrow());
+    }
+
+    /// Ondata finale F1 (m1): «+N in attesa ›», a fine arrivo e per intero, sta ad almeno 8 px
+    /// da ogni «Nega» delle righe della Coda che apre: un doppio clic sul suo bordo, con qualche
+    /// pixel di deriva, non preme il «Nega» (non armato) di una riga. Nella Griglia e nell'Orologio.
+    #[test]
+    fn altre_in_attesa_lontano_dai_nega_della_coda() {
+        let voci = || {
+            ModelRc::new(VecModel::from(vec![
+                permesso_corto(),
+                voce_coda("b", "Secondo", LivelloUi::Bloccante, "Aspetta te · Agenti", true),
+                voce_coda("c", "Terzo", LivelloUi::Bloccante, "Aspetta te · Agenti", true),
+            ]))
+        };
+        for orologio in [false, true] {
+            let p = pannello_panoramica(ModelRc::from(quattro_moduli()));
+            if orologio {
+                p.set_panoramica(1);
+                crate::pannello::scrivi_fascia(&p, 0);
+            }
+            p.set_attese(voci());
+            slint::platform::update_timers_and_animations();
+            avanza(400);
+            let altre = elemento(&p, "Altre 2 voci in attesa");
+            let (a, la) = (altre.absolute_position(), altre.size());
+            assert!(la.width > 0.0 && la.height > 0.0);
+            p.set_vista("coda".into());
+            slint::platform::update_timers_and_animations();
+            avanza(400);
+            let negati: Vec<ElementHandle> = ElementHandle::find_by_accessible_label(&p, "Nega").collect();
+            assert!(negati.len() >= 2, "orologio={orologio}: i «Nega» delle righe della Coda");
+            for nega in negati {
+                let (n, ln) = (nega.absolute_position(), nega.size());
+                let dx = (n.x - (a.x + la.width)).max(a.x - (n.x + ln.width)).max(0.0);
+                let dy = (n.y - (a.y + la.height)).max(a.y - (n.y + ln.height)).max(0.0);
+                assert!(
+                    dx.max(dy) >= 8.0,
+                    "orologio={orologio}: «+N» ({}, {}, {}×{}) a {dx}/{dy} px da «Nega» ({}, {}, {}×{})",
+                    a.x, a.y, la.width, la.height, n.x, n.y, ln.width, ln.height
+                );
+            }
+        }
+    }
+
+    /// Ondata finale F1 (Task 8 m3): una voce con un solo pulsante, delicato. Il posto di «Nega»
+    /// (100, col fuoco iniziale) resta vuoto e il pulsante va sull'altro posto; col testo che non
+    /// sta in una riga è «Apri», mai «Consenti», e nessun tasto concede; col testo intero il
+    /// fuoco iniziale non è sul consenso e Invio non concede.
+    #[test]
+    fn voce_con_solo_un_pulsante_delicato() {
+        use slint::platform::Key;
+        let solo_consenti = |mut v: VoceAttesaUi| {
+            v.pulsanti = ModelRc::new(VecModel::from(vec![PulsanteUi { id: "consenti".into(), testo: "Consenti".into(), delicato: true }]));
+            v
+        };
+        // Testo lungo: «Apri».
+        let (p, azioni) = panoramica_con_voci(ModelRc::new(VecModel::from(vec![solo_consenti(permesso_lungo(2))])));
+        assert!(ElementHandle::find_by_accessible_label(&p, "Consenti").next().is_none(), "nella voce niente «Consenti»");
+        assert_eq!(ElementHandle::find_by_accessible_label(&p, "Apri").count(), 1, "un «Apri» solo");
+        assert_ne!(etichetta_col_fuoco(&p), "Consenti");
+        for _ in 0..3 {
+            con_modificatori(&p, &[Key::Control], Key::Return);
+            tasto(&p, Key::Tab);
+        }
+        assert!(azioni.borrow().iter().all(|a| a != "consenti"), "concesso senza leggere: {:?}", azioni.borrow());
+        // Testo intero: «Consenti» sull'altro posto, non sul fuoco iniziale.
+        let (p, azioni) = panoramica_con_voci(ModelRc::new(VecModel::from(vec![solo_consenti(permesso_corto())])));
+        assert_eq!(ElementHandle::find_by_accessible_label(&p, "Consenti").count(), 1);
+        assert_ne!(etichetta_col_fuoco(&p), "Consenti", "il fuoco iniziale sul consenso");
+        tasto(&p, Key::Return);
+        assert!(azioni.borrow().is_empty(), "Invio ha risposto: {:?}", azioni.borrow());
     }
 
     /// Review Focus 2: fuoco su «Consenti», la voce tolta da Rust (permesso risolto nel
