@@ -1929,7 +1929,9 @@ mod accessibilita {
     }
 
     /// Fix 1 del Task 7 (C1, dec. 11): dalla pillola («Apri» o clic su un permesso) il pannello
-    /// nasce sulla Coda col permesso già aperto e il testo intero, il fuoco su «Nega».
+    /// nasce sulla Coda col permesso già aperto e il testo intero, il fuoco su «Nega». Dal Task 8
+    /// di F2 è il ripiego (`DallaPillola::PermessoInCoda`): un permesso senza riga nella pagina
+    /// Agenti.
     #[test]
     fn dalla_pillola_il_permesso_si_apre_intero() {
         use slint::platform::Key;
@@ -4641,6 +4643,16 @@ mod accessibilita {
     /// «{voce} {pulsante}»), le azioni dirette («azione …») e quelle della pagina («pagina …»);
     /// conta i `consenti-compare`, che qui come in Rust spostano la guardia (`armamenti` + 1).
     fn agenti_col_permesso(righe: Vec<crate::RigaModuloUi>, attese: Vec<VoceAttesaUi>) -> (Pannello, Registro, Riarmi) {
+        let (p, eventi, riarmi) = agenti_all_arrivo(righe, attese);
+        fine_arrivo();
+        avanza(700);
+        slint::platform::update_timers_and_animations();
+        (p, eventi, riarmi)
+    }
+
+    /// Come `agenti_col_permesso`, ma nell'istante in cui la pagina è chiesta: l'arrivo e i suoi
+    /// tempi li fa girare chi chiama.
+    fn agenti_all_arrivo(righe: Vec<crate::RigaModuloUi>, attese: Vec<VoceAttesaUi>) -> (Pannello, Registro, Riarmi) {
         piattaforma_di_prova();
         let p = pannello();
         p.set_schede(schede());
@@ -4666,9 +4678,6 @@ mod accessibilita {
         p.set_elenco_stato(pagina_piena());
         p.set_elenco_righe(ModelRc::new(VecModel::from(righe)));
         p.set_vista("agenti".into());
-        fine_arrivo();
-        avanza(700);
-        slint::platform::update_timers_and_animations();
         (p, eventi, riarmi)
     }
 
@@ -4933,6 +4942,120 @@ mod accessibilita {
         for (n, r) in &pulsanti {
             assert!(staccati(terminale, *r, 2.0), "«Apri il terminale» {terminale:?} nasce sotto «{n}» {r:?}");
         }
+    }
+
+    /// Dalla pillola (ridisegno F2, Task 8): la pagina Agenti chiesta, e nello stesso istante, come
+    /// fa Rust alla prima scrittura della pagina, la riga del permesso scelta (`elenco-fuoco`, qui
+    /// la seconda) e `entra-nel-permesso()`. Restituisce il pannello prima dell'arrivo.
+    fn agenti_dalla_pillola(comando: &str) -> (Pannello, Registro, Riarmi) {
+        let (p, eventi, riarmi) = agenti_all_arrivo(
+            vec![riga_agenti("aaaa", "uno", crate::TonoModuloUi::Attivo), riga_col_permesso("pppp", "my-shop", VOCE_P, 0)],
+            vec![permesso_con_dati(VOCE_P, comando)],
+        );
+        p.set_elenco_fuoco(1);
+        p.invoke_entra_nel_permesso();
+        (p, eventi, riarmi)
+    }
+
+    /// Ridisegno F2, Task 8 (decisione di Paolo 5): dalla pillola il permesso si apre nella pagina
+    /// Agenti, sulla riga della sua sessione (anche se non è la prima), col fuoco nel dettaglio.
+    /// All'arrivo un riarmo con «Nega» inerte; il fuoco vero (al primo tasto) su «Nega»; testo
+    /// intero e sessione nel dettaglio; col testo lungo «Consenti» non c'è prima del fondo (né →
+    /// né Ctrl+Invio lo raggiungono); dopo il fondo Invio e Spazio su «Consenti» non concedono,
+    /// Ctrl+Invio esatto sì. Il clic col puntatore fermo dall'arrivo non decide (regola del Task 7).
+    #[test]
+    fn dalla_pillola_il_permesso_nella_pagina_agenti() {
+        use slint::platform::Key;
+        let (p, eventi, riarmi) = agenti_dalla_pillola(&"alfa ".repeat(400));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(p.get_vista().as_str(), "agenti");
+        assert_eq!((p.get_elenco_fuoco(), p.get_elenco_lato()), (1, 1), "la riga del permesso, il fuoco nel dettaglio");
+        assert_eq!(riarmi.get(), 1, "l'arrivo sul permesso riarma");
+        assert!(inerte(&p, "Permesso::nega"), "e si vede");
+        fine_arrivo();
+        // Il testo intero e la sessione si leggono nel dettaglio.
+        let gruppo = elemento(&p, "Ti aspetta · Agenti: my-shop chiede: Comando");
+        assert_eq!(
+            gruppo.accessible_description().as_deref(),
+            Some(format!("{}\nmy-shop", "alfa ".repeat(400)).as_str()),
+            "il comando intero e la sessione per Narrator"
+        );
+        assert!(dentro_il_dettaglio(&parte(&p, "sessione")), "la sessione nel dettaglio");
+        assert!(dentro_il_dettaglio(&gruppo), "il permesso nel dettaglio");
+        // Il primo tasto accende il fuoco vero: è su «Nega» (↓ su un pulsante non fa nulla).
+        tasto(&p, Key::DownArrow);
+        assert_eq!((p.get_elenco_lato(), etichetta_col_fuoco(&p).as_str()), (1, "Nega"));
+        // Prima del fondo «Consenti» non c'è e non si raggiunge.
+        assert!(!c_e(&p, "Consenti"));
+        tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Nega", "il consenso nascosto non si raggiunge");
+        con_modificatori(&p, &[Key::Control], Key::Return);
+        assert!(eventi.borrow().is_empty(), "concesso senza aver letto: {:?}", eventi.borrow());
+        // ↑ al testo, ↓ fino al fondo: «Consenti» compare (e riarma).
+        tasto(&p, Key::UpArrow);
+        for _ in 0..200 {
+            if c_e(&p, "Consenti") {
+                break;
+            }
+            tasto(&p, Key::DownArrow);
+            lascia_girare(&p);
+        }
+        assert!(c_e(&p, "Consenti"), "letto il fondo, «Consenti» c'è");
+        assert_eq!(riarmi.get(), 2, "«Consenti» comparso: riarmo");
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Consenti");
+        tasto(&p, Key::Return);
+        tasto(&p, Key::Space);
+        assert!(eventi.borrow().is_empty(), "Invio non concede: {:?}", eventi.borrow());
+        con_modificatori(&p, &[Key::Control], Key::Return);
+        assert_eq!(*eventi.borrow(), [format!("{VOCE_P} consenti")], "solo Ctrl+Invio esatto, dopo il fondo");
+
+        // Testo corto («Consenti» subito): passati i 600 ms, un clic col puntatore fermo dall'arrivo
+        // su «Nega» o su «Consenti» non decide; col puntatore mosso sopra «Nega» sì.
+        let (p, eventi, _) = agenti_dalla_pillola("npm test");
+        fine_arrivo();
+        avanza(700);
+        slint::platform::update_timers_and_animations();
+        assert!(!inerte(&p, "Permesso::nega") && c_e(&p, "Consenti"));
+        for nome in ["Nega", "Consenti"] {
+            let (x, y) = centro(&elemento(&p, nome));
+            clic_fermo(&p, x, y);
+        }
+        assert!(eventi.borrow().is_empty(), "un clic senza movimento ha deciso: {:?}", eventi.borrow());
+        let (x, y) = centro(&elemento(&p, "Nega"));
+        clic_deciso(&p, x, y);
+        assert_eq!(*eventi.borrow(), [format!("{VOCE_P} nega")]);
+    }
+
+    /// Ridisegno F2, Task 8 (regola M3: nessun pulsante nasce sotto il punto di un clic di prima):
+    /// il clic sulla pillola cade nella sua finestra, che nel pannello aperto sta al centro della
+    /// riga alta (stessa ascissa centrale, stesso bordo alto). «Nega» e «Consenti» del dettaglio,
+    /// in ogni istante dell'arrivo, stanno interi sotto y = 44 + 48 (fuori dalla riga alta e dalla
+    /// testata) e lontani dal rettangolo della finestra della pillola.
+    #[test]
+    fn dalla_pillola_nessun_pulsante_sotto_il_clic() {
+        use crate::finestre::{ALTEZZA_FINESTRA_PILLOLA, LARGHEZZA_FINESTRA_PANNELLO, LARGHEZZA_FINESTRA_PILLOLA, MARGINE_AURA};
+        // La finestra della pillola in coordinate del pannello: centrata, col bordo alto `MARGINE_AURA`
+        // sopra quello del pannello (`posizione_pillola` contro `posizione_pannello`).
+        let x0 = (LARGHEZZA_FINESTRA_PANNELLO - LARGHEZZA_FINESTRA_PILLOLA) / 2.0;
+        let pillola = (x0, -MARGINE_AURA, x0 + LARGHEZZA_FINESTRA_PILLOLA, -MARGINE_AURA + ALTEZZA_FINESTRA_PILLOLA);
+        let (p, _, _) = agenti_dalla_pillola("npm test");
+        let mut visti = 0;
+        for passo in [0, 16, 40, 80, 140, 200, 280, 420, 700] {
+            avanza(passo);
+            slint::platform::update_timers_and_animations();
+            for nome in ["Nega", "Consenti"] {
+                for e in ElementHandle::find_by_accessible_label(&p, nome) {
+                    let r = rettangolo(&e);
+                    assert!(r.1 >= 44.0 + 48.0 - 0.5, "«{nome}» {r:?} nella riga alta o nella testata ({passo} ms)");
+                    assert!(staccati(r, pillola, 2.0), "«{nome}» {r:?} sotto la pillola {pillola:?} ({passo} ms)");
+                    visti += 1;
+                }
+            }
+        }
+        assert!(c_e(&p, "Nega") && c_e(&p, "Consenti"), "i due pulsanti alla fine dell'arrivo");
+        assert!(visti >= 2 * 9 - 1, "i pulsanti in ogni istante: {visti}");
     }
 
     /// Review Focus 1: col fuoco su «Consenti» nel dettaglio, il permesso si risolve nel terminale

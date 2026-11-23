@@ -492,8 +492,14 @@ export component Pannello inherits Window {
     // sia scelto — il permesso risolto nel terminale, un permesso al posto del terminale — torna
     // sulla riga: mai una decisione su ciò che non si è scelto (Review Focus 1).
     property <string> agenti-permesso-id: agenti-permesso-mostrato ? agenti-voce.id : "";
+    // Il permesso in cui si è entrati dalla pillola (`entra-nel-permesso`) prima che questo
+    // `changed` girasse: arrivare proprio su di lui non è un cambio sotto il fuoco. Vale per il
+    // primo `changed` e basta (ogni passaggio lo svuota).
+    property <string> permesso-chiesto;
     changed agenti-permesso-id => {
-        if (elenco-lato == 1) {
+        let chiesto = permesso-chiesto != "" && permesso-chiesto == agenti-permesso-id;
+        permesso-chiesto = "";
+        if (elenco-lato == 1 && !chiesto) {
             if (zona == Zona.contenuto) {
                 tasti.focus();
             }
@@ -508,6 +514,16 @@ export component Pannello inherits Window {
     function entra-agenti-permesso() {
         elenco-lato = 1;
         agenti-permesso.entra();
+    }
+    // Da Rust (ridisegno F2, Task 8, decisione di Paolo 5): il pannello si apre dalla pillola su un
+    // permesso, con la riga della sua sessione già scelta (`elenco-fuoco`). Il fuoco entra nel
+    // permesso del dettaglio, su «Nega». È la scelta dell'utente (il clic sulla pillola), quindi
+    // il `changed agenti-permesso-id` che arriva subito dopo non la riporta sulla riga
+    // (`permesso-chiesto`); riarma comunque, come ogni permesso che compare nel dettaglio.
+    public function entra-nel-permesso() {
+        zona = Zona.contenuto;
+        permesso-chiesto = agenti-permesso-id;
+        entra-agenti-permesso();
     }
     // Collegamenti: card col fuoco (-1 = «Modifica» nella testata), 3 colonne.
     property <int> fuoco-collegamento: 0;

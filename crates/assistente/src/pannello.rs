@@ -641,11 +641,13 @@ impl Apertura {
             pannello.set_partenza_occhi_y(finestre::SCARTO_OCCHI_PANNELLO_Y);
         }
         // La destinazione di ciò che la pillola mostra: la pagina di un modulo o la Coda
-        // (`pannello_aperto` la mette), un permesso aperto nella Coda col testo intero,
-        // altrimenti la Panoramica.
+        // (`pannello_aperto` la mette), un permesso nella pagina Agenti sulla riga della sua
+        // sessione (la pagina, alla prima scrittura, sceglie la riga ed entra nel permesso), un
+        // permesso senza riga aperto nella Coda col testo intero, altrimenti la Panoramica.
         match self.ponte.apertura_dalla_pillola(pillola.get_attivita_visibile()) {
             DallaPillola::Vista(vista) => self.ponte.chiedi_vista(vista),
-            DallaPillola::Permesso(indice) => pannello.invoke_apri_coda_su(indice),
+            DallaPillola::Permesso(voce) => self.ponte.chiedi_permesso(&voce),
+            DallaPillola::PermessoInCoda(indice) => pannello.invoke_apri_coda_su(indice),
             DallaPillola::Panoramica => {}
         }
         // Parte con l'umore della pillola; il ponte glielo aggiorna appena la pillola è sparita.

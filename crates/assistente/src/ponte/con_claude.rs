@@ -1128,6 +1128,20 @@ impl Ponte {
         per_sessione
     }
 
+    /// La pagina Agenti ha la riga che porta questo permesso (id della voce): Claude è collegato,
+    /// la richiesta è viva, la sua sessione è fra le righe e il permesso è quello che la riga mostra
+    /// (il più vecchio della sessione, `permessi_per_sessione`). Altrimenti dalla pillola si va
+    /// sulla Coda (ripiego, pre-flight C9).
+    pub(super) fn permesso_ha_riga(&self, voce: &str) -> bool {
+        let Some(numero) = claude::id_permesso_da_voce(voce) else { return false };
+        if !self.casa.con_config(|c| c.claude.collegato) {
+            return false;
+        }
+        let Some(sessione) = self.claude_permessi.borrow().get(&numero).map(|p| p.sessione.clone()) else { return false };
+        self.claude_sessioni.borrow().elenco().iter().any(|s| s.id == sessione)
+            && self.permessi_per_sessione().get(&claude::id_sessione(&sessione)) == Some(&numero)
+    }
+
     /// Come `aggiorna_vista_claude`, a un'ora data (secondi dall'epoca): i limiti scaduti a quell'ora
     /// non si mostrano.
     pub(super) fn aggiorna_vista_claude_a(&self, ora: i64) {
@@ -1187,9 +1201,19 @@ impl Ponte {
                 pagina_agenti::riga(r, permesso, ripiego, a_finestra)
             })
             .collect();
-        let nuovo_fuoco = col_fuoco
-            .and_then(|id| voci.iter().position(|v| v.id == id))
-            .unwrap_or_else(|| (fuoco as usize).min(voci.len().saturating_sub(1)));
+        // Dalla pillola (ridisegno F2, Task 8): la prima scrittura dopo l'apertura sceglie la riga
+        // che porta il permesso chiesto, ovunque stia, e poi entra nel permesso del dettaglio. La
+        // richiesta vale una volta sola; senza la sua riga (sparita nel frattempo) resta la prima.
+        let chiesta = self
+            .permesso_richiesto
+            .borrow_mut()
+            .take()
+            .and_then(|voce| voci.iter().position(|v| v.voce.as_str() == voce));
+        let nuovo_fuoco = chiesta.unwrap_or_else(|| {
+            col_fuoco
+                .and_then(|id| voci.iter().position(|v| v.id == id))
+                .unwrap_or_else(|| (fuoco as usize).min(voci.len().saturating_sub(1)))
+        });
         // Il timer della lettura esiste solo con la chiave da amministratore.
         let con_chiave = self.sveglia_api.running();
         let (spesa, nota) = {
@@ -1204,6 +1228,11 @@ impl Ponte {
         scrivi_se_cambia(p.get_elenco_fuoco(), nuovo_fuoco as i32, |v| p.set_elenco_fuoco(v));
         scrivi_se_cambia(p.get_elenco_sintesi(), sintesi, |v| p.set_elenco_sintesi(v));
         scrivi_se_cambia(p.get_elenco_stato(), stato, |v| p.set_elenco_stato(v));
+        // Righe e fuoco scritti: il fuoco nel permesso del dettaglio, su «Nega». Il pannello conta
+        // il riarmo dell'arrivo (il permesso che compare nel dettaglio, e il pannello che si apre).
+        if chiesta.is_some() {
+            p.invoke_entra_nel_permesso();
+        }
     }
 
     /// I due limiti come li vuole la sintesi: quelli arrivati, o per la finestra che non è ancora
@@ -1632,10 +1661,13 @@ mod test {
         }
     }
 
-    /// Ridisegno F1, Task 7: il clic sulla pillola porta alla destinazione. I sette casi: permesso
-    /// allargato → Coda col permesso aperto (fix 1: il testo intero si legge lì); voce allargata
-    /// di Claude che non è un permesso → Agenti; di Casa → Casa; del PC → PC; pillola col puntino →
-    /// Coda; attività di Claude → Agenti; riposo → Panoramica. Sostituisce i test di `Espandi`.
+    /// Ridisegno F1, Task 7: il clic sulla pillola porta alla destinazione. I casi: permesso
+    /// allargato → pagina Agenti con la sua voce (ridisegno F2, Task 8, decisione di Paolo 5: il
+    /// testo intero si legge nel dettaglio), anche senza risposta dalla pillola; un permesso senza
+    /// riga di sessione (Claude scollegato, voce senza richiesta viva) → Coda col permesso aperto,
+    /// alla sua posizione (ripiego, pre-flight C9); voce allargata di Claude che non è un permesso
+    /// → Agenti; di Casa → Casa; del PC → PC; pillola col puntino → Coda; attività di Claude →
+    /// Agenti; riposo → Panoramica. Sostituisce i test di `Espandi`.
     #[test]
     fn dalla_pillola_alla_destinazione() {
         use crate::ponte::DallaPillola;
@@ -1654,16 +1686,27 @@ mod test {
             assert_eq!(dove(&p), DallaPillola::Vista(vista), "{id}");
             p.togli_voce(id);
         }
-        // Un permesso allargato: aperto nella Coda col testo intero (fix 1, C1), alla sua posizione.
+        // Un permesso allargato di una sessione con la sua riga: la pagina Agenti, con la sua voce
+        // (l'id, non il posto: la riga la sceglie la vista quando si apre).
+        p.casa().aggiorna_config(|c| c.claude.collegato = true);
         p.metti_voce(voce_di_prova("casa.info", Fonte::Casa, Livello::Informazione, false), false);
+        let _r = permesso(&p, 1, "a");
+        assert_eq!(dove(&p), DallaPillola::Permesso(voce_di(1)), "permesso");
+        // Senza risposta dalla pillola il permesso ha solo «Apri il terminale»: è ancora un permesso.
+        p.metti_voce(voce_di_prova(&voce_di(1), Fonte::Claude, Livello::Bloccante, false), false);
+        assert_eq!(dove(&p), DallaPillola::Permesso(voce_di(1)), "permesso senza risposta dalla pillola");
+        // Ripiego: Claude scollegato, la pagina non ha righe → la Coda col permesso aperto, al suo
+        // posto fra le attese (il bloccante prima dell'informazione).
+        p.casa().aggiorna_config(|c| c.claude.collegato = false);
+        assert_eq!(dove(&p), DallaPillola::PermessoInCoda(0), "senza riga: la Coda");
+        p.casa().aggiorna_config(|c| c.claude.collegato = true);
+        p.togli_voce(&voce_di(1));
+        // Ripiego: una voce di permesso senza la richiesta viva (nessuna sessione la porta).
         p.metti_voce(voce_di_prova("claude.permesso.7", Fonte::Claude, Livello::Bloccante, true), false);
-        assert_eq!(dove(&p), DallaPillola::Permesso(0), "permesso");
+        assert_eq!(dove(&p), DallaPillola::PermessoInCoda(0), "voce senza sessione: la Coda");
         p.togli_voce("claude.permesso.7");
         p.togli_voce("casa.info");
-        // Senza risposta dalla pillola il permesso ha solo «Apri il terminale»: è ancora un permesso.
-        p.metti_voce(voce_di_prova("claude.permesso.8", Fonte::Claude, Livello::Bloccante, false), false);
-        assert_eq!(dove(&p), DallaPillola::Permesso(0), "permesso senza risposta dalla pillola");
-        p.togli_voce("claude.permesso.8");
+        p.casa().aggiorna_config(|c| c.claude.collegato = false);
         manda(&p, ev("a", TipoEvento::SessionEnd));
         // Il puntino (una sola informazione: non allarga): la Coda.
         p.metti_voce(voce_di_prova("casa.info", Fonte::Casa, Livello::Informazione, false), false);
@@ -1686,6 +1729,47 @@ mod test {
         let pannello = con_pannello(&p);
         assert_eq!(pannello.get_vista().as_str(), "agenti");
         assert_eq!(p.vista_richiesta.get(), None);
+    }
+
+    /// Ridisegno F2, Task 8 (decisione di Paolo 5): dal permesso della pillola il pannello si apre
+    /// sulla pagina Agenti con la riga di quella sessione scelta, anche se non è la prima, e il
+    /// fuoco entra nel permesso del dettaglio (`elenco-lato` 1); l'apertura conta un riarmo
+    /// (`armamenti`). La richiesta vale una volta sola: l'apertura dopo riparte dalla prima riga,
+    /// sull'elenco; e un pannello che non si apre non la lascia in sospeso.
+    #[test]
+    fn dal_permesso_della_pillola_la_riga_scelta() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        p.casa().aggiorna_config(|c| c.claude.collegato = true);
+        let _r1 = permesso(&p, 1, "a");
+        let _r2 = permesso(&p, 2, "b");
+        // Come in `pannello.rs`: il modello, poi l'apertura.
+        let apri = |p: &Ponte| {
+            let pannello = crate::Pannello::new().unwrap();
+            p.riempi(&pannello);
+            let prima = pannello.get_armamenti();
+            p.pannello_aperto(&pannello);
+            (pannello, prima)
+        };
+        // Un pannello che non si apre: la richiesta non resta.
+        p.chiedi_permesso(&voce_di(1));
+        p.pannello_chiuso();
+        assert_eq!(*p.permesso_richiesto.borrow(), None, "un pannello non aperto non la lascia in sospeso");
+        p.chiedi_permesso(&voce_di(1));
+        let (pannello, prima) = apri(&p);
+        assert_eq!(pannello.get_vista().as_str(), "agenti");
+        let righe = pannello.get_elenco_righe();
+        // Chi aspetta, il più recente prima: «b», poi «a» col permesso chiesto.
+        let fuoco = pannello.get_elenco_fuoco();
+        assert_eq!(fuoco, 1, "la riga di «a», la seconda");
+        assert_eq!(righe.row_data(fuoco as usize).unwrap().voce.as_str(), voce_di(1));
+        assert_eq!(pannello.get_elenco_lato(), 1, "il fuoco nel permesso del dettaglio");
+        assert_eq!(pannello.get_armamenti(), prima + 1, "un riarmo all'arrivo");
+        assert_eq!(*p.permesso_richiesto.borrow(), None, "consumata");
+        // Riaperto sulla pagina senza permesso chiesto: dalla prima riga, sull'elenco.
+        p.pannello_chiuso();
+        p.chiedi_vista("agenti");
+        let (pannello, _) = apri(&p);
+        assert_eq!((pannello.get_elenco_fuoco(), pannello.get_elenco_lato()), (0, 0), "una volta sola");
     }
 
     #[test]

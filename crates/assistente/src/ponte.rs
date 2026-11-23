@@ -48,13 +48,17 @@ mod con_moduli;
 
 /// Dove si apre il pannello da un clic sulla pillola (ridisegno F1, Task 7: la destinazione di ciò
 /// che la pillola mostra).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DallaPillola {
     /// Su questa vista: la pagina di un modulo o la Coda (`coda`).
     Vista(&'static str),
-    /// Sulla Coda, col permesso in questa posizione già aperto (testo intero): la pillola col
-    /// testo tagliato offre «Apri» proprio per farlo leggere qui prima di concedere (dec. 11).
-    Permesso(i32),
+    /// Sulla pagina Agenti, con la riga della sessione di questo permesso (l'id della voce)
+    /// scelta e il permesso nel dettaglio: testo intero e sessione si leggono lì prima di
+    /// concedere (ridisegno F2, Task 8, decisione di Paolo 5).
+    Permesso(String),
+    /// Ripiego: un permesso senza riga nella pagina Agenti (la sessione non c'è più, Claude
+    /// scollegato) si apre sulla Coda, già aperto alla sua posizione (testo intero; dec. 11).
+    PermessoInCoda(i32),
     /// Sulla Panoramica.
     Panoramica,
 }
@@ -679,6 +683,10 @@ pub struct Ponte {
     /// fuori (la pillola che mostra Claude, o fuori da Windows un pulsante di una voce di Claude)
     /// la chiede qui.
     vista_richiesta: Cell<Option<&'static str>>,
+    /// Il permesso (id della voce) su cui deve aprirsi la pagina Agenti del prossimo pannello: la
+    /// prima scrittura della pagina sceglie la sua riga ed entra nel permesso del dettaglio (una
+    /// volta sola, come `vista_richiesta`; ridisegno F2, Task 8).
+    permesso_richiesto: RefCell<Option<String>>,
     cervello: Rc<RefCell<Cervello>>,
     /// `--umore`: umore fisso per prova, gli eventi non lo cambiano.
     umore_fisso: Option<Umore>,
@@ -895,6 +903,7 @@ pub fn collega(
         dettagli_ultimo_aggiorna: Cell::new(None),
         dettagli_avviso: RefCell::new(None),
         vista_richiesta: Cell::new(None),
+        permesso_richiesto: RefCell::new(None),
         cervello,
         umore_fisso,
         stato: RefCell::new(StatoConnessione::Disconnesso),
@@ -2137,9 +2146,10 @@ impl Ponte {
 
     /// Dove si apre il pannello da un clic sulla pillola (`attivita_visibile`: la pillola sta
     /// mostrando l'attività di Claude). Una voce allargata porta alla pagina del suo modulo (Claude
-    /// → Agenti, Casa, PC), tranne un permesso, che si apre nella Coda col testo intero (lì si legge
-    /// il comando e la sessione prima di decidere); il puntino apre la Coda; l'attività di Claude,
-    /// Agenti; a riposo la Panoramica.
+    /// → Agenti, Casa, PC); un permesso porta alla pagina Agenti con la riga della sua sessione e
+    /// il permesso nel dettaglio (decisione di Paolo 5: lì si legge il comando e la sessione prima
+    /// di decidere), e se la sua sessione non ha una riga nella Coda col testo intero; il puntino
+    /// apre la Coda; l'attività di Claude, Agenti; a riposo la Panoramica.
     pub fn apertura_dalla_pillola(&self, attivita_visibile: bool) -> DallaPillola {
         let (allargata, puntino) = match self.mostrato.borrow().as_ref() {
             Some(v) => (v.voce_allargata().map(str::to_owned), v.aspetto == AspettoPillola::Puntino),
@@ -2149,11 +2159,16 @@ impl Ponte {
             let attese = self.attese.borrow();
             return match attese.voce(&id) {
                 // Il permesso lo dice l'identità della voce, non i suoi pulsanti (senza risposta dalla
-                // pillola il permesso ha solo «Apri il terminale»): la sua posizione nella Coda.
+                // pillola il permesso ha solo «Apri il terminale»). Con la riga della sua sessione:
+                // Agenti; senza (ripiego): la sua posizione nella Coda.
                 Some(v) if v.fonte == Fonte::Claude && v.id.starts_with(crate::claude::PREFISSO_PERMESSO) => {
-                    match attese.ordinate().iter().position(|x| x.id == id) {
-                        Some(i) => DallaPillola::Permesso(i as i32),
-                        None => DallaPillola::Panoramica,
+                    if self.permesso_ha_riga(&id) {
+                        DallaPillola::Permesso(id)
+                    } else {
+                        match attese.ordinate().iter().position(|x| x.id == id) {
+                            Some(i) => DallaPillola::PermessoInCoda(i as i32),
+                            None => DallaPillola::Panoramica,
+                        }
                     }
                 }
                 Some(v) => match v.fonte {
@@ -2182,6 +2197,14 @@ impl Ponte {
         self.vista_richiesta.set(Some(vista));
     }
 
+    /// Il prossimo pannello si apre sulla pagina Agenti con la riga del permesso `voce` (id della
+    /// voce) scelta e il fuoco nel permesso del dettaglio, su «Nega» (una volta sola). La vista e
+    /// la voce si chiedono insieme: una senza l'altra non c'è.
+    pub fn chiedi_permesso(&self, voce: &str) {
+        self.chiedi_vista("agenti");
+        *self.permesso_richiesto.borrow_mut() = Some(voce.to_owned());
+    }
+
     /// Il pannello si è aperto: le voci in attesa sono viste (un'attenzione non allarga più la
     /// pillola) e il pannello prende l'umore.
     pub fn pannello_aperto(&self, p: &Pannello) {
@@ -2191,6 +2214,9 @@ impl Ponte {
             self.vista_claude(vista == "agenti");
             self.vista_coda(vista == "coda");
         }
+        // Il permesso chiesto lo prende la prima scrittura della pagina Agenti (qui sopra): se non
+        // l'ha preso (la pagina era già aperta), non resta per dopo.
+        self.permesso_richiesto.borrow_mut().take();
         self.attese.borrow_mut().segna_viste();
         // Il pannello compare: un permesso in attesa non si consente al primo istante, e una guardia
         // ancora in corso si vede.
@@ -2202,8 +2228,10 @@ impl Ponte {
     /// Il pannello si è chiuso e la pillola (di nuovo attiva) sta per ricomparire: riprende
     /// l'umore di adesso.
     pub fn pannello_chiuso(&self) {
-        // Una vista chiesta a un pannello che non si è aperto non resta per il prossimo.
+        // Una vista (o un permesso) chiesta a un pannello che non si è aperto non resta per il
+        // prossimo.
         self.vista_richiesta.set(None);
+        self.permesso_richiesto.borrow_mut().take();
         // Le radio si liberano e la rete torna a seguire solo la pillola.
         self.vista_pc(false);
         // La vista Claude non c'è più: il timer torna a seguire solo la pillola.
