@@ -95,6 +95,24 @@ impl Pulsante {
     }
 }
 
+/// I dati di un permesso di Claude Code, divisi per il componente del guscio (F2): chi chiede,
+/// con quale strumento, cosa vuole fare e da quale cartella. Tutto testo non fidato già ripulito;
+/// vive solo in memoria (minimizzazione di M3: nessun testo di prompt, niente su disco) e il
+/// comando non va mai nella notifica di Windows (`testo_notifica` non lo legge).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DatiPermesso {
+    /// Il nome visto della sessione: titolo della scheda di Claude Code, altrimenti la cartella.
+    pub sessione: String,
+    /// Lo strumento in italiano («Comando», «Modifica»…).
+    pub strumento: String,
+    /// Il riassunto di cosa Claude sta per fare, ripulito; vuoto se Claude non l'ha dato.
+    pub comando: String,
+    /// Il nome finale della cartella di lavoro, ripulito; vuoto se manca.
+    pub cartella: String,
+    /// Quando è arrivata la richiesta, in secondi Unix (per «chiesto alle HH:MM»).
+    pub alle: i64,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Voce {
     pub id: String,
@@ -104,6 +122,8 @@ pub struct Voce {
     pub dettaglio: String,
     pub pulsanti: Vec<Pulsante>,
     pub creata: Instant,
+    /// Solo per i permessi di Claude Code: i dati divisi per il componente del permesso.
+    pub permesso: Option<DatiPermesso>,
 }
 
 /// Pulsanti di una voce: stanno anche nella pillola, quindi al massimo due.
@@ -379,6 +399,7 @@ impl SorveglianzaCasa {
                 dettaglio: dettaglio.into(),
                 pulsanti: vec![Pulsante::new(PULSANTE_IMPOSTAZIONI, "Impostazioni")],
                 creata: self.non_connessa_da.unwrap_or(ora),
+                permesso: None,
             });
         }
         let da = self.non_connessa_da.filter(|_| self.sorvegliata)?;
@@ -390,6 +411,7 @@ impl SorveglianzaCasa {
             dettaglio: "La casa non risponde da più di 5 minuti. Riprovo da solo; puoi anche riprovare adesso.".into(),
             pulsanti: vec![Pulsante::new(PULSANTE_RIPROVA, "Riprova")],
             creata: da + CASA_OFFLINE_DOPO,
+            permesso: None,
         })
     }
 
@@ -443,6 +465,7 @@ impl SorveglianzaBatteria {
                 dettaglio: "Collega l'alimentatore: il PC si spegnerà presto.".into(),
                 pulsanti: vec![],
                 creata: ora,
+                permesso: None,
             });
         }
         (p < soglia_info && !self.zittita).then(|| Voce {
@@ -453,6 +476,7 @@ impl SorveglianzaBatteria {
             dettaglio: "Collega l'alimentatore quando puoi.".into(),
             pulsanti: vec![Pulsante::new(PULSANTE_HO_CAPITO, "Ho capito")],
             creata: ora,
+            permesso: None,
         })
     }
 
@@ -472,6 +496,7 @@ pub fn voce_notifica(id: &str, titolo: &str, messaggio: &str, ora: Instant) -> V
         dettaglio: messaggio.into(),
         pulsanti: vec![Pulsante::new(PULSANTE_ARCHIVIA, "Archivia")],
         creata: ora,
+        permesso: None,
     }
 }
 
@@ -498,6 +523,8 @@ pub fn voce_di_prova(livello: Livello, lungo: bool, ora: Instant) -> Voce {
         dettaglio,
         pulsanti: vec![Pulsante::new("nega", "Nega"), Pulsante::delicato("consenti", "Consenti")],
         creata: ora,
+        // La voce di prova non porta i dati di un permesso: il componente mostra titolo e dettaglio.
+        permesso: None,
     }
 }
 
@@ -630,6 +657,7 @@ pub(crate) mod test {
             dettaglio: String::new(),
             pulsanti: vec![],
             creata,
+            permesso: None,
         }
     }
 
@@ -687,19 +715,27 @@ pub(crate) mod test {
             strumento: Some("PowerShell".into()),
             notifica: None,
             errore: None,
-            riassunto: Some("rm -rf segreto".into()),
+            riassunto: Some("rm -rf\n segreto".into()),
         };
-        let v = crate::claude::voce_permesso(3, &e, "", Instant::now());
+        let v = crate::claude::voce_permesso(3, &e, "", Instant::now(), 0);
         assert!(v.titolo.contains("segreto") && v.dettaglio.contains("segreto"), "la voce in pillola resta completa");
+        // F2, Task 2: il comando diviso della voce (M3 §10) non arriva mai alla notifica di Windows.
+        let comando = v.permesso.as_ref().expect("la voce del permesso porta i suoi dati").comando.clone();
+        assert_eq!(comando, "rm -rf segreto");
         let (titolo, dettaglio) = testo_notifica(&v);
         assert_eq!(titolo, "Claude chiede un permesso · progetto");
-        assert!(!titolo.contains("segreto") && !dettaglio.contains("segreto"));
+        for t in [&titolo, &dettaglio] {
+            assert!(!t.contains(&comando) && !t.contains("rm -rf") && !t.contains("segreto"), "{t:?}");
+        }
         e.cartella.clear();
-        let v = crate::claude::voce_permesso(3, &e, "", Instant::now());
+        let v = crate::claude::voce_permesso(3, &e, "", Instant::now(), 0);
         assert_eq!(testo_notifica(&v).0, "Claude chiede un permesso · Claude");
-        // Con il titolo della sessione la notifica dice quello, non la cartella.
-        let v = crate::claude::voce_permesso(3, &e, "Sistemare il restyle", Instant::now());
-        assert_eq!(testo_notifica(&v).0, "Claude chiede un permesso · Sistemare il restyle");
+        // Con il titolo della sessione la notifica dice quello, non la cartella (il nome della sessione c'è).
+        let v = crate::claude::voce_permesso(3, &e, "Sistemare il restyle", Instant::now(), 0);
+        let (titolo, dettaglio) = testo_notifica(&v);
+        assert_eq!(titolo, "Claude chiede un permesso · Sistemare il restyle");
+        assert!(titolo.contains(&v.permesso.as_ref().unwrap().sessione));
+        assert!(!titolo.contains("segreto") && !dettaglio.contains("segreto"));
         // Le altre voci non cambiano.
         let altra = voce("x", Livello::Attenzione, Instant::now());
         assert_eq!(testo_notifica(&altra), (altra.titolo.clone(), altra.dettaglio.clone()));

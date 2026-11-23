@@ -237,6 +237,7 @@ mod test {
             dettaglio: String::new(),
             pulsanti: vec![],
             creata: Instant::now(),
+            permesso: None,
         };
         ponte.metti_voce(voce, false);
         assert_eq!(p.get_moduli().row_data(1).map(|m| m.tono), Some(TonoModuloUi::Aspetta));

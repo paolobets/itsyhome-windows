@@ -160,6 +160,7 @@ fn voce_non_disponibile(p: &Ponte, e: ErroreAvvio) {
             dettaglio: dettaglio.into(),
             pulsanti: vec![Pulsante::new(PULSANTE_IMPOSTAZIONI, "Impostazioni")],
             creata: Instant::now(),
+            permesso: None,
         },
         true,
     );
@@ -781,7 +782,7 @@ impl Ponte {
             .find(|s| s.id == e.sessione)
             .map(|s| s.titolo.clone())
             .unwrap_or_default();
-        let voce = claude::voce_permesso(id, &e, &titolo, ora);
+        let voce = claude::voce_permesso(id, &e, &titolo, ora, adesso_unix());
         // Prima il permesso in elenco, poi l'evento: la voce «ti aspetta» della sessione cede il
         // posto a quella del permesso.
         self.claude_evento(e, sequenza, ora);
@@ -1635,6 +1636,7 @@ mod test {
             dettaglio: String::new(),
             pulsanti: if permesso { vec![Pulsante::new("nega", "Nega"), Pulsante::delicato("consenti", "Consenti")] } else { vec![] },
             creata: Instant::now(),
+            permesso: None,
         }
     }
 

@@ -9,6 +9,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 > **Nota sul trasporto di M3.** Le sezioni «Task 1», «Task 2», «Task 4», «Task 6» e «Task 7» qui sotto raccontano il primo giro, con hook HTTP su `127.0.0.1`, porta, codice segreto, variabile `ISOLA_HOOK_TOKEN`, `assistente --barra-stato` e «Rigenera il codice». **Nulla di tutto ciò è mai stato rilasciato**: i Task 7A/7B (18/11) lo hanno sostituito con l'aiutante `isola-hook.exe` e un tubo con nome riservato all'utente (spec M3 §10). Le sezioni restano come storia.
 
+### Added (Ridisegno F2, Task 2: dati del permesso sulla voce)
+- La voce di un permesso di Claude Code porta i suoi dati divisi (`DatiPermesso`: sessione, strumento, comando, cartella, ora della richiesta) e il pannello li riceve in `VoceAttesaUi.permesso` (`PermessoUi`), per il componente del permesso del guscio che arriva nel Task 3. Nessuna superficie cambia ancora.
+- Sessione = titolo della scheda di Claude Code, altrimenti la cartella; della cartella solo il nome finale; comando ripulito come il titolo (via invisibili, segni di direzione e a capo), vuoto se Claude non l'ha dato. «Chiesto» è l'ora fissa della richiesta, «alle 14:32» (nessun timer). I dati vivono solo in memoria: niente su disco, nessun testo di prompt.
+- Il test della notifica di Windows ora controlla anche il comando diviso: non c'è mai, c'è solo il nome della sessione (M3 §10).
+
 ### Fixed (Ridisegno F2, Task 1: voce con un solo pulsante delicato)
 - **Il fuoco non si perde più** quando la voce che ti aspetta viene sostituita da una che ha solo il pulsante delicato (rimandato n1 di F1): senza «Nega» il fuoco va su «Apri» (che porta al permesso intero); se quel pulsante è «Consenti» (testo intero nella voce) mai su di lui, ma su «+N in attesa» o sulla prima carta. La stessa regola vale quando la voce compare, tornando alla Panoramica, all'apertura, quando «+N» o «N in attesa» spariscono e con ↑ dalle carte. Senza alcun bersaglio la tastiera resta al pannello (Esc chiude, Tab va avanti).
 - Se la stessa voce si aggiorna e il suo testo ora sta tutto, «Apri» diventa «Consenti»: «Consenti» si riarma (600 ms) e, se il fuoco era su «Apri», passa al bersaglio successivo; mai un consenso col fuoco addosso senza averlo scelto.

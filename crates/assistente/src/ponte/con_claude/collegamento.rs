@@ -299,6 +299,7 @@ impl Ponte {
                         Pulsante::new(crate::attenzione::PULSANTE_HO_CAPITO, "Ho capito"),
                     ],
                     creata: Instant::now(),
+                    permesso: None,
                 },
                 true,
             );

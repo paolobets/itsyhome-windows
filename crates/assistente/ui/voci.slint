@@ -131,10 +131,23 @@ export struct PulsanteUi {
     delicato: bool,
 }
 
+// I dati di un permesso di Claude Code per il componente del guscio (vedi `DatiPermesso` in
+// `attenzione.rs`): `sessione` = titolo della scheda di Claude Code, altrimenti la cartella;
+// `comando`: il riassunto ripulito ("" se Claude non l'ha dato); `cartella`: solo il nome finale;
+// `chiesto`: «alle 14:32», ora fissa della richiesta. `sessione == ""`: voce senza dati di permesso.
+export struct PermessoUi {
+    sessione: string,
+    strumento: string,
+    comando: string,
+    cartella: string,
+    chiesto: string,
+}
+
 // Una voce «In attesa» per la riga in cima alla Panoramica (vedi `attenzione.rs`).
 // `livello`: colore della barretta (la parola è in `sotto`);
 // `sotto`: la riga piccola sotto il titolo, «attenzione · pc»; `icona`: la fonte; `modulo`: il
-// nome del modulo da cui viene («Agenti»: la capsula della voce che ti aspetta).
+// nome del modulo da cui viene («Agenti»: la capsula della voce che ti aspetta); `permesso`: i dati
+// divisi di un permesso di Claude (vuoti per le altre voci).
 export struct VoceAttesaUi {
     id: string,
     livello: LivelloUi,
@@ -144,6 +157,7 @@ export struct VoceAttesaUi {
     dettaglio: string,
     icona: image,
     pulsanti: [PulsanteUi],
+    permesso: PermessoUi,
 }
 
 // Un ambiente di Home Assistant nelle Impostazioni (vedi `ponte::aggiorna_ambienti`).

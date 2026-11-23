@@ -138,6 +138,7 @@ pub fn voce_bt(l: &LetturaBt, ora: Instant) -> Voce {
         dettaglio: "Ricarica il dispositivo Bluetooth quando puoi.".into(),
         pulsanti: vec![Pulsante::new(PULSANTE_HO_CAPITO, "Ho capito")],
         creata: ora,
+        permesso: None,
     }
 }
 

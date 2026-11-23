@@ -970,6 +970,7 @@ mod accessibilita {
             dettaglio: "Il testo completo".into(),
             icona: Default::default(),
             pulsanti: ModelRc::new(VecModel::from(pulsanti)),
+            permesso: Default::default(),
         }
     }
 
@@ -2231,6 +2232,7 @@ mod accessibilita {
                     dettaglio: "Il testo completo".into(),
                     icona: Default::default(),
                     pulsanti: ModelRc::new(VecModel::from(Vec::<PulsanteUi>::new())),
+                    permesso: Default::default(),
                 })
                 .collect::<Vec<_>>(),
         ))
@@ -3318,7 +3320,7 @@ mod accessibilita {
             errore: None,
             riassunto: Some("ls".into()),
         };
-        let voce = crate::claude::voce_permesso(1, &e, "", std::time::Instant::now());
+        let voce = crate::claude::voce_permesso(1, &e, "", std::time::Instant::now(), 0);
         let (p, azioni) = pannello_in_coda(ModelRc::new(VecModel::from(vec![VoceAttesaUi {
             id: voce.id.as_str().into(),
             livello: LivelloUi::Bloccante,
@@ -3328,6 +3330,7 @@ mod accessibilita {
             dettaglio: voce.dettaglio.as_str().into(),
             icona: Default::default(),
             pulsanti: crate::pillola::pulsanti_ui(&voce.pulsanti),
+            permesso: Default::default(),
         }])));
         // Invio sulla riga apre il permesso col testo intero, il fuoco su «Nega»: non risponde.
         tasto(&p, Key::Return);

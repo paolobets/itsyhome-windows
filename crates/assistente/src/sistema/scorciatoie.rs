@@ -57,6 +57,7 @@ pub fn voce_non_attiva(s: Scorciatoia, occupata: bool, ora: Instant) -> Voce {
         dettaglio: format!("La scorciatoia per {} non funziona. {}", s.cosa_fa(), s.altro_modo()),
         pulsanti: vec![Pulsante::new(PULSANTE_HO_CAPITO, "Ho capito")],
         creata: ora,
+        permesso: None,
     }
 }
 

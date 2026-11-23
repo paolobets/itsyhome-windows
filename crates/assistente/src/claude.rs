@@ -6,7 +6,7 @@
 //! genera Claude Code e può riassumere il prompt; compare anche nelle notifiche di sistema, che
 //! Windows può conservare nel centro notifiche e mostrare a schermo bloccato.
 
-use crate::attenzione::{Fonte, Livello, Pulsante, Voce};
+use crate::attenzione::{DatiPermesso, Fonte, Livello, Pulsante, Voce};
 use claude_hook::evento::EventoHook;
 use api_claude::{Importo, Riepilogo};
 use casa_core::config::LimiteVisto;
@@ -95,8 +95,9 @@ pub fn nome_visto(titolo: &str, cartella: &str) -> String {
 /// La voce del permesso `id` chiesto da una sessione: *bloccante*, col riassunto di cosa Claude sta
 /// per fare (testo non fidato: ripulito da caratteri invisibili, di direzione e a capo) e i
 /// pulsanti per decidere. Il titolo della voce ne porta al più 60 caratteri, il dettaglio tutto e
-/// la sessione col suo `titolo` (vuoto: la cartella).
-pub fn voce_permesso(id: u64, e: &EventoHook, titolo: &str, ora: Instant) -> Voce {
+/// la sessione col suo `titolo` (vuoto: la cartella). Gli stessi dati, divisi, vanno in
+/// `Voce::permesso` per il componente del guscio, con `alle` (secondi Unix della richiesta).
+pub fn voce_permesso(id: u64, e: &EventoHook, titolo: &str, ora: Instant, alle: i64) -> Voce {
     let strumento = e.strumento.as_deref().map_or_else(|| "Strumento".to_owned(), |s| strumento_italiano(Some(s)));
     let riassunto = testo_pulito(e.riassunto.as_deref().unwrap_or(""));
     let cartella = nome_visto(titolo, &e.cartella);
@@ -115,7 +116,17 @@ pub fn voce_permesso(id: u64, e: &EventoHook, titolo: &str, ora: Instant) -> Voc
     } else {
         vec![Pulsante::new(PULSANTE_TERMINALE, "Apri il terminale")]
     };
-    Voce { id: id_voce_permesso(id), livello: Livello::Bloccante, fonte: Fonte::Claude, titolo, dettaglio, pulsanti, creata: ora }
+    let dati = DatiPermesso { sessione: cartella, strumento, comando: riassunto, cartella: testo_pulito(&e.cartella), alle };
+    Voce {
+        id: id_voce_permesso(id),
+        livello: Livello::Bloccante,
+        fonte: Fonte::Claude,
+        titolo,
+        dettaglio,
+        pulsanti,
+        creata: ora,
+        permesso: Some(dati),
+    }
 }
 
 /// La voce «Claude ha già smesso di aspettare»: il gesto dell'utente è arrivato dopo che il tubo
@@ -129,6 +140,7 @@ pub fn voce_decisione_tardiva(ora: Instant) -> Voce {
         dettaglio: "Claude ha già smesso di aspettare: rispondi nel terminale.".into(),
         pulsanti: vec![Pulsante::new(crate::attenzione::PULSANTE_HO_CAPITO, "Ho capito")],
         creata: ora,
+        permesso: None,
     }
 }
 
@@ -144,6 +156,7 @@ pub fn voce_terminale_rifiutato(ora: Instant) -> Voce {
         dettaglio: "Windows non ha permesso di portare davanti il terminale: cliccalo nella barra.".into(),
         pulsanti: vec![Pulsante::new(crate::attenzione::PULSANTE_HO_CAPITO, "Ho capito")],
         creata: ora,
+        permesso: None,
     }
 }
 
@@ -159,6 +172,7 @@ pub fn voce_terminale_mancante(ora: Instant) -> Voce {
         dettaglio: "Non è stata portata davanti nessuna finestra: aprila tu dalla barra.".into(),
         pulsanti: vec![Pulsante::new(crate::attenzione::PULSANTE_HO_CAPITO, "Ho capito")],
         creata: ora,
+        permesso: None,
     }
 }
 
@@ -206,7 +220,7 @@ pub fn voce_sessione(s: &Sessione, ora: Instant) -> Option<Voce> {
         Stato::TiAspetta | Stato::Fatto => vec![Pulsante::new(PULSANTE_TERMINALE, "Apri il terminale")],
         _ => vec![],
     };
-    Some(Voce { id, livello, fonte: Fonte::Claude, titolo, dettaglio, pulsanti, creata: ora })
+    Some(Voce { id, livello, fonte: Fonte::Claude, titolo, dettaglio, pulsanti, creata: ora, permesso: None })
 }
 
 /// Il nome dello strumento in italiano per la pillola. Un nome che non conosciamo si mostra
@@ -660,6 +674,7 @@ pub fn avviso_limite(f: Finestra, l: &Limite, soglia: u8, avvisato: Option<i64>,
         dettaglio,
         pulsanti: pulsante_ho_capito(),
         creata: Instant::now(),
+        permesso: None,
     })
 }
 
@@ -713,6 +728,7 @@ pub fn avviso_spesa(spesa: &Importo, soglia: f64, mese: &str, gia: Option<u8>) -
             dettaglio: format!("Spesa del mese ({}): {}.", mese_a_parole(mese), spesa.in_dollari()),
             pulsanti: pulsante_ho_capito(),
             creata: Instant::now(),
+            permesso: None,
         },
     ))
 }
@@ -728,6 +744,7 @@ pub fn voce_insolita(ieri: &Importo, giorno: NaiveDate) -> Voce {
         dettaglio: format!("Più di 3 volte la media dei 7 giorni prima ({}).", giorno.format("%d/%m")),
         pulsanti: pulsante_ho_capito(),
         creata: Instant::now(),
+        permesso: None,
     }
 }
 
@@ -1205,7 +1222,7 @@ mod test {
 
     #[test]
     fn riassunto_pulito() {
-        let v = voce_permesso(7, &permesso("rm \u{202E}-rf\n/tmp\u{200B}/x"), "", Instant::now());
+        let v = voce_permesso(7, &permesso("rm \u{202E}-rf\n/tmp\u{200B}/x"), "", Instant::now(), 0);
         assert_eq!(v.titolo, "Claude chiede: Comando rm -rf /tmp/x");
         assert_eq!(v.dettaglio, "rm -rf /tmp/x\nSessione: progetto-a");
         for t in [&v.titolo, &v.dettaglio] {
@@ -1218,31 +1235,72 @@ mod test {
         assert_eq!(id_permesso_da_voce("claude.0123.aspetta"), None);
         // Anche la cartella non fidata viene ripulita.
         let e = EventoHook { cartella: "pro\u{202E}getto".into(), ..permesso("ls") };
-        assert_eq!(voce_permesso(1, &e, "", Instant::now()).dettaglio, "ls\nSessione: progetto");
+        assert_eq!(voce_permesso(1, &e, "", Instant::now(), 0).dettaglio, "ls\nSessione: progetto");
     }
 
     #[test]
     fn titolo_permesso_tagliato_a_sessanta() {
         let lungo = "x".repeat(300);
-        let v = voce_permesso(1, &permesso(&lungo), "", Instant::now());
+        let v = voce_permesso(1, &permesso(&lungo), "", Instant::now(), 0);
         assert!(v.titolo.chars().count() <= "Claude chiede: Comando ".chars().count() + 60, "{}", v.titolo.chars().count());
         assert!(v.titolo.ends_with('…'));
         assert_eq!(v.dettaglio, format!("{lungo}\nSessione: progetto-a"), "il dettaglio ha il riassunto intero");
         // Esattamente 60: nessun taglio.
-        let v = voce_permesso(1, &permesso(&"y".repeat(60)), "", Instant::now());
+        let v = voce_permesso(1, &permesso(&"y".repeat(60)), "", Instant::now(), 0);
         assert!(!v.titolo.ends_with('…'));
         // Senza riassunto né strumento né cartella.
         let nudo = EventoHook { cartella: String::new(), ..ev("a", TipoEvento::PermissionRequest) };
-        let v = voce_permesso(1, &nudo, "", Instant::now());
+        let v = voce_permesso(1, &nudo, "", Instant::now(), 0);
         assert_eq!(v.titolo, "Claude chiede: Strumento");
         assert_eq!(v.dettaglio, "Sessione: Claude");
     }
 
     #[test]
     fn pulsanti_del_permesso() {
-        let v = voce_permesso(1, &permesso("ls"), "", Instant::now());
+        let v = voce_permesso(1, &permesso("ls"), "", Instant::now(), 0);
         assert_eq!(v.pulsanti, vec![Pulsante::new("nega", "Nega"), Pulsante::delicato("consenti", "Consenti")]);
         assert_eq!(PULSANTE_TERMINALE, "terminale");
+    }
+
+    /// Ridisegno F2, Task 2: la voce del permesso porta i dati divisi per il componente del guscio,
+    /// ripuliti come il titolo; titolo e dettaglio restano quelli di prima.
+    #[test]
+    fn voce_permesso_porta_i_dati_ripuliti() {
+        use crate::attenzione::DatiPermesso;
+        let alle = 1_790_000_000;
+        let v = voce_permesso(7, &permesso("rm \u{202E}-rf\n/tmp\u{200B}/x"), "", Instant::now(), alle);
+        assert_eq!(
+            v.permesso,
+            Some(DatiPermesso {
+                sessione: "progetto-a".into(),
+                strumento: "Comando".into(),
+                comando: "rm -rf /tmp/x".into(),
+                cartella: "progetto-a".into(),
+                alle,
+            })
+        );
+        assert_eq!(v.titolo, "Claude chiede: Comando rm -rf /tmp/x", "il titolo resta quello di prima");
+        assert_eq!(v.dettaglio, "rm -rf /tmp/x\nSessione: progetto-a", "il dettaglio resta quello di prima");
+        // Col titolo della scheda la sessione è quello, la cartella resta accanto (ripulita).
+        let e = EventoHook { cartella: "pro\u{202E}getto".into(), ..permesso("ls") };
+        let dati = voce_permesso(1, &e, "Sistemare\n il restyle\u{200b}", Instant::now(), 5).permesso.unwrap();
+        assert_eq!((dati.sessione.as_str(), dati.cartella.as_str(), dati.alle), ("Sistemare il restyle", "progetto", 5));
+        // Senza riassunto il comando è vuoto; senza strumento «Strumento», come nel titolo.
+        let nudo = EventoHook { cartella: String::new(), ..ev("a", TipoEvento::PermissionRequest) };
+        let dati = voce_permesso(1, &nudo, "", Instant::now(), 0).permesso.unwrap();
+        assert_eq!(
+            dati,
+            DatiPermesso {
+                sessione: "Claude".into(),
+                strumento: "Strumento".into(),
+                comando: String::new(),
+                cartella: String::new(),
+                alle: 0
+            }
+        );
+        // Un riassunto fatto di soli invisibili vale come assente.
+        let vuoto = voce_permesso(1, &permesso("\u{200b}\u{202E}\n"), "", Instant::now(), 0).permesso.unwrap();
+        assert_eq!(vuoto.comando, "");
     }
 
     #[test]
@@ -1478,14 +1536,14 @@ mod test {
 
     #[test]
     fn il_permesso_porta_il_titolo_della_sessione() {
-        let v = voce_permesso(1, &permesso("ls"), "Sistemare il restyle", Instant::now());
+        let v = voce_permesso(1, &permesso("ls"), "Sistemare il restyle", Instant::now(), 0);
         assert_eq!(v.dettaglio, "ls\nSessione: Sistemare il restyle");
         assert_eq!(v.titolo, "Claude chiede: Comando ls", "il titolo della voce resta quello di prima");
         // Senza titolo (o fatto di soli invisibili) vale la cartella; senza nulla «Claude».
-        assert_eq!(voce_permesso(1, &permesso("ls"), "", Instant::now()).dettaglio, "ls\nSessione: progetto-a");
-        assert_eq!(voce_permesso(1, &permesso("ls"), "\u{200b}", Instant::now()).dettaglio, "ls\nSessione: progetto-a");
+        assert_eq!(voce_permesso(1, &permesso("ls"), "", Instant::now(), 0).dettaglio, "ls\nSessione: progetto-a");
+        assert_eq!(voce_permesso(1, &permesso("ls"), "\u{200b}", Instant::now(), 0).dettaglio, "ls\nSessione: progetto-a");
         let nudo = EventoHook { cartella: String::new(), ..permesso("ls") };
-        assert_eq!(voce_permesso(1, &nudo, "", Instant::now()).dettaglio, "ls\nSessione: Claude");
+        assert_eq!(voce_permesso(1, &nudo, "", Instant::now(), 0).dettaglio, "ls\nSessione: Claude");
     }
 
     #[test]

@@ -26,7 +26,7 @@ use crate::dispositivi::{self, Riga, TipoRiga};
 use crate::collegamenti;
 use crate::moduli::registro::Registro;
 use crate::{
-    AmbienteUi, CollegamentoUi, FinestraImpostazioni, GenereUi, ModuloUi, Pannello, Pillola, PreferitoUi, RigaDispositivoUi,
+    AmbienteUi, CollegamentoUi, FinestraImpostazioni, GenereUi, ModuloUi, Pannello, PermessoUi, Pillola, PreferitoUi, RigaDispositivoUi,
     RigaSessioneUi, SchedaBarraUi, StanzaUi, TipoRigaUi, TonoUi, VoceAttesaUi,
 };
 use casa_core::config::Config;
@@ -636,6 +636,22 @@ fn voce_attesa_ui(v: &Voce, registro: &Registro, non_archiviata: bool) -> VoceAt
         dettaglio: v.dettaglio.as_str().into(),
         icona: pillola::icona_fonte(v.fonte),
         pulsanti: pillola::pulsanti_ui(&v.pulsanti),
+        permesso: v.permesso.as_ref().map(permesso_ui).unwrap_or_default(),
+    }
+}
+
+/// I dati di un permesso per il componente del guscio: «chiesto» è l'ora locale fissa della
+/// richiesta («alle 14:32»), calcolata qui (nessun timer); vuota se l'ora non è valida.
+fn permesso_ui(d: &attenzione::DatiPermesso) -> PermessoUi {
+    let chiesto = chrono::DateTime::from_timestamp(d.alle, 0)
+        .map(|t| format!("alle {}", t.with_timezone(&chrono::Local).format("%H:%M")))
+        .unwrap_or_default();
+    PermessoUi {
+        sessione: d.sessione.as_str().into(),
+        strumento: d.strumento.as_str().into(),
+        comando: d.comando.as_str().into(),
+        cartella: d.cartella.as_str().into(),
+        chiesto: chiesto.into(),
     }
 }
 
@@ -3837,6 +3853,38 @@ pub(crate) mod test {
         v.fonte = Fonte::Claude;
         v.livello = Livello::Bloccante;
         assert_eq!(voce_attesa_ui(&v, &r, false).sotto, "Aspetta te · Agenti");
+    }
+
+    /// Ridisegno F2, Task 2: la voce del pannello porta i dati divisi del permesso, con l'ora fissa
+    /// della richiesta («alle 14:32»); una voce senza dati ha il `PermessoUi` vuoto.
+    #[test]
+    fn voce_attesa_ui_col_permesso() {
+        let r = Registro::nuovo(&[]);
+        let e = claude_hook::evento::EventoHook {
+            sessione: "a".into(),
+            tipo: claude_hook::evento::TipoEvento::PermissionRequest,
+            cartella: "progetto".into(),
+            strumento: Some("PowerShell".into()),
+            notifica: None,
+            errore: None,
+            riassunto: Some("npm test".into()),
+        };
+        let alle = 1_790_000_000;
+        let v = crate::claude::voce_permesso(1, &e, "Sistemare il restyle", Instant::now(), alle);
+        let dati = v.permesso.clone().unwrap();
+        let ui = voce_attesa_ui(&v, &r, false).permesso;
+        assert_eq!(ui.sessione, dati.sessione.as_str());
+        assert_eq!(ui.strumento, dati.strumento.as_str());
+        assert_eq!(ui.comando, dati.comando.as_str());
+        assert_eq!(ui.cartella, dati.cartella.as_str());
+        assert_eq!((ui.sessione.as_str(), ui.cartella.as_str()), ("Sistemare il restyle", "progetto"));
+        // L'ora locale della richiesta, fissa: «alle HH:MM».
+        let ora = chrono::DateTime::from_timestamp(alle, 0).unwrap().with_timezone(&chrono::Local).format("%H:%M");
+        assert_eq!(ui.chiesto, format!("alle {ora}").as_str());
+        assert!(ui.chiesto.starts_with("alle "));
+        // Una voce senza dati di permesso (la voce di prova, le altre fonti): tutto vuoto.
+        let prova = attenzione::voce_di_prova(Livello::Bloccante, true, Instant::now());
+        assert_eq!(voce_attesa_ui(&prova, &r, false).permesso, crate::PermessoUi::default());
     }
 
     fn nuvoloso(temperatura: Option<f64>) -> Meteo {
