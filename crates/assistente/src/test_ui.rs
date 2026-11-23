@@ -293,9 +293,157 @@ fn menu_fondo_passaggio_scelta_in_ordine_crescente() {
     let l = |nome: &str| luminanza(&colore_del_token(&tema, nome));
     let (fondo, passaggio, scelta) = (l("menu-fondo"), l("menu-sopra"), l("menu-scelta"));
     assert!(fondo < passaggio && passaggio < scelta, "ordine: fondo {fondo:.4}, passaggio {passaggio:.4}, scelta {scelta:.4}");
-    assert!(l("suggerimento") <= l("g2"), "suggerimento al più g2");
     let menu = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("ui/menu.slint")).expect("menu.slint leggibile");
     assert!(!menu.contains("Tema.scheda-attiva") && !menu.contains("Tema.scheda-sopra"), "le righe del menu usano menu-sopra e menu-scelta");
+}
+
+/// Il corpo di un componente Slint (`component {nome} …` fino al componente seguente) nel file
+/// `ui/{file}` dell'assistente.
+fn componente_slint(file: &str, nome: &str) -> String {
+    let testo = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("ui").join(file)).expect("file leggibile");
+    let inizio = testo.find(&format!("component {nome} ")).unwrap_or_else(|| panic!("componente {nome} non trovato in {file}"));
+    let resto = &testo[inizio + 1..];
+    let fine = ["\ncomponent ", "\nexport component "].iter().filter_map(|m| resto.find(m)).min().unwrap_or(resto.len());
+    resto[..fine].to_string()
+}
+
+#[test]
+fn contrasti_delle_superfici_vecchie() {
+    // Ridisegno F1, Task 10: le coppie testo/fondo delle pagine di oggi (Casa, Agenti, PC,
+    // Collegamenti), della pillola, delle Impostazioni e della gestione sulla base nera. Parola
+    // ≥ 4,5:1, segno e bordo ≥ 3:1; una superficie sopra un'altra si stacca di luminanza.
+    let tema = tema_slint();
+    let colore = |nome: &str| colore_del_token(&tema, nome);
+    let mut sotto = Vec::new();
+    let mut verifica = |sopra: &str, fondo: &str, minimo: f64| {
+        let c = contrasto(&colore(sopra), &colore(fondo));
+        if c < minimo {
+            sotto.push(format!("{sopra} su {fondo}: {c:.2}:1 (minimo {minimo}:1)"));
+        }
+    };
+    // Testi: carte e righe (g1), righe sotto il mouse (g2), sovrapposizioni e suggerimenti.
+    for testo in ["testo", "testo-2", "testo-tenue"] {
+        for fondo in ["nero", "card-fondo", "scheda-sopra", "menu-fondo"] {
+            verifica(testo, fondo, 4.5);
+        }
+    }
+    verifica("segnaposto", "riquadro-fondo", 4.5);
+    verifica("testo", "suggerimento", 4.5);
+    verifica("testo", "menu-sopra", 4.5);
+    verifica("testo", "menu-scelta", 4.5);
+    // Pulsanti: grigio (neutro) col testo bianco, bianco (azione) col testo nero.
+    for fondo in ["neutro-fondo", "neutro-sopra", "scheda-attiva"] {
+        verifica("testo", fondo, 4.5);
+    }
+    for fondo in ["azione-fondo", "azione-sopra"] {
+        verifica("testo-su-primario", fondo, 4.5);
+    }
+    // Lo stato della riga di una sessione e i livelli (pillola, Coda, Impostazioni), anche sulla
+    // riga sotto il mouse.
+    for tono in ["attivo", "bloccante", "attenzione", "informazione", "errore", "caldo-1", "caldo-2"] {
+        for fondo in ["nero", "card-fondo", "scheda-sopra"] {
+            verifica(tono, fondo, 4.5);
+        }
+    }
+    // Segni e bordi: bordo dei campi, icona spenta, interruttore acceso.
+    for fondo in ["card-fondo", "scheda-sopra"] {
+        verifica("bordo-ctl", fondo, 3.0);
+        verifica("icona-spenta", fondo, 3.0);
+        verifica("interruttore-acceso", fondo, 3.0);
+    }
+    verifica("icona-spenta", "nero", 3.0);
+    // Barre e archi: il pieno si legge sulla traccia e sulla carta (la traccia, come nelle bozze, è
+    // un grigio appena sopra la carta: il valore lo dice il pieno, e la parola accanto).
+    for pieno in ["petalo-2", "caldo-2", "attenzione", "fatto", "testo", "batteria-carica"] {
+        for fondo in ["traccia", "card-fondo", "nero"] {
+            verifica(pieno, fondo, 3.0);
+        }
+    }
+    // L'anello di Windows: bianco sul nero e sulle carte, il filo nero esterno sul primario bianco.
+    verifica("anello", "nero", 3.0);
+    verifica("anello", "card-fondo", 3.0);
+    verifica("anello-esterno", "primario", 3.0);
+    assert!(sotto.is_empty(), "contrasti sotto soglia:\n{}", sotto.join("\n"));
+
+    // Una superficie sopra un'altra se ne stacca (non solo col filo): le sovrapposizioni (menu,
+    // elenco a comparsa, scelta dell'icona, conferma) sopra le righe g1; il suggerimento sopra la
+    // riga sotto il mouse.
+    let l = |nome: &str| luminanza(&colore(nome));
+    assert!(l("menu-fondo") > l("card-fondo"), "sovrapposizioni più chiare delle righe");
+    assert!(l("suggerimento") > l("scheda-sopra"), "il suggerimento sopra la riga sotto il mouse si stacca");
+    // Il fondo del menu è un grigio scritto a sé, non l'alias del suggerimento (Task 1).
+    let riga = tema.lines().find(|r| r.contains("out property <color> menu-fondo:")).expect("token menu-fondo");
+    assert!(!riga.contains("suggerimento"), "menu-fondo alias del suggerimento: {riga}");
+}
+
+#[test]
+fn sovrapposizioni_staccate_dalle_righe() {
+    // Task 1, minore rimandato: la scelta dell'icona, la conferma dell'eliminazione e l'elenco
+    // del selettore stanno sopra righe g1; il loro fondo è quello dei menu (g2) con l'ombra, e la
+    // cella sotto il mouse e quella evidenziata usano i gradini del menu (si vedono sul g2).
+    for (file, nome) in [("impostazioni.slint", "SceltaIcona"), ("impostazioni.slint", "ConfermaElimina"), ("componenti.slint", "Scelta")] {
+        let corpo = componente_slint(file, nome);
+        assert!(corpo.contains("background: Tema.menu-fondo"), "{nome}: il fondo non è menu-fondo");
+        assert!(corpo.contains("drop-shadow-color: Tema.menu-ombra"), "{nome}: senza ombra");
+        assert!(!corpo.contains("background: Tema.g1"), "{nome}: ancora g1 sopra le righe g1");
+        assert!(!corpo.contains("Tema.scheda-sopra"), "{nome}: il passaggio g2 sparisce sul fondo g2");
+    }
+}
+
+#[test]
+fn bordo_dei_campi_come_i_controlli() {
+    // Task 10: la casella di un campo delle Impostazioni sta su una card g1; il suo bordo è quello
+    // dei controlli (≥ 3:1 sulla carta), non il filo fra le superfici (≈ 1,2:1).
+    let campo = componente_slint("impostazioni.slint", "Campo");
+    assert!(campo.contains("Tema.caldo-2 : Tema.bordo-ctl"), "il bordo della casella non è bordo-ctl");
+}
+
+/// Il valore di `text:` di ogni `Etichetta { … }` (mono maiuscolo) nel sorgente, fino al `;`.
+fn testi_delle_etichette(sorgente: &str) -> Vec<String> {
+    let mut testi = Vec::new();
+    let mut resto = sorgente;
+    while let Some(i) = resto.find("Etichetta {") {
+        let dopo = &resto[i..];
+        if let Some(t) = dopo.find("text:") {
+            // Solo il `text:` di questa etichetta: prima della `}` che la chiude.
+            if dopo.find('}').is_none_or(|c| t < c) {
+                let valore = &dopo[t + 5..];
+                testi.push(valore[..valore.find(';').unwrap_or(valore.len())].trim().to_string());
+            }
+        }
+        resto = &dopo[1..];
+    }
+    testi
+}
+
+#[test]
+fn riconosce_i_testi_delle_etichette() {
+    let s = "a := Etichetta {\n  text: \"CPU\";\n}\nEtichetta { x: 1; }\nText { text: \"no\"; }\nEtichetta {\n text: a\n   ? b : c;\n}";
+    assert_eq!(testi_delle_etichette(s), ["\"CPU\"", "a\n   ? b : c"]);
+}
+
+#[test]
+fn etichette_mono_in_maiuscolo() {
+    // Ridisegno F1 (spec §13.10): il mono è sempre maiuscolo con tracking. Un'etichetta col testo
+    // scritto è già maiuscola; con un testo che arriva da fuori (nome di una stanza, colonna della
+    // gestione) passa da `to-uppercase()`.
+    let mut sbagliate = Vec::new();
+    for file in file_slint() {
+        let sorgente = std::fs::read_to_string(&file).expect("leggibile");
+        for testo in testi_delle_etichette(&sorgente) {
+            let maiuscolo = |t: &str| {
+                let t = t.trim();
+                t.starts_with('"') && t.ends_with('"') && t.matches('"').count() == 2 && t == t.to_uppercase()
+            };
+            // Un testo scritto, o una scelta fra testi scritti (`a ? "UNO" : "DUE"`), già maiuscoli.
+            let scritti = testo.rsplit_once('?').map_or(testo.as_str(), |(_, rami)| rami).split(':').all(maiuscolo);
+            let buono = scritti || testo.contains("to-uppercase()");
+            if !buono {
+                sbagliate.push(format!("{}: {testo}", file.file_name().unwrap().to_string_lossy()));
+            }
+        }
+    }
+    assert!(sbagliate.is_empty(), "etichette mono non maiuscole:\n{}", sbagliate.join("\n"));
 }
 
 #[test]
@@ -457,9 +605,9 @@ fn misure_slint_e_rust() {
     assert_eq!(pannello.get_altezza_pannello(), 340.0);
     assert_eq!(pannello.get_altezza_riga(), finestre::ALTEZZA_RIGA_PANNELLO, "riga alta del pannello");
     assert_eq!(pannello.get_altezza_riga(), 44.0);
-    // Il corpo: 752 × 224 a (34, 44); la vista sta sopra la riga dei puntini (20 + 2).
+    // Il corpo: 752 × 224 a (34, 44), tutto per la vista (Task 10).
     assert_eq!((pannello.get_centro_x(), pannello.get_centro_y(), pannello.get_centro_l()), (34.0, 44.0, 752.0));
-    assert_eq!(pannello.get_centro_a(), 224.0 - 20.0 - 2.0);
+    assert_eq!(pannello.get_centro_a(), 224.0);
     drop((pillola, pannello));
 }
 
@@ -3141,7 +3289,7 @@ mod accessibilita {
 
     fn tre_righe_claude() -> ModelRc<crate::RigaSessioneUi> {
         ModelRc::new(VecModel::from(vec![
-            riga_claude("aaaa", "uno", "Ti aspetta", crate::LivelloUi::Attenzione),
+            riga_claude("aaaa", "uno", "Tocca a te", crate::LivelloUi::Attenzione),
             riga_claude("bbbb", "due", "Fatto", crate::LivelloUi::Informazione),
             riga_claude("cccc", "tre", "Lavora", crate::LivelloUi::Nessuno),
         ]))
@@ -3348,7 +3496,7 @@ mod accessibilita {
     #[test]
     fn vista_claude_entra_nel_pannello() {
         let mut righe = Vec::new();
-        for (i, stato) in ["Ti aspetta", "Fatto", "Lavora"].iter().enumerate() {
+        for (i, stato) in ["Tocca a te", "Fatto", "Lavora"].iter().enumerate() {
             righe.push(crate::RigaSessioneUi {
                 // Anche col titolo più lungo (60 caratteri) e la cartella: nulla esce dalla vista.
                 titolo: "Un titolo di sessione davvero lungo, da sessanta caratteri…".into(),
@@ -3822,6 +3970,9 @@ mod accessibilita {
             let p = elemento(&f, nome);
             assert!(p.absolute_position().y > sotto, "«{nome}» accanto al testo invece che sotto");
         }
+        // Task 10: coi caratteri nuovi nessun pulsante esce dalla finestra né si accorcia.
+        let tagliati = pulsanti_tagliati(&f, 600.0);
+        assert!(tagliati.is_empty(), "{}", tagliati.join("\n"));
         // Alla misura di serie un pulsante solo (non collegato) resta accanto al testo.
         f.set_claude_collegato(false);
         f.set_claude_da_aggiornare(false);
@@ -4479,9 +4630,10 @@ mod accessibilita {
         assert_eq!((barra.size().width, barra.size().height), (40.0, 6.0));
         let centro = barra.absolute_position().x + barra.size().width / 2.0;
         assert_eq!(centro, p.get_larghezza_finestra() / 2.0, "senza lati gli occhi (e la barra) stanno al centro");
-        assert_eq!(elemento(&p, "Volume 50%").accessible_role(), Some(AccessibleRole::Button));
+        // Task 10: lo stesso nome della barra e della vista PC, con lo spazio prima di «%».
+        assert_eq!(elemento(&p, "Volume 50 %").accessible_role(), Some(AccessibleRole::Button));
         p.set_volume_muto(true);
-        assert!(ElementHandle::find_by_accessible_label(&p, "Volume 50%, muto").next().is_some());
+        assert!(ElementHandle::find_by_accessible_label(&p, "Volume 50 %, muto").next().is_some());
 
         p.set_volume_mostrato(-1.0);
         assert_eq!(conta("Pillola::occhi"), 1, "occhi di nuovo visibili");
@@ -5510,5 +5662,116 @@ mod accessibilita {
         }
         let sotto = riga_menu(&p, "Schermo 2 · 2560×1440").expect("riga");
         assert!(sotto.absolute_position().x + sotto.size().width <= esci.absolute_position().x, "il sottomenu sta a sinistra del menu");
+    }
+
+    // ─── Ridisegno F1, Task 10: le superfici di oggi sulla base nera ───
+
+    /// Le viste di oggi stanno nel corpo della cornice e lo usano tutto: 752 × 224 a (34, 44)
+    /// (prima stavano sopra la vecchia riga dei puntini, alte 202). Nessun elemento accessibile
+    /// esce dal corpo.
+    #[test]
+    fn pagine_dentro_il_corpo() {
+        let (casa, _) = pannello_casa();
+        let (agenti, _) = pannello_claude(true, tre_righe_claude());
+        agenti.set_claude_cinque_ore(limite_claude("34%", 0.34, "si azzera alle 14:30"));
+        agenti.set_claude_sette_giorni(limite_claude("61%", 0.61, "si azzera mercoledì alle 14:30"));
+        agenti.set_claude_spesa("12,40 $".into());
+        let pc = pannello_connessioni();
+        let (collegamenti, _) = pannello_collegamenti(quattro_collegamenti());
+        collegamenti.set_vista("collegamenti".into());
+        for (p, tipo) in [(&casa, "VistaCasa"), (&agenti, "VistaClaude"), (&pc, "VistaPc"), (&collegamenti, "VistaCollegamenti")] {
+            // Lo scorrimento del cambio di vista finito.
+            fine_scorrimento();
+            fine_scorrimento();
+            let vista = ElementHandle::find_by_element_type_name(p, tipo).next().unwrap_or_else(|| panic!("{tipo} assente"));
+            let (pos, lato) = (vista.absolute_position(), vista.size());
+            assert_eq!((pos.x, pos.y, lato.width, lato.height), (34.0, 44.0, 752.0, 224.0), "{tipo}: il corpo intero");
+            for e in vista.query_descendants().find_all() {
+                let (a, l) = (e.absolute_position(), e.size());
+                if e.accessible_role().is_none_or(|r| r == AccessibleRole::None) || l.width <= 0.0 || l.height <= 0.0 {
+                    continue;
+                }
+                assert!(
+                    a.x >= 34.0 - 0.5 && a.y >= 44.0 - 0.5 && a.x + l.width <= 34.0 + 752.0 + 0.5 && a.y + l.height <= 44.0 + 224.0 + 0.5,
+                    "{tipo}: «{}» esce dal corpo: {a:?} {l:?}",
+                    e.accessible_label().unwrap_or_default()
+                );
+            }
+        }
+    }
+
+    /// L'anello del fuoco è quello di Windows: 2 px bianchi e, fuori, 1 px nero (si vede sul nero
+    /// e sul bianco del primario).
+    #[test]
+    fn anello_bianco_e_nero_come_windows() {
+        piattaforma_di_prova();
+        let f = FinestraImpostazioni::new().expect("impostazioni");
+        f.show().expect("impostazioni mostrate nel backend di prova");
+        f.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        elemento(&f, "Aggiungi una casa").invoke_accessible_default_action();
+        let anello = ElementHandle::find_by_element_type_name(&f, "Anello").next().expect("anello sul campo col fuoco");
+        let base = anello.size().width;
+        let mut larghezze: Vec<f32> = anello.query_descendants().find_all().iter().map(|e| e.size().width - base).collect();
+        larghezze.sort_by(f32::total_cmp);
+        // Distanza 2 di serie: il bianco largo 2 + 2 + 2 per lato, il nero 1 px ancora più fuori.
+        assert_eq!(larghezze, [8.0, 10.0], "un filo bianco e uno nero fuori");
+    }
+
+    /// I pulsanti visibili di una finestra: nessuno esce dalla finestra né ha il testo accorciato.
+    /// Il testo di un `Pulsante` è largo al più quanto lui meno 12: se lo tocca, è tagliato.
+    fn pulsanti_tagliati(f: &FinestraImpostazioni, larghezza: f32) -> Vec<String> {
+        use i_slint_backend_testing::ElementRoot;
+        let mut tagliati = Vec::new();
+        for e in f.root_element().query_descendants().find_all() {
+            if e.accessible_role() != Some(AccessibleRole::Button) {
+                continue;
+            }
+            let (a, l) = (e.absolute_position(), e.size());
+            if l.width <= 0.0 || l.height <= 0.0 {
+                continue;
+            }
+            let nome = e.accessible_label().unwrap_or_default();
+            if a.x < -0.5 || a.x + l.width > larghezza + 0.5 {
+                tagliati.push(format!("«{nome}» fuori dalla finestra: {a:?} {l:?}"));
+            }
+            if matches!(e.type_name().as_deref(), Some("Pulsante" | "Bottone")) {
+                for t in e.query_descendants().find_all() {
+                    if t.type_name().as_deref() == Some("Text") && t.size().width > l.width - 12.0 - 0.5 {
+                        tagliati.push(format!("«{nome}» col testo accorciato: {} su {}", t.size().width, l.width));
+                    }
+                }
+            }
+        }
+        tagliati
+    }
+
+    /// Task 10: a finestra minima (600 px) coi caratteri nuovi nessun pulsante tagliato, in ogni
+    /// sezione, coi testi più lunghi che le sezioni mostrano.
+    #[test]
+    fn impostazioni_a_finestra_minima() {
+        piattaforma_di_prova();
+        let f = FinestraImpostazioni::new().expect("impostazioni");
+        f.show().expect("impostazioni mostrate nel backend di prova");
+        f.window().set_size(slint::LogicalSize::new(600.0, 420.0));
+        f.set_ambienti(ModelRc::new(VecModel::from(vec![crate::AmbienteUi {
+            id: "a".into(),
+            nome: "Una casa dal nome davvero molto lungo".into(),
+            url: "https://casa.esempio.lan:8123".into(),
+            stato: "Non raggiungibile".into(),
+            attivo: true,
+            collegato: true,
+            ..Default::default()
+        }])));
+        f.set_collegamenti(quattro_collegamenti());
+        f.set_claude_collegato(true);
+        f.set_claude_da_aggiornare(true);
+        f.set_claude_stato("Da aggiornare".into());
+        f.set_api_presente(true);
+        let mut tagliati = Vec::new();
+        for sezione in 0..=crate::finestra_impostazioni::SEZIONE_INFORMAZIONI {
+            f.set_sezione(sezione);
+            tagliati.extend(pulsanti_tagliati(&f, 600.0).into_iter().map(|t| format!("sezione {sezione}: {t}")));
+        }
+        assert!(tagliati.is_empty(), "{}", tagliati.join("\n"));
     }
 }

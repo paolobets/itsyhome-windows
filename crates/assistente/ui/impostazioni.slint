@@ -204,7 +204,8 @@ component Campo inherits Rectangle {
             horizontal-stretch: 1;
             border-radius: Tema.raggio-m;
             border-width: errore != "" ? 2px : 1px;
-            border-color: errore != "" ? Tema.caldo-2 : Tema.vetro-bordo;
+            // Il bordo del controllo (≥ 3:1 sulla carta): il campo si vede anche vuoto sulla card g1.
+            border-color: errore != "" ? Tema.caldo-2 : Tema.bordo-ctl;
             background: Tema.riquadro-fondo;
 
             // Suggerimento e testo stanno uno sopra l'altro, a 12 dal bordo. Il suggerimento è più
@@ -522,11 +523,15 @@ component SceltaIcona inherits FocusScope {
     // celle): senza, arriverebbero all'area sotto, che chiude la scelta come Esc (N1 del 14e).
     TouchArea {}
 
+    // Sopra le righe g1: il fondo dei menu, un gradino sopra, con l'ombra.
     Rectangle {
         border-radius: Tema.raggio-xl;
-        background: Tema.g1;
+        background: Tema.menu-fondo;
         border-width: 1px;
         border-color: Tema.vetro-bordo;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: Tema.menu-ombra;
+        drop-shadow-offset-y: 8px;
     }
 
     corpo := VerticalLayout {
@@ -542,7 +547,9 @@ component SceltaIcona inherits FocusScope {
 
             Etichetta {
                 horizontal-stretch: 1;
-                text: titolo;
+                // Mono sempre maiuscolo: anche il nome della stanza; Narrator lo legge com'è.
+                text: titolo.to-uppercase();
+                accessible-label: titolo;
                 overflow: elide;
             }
 
@@ -565,7 +572,7 @@ component SceltaIcona inherits FocusScope {
                 width: lato - 2px;
                 height: lato - 2px;
                 border-radius: Tema.raggio-s;
-                background: i == root.attuale ? Tema.scheda-attiva : cella.has-hover ? Tema.scheda-sopra : transparent;
+                background: i == root.attuale ? Tema.menu-scelta : cella.has-hover ? Tema.menu-sopra : transparent;
                 accessible-role: button;
                 accessible-label: nome;
                 accessible-item-selected: i == root.attuale;
@@ -626,11 +633,16 @@ component ConfermaElimina inherits FocusScope {
 
     TouchArea {}
 
+    // Sopra le righe g1: il fondo dei menu, un gradino sopra, con l'ombra; il filo rosa dice
+    // l'eliminazione.
     Rectangle {
         border-radius: Tema.raggio-xl;
-        background: Tema.g1;
+        background: Tema.menu-fondo;
         border-width: 1px;
         border-color: Tema.pericolo-filo;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: Tema.menu-ombra;
+        drop-shadow-offset-y: 8px;
     }
 
     corpo := VerticalLayout {
@@ -1391,7 +1403,9 @@ export component FinestraImpostazioni inherits Window {
 
                     Etichetta {
                         height: 34px;
-                        text: modulo-titolo;
+                        // Mono sempre maiuscolo, anche il nome; Narrator lo legge com'è.
+                        text: modulo-titolo.to-uppercase();
+                        accessible-label: modulo-titolo;
                         overflow: elide;
                     }
 
@@ -1974,7 +1988,9 @@ export component FinestraImpostazioni inherits Window {
 
                     Etichetta {
                         height: 34px;
-                        text: modulo-c-titolo;
+                        // Mono sempre maiuscolo, anche il nome; Narrator lo legge com'è.
+                        text: modulo-c-titolo.to-uppercase();
+                        accessible-label: modulo-c-titolo;
                         overflow: elide;
                     }
 
@@ -2588,7 +2604,8 @@ export component FinestraImpostazioni inherits Window {
                                 if api-conferma-togli: conferma-api := Rectangle {
                                     height: corpo-togli.preferred-height;
                                     border-radius: Tema.raggio-l;
-                                    background: Tema.g1;
+                                    // Dentro la card g1: un gradino sopra, come le altre conferme.
+                                    background: Tema.menu-fondo;
                                     border-width: 1px;
                                     border-color: Tema.pericolo-filo;
                                     init => { annulla-togli.focus(); }

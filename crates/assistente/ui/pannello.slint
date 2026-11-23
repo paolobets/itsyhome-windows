@@ -260,9 +260,8 @@ export component Pannello inherits Window {
     out property <length> centro-x: 34px;
     out property <length> centro-y: altezza-riga;
     out property <length> centro-l: larghezza-finestra - 2 * centro-x;
-    // Le viste stanno sopra la vecchia riga dei puntini (20 + 2): le porta a tutto il corpo il
-    // Task 10. La Panoramica a griglia usa già tutto il corpo (`corpo-a`).
-    out property <length> centro-a: corpo-a - 22px;
+    // Panoramica, Coda e viste usano tutto il corpo (224; ridisegno F1, Task 10).
+    out property <length> centro-a: corpo-a;
     // «⋯» nella riga alta: 32 × 32, 22 dal fianco destro dell'isola.
     property <length> piu-x: (larghezza-finestra + larghezza-isola) / 2 - 22px - 32px;
     property <length> piu-y: (altezza-riga - 32px) / 2;

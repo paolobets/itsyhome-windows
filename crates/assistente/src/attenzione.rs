@@ -477,12 +477,12 @@ pub fn voce_notifica(id: &str, titolo: &str, messaggio: &str, ora: Instant) -> V
 
 /// `--prova-avviso <livello> [--lungo]`: una voce finta che chiede un permesso con 2 pulsanti
 /// finti (entrambi la tolgono). `lungo`: titolo che non sta nella pillola (lì «Nega» + «Apri») e
-/// testo più lungo dell'area della voce espansa (si scorre).
+/// testo più lungo dello spazio del permesso aperto nella Coda (si scorre).
 pub fn voce_di_prova(livello: Livello, lungo: bool, ora: Instant) -> Voce {
     let (titolo, dettaglio) = if lungo {
         (
             format!("Avviso di prova ({}): consentire a un programma di prova di cancellare la cartella dist e tutto il suo contenuto?", livello.parola().to_lowercase()),
-            "Questo è un avviso di prova lungo, creato con --prova-avviso e --lungo. I due pulsanti non fanno nulla: lo tolgono soltanto.\n\nServe a provare che un testo più lungo dello spazio della voce espansa si legge tutto: con la rotella del mouse o con le frecce ↑ e ↓ quando il fuoco è sulla voce, il testo scorre.\n\nNella pillola il titolo è tagliato: per questo al posto di «Consenti» c'è «Apri», che porta qui, dove il testo si legge intero e si decide.\n\nRiga in più per lo scorrimento.\n\nUltima riga dell'avviso di prova.".to_owned(),
+            "Questo è un avviso di prova lungo, creato con --prova-avviso e --lungo. I due pulsanti non fanno nulla: lo tolgono soltanto.\n\nServe a provare che un testo più lungo dello spazio del permesso aperto nella Coda si legge tutto: con la rotella del mouse o con le frecce ↑ e ↓ quando il fuoco è sul permesso, il testo scorre.\n\nNella pillola il titolo è tagliato: per questo al posto di «Consenti» c'è «Apri», che porta qui, dove il testo si legge intero e si decide.\n\nRiga in più per lo scorrimento.\n\nUltima riga dell'avviso di prova.".to_owned(),
         )
     } else {
         (

@@ -307,8 +307,11 @@ export component VistaCasa inherits Rectangle {
         y: 0;
         width: griglia-l * 0.4;
         height: 28px;
-        text: filtro-luci ? (voci.length > 0 ? "Luci accese (" + voci.length + ")" : "Luci accese")
+        // Mono sempre maiuscolo (anche il nome della stanza); Narrator legge il titolo com'è.
+        property <string> titolo: filtro-luci ? (voci.length > 0 ? "Luci accese (" + voci.length + ")" : "Luci accese")
             : in-stanza ? stanze[stanza-aperta].nome : "Preferiti";
+        text: titolo.to-uppercase();
+        accessible-label: titolo;
         overflow: elide;
     }
 

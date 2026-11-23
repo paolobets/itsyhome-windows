@@ -47,7 +47,8 @@ component Riga inherits Rectangle {
         x: MisurePc.margine;
         y: 4px;
         height: 16px;
-        text: etichetta;
+        // Mono sempre maiuscolo.
+        text: etichetta.to-uppercase();
     }
 
     // La misura del dettaglio (trasparente): quanto sarebbe largo intero. Serve al test che il

@@ -128,7 +128,8 @@ export component Pillola inherits Window {
     in property <string> nome-attivita;
     in property <LivelloUi> tinta-occhi: LivelloUi.nessuno;
     property <bool> con-barra: volume-mostrato >= 0 && !allargata && !ritirata;
-    property <string> nome-volume: "Volume " + round(volume-mostrato * 100) + "%" + (volume-muto ? ", muto" : "");
+    // Lo stesso nome della barra e della vista PC: «Volume 40 %», con lo spazio.
+    property <string> nome-volume: "Volume " + round(volume-mostrato * 100) + " %" + (volume-muto ? ", muto" : "");
     callback cliccata();
     // La rotella sopra la pillola: lo spostamento in pixel logici (in su = positivo).
     callback rotella(length);
@@ -382,7 +383,7 @@ export component Pillola inherits Window {
             // Per Narrator (FE16): un pulsante che apre il pannello, col messaggio se chiama (i
             // pulsanti della pillola allargata gli stanno accanto, non dentro).
             accessible-role: button;
-            // Durante la barra del volume: «Volume 40%» (con «, muto» se muto).
+            // Durante la barra del volume: «Volume 40 %» (con «, muto» se muto).
             accessible-label: allargata ? messaggio + altri
                 : con-barra ? nome-volume
                 : "ItsyHome" + (attivita-visibile ? ", " + (nome-attivita != "" ? nome-attivita : attivita) : nome-lati) + (aspetto == AspettoPillolaUi.puntino ? ", una voce in attesa" : "");

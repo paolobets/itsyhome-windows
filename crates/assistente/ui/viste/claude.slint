@@ -23,8 +23,9 @@ component RigaClaude inherits Rectangle {
     in property <bool> anello;
     callback apri();
 
-    // Chi lavora ha la tinta del lavoro; gli altri quella del loro livello (la parola c'è sempre).
-    property <color> tinta-stato: riga.livello == LivelloUi.nessuno ? Tema.petalo-5 : Tema.colore-livello(riga.livello);
+    // Chi lavora ha la tinta del lavoro (arancio, come la capsula «Al lavoro»); gli altri quella
+    // del loro livello (la parola c'è sempre).
+    property <color> tinta-stato: riga.livello == LivelloUi.nessuno ? Tema.attivo : Tema.colore-livello(riga.livello);
     // Il mouse è sull'icona del terminale (ha il suo suggerimento): la riga resta «sopra».
     property <bool> sopra-icona;
 

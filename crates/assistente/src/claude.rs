@@ -381,7 +381,9 @@ pub fn righe_sessioni(
             let cartella = if cartella.is_empty() { SENZA_CARTELLA.to_owned() } else { cartella };
             let (stato_testo, livello) = match x.stato {
                 Stato::Lavora => ("Lavora", None),
-                Stato::TiAspetta => ("Ti aspetta", Some(Livello::Attenzione)),
+                // «Tocca a te», come la carta di Agenti (tono Guarda): «Ti aspetta» è la parola
+                // del tono Aspetta, del permesso bloccante (vocabolario chiuso).
+                Stato::TiAspetta => ("Tocca a te", Some(Livello::Attenzione)),
                 Stato::Fatto => ("Fatto", Some(Livello::Informazione)),
                 Stato::Errore => ("Errore", Some(Livello::Attenzione)),
             };
@@ -1276,7 +1278,8 @@ mod test {
         // Nell'ordine di urgenza dell'elenco: chi aspetta, chi si è fermato, chi ha finito.
         let attesi: Vec<_> = s.elenco().iter().map(|x| id_sessione(&x.id)).collect();
         assert_eq!(righe.iter().map(|r| r.id.clone()).collect::<Vec<_>>(), attesi);
-        assert_eq!(righe[0].stato_testo, "Ti aspetta");
+        // «Tocca a te», come la carta di Agenti: «Ti aspetta» è la parola del tono Aspetta.
+        assert_eq!(righe[0].stato_testo, "Tocca a te");
         assert_eq!(righe[1].stato_testo, "Errore");
         assert_eq!(righe[2].stato_testo, "Fatto");
         assert_eq!(ordine, s.elenco().iter().map(|x| x.id.clone()).collect::<Vec<_>>());

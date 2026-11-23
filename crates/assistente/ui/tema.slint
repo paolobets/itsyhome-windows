@@ -90,7 +90,9 @@ export global Tema {
     // Suggerimento di un campo vuoto: più tenue del testo vero (testo bianco), non sembra un
     // valore già scritto.
     out property <color> segnaposto: testo-tenue;
-    // Traccia degli archi e delle barre: grigio pieno, la scala si legge anche con un valore piccolo.
+    // Traccia degli archi e delle barre: grigio pieno appena sopra la carta, come nelle bozze (che
+    // la vogliono anche più scura). Il valore lo dicono il pieno, ≥ 3:1 sulla traccia e sulla carta
+    // (lo controlla un test), e la parola accanto: un limite a zero non ha l'arco ma il testo.
     out property <color> traccia: g4;
     out property <color> vetro-bordo: filo;
     out property <color> scheda-sopra: g2;
@@ -135,12 +137,13 @@ export global Tema {
     // visibile sul nero e sul bianco del primario.
     out property <color> anello: #ffffff;
     out property <color> anello-esterno: #000000;
-    // Suggerimento (tooltip) delle icone del dock.
-    out property <color> suggerimento: g2;
-    // Menu «⋯» del pannello: fondo pieno come i suggerimenti (si legge sopra qualunque vista) e
-    // ombra che lo stacca dal corpo, quasi nero. Le righe si staccano dal fondo a gradini:
+    // Suggerimento (tooltip): un gradino sopra la riga sotto il mouse (g2), da cui spunta.
+    out property <color> suggerimento: g3;
+    // Menu «⋯» del pannello e sovrapposizioni (elenco di un selettore, scelta dell'icona, conferma
+    // di un'eliminazione): fondo pieno g2, un gradino sopra le carte e le righe g1 su cui si
+    // aprono, e ombra che lo stacca, quasi nera. Le righe si staccano dal fondo a gradini:
     // fondo g2 < riga sotto il mouse g3 < riga evidenziata g4 (lo controlla un test).
-    out property <color> menu-fondo: suggerimento;
+    out property <color> menu-fondo: g2;
     out property <color> menu-sopra: g3;
     out property <color> menu-scelta: g4;
     out property <color> menu-ombra: rgba(0, 0, 0, 0.55);

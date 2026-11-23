@@ -204,7 +204,8 @@ component RigaTabella inherits FocusScope {
         width: root.width - 24px;
         height: alto-gruppo - 6px;
         vertical-alignment: bottom;
-        text: riga.gruppo;
+        // Mono sempre maiuscolo (Narrator legge il gruppo dal testo della riga).
+        text: riga.gruppo.to-uppercase();
         overflow: elide;
         accessible-role: none;
     }
@@ -396,7 +397,8 @@ export component Schede inherits Rectangle {
         y: alto-testa + 30px;
         width: (ci == 0 ? 1.6 : 1.0) * unita - 8px;
         height: 20px;
-        text: c;
+        // Mono sempre maiuscolo (Narrator legge le colonne dal testo della riga).
+        text: c.to-uppercase();
         horizontal-alignment: attiva.numeriche[ci] ? TextHorizontalAlignment.right : TextHorizontalAlignment.left;
         overflow: elide;
         accessible-role: none;

@@ -2663,7 +2663,7 @@ mod test {
         manda(&p, ev("b", TipoEvento::PermissionRequest));
         let righe = pannello.get_claude_righe();
         assert_eq!(righe.row_count(), 2);
-        assert_eq!(righe.row_data(1).unwrap().stato.as_str(), "Ti aspetta");
+        assert_eq!(righe.row_data(1).unwrap().stato.as_str(), "Tocca a te");
         assert_eq!(righe.row_data(1).unwrap().livello, LivelloUi::Attenzione);
         // Cinque sessioni: cinque righe (la colonna scorre, RC-52).
         for id in ["c", "d", "e"] {
@@ -2710,7 +2710,7 @@ mod test {
         // «a» chiede un permesso: per urgenza passerebbe in cima, ma la riga resta dov'è.
         manda(&p, evc("a", TipoEvento::PermissionRequest));
         assert_eq!(cartelle_vista(&pannello), ["progetto-b", "progetto-a"]);
-        assert_eq!(pannello.get_claude_righe().row_data(1).unwrap().stato.as_str(), "Ti aspetta", "lo stato però si aggiorna");
+        assert_eq!(pannello.get_claude_righe().row_data(1).unwrap().stato.as_str(), "Tocca a te", "lo stato però si aggiorna");
         // Una sessione nuova, anche urgente, in fondo.
         manda(&p, evc("c", TipoEvento::PermissionRequest));
         assert_eq!(cartelle_vista(&pannello), ["progetto-b", "progetto-a", "progetto-c"]);

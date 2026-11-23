@@ -43,7 +43,8 @@ export global RegolaPulsanti {
     }
 }
 
-// Anello del fuoco da tastiera: 2 px, a `distanza` dall'elemento che lo contiene. Si mette dentro
+// Anello del fuoco da tastiera, come quello di Windows: 2 px bianchi e, fuori, 1 px nero (si vede
+// sul nero e sul bianco del primario), a `distanza` dall'elemento che lo contiene. Si mette dentro
 // l'elemento (`if …: Anello { raggio: parent.border-radius; }`) e ne prende le misure: senza
 // larghezza e altezza un elemento fuori da un layout riempie il genitore.
 export component Anello inherits Rectangle {
@@ -54,6 +55,17 @@ export component Anello inherits Rectangle {
     in property <length> distanza-y: distanza;
     in property <length> raggio-anello: raggio + distanza + spessore;
     property <length> spessore: Tema.sul-pixel(2px);
+    property <length> filo-nero: Tema.sul-pixel(1px);
+
+    Rectangle {
+        x: -(distanza + spessore + filo-nero);
+        y: -(distanza-y + spessore + filo-nero);
+        width: root.width + 2 * (distanza + spessore + filo-nero);
+        height: root.height + 2 * (distanza-y + spessore + filo-nero);
+        border-radius: raggio-anello + filo-nero;
+        border-width: filo-nero;
+        border-color: Tema.anello-esterno;
+    }
 
     Rectangle {
         x: -(distanza + spessore);
@@ -393,11 +405,15 @@ export component Scelta inherits FocusScope {
                 return accept;
             }
 
+            // Sopra le righe g1 delle Impostazioni: il fondo dei menu, un gradino sopra, con l'ombra.
             Rectangle {
                 border-radius: Tema.raggio-m;
-                background: Tema.g1;
+                background: Tema.menu-fondo;
                 border-width: 1px;
                 border-color: Tema.vetro-bordo;
+                drop-shadow-blur: 24px;
+                drop-shadow-color: Tema.menu-ombra;
+                drop-shadow-offset-y: 8px;
             }
 
             Flickable {
@@ -413,7 +429,7 @@ export component Scelta inherits FocusScope {
                     y: i * alto-voce;
                     height: alto-voce;
                     border-radius: Tema.raggio-s;
-                    background: i == evidenziata ? Tema.scheda-attiva : cella.has-hover ? Tema.scheda-sopra : transparent;
+                    background: i == evidenziata ? Tema.menu-scelta : cella.has-hover ? Tema.menu-sopra : transparent;
                     accessible-role: list-item;
                     accessible-label: voce;
                     accessible-item-selectable: true;
