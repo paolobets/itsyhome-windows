@@ -2214,9 +2214,6 @@ impl Ponte {
             self.vista_claude(vista == "agenti");
             self.vista_coda(vista == "coda");
         }
-        // Il permesso chiesto lo prende la prima scrittura della pagina Agenti (qui sopra): se non
-        // l'ha preso (la pagina era già aperta), non resta per dopo.
-        self.permesso_richiesto.borrow_mut().take();
         self.attese.borrow_mut().segna_viste();
         // Il pannello compare: un permesso in attesa non si consente al primo istante, e una guardia
         // ancora in corso si vede.

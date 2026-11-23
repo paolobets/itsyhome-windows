@@ -1128,18 +1128,34 @@ impl Ponte {
         per_sessione
     }
 
-    /// La pagina Agenti ha la riga che porta questo permesso (id della voce): Claude è collegato,
-    /// la richiesta è viva, la sua sessione è fra le righe e il permesso è quello che la riga mostra
-    /// (il più vecchio della sessione, `permessi_per_sessione`). Altrimenti dalla pillola si va
-    /// sulla Coda (ripiego, pre-flight C9).
-    pub(super) fn permesso_ha_riga(&self, voce: &str) -> bool {
-        let Some(numero) = claude::id_permesso_da_voce(voce) else { return false };
+    /// Il permesso che porta ogni riga della pagina Agenti, per impronta della sessione: la sua
+    /// voce, il suo posto fra le attese (come nel modello delle attese, che segue `ordinate`) e i
+    /// suoi dati. Una riga c'è solo da collegato e per una sessione dell'elenco; il permesso è il
+    /// più vecchio della sessione (`permessi_per_sessione`) e la sua voce è fra le attese. Unica
+    /// regola, per la pagina (`aggiorna_vista_claude_a`) e per la pillola (`permesso_ha_riga`).
+    fn permessi_della_pagina(&self) -> HashMap<String, (String, i32, crate::attenzione::DatiPermesso)> {
         if !self.casa.con_config(|c| c.claude.collegato) {
-            return false;
+            return HashMap::new();
         }
-        let Some(sessione) = self.claude_permessi.borrow().get(&numero).map(|p| p.sessione.clone()) else { return false };
-        self.claude_sessioni.borrow().elenco().iter().any(|s| s.id == sessione)
-            && self.permessi_per_sessione().get(&claude::id_sessione(&sessione)) == Some(&numero)
+        let presenti: Vec<String> = self.claude_sessioni.borrow().elenco().iter().map(|s| claude::id_sessione(&s.id)).collect();
+        let attese = self.attese.borrow();
+        let ordinate = attese.ordinate();
+        self.permessi_per_sessione()
+            .into_iter()
+            .filter(|(impronta, _)| presenti.contains(impronta))
+            .filter_map(|(impronta, numero)| {
+                let voce = claude::id_voce_permesso(numero);
+                let posto = ordinate.iter().position(|v| v.id == voce)?;
+                let dati = ordinate[posto].permesso.clone().unwrap_or_default();
+                Some((impronta, (voce, posto as i32, dati)))
+            })
+            .collect()
+    }
+
+    /// La pagina Agenti ha la riga che porta questo permesso (id della voce), secondo
+    /// `permessi_della_pagina`. Altrimenti dalla pillola si va sulla Coda (ripiego, pre-flight C9).
+    pub(super) fn permesso_ha_riga(&self, voce: &str) -> bool {
+        self.permessi_della_pagina().values().any(|(v, _, _)| v == voce)
     }
 
     /// Come `aggiorna_vista_claude`, a un'ora data (secondi dall'epoca): i limiti scaduti a quell'ora
@@ -1174,21 +1190,8 @@ impl Ponte {
                 catene.iter().filter(|(_, c)| a_finestre(c)).map(|(id, _)| claude::id_sessione(id)).collect(),
             )
         };
-        // Il permesso in attesa di ogni sessione: la sua voce, il suo posto fra le attese (come nel
-        // modello delle attese, che segue `ordinate`) e i suoi dati.
-        let permessi: HashMap<String, (String, i32, crate::attenzione::DatiPermesso)> = {
-            let attese = self.attese.borrow();
-            let ordinate = attese.ordinate();
-            self.permessi_per_sessione()
-                .into_iter()
-                .filter_map(|(impronta, numero)| {
-                    let voce = claude::id_voce_permesso(numero);
-                    let posto = ordinate.iter().position(|v| v.id == voce)?;
-                    let dati = ordinate[posto].permesso.clone().unwrap_or_default();
-                    Some((impronta, (voce, posto as i32, dati)))
-                })
-                .collect()
-        };
+        // Il permesso in attesa di ogni riga (la stessa regola che usa la pillola).
+        let permessi = self.permessi_della_pagina();
         // La riga scelta non si perde (RC-53): resta sulla sua sessione, e se la sua riga è
         // sparita passa a quella che ne prende il posto (la più vicina), mai oltre l'ultima.
         let fuoco = p.get_elenco_fuoco().max(0);
@@ -1203,13 +1206,14 @@ impl Ponte {
             .collect();
         // Dalla pillola (ridisegno F2, Task 8): la prima scrittura dopo l'apertura sceglie la riga
         // che porta il permesso chiesto, ovunque stia, e poi entra nel permesso del dettaglio. La
-        // richiesta vale una volta sola; senza la sua riga (sparita nel frattempo) resta la prima.
+        // richiesta vale una volta sola: la prende (`take`) questa scrittura, l'unica a consumarla;
+        // senza la sua riga (sparita nel frattempo) resta la prima e non si entra.
         let chiesta = self
             .permesso_richiesto
             .borrow_mut()
             .take()
-            .and_then(|voce| voci.iter().position(|v| v.voce.as_str() == voce));
-        let nuovo_fuoco = chiesta.unwrap_or_else(|| {
+            .and_then(|voce| voci.iter().position(|v| v.voce.as_str() == voce).map(|i| (i, voce)));
+        let nuovo_fuoco = chiesta.as_ref().map(|(i, _)| *i).unwrap_or_else(|| {
             col_fuoco
                 .and_then(|id| voci.iter().position(|v| v.id == id))
                 .unwrap_or_else(|| (fuoco as usize).min(voci.len().saturating_sub(1)))
@@ -1230,8 +1234,8 @@ impl Ponte {
         scrivi_se_cambia(p.get_elenco_stato(), stato, |v| p.set_elenco_stato(v));
         // Righe e fuoco scritti: il fuoco nel permesso del dettaglio, su «Nega». Il pannello conta
         // il riarmo dell'arrivo (il permesso che compare nel dettaglio, e il pannello che si apre).
-        if chiesta.is_some() {
-            p.invoke_entra_nel_permesso();
+        if let Some((_, voce)) = chiesta {
+            p.invoke_entra_nel_permesso(voce.into());
         }
     }
 
@@ -1733,15 +1737,20 @@ mod test {
 
     /// Ridisegno F2, Task 8 (decisione di Paolo 5): dal permesso della pillola il pannello si apre
     /// sulla pagina Agenti con la riga di quella sessione scelta, anche se non è la prima, e il
-    /// fuoco entra nel permesso del dettaglio (`elenco-lato` 1); l'apertura conta un riarmo
-    /// (`armamenti`). La richiesta vale una volta sola: l'apertura dopo riparte dalla prima riga,
-    /// sull'elenco; e un pannello che non si apre non la lascia in sospeso.
+    /// fuoco entra nel permesso del dettaglio (`elenco-lato` 1). Due riarmi all'arrivo: il
+    /// pannello che compare (c'era già prima del Task 8) e il permesso che compare nel dettaglio
+    /// (il `changed` dell'id in Slint): senza la riga del permesso scelta la prima riga, che non
+    /// chiede nulla, non riarma e se ne conta uno solo. La richiesta vale una volta sola: la
+    /// consuma la prima scrittura della pagina (le scritture dopo non riportano il fuoco sul
+    /// permesso), l'apertura dopo riparte dalla prima riga, sull'elenco; e un pannello che non si
+    /// apre non la lascia in sospeso.
     #[test]
     fn dal_permesso_della_pillola_la_riga_scelta() {
         let (_s, p, _pillola, _d) = ponte_di_prova();
         p.casa().aggiorna_config(|c| c.claude.collegato = true);
         let _r1 = permesso(&p, 1, "a");
-        let _r2 = permesso(&p, 2, "b");
+        // «b» aspetta senza un permesso (più recente: la prima riga).
+        manda(&p, EventoHook { notifica: Some("agent_needs_input".into()), ..ev("b", TipoEvento::Notification) });
         // Come in `pannello.rs`: il modello, poi l'apertura.
         let apri = |p: &Ponte| {
             let pannello = crate::Pannello::new().unwrap();
@@ -1758,13 +1767,25 @@ mod test {
         let (pannello, prima) = apri(&p);
         assert_eq!(pannello.get_vista().as_str(), "agenti");
         let righe = pannello.get_elenco_righe();
-        // Chi aspetta, il più recente prima: «b», poi «a» col permesso chiesto.
+        // Chi aspetta, il più recente prima: «b» (senza permesso), poi «a» col permesso chiesto.
+        let prima_riga = righe.row_data(0).unwrap();
+        assert_eq!((prima_riga.id.as_str(), prima_riga.voce.as_str()), (claude::id_sessione("b").as_str(), ""));
         let fuoco = pannello.get_elenco_fuoco();
         assert_eq!(fuoco, 1, "la riga di «a», la seconda");
         assert_eq!(righe.row_data(fuoco as usize).unwrap().voce.as_str(), voce_di(1));
         assert_eq!(pannello.get_elenco_lato(), 1, "il fuoco nel permesso del dettaglio");
-        assert_eq!(pannello.get_armamenti(), prima + 1, "un riarmo all'arrivo");
+        // I `changed` di Slint girano qui.
+        slint::platform::update_timers_and_animations();
+        assert_eq!(pannello.get_elenco_lato(), 1, "il `changed` dell'arrivo non lo riporta sulla riga");
+        // Tre riarmi: il pannello che compare, il permesso nel dettaglio e «Consenti» che compare
+        // in fondo al comando corto («ls -la»). Senza la riga scelta solo il primo.
+        assert_eq!(pannello.get_armamenti(), prima + 3, "il pannello, il permesso nel dettaglio, il fondo del testo");
         assert_eq!(*p.permesso_richiesto.borrow(), None, "consumata");
+        // L'utente torna sulla prima riga; la scrittura dopo non lo riporta sul permesso.
+        pannello.set_elenco_lato(0);
+        pannello.set_elenco_fuoco(0);
+        p.aggiorna_vista_claude_a(adesso_unix());
+        assert_eq!((pannello.get_elenco_fuoco(), pannello.get_elenco_lato()), (0, 0), "la richiesta non vale due volte");
         // Riaperto sulla pagina senza permesso chiesto: dalla prima riga, sull'elenco.
         p.pannello_chiuso();
         p.chiedi_vista("agenti");

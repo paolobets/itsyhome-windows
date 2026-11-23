@@ -494,7 +494,7 @@ export component Pannello inherits Window {
     property <string> agenti-permesso-id: agenti-permesso-mostrato ? agenti-voce.id : "";
     // Il permesso in cui si è entrati dalla pillola (`entra-nel-permesso`) prima che questo
     // `changed` girasse: arrivare proprio su di lui non è un cambio sotto il fuoco. Vale per il
-    // primo `changed` e basta (ogni passaggio lo svuota).
+    // primo `changed` e basta (ogni passaggio lo svuota: test `dalla_pillola_la_guardia_vale_una_volta`).
     property <string> permesso-chiesto;
     changed agenti-permesso-id => {
         let chiesto = permesso-chiesto != "" && permesso-chiesto == agenti-permesso-id;
@@ -516,13 +516,18 @@ export component Pannello inherits Window {
         agenti-permesso.entra();
     }
     // Da Rust (ridisegno F2, Task 8, decisione di Paolo 5): il pannello si apre dalla pillola su un
-    // permesso, con la riga della sua sessione già scelta (`elenco-fuoco`). Il fuoco entra nel
-    // permesso del dettaglio, su «Nega». È la scelta dell'utente (il clic sulla pillola), quindi
-    // il `changed agenti-permesso-id` che arriva subito dopo non la riporta sulla riga
-    // (`permesso-chiesto`); riarma comunque, come ogni permesso che compare nel dettaglio.
-    public function entra-nel-permesso() {
+    // permesso (`voce`, l'id della voce), con la riga della sua sessione già scelta
+    // (`elenco-fuoco`). Il fuoco entra nel permesso del dettaglio, su «Nega», solo se il dettaglio
+    // mostra proprio quella voce (altrimenti resta sulla riga: mai su un altro dettaglio). È la
+    // scelta dell'utente (il clic sulla pillola), quindi il `changed agenti-permesso-id` che arriva
+    // subito dopo non la riporta sulla riga (`permesso-chiesto`); riarma comunque, come ogni
+    // permesso che compare nel dettaglio.
+    public function entra-nel-permesso(voce: string) {
+        if (voce == "" || agenti-permesso-id != voce) {
+            return;
+        }
         zona = Zona.contenuto;
-        permesso-chiesto = agenti-permesso-id;
+        permesso-chiesto = voce;
         entra-agenti-permesso();
     }
     // Collegamenti: card col fuoco (-1 = «Modifica» nella testata), 3 colonne.

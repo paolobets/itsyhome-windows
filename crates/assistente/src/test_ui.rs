@@ -4953,7 +4953,7 @@ mod accessibilita {
             vec![permesso_con_dati(VOCE_P, comando)],
         );
         p.set_elenco_fuoco(1);
-        p.invoke_entra_nel_permesso();
+        p.invoke_entra_nel_permesso(VOCE_P.into());
         (p, eventi, riarmi)
     }
 
@@ -5026,6 +5026,47 @@ mod accessibilita {
         let (x, y) = centro(&elemento(&p, "Nega"));
         clic_deciso(&p, x, y);
         assert_eq!(*eventi.borrow(), [format!("{VOCE_P} nega")]);
+    }
+
+    /// Task 8, giro di correzioni 1 (I1): la guardia dell'arrivo dalla pillola (`permesso-chiesto`)
+    /// vale per il primo `changed` e basta. Arrivati sul permesso di «my-shop», il fuoco va al
+    /// dettaglio di «uno» («Apri il terminale»); poi la riga di «uno» sparisce e quella col fuoco
+    /// diventa il permesso di «my-shop», che lì non si è scelto: il fuoco torna sulla riga (regola
+    /// del Task 7, Review Focus 1 e 4), mai nel dettaglio del permesso.
+    #[test]
+    fn dalla_pillola_la_guardia_vale_una_volta() {
+        use slint::platform::Key;
+        let (p, eventi, _) = agenti_dalla_pillola("npm test");
+        fine_arrivo();
+        avanza(700);
+        slint::platform::update_timers_and_animations();
+        assert_eq!((p.get_elenco_fuoco(), p.get_elenco_lato()), (1, 1), "arrivati nel permesso");
+        tasto(&p, Key::LeftArrow);
+        tasto(&p, Key::UpArrow);
+        tasto(&p, Key::RightArrow);
+        assert_eq!((p.get_elenco_fuoco(), p.get_elenco_lato(), etichetta_col_fuoco(&p).as_str()), (0, 1, "Apri il terminale"));
+        p.set_elenco_righe(ModelRc::new(VecModel::from(vec![
+            riga_col_permesso("pppp", "my-shop", VOCE_P, 0),
+            riga_agenti("bbbb", "due", crate::TonoModuloUi::Fatto),
+        ])));
+        slint::platform::update_timers_and_animations();
+        lascia_girare(&p);
+        assert_eq!((p.get_elenco_lato(), etichetta_col_fuoco(&p).as_str()), (0, "my-shop, Claude"), "il fuoco sulla riga");
+        assert!(eventi.borrow().is_empty(), "{:?}", eventi.borrow());
+
+        // Rust chiede una voce che il dettaglio non mostra (attese non allineate): nessun
+        // ingresso, il fuoco resta sulla riga (revisione del Task 8, m5).
+        for voce in ["claude.permesso.9", ""] {
+            let (p, _, _) = agenti_all_arrivo(
+                vec![riga_agenti("aaaa", "uno", crate::TonoModuloUi::Attivo), riga_col_permesso("pppp", "my-shop", VOCE_P, 0)],
+                vec![permesso_con_dati(VOCE_P, "npm test")],
+            );
+            p.set_elenco_fuoco(1);
+            p.invoke_entra_nel_permesso(voce.into());
+            assert_eq!((p.get_elenco_fuoco(), p.get_elenco_lato()), (1, 0), "voce «{voce}»: nessun ingresso");
+            slint::platform::update_timers_and_animations();
+            assert_eq!((p.get_elenco_fuoco(), p.get_elenco_lato()), (1, 0), "voce «{voce}»: dopo il `changed`");
+        }
     }
 
     /// Ridisegno F2, Task 8 (regola M3: nessun pulsante nasce sotto il punto di un clic di prima):
