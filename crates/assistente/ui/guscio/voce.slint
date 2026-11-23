@@ -13,7 +13,7 @@
 // «Nega» e «Consenti» (in alto a destra) e dalle sue righe: un doppio clic non preme mai un
 // pulsante nato sotto il puntatore.
 import { Tema } from "../tema.slint";
-import { Anello, Fuoco, Inerzia, Pulsante, RegolaPulsanti } from "../componenti.slint";
+import { Anello, Fuoco, Pulsante, RegolaPulsanti } from "../componenti.slint";
 import { Icone } from "../icone.slint";
 import { VoceAttesaUi, TonoModuloUi } from "../voci.slint";
 import { Permessi } from "permesso.slint";
@@ -23,13 +23,10 @@ export component VoceInAttesa inherits Rectangle {
     in property <VoceAttesaUi> voce;
     // Le altre voci in attesa («+N in attesa ›»; 0 = niente).
     in property <int> altre;
-    // I riarmi della guardia di Rust (ridisegno F2, Task 4): a ogni incremento «Nega» e
-    // «Consenti» si vedono inerti per 600 ms (`Inerzia`).
-    in property <int> armamenti;
-    // Inerte: Rust ignora i pulsanti della voce (`azione_voce`) dopo un riarmo. «Apri» non passa
-    // dalla guardia (porta solo alla Coda) e resta attivo: mai nascosto un pulsante che funziona.
-    out property <bool> inerte: inerzia.inerte;
-    inerzia := Inerzia { armamenti: root.armamenti; }
+    // Inerte: Rust ignora i pulsanti della voce (`azione_voce`) per 600 ms dopo un riarmo (lo dice
+    // l'unico `Inerzia` del pannello). «Apri» non passa dalla guardia (porta solo alla Coda) e
+    // resta attivo: mai nascosto un pulsante che funziona.
+    in property <bool> inerte;
     // Il bersaglio della Panoramica col fuoco (100 «Nega», 101 l'altro pulsante, 102 «+N») e se
     // l'anello si vede (da tastiera).
     in property <int> fuoco: -1;

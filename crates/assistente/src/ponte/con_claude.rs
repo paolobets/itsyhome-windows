@@ -873,6 +873,19 @@ impl Ponte {
         self.azione(voce, pulsante);
     }
 
+    /// Il pannello appena aperto (`pannello_aperto`): la superficie compare e, se `dal` era già nel
+    /// futuro ma la superficie non lo ha spostato (spostato a pannello chiuso, senza permessi: il
+    /// primo bloccante cambiato), il pannello conta comunque un armamento, perché la guardia ignora
+    /// ancora i pulsanti della voce e vanno mostrati inerti (revisione del Task 4, m1). L'aspetto
+    /// può durare fino a 600 ms oltre la guardia: dalla parte sicura.
+    pub(super) fn claude_pannello_compare(&self, p: &crate::Pannello, ora: Instant) {
+        let prima = p.get_armamenti();
+        self.claude_superficie_compare(ora);
+        if p.get_armamenti() == prima && self.claude_armamento.borrow().dal.get() > ora {
+            p.set_armamenti(prima.wrapping_add(1));
+        }
+    }
+
     /// Una superficie che mostra i permessi compare (pannello aperto, pillola che torna): con un
     /// permesso in attesa «Consenti» si arma fra `ARMAMENTO_CONSENTI`.
     pub(super) fn claude_superficie_compare(&self, ora: Instant) {
@@ -1113,19 +1126,6 @@ impl Ponte {
             *primo = (*primo).min(*id);
         }
         per_sessione
-    }
-
-    /// «Apri il permesso» della riga di una sessione nella pagina Agenti (fino al Task 7): il
-    /// pannello passa alla Coda col permesso di quella sessione aperto, col testo intero, il fuoco
-    /// su «Nega» e «Consenti» di nuovo armato (le regole M3 del componente del guscio). Una sessione
-    /// senza permesso (risolto intanto) non apre nulla.
-    pub(super) fn claude_apri_permesso(&self, impronta: &str) {
-        let Some(numero) = self.permessi_per_sessione().get(impronta).copied() else { return };
-        let indice = crate::pannello::indice_voce(&*self.modello_attese, &claude::id_voce_permesso(numero));
-        let p = self.pannello.borrow().upgrade();
-        if let (Some(p), true) = (p, indice >= 0) {
-            p.invoke_apri_coda_su(indice);
-        }
     }
 
     /// Come `aggiorna_vista_claude`, a un'ora data (secondi dall'epoca): i limiti scaduti a quell'ora
@@ -2476,6 +2476,36 @@ mod test {
         assert_eq!(pannello.get_armamenti(), chiuso, "nessuna scrittura a pannello chiuso");
     }
 
+    /// Revisione del Task 4, m1 (fatto nel Task 7): `dal` spostato a pannello chiuso (il primo
+    /// bloccante, non un permesso, è cambiato) e il pannello che si apre prima della fine: senza
+    /// permessi la superficie che compare non riarma, ma la guardia ignora ancora i pulsanti della
+    /// voce, quindi il pannello conta un armamento e li mostra inerti. Con `dal` già passato no.
+    #[test]
+    fn pannello_che_si_apre_durante_la_guardia_conta_un_armamento() {
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        armato(&p);
+        p.metti_voce(voce_di_prova("casa.blocco", Fonte::Casa, Livello::Bloccante, false), false);
+        assert!(p.claude_armamento.borrow().dal.get() > Instant::now(), "dal spostato a pannello chiuso");
+        let pannello = crate::Pannello::new().unwrap();
+        let prima = pannello.get_armamenti();
+        p.pannello_aperto(&pannello);
+        assert_eq!(pannello.get_armamenti(), prima + 1, "la guardia è ancora in corso: inerti");
+        p.pannello_chiuso();
+        // `dal` passato: nessun conteggio.
+        armato(&p);
+        let pannello = crate::Pannello::new().unwrap();
+        let prima = pannello.get_armamenti();
+        p.pannello_aperto(&pannello);
+        assert_eq!(pannello.get_armamenti(), prima, "nessuna guardia in corso");
+        // Con un permesso la superficie che compare conta già uno: non due.
+        p.pannello_chiuso();
+        let _r = permesso(&p, 1, "a");
+        let pannello = crate::Pannello::new().unwrap();
+        let prima = pannello.get_armamenti();
+        p.pannello_aperto(&pannello);
+        assert_eq!(pannello.get_armamenti(), prima + 1, "un solo armamento");
+    }
+
     #[test]
     fn invio_non_riuscito_non_e_una_decisione() {
         use claude_hook::sessioni::Stato;
@@ -2887,7 +2917,7 @@ mod test {
         p.claude_permesso(4, EventoHook { strumento: Some("Bash".into()), riassunto: Some("ls".into()), ..evc("a", TipoEvento::PermissionRequest) }, None, 1_000_000, Instant::now());
         let r = riga_di(&pannello, "a");
         assert_eq!((r.voce.as_str(), r.attesa, r.tono), (claude::id_voce_permesso(4).as_str(), 0, crate::TonoModuloUi::Aspetta));
-        assert_eq!(r.azione_id.as_str(), pagina_agenti::PERMESSO);
+        assert_eq!(r.azione_id.as_str(), "", "nessuna azione: il dettaglio è il permesso (Task 7)");
         assert_eq!(pannello.get_elenco_sintesi().titolo.as_str(), "1 ti aspetta");
         // Una voce bloccante più recente di un altro modulo passa davanti: il posto segue.
         let mut casa = voce_di_prova("casa.x", Fonte::Casa, Livello::Bloccante, false);

@@ -1,6 +1,6 @@
 // Il permesso del guscio (ridisegno F2, Task 3; spec §7, §13): un permesso di un agente con tutte
-// le regole di M3 dentro. Lo usano la Coda (al posto della `VoceAperta` di F1) e, dal Task 7, il
-// dettaglio della pagina Agenti; un secondo agente lo usa così com'è e non lo riscrive.
+// le regole di M3 dentro. Lo usano la Coda (al posto della `VoceAperta` di F1) e il dettaglio
+// della pagina Agenti (Task 7); un secondo agente lo usa così com'è e non lo riscrive.
 //
 // Regole di M3, invariate (spec §7):
 // - il fuoco entra su «Nega» (`entra()`), mai sul consenso;
@@ -17,10 +17,11 @@
 // Un'altra voce (altro id) riparte da capo: testo in cima, `visto` falso.
 //
 // Il componente non nasce e muore con l'apertura (pre-flight C1, C2): chi lo usa lo tiene fisso e
-// lo mostra con `visible`. Un id dentro un `if` non si raggiunge da fuori, e un componente creato
-// al momento non vedrebbe l'incremento di `armamenti` che accompagna l'apertura (Task 4).
+// lo mostra con `visible`. Un id dentro un `if` non si raggiunge da fuori. Il pannello ne ha due:
+// la Coda (`coda-permesso`, pulsanti in alto) e il dettaglio di Agenti (`agenti-permesso`,
+// pulsanti in basso a destra, lontani dalle righe e dal pulsante del dettaglio di prima).
 import { Tema } from "../tema.slint";
-import { Anello, Fuoco, Inerzia, Pulsante, RegolaPulsanti } from "../componenti.slint";
+import { Anello, Fuoco, Pulsante, RegolaPulsanti } from "../componenti.slint";
 import { VoceAttesaUi, TonoModuloUi } from "../voci.slint";
 import { Capsula } from "carta.slint";
 
@@ -40,11 +41,9 @@ export component Permesso inherits Rectangle {
     in property <bool> con-torna;
     // Il fuoco da tastiera è qui (altrimenti nessun anello e nessun fuoco vero).
     in property <bool> con-fuoco;
-    // I riarmi della guardia di Rust (`Pannello.armamenti`): a ogni incremento «Nega» e
-    // «Consenti» si vedono inerti per i 600 ms in cui Rust li ignora (Task 4, `Inerzia`).
-    in property <int> armamenti;
-    out property <bool> inerte: inerzia.inerte;
-    inerzia := Inerzia { armamenti: root.armamenti; }
+    // Rust ignora «Nega» e «Consenti» dopo un riarmo: si vedono inerti per quei 600 ms. Lo dice
+    // l'unico `Inerzia` del pannello (ruling del Task 4, dubbio 4).
+    in property <bool> inerte;
     // Il bersaglio col fuoco: -2 il testo, 0/1 un pulsante (indice in `voce.pulsanti`).
     out property <int> fuoco: -2;
     // Il fondo del testo si è visto, per questa voce: vale per l'id (`visto-di`), così un'altra
@@ -171,7 +170,12 @@ export component Permesso inherits Rectangle {
     property <length> scorrimento-minimo: min(0px, testo.height - testo.content-height);
     property <bool> a-fondo: testo.content-y <= scorrimento-minimo + 0.5px;
     changed a-fondo => { root.segna-fondo(); }
-    init => { root.segna-fondo(); }
+    // Creato con la voce già impostata (il pannello nasce a ogni apertura) il `changed id-voce` non
+    // scatta: lo scorrimento è già della voce, in cima (requisito del Task 3 per il Task 7).
+    init => {
+        scorrimento-di = voce.id;
+        root.segna-fondo();
+    }
     // Di quale voce è lo scorrimento del testo: finché il `changed` qui sotto non l'ha riportato
     // in cima, il fondo raggiunto con la voce di prima non vale per quella nuova.
     property <string> scorrimento-di;
@@ -382,12 +386,15 @@ export component Permesso inherits Rectangle {
 
     // In fondo a sinistra: perché «Consenti» non c'è ancora, o il tasto che lo concede.
     property <length> y-fondo: root.height - root.alto-fondo;
+    // Mai sotto i pulsanti (in basso, nel dettaglio di Agenti, stanno sulla stessa riga): fino a
+    // 12 px da «Nega», a capo se non ci sta.
     if Permessi.chiede(root.voce) && !root.visto: Text {
         x: 0;
         y: root.y-fondo;
-        width: self.preferred-width;
+        width: min(self.preferred-width, (root.pulsanti-in-alto ? root.width : nega.x - 12px));
         height: root.alto-fondo;
         text: "Leggi fino in fondo per consentire";
+        wrap: word-wrap;
         vertical-alignment: center;
         font-size: Tema.testo-piccolo;
         color: Tema.testo-tenue;

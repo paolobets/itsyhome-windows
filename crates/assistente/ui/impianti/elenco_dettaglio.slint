@@ -8,13 +8,23 @@
 // scelta (indice già valido) e il lato col fuoco (-1 la testata, 0 l'elenco, 1 il dettaglio), e il
 // fuoco vero si sposta da sé (`Fuoco`, `Pulsante.chiede-fuoco`) perché Narrator legga ruolo e nome.
 //
-// Nessun permesso si decide qui: la riga col permesso porta (fino al Task 7) al permesso aperto
-// della Coda, con le sue regole M3.
+// La riga col permesso (ridisegno F2, Task 7): il suo dettaglio è il `Permesso` del guscio, con
+// tutte le regole M3. Lo tiene il pannello, fisso (`agenti-permesso`, pre-flight C1: un id dentro
+// un `if` non si raggiunge da fuori); qui, con `dettaglio-permesso`, resta solo il posto, alle
+// misure di `GeometriaElencoDettaglio` che il pannello usa per metterlo lì.
 import { Tema } from "../tema.slint";
-import { RigaModuloUi, VoceAttesaUi } from "../voci.slint";
+import { RigaModuloUi } from "../voci.slint";
 import { Anello, Fuoco, Pulsante, TipoPulsante } from "../componenti.slint";
 import { Occhietti } from "../guscio/occhietti.slint";
 import { Capsula } from "../guscio/carta.slint";
+
+// Le misure dell'impianto, condivise col pannello (il permesso del dettaglio sta lì sopra): la
+// colonna delle righe da y `cima`, larga `largo-elenco`; il dettaglio da x `x-dettaglio` al bordo.
+export global GeometriaElencoDettaglio {
+    out property <length> cima: 48px;
+    out property <length> largo-elenco: 330px;
+    out property <length> x-dettaglio: 346px;
+}
 
 // Una riga dell'elenco, alta 40 r12: occhietti del tono · nome (Inter 700 13) · chi (12 tenue) ·
 // cosa (13 secondario) · valore (mono 12, a destra). Nome e cosa si accorciano (ellissi); il nome
@@ -251,8 +261,8 @@ export component DettaglioRiga inherits Rectangle {
 
 export component ImpiantoElencoDettaglio inherits Rectangle {
     in property <[RigaModuloUi]> righe;
-    // Le voci in attesa: il dettaglio della riga col permesso le leggerà nel Task 7 (`attesa`).
-    in property <[VoceAttesaUi]> attese;
+    // Il dettaglio della riga scelta è il suo permesso (lo mostra il pannello): qui resta il posto.
+    in property <bool> dettaglio-permesso;
     // La riga scelta (indice valido, deciso dal pannello) e il lato col fuoco.
     in property <int> fuoco;
     in property <int> lato;
@@ -265,9 +275,9 @@ export component ImpiantoElencoDettaglio inherits Rectangle {
     // Il pulsante del dettaglio: (id dell'azione, id della riga).
     callback azione(string, string);
 
-    property <length> cima: 48px;
-    property <length> largo-elenco: 330px;
-    property <length> x-dettaglio: 346px;
+    property <length> cima: GeometriaElencoDettaglio.cima;
+    property <length> largo-elenco: GeometriaElencoDettaglio.largo-elenco;
+    property <length> x-dettaglio: GeometriaElencoDettaglio.x-dettaglio;
     property <length> alto-riga: 40px;
     property <length> passo: 42px;
     property <length> alto-elenco: righe.length * passo - 2px;
@@ -318,7 +328,7 @@ export component ImpiantoElencoDettaglio inherits Rectangle {
         background: Tema.testo-tenue.with-alpha(0.5);
     }
 
-    if root.righe.length > 0: DettaglioRiga {
+    if root.righe.length > 0 && !root.dettaglio-permesso: DettaglioRiga {
         x: root.x-dettaglio;
         y: root.cima;
         width: root.width - root.x-dettaglio;

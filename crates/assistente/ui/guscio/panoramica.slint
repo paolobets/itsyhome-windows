@@ -177,8 +177,8 @@ export component Panoramica inherits Rectangle {
     in property <bool> voce-mostrata;
     in property <VoceAttesaUi> voce;
     in property <int> altre;
-    // I riarmi della guardia di Rust (Task 4): la voce che ti aspetta si vede inerte 600 ms.
-    in property <int> armamenti;
+    // La guardia di Rust in corso (l'`Inerzia` del pannello): la voce che ti aspetta si vede inerte.
+    in property <bool> inerte;
     in property <int> fuoco: -1;
     in property <bool> anello;
     // La fascia dell'Orologio.
@@ -229,7 +229,7 @@ export component Panoramica inherits Rectangle {
         transform-scale-y: self.scala;
         voce: root.voce;
         altre: root.altre;
-        armamenti: root.armamenti;
+        inerte: root.inerte;
         fuoco: root.voce-mostrata ? root.fuoco : -1;
         anello: root.anello;
         scelta(id) => { root.scelta(id); }

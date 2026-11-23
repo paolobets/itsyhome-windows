@@ -180,14 +180,14 @@ impl Ponte {
     /// Un'azione di una pagina (`azione-pagina` del pannello, ridisegno F2): (id del modulo, id
     /// dell'azione, id della riga o ""). Nella pagina Agenti la riga è l'impronta della sessione:
     /// «Apri il terminale» la porta davanti (la stessa funzione della carta), «Collega» come la
-    /// carta, «Dettagli» le schede delle API, «Apri il permesso» la Coda col permesso di quella
-    /// sessione aperto. Va chiamata solo subito dopo il gesto dell'utente.
+    /// carta, «Dettagli» le schede delle API. Il permesso di una riga non è un'azione della pagina:
+    /// lo decide il dettaglio stesso, dalla guardia di `azione-voce` (Task 7). Va chiamata solo
+    /// subito dopo il gesto dell'utente.
     pub fn azione_pagina(&self, modulo: &str, azione: &str, riga: &str) {
         match (modulo, azione) {
             ("agenti", agenti::TERMINALE) => self.claude_apri_terminale(riga),
             ("agenti", agenti::COLLEGA) => self.azione_modulo(modulo, azione),
             ("agenti", pagina_agenti::DETTAGLI) => self.claude_apri_dettagli(),
-            ("agenti", pagina_agenti::PERMESSO) => self.claude_apri_permesso(riga),
             _ => eprintln!("azione di pagina sconosciuta: {modulo} {azione}"),
         }
     }
@@ -356,12 +356,12 @@ mod test {
     }
 
     /// Le azioni della pagina Agenti (ridisegno F2, Task 6): «Apri il terminale» della riga è la
-    /// stessa funzione della carta, sulla sessione della riga; «Apri il permesso» apre la Coda sul
-    /// permesso di quella sessione, col testo intero e «Consenti» di nuovo armato (le regole M3
-    /// stanno lì); un'impronta senza permesso non apre nulla.
+    /// stessa funzione della carta, sulla sessione della riga. Dal Task 7 la riga col permesso non
+    /// ha più un'azione: il suo dettaglio è il permesso stesso (proprio quello della sua sessione,
+    /// anche con un'altra voce davanti nelle attese), col fuoco su «Nega» e «Consenti» riarmato.
     #[test]
     fn azioni_della_pagina_agenti() {
-        use crate::moduli::{agenti, pagina_agenti};
+        use crate::moduli::agenti;
         let (_spegni, ponte, _pillola, _cartella) = ponte_di_prova();
         let p = Pannello::new().expect("pannello");
         ponte.riempi(&p);
@@ -374,11 +374,8 @@ mod test {
         ponte.azione_pagina("agenti", agenti::TERMINALE, &crate::claude::id_sessione("a"));
         assert_eq!(portati_davanti_prova(), vec![catena(5)], "il terminale della riga");
 
-        // Senza permesso: «Apri il permesso» non apre nulla.
         p.set_vista("agenti".into());
-        ponte.azione_pagina("agenti", pagina_agenti::PERMESSO, &crate::claude::id_sessione("b"));
-        assert_eq!(p.get_vista().as_str(), "agenti");
-        // Un permesso di «b», dietro una voce bloccante della casa: la Coda si apre su di lui.
+        // Un permesso di «b», dietro una voce bloccante della casa.
         ponte.metti_voce(
             crate::attenzione::Voce {
                 id: "prova.casa".into(),
@@ -396,9 +393,11 @@ mod test {
         let e = EventoHook { strumento: Some("Bash".into()), riassunto: Some("npm test".into()), ..evento("b", TipoEvento::PermissionRequest) };
         ponte.claude_permesso(9, e, None, 3, Instant::now());
         let indice = crate::pannello::indice_voce(&p.get_attese(), &crate::claude::id_voce_permesso(9));
-        assert!(indice > 0, "il permesso non è la prima voce: «0» aprirebbe la voce della casa");
-        // La strada vera, da tastiera: la riga di «b» scelta, → al pulsante del dettaglio
-        // («Apri il permesso»), Invio. Il pannello è mostrato (le parti dentro `if` esistono).
+        assert!(indice > 0, "il permesso non è la prima voce: «0» mostrerebbe la voce della casa");
+        // La strada vera, da tastiera: la riga di «b» scelta, → nel permesso del dettaglio. Il
+        // pannello è mostrato (le parti dentro `if` esistono).
+        // Prima che la pagina mostri le righe: la scelta può già stare sulla riga di «b».
+        let armamenti = p.get_armamenti();
         ponte.casa().aggiorna_config(|c| c.claude.collegato = true);
         ponte.vista_claude(true);
         p.set_aperto(true);
@@ -407,23 +406,21 @@ mod test {
         p.global::<crate::Fuochi>().set_pronti(true);
         let righe = p.get_elenco_righe();
         let riga_b = (0..righe.row_count()).position(|i| righe.row_data(i).is_some_and(|r| r.id == crate::claude::id_sessione("b"))).expect("la riga di «b»");
-        assert_eq!(righe.row_data(riga_b).map(|r| r.azione_id.to_string()).as_deref(), Some(pagina_agenti::PERMESSO));
+        let r = righe.row_data(riga_b).expect("la riga");
+        assert_eq!((r.azione_id.as_str(), r.voce.to_string()), ("", crate::claude::id_voce_permesso(9)), "nessuna azione: il dettaglio è il permesso");
         p.set_elenco_fuoco(riga_b as i32);
-        let armamenti = p.get_armamenti();
         tasto(&p, slint::platform::Key::RightArrow);
-        tasto(&p, slint::platform::Key::Return);
-        assert_eq!(p.get_vista().as_str(), "coda");
-        // È proprio il permesso di «b» (il suo comando), non la voce della casa davanti a lui, e il
-        // fuoco è su «Nega».
         slint::platform::update_timers_and_animations();
-        // Il gruppo del permesso dice a Narrator il comando e la sessione (descrizione).
-        let aperto = ElementHandle::find_by_element_id(&p, "Permesso::riquadro").next().is_some();
-        assert!(aperto, "il permesso è aperto");
-        let permesso = ElementHandle::find_by_element_type_name(&p, "Permesso").next().expect("il componente");
-        let detto = permesso.accessible_description().unwrap_or_default().to_string();
+        assert_eq!(p.get_vista().as_str(), "agenti", "si resta nella pagina");
+        // È proprio il permesso di «b» (il suo comando), non la voce della casa davanti a lui, e il
+        // fuoco è su «Nega». Il gruppo del permesso dice a Narrator il comando e la sessione.
+        let permesso = ElementHandle::find_by_element_id(&p, "Permesso::riquadro").next().is_some();
+        assert!(permesso, "il permesso è nel dettaglio");
+        let gruppo = ElementHandle::find_by_element_type_name(&p, "Permesso").next().expect("il componente");
+        let detto = gruppo.accessible_description().unwrap_or_default().to_string();
         assert!(detto.starts_with("npm test\n"), "il comando di «b», non la voce della casa: {detto:?}");
         assert_eq!(etichetta_col_fuoco(&p), "Nega");
-        assert!(p.get_armamenti() > armamenti, "il permesso che si apre riarma «Consenti»");
+        assert!(p.get_armamenti() > armamenti, "la scelta arrivata sul permesso riarma «Consenti»");
     }
 
     fn tasto(p: &Pannello, k: slint::platform::Key) {

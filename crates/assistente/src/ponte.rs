@@ -2192,8 +2192,9 @@ impl Ponte {
             self.vista_coda(vista == "coda");
         }
         self.attese.borrow_mut().segna_viste();
-        // Il pannello compare: un permesso in attesa non si consente al primo istante.
-        self.claude_superficie_compare(Instant::now());
+        // Il pannello compare: un permesso in attesa non si consente al primo istante, e una guardia
+        // ancora in corso si vede.
+        self.claude_pannello_compare(p, Instant::now());
         *self.mostrato.borrow_mut() = None; // il pannello nuovo non ha ancora l'umore
         self.aggiorna_umore();
     }

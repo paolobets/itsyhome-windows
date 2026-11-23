@@ -30,9 +30,11 @@
 // In Collegamenti le frecce fra le card, ↑ dalla prima riga a «Modifica»; Invio apre la pagina.
 // Nella pagina Agenti (impianto Elenco + dettaglio, ridisegno F2) ↑/↓ fra le righe delle sessioni
 // (↑ dalla prima porta a «Dettagli» della testata, se c'è; ↓ torna), → al pulsante del dettaglio e
-// ← di nuovo alla riga; Invio sulla riga di una sessione apre il terminale, sulla riga col permesso
-// porta al pulsante del dettaglio (mai una decisione), sul pulsante lo preme; scollegato Invio
-// preme «Collega»; Backspace un livello (dettaglio → elenco → Panoramica).
+// ← di nuovo alla riga; Invio sulla riga di una sessione apre il terminale, sul pulsante lo preme;
+// la riga col permesso ha per dettaglio il permesso stesso (Task 7): → o Invio portano su «Nega»
+// (mai una decisione), lì i tasti sono quelli del permesso («Consenti» dopo il fondo del testo e
+// solo con Ctrl+Invio esatto), ← dal primo bersaglio torna alla riga; scollegato Invio preme
+// «Collega»; Backspace un livello (dettaglio → elenco → Panoramica).
 // Nella vista PC il contenuto sono il cursore del volume e, su Windows, i riquadri Wi-Fi e
 // Bluetooth e le righe «Reti Wi-Fi ›» e «Dispositivi Bluetooth ›» (M2, Task 8): Tab e Maiusc+Tab
 // passano dall'uno all'altro prima di lasciare la vista; sul cursore ←/→ ±2 punti, Home/Fine
@@ -46,11 +48,11 @@
 // zona scelta.
 import { Tema, Movimento } from "tema.slint";
 import { Occhi } from "faccia.slint";
-import { Anello, Fuoco, Fuochi } from "componenti.slint";
+import { Anello, Fuoco, Fuochi, Inerzia } from "componenti.slint";
 import { ContornoIsola, RigaAlta, Barra } from "guscio/cornice.slint";
 import { SchedaBarraUi, StatPcUi, PreferitoUi, PulsanteUi, VoceAttesaUi, UmoreUi, StanzaUi, CollegamentoUi, TipoReteUi, TintaBatteriaUi, VoceMenuUi, SchermoMenuUi, ModuloUi, TonoModuloUi, LivelloUi, RigaModuloUi, SintesiUi, StatoPaginaUi, TipoStatoPaginaUi } from "voci.slint";
 import { ImpiantoElenco } from "impianti/elenco.slint";
-import { ImpiantoElencoDettaglio } from "impianti/elenco_dettaglio.slint";
+import { ImpiantoElencoDettaglio, GeometriaElencoDettaglio } from "impianti/elenco_dettaglio.slint";
 import { TestataPagina, StatoPagina } from "guscio/pagina.slint";
 import { Permesso, Permessi } from "guscio/permesso.slint";
 import { MenuScuro } from "menu.slint";
@@ -215,6 +217,11 @@ export component Pannello inherits Window {
     // se e solo se `dal` si sposta, scritto da Rust. A ogni incremento «Nega» e «Consenti» della
     // voce che ti aspetta e del permesso aperto si vedono inerti per i 600 ms in cui Rust li ignora.
     in property <int> armamenti;
+    // L'unico `Inerzia` (ruling del Task 4, dubbio 4): fisso, fuori da ogni `if` e `for`, passa
+    // `inerte` alla voce che ti aspetta, ai due permessi (Coda e dettaglio di Agenti) e alle righe
+    // della Coda col permesso. Una sola animazione per riarmo.
+    inerzia := Inerzia { armamenti: root.armamenti; }
+    out property <bool> inerte: inerzia.inerte;
     // Dove sta adesso la voce con questo id fra le `attese` (-1: non c'è più). Lo dice Rust, che
     // tiene il modello: il permesso aperto nella Coda segue il suo id quando cambia posto, e si
     // chiude solo quando l'id sparisce (pre-flight C14).
@@ -232,7 +239,8 @@ export component Pannello inherits Window {
     callback apri-stanza(string);
     callback chiudi-stanza();
     // Un'azione di una pagina (id del modulo, id dell'azione, id della riga o ""): il terminale di
-    // una sessione, «Collega», «Dettagli», il permesso di una riga. Va chiamata solo subito dopo
+    // una sessione, «Collega», «Dettagli» (il permesso di una riga no: si decide nel dettaglio,
+    // da `azione-voce`). Va chiamata solo subito dopo
     // il gesto dell'utente; la traduce Rust (`Ponte::azione_pagina`).
     callback azione-pagina(string, string, string);
     // Un collegamento scelto (id): Rust lo apre nel browser e chiude il pannello.
@@ -466,8 +474,41 @@ export component Pannello inherits Window {
     property <bool> elenco-stato-azione: !elenco-pieno && elenco-stato.azione-testo != "";
     property <int> elenco-riga: max(0, min(elenco-fuoco, elenco-righe.length - 1));
     property <int> elenco-lato-valido: elenco-lato < 0 && elenco-testata ? -1
-        : elenco-pieno ? (elenco-lato > 0 && elenco-righe[elenco-riga].azione-testo != "" ? 1 : 0)
+        : elenco-pieno ? (elenco-lato > 0 && (agenti-con-permesso || elenco-righe[elenco-riga].azione-testo != "") ? 1 : 0)
         : elenco-stato-azione ? 0 : elenco-testata ? -1 : 0;
+    // Il permesso nel dettaglio di Agenti (ridisegno F2, Task 7): la riga scelta ha un permesso
+    // (`voce`) e al suo posto fra le attese (`attesa`) c'è proprio quella voce, per id; altrimenti
+    // il dettaglio è quello della riga (un permesso di un altro non si mostra mai). Lo mostra il
+    // `Permesso` fisso `agenti-permesso`; i tasti si decidono su questo, mai su un'azione.
+    property <bool> agenti-con-permesso: elenco-pieno && elenco-righe[elenco-riga].voce != ""
+        && attese[elenco-righe[elenco-riga].attesa].id == elenco-righe[elenco-riga].voce;
+    property <VoceAttesaUi> agenti-voce: agenti-con-permesso ? attese[elenco-righe[elenco-riga].attesa] : voce-vuota;
+    property <bool> agenti-permesso-mostrato: vista == "agenti" && agenti-con-permesso;
+    // L'id del permesso mostrato ("" nessuno). Cambia quando la scelta arriva su un permesso senza
+    // un gesto sul permesso (↑/↓, clic su una riga, la pagina che si apre, la riga col fuoco tolta
+    // che lascia il posto a un'altra, un permesso al posto di un altro): «Consenti» c'è o può
+    // comparire, quindi si riarma (Review Focus 4). Il fuoco nel permesso riparte da «Nega». Se il
+    // fuoco era nel dettaglio (`elenco-lato` 1) e il dettaglio cambia sotto di lui senza che lo si
+    // sia scelto — il permesso risolto nel terminale, un permesso al posto del terminale — torna
+    // sulla riga: mai una decisione su ciò che non si è scelto (Review Focus 1).
+    property <string> agenti-permesso-id: agenti-permesso-mostrato ? agenti-voce.id : "";
+    changed agenti-permesso-id => {
+        if (elenco-lato == 1) {
+            if (zona == Zona.contenuto) {
+                tasti.focus();
+            }
+            elenco-lato = 0;
+        }
+        agenti-permesso.entra();
+        if (agenti-permesso-id != "") {
+            root.consenti-compare();
+        }
+    }
+    // Dalla riga al permesso del dettaglio (→ o Invio): il fuoco su «Nega».
+    function entra-agenti-permesso() {
+        elenco-lato = 1;
+        agenti-permesso.entra();
+    }
     // Collegamenti: card col fuoco (-1 = «Modifica» nella testata), 3 colonne.
     property <int> fuoco-collegamento: 0;
     property <int> fuoco-collegamento-valido: min(fuoco-collegamento, collegamenti.length - 1);
@@ -744,8 +785,12 @@ export component Pannello inherits Window {
         if (!ha-zona(zona)) {
             zona = zona-dopo(zona, avanti);
         }
-        // Rientrando nella Coda il fuoco torna sulla riga, mai su un pulsante.
+        // Rientrando nella Coda il fuoco torna sulla riga, mai su un pulsante; nella pagina Agenti
+        // dal permesso del dettaglio alla sua riga (mai di nuovo su un «Consenti» lasciato).
         fuoco-coda-pulsante = -1;
+        if (agenti-con-permesso && elenco-lato == 1) {
+            elenco-lato = 0;
+        }
     }
 
     // Il primo pulsante non delicato della voce `i` («Nega»), qualunque sia l'ordine scelto dalla
@@ -1005,6 +1050,16 @@ export component Pannello inherits Window {
     // riga accanto. → dalla riga al pulsante del dettaglio, ← di nuovo alla riga. Senza elenco
     // ↑/↓ passano fra il pulsante dello stato e quello della testata.
     function freccia-agenti(k: string) {
+        if (elenco-lato-valido == 1 && agenti-con-permesso) {
+            // Nel permesso i tasti li governa il componente (↑/↓ scorrono il testo, ←/→ fra
+            // «Nega» e «Consenti»); ← dal primo bersaglio torna alla riga (`lascia`).
+            agenti-permesso.tasto(k, false);
+            return;
+        }
+        if (k == Key.RightArrow && elenco-lato-valido == 0 && agenti-con-permesso) {
+            entra-agenti-permesso();
+            return;
+        }
         if (k == Key.UpArrow) {
             if (elenco-lato-valido >= 0 && elenco-pieno && elenco-riga > 0) {
                 elenco-fuoco = elenco-riga - 1;
@@ -1028,9 +1083,10 @@ export component Pannello inherits Window {
     }
 
     // Invio nella pagina Agenti: sulla testata o sullo stato il loro pulsante; sul pulsante del
-    // dettaglio la sua azione; sulla riga di una sessione il terminale (decisione di Paolo), sulla
-    // riga col permesso (`voce` non vuota) solo il fuoco sul pulsante del dettaglio: mai una
-    // decisione (pre-flight C6, C7).
+    // dettaglio la sua azione; nel permesso del dettaglio lo governa il componente (preme solo
+    // «Nega», mai un consenso); sulla riga di una sessione il terminale (decisione di Paolo), sulla
+    // riga col permesso solo il fuoco su «Nega»: mai una decisione (pre-flight C6, C7). Una riga
+    // con una `voce` che non è quella al suo posto fra le attese non fa nulla.
     function attiva-agenti() {
         if (elenco-lato-valido < 0) {
             if (elenco-testata) {
@@ -1040,10 +1096,12 @@ export component Pannello inherits Window {
             if (elenco-stato-azione) {
                 root.azione-pagina("agenti", elenco-stato.azione-id, "");
             }
+        } else if (elenco-lato-valido == 1 && agenti-con-permesso) {
+            agenti-permesso.tasto(Key.Return, false);
         } else if (elenco-lato-valido == 1 || elenco-righe[elenco-riga].voce == "") {
             root.azione-pagina("agenti", elenco-righe[elenco-riga].azione-id, elenco-righe[elenco-riga].id);
-        } else if (elenco-righe[elenco-riga].azione-testo != "") {
-            elenco-lato = 1;
+        } else if (agenti-con-permesso) {
+            entra-agenti-permesso();
         }
     }
 
@@ -1170,6 +1228,8 @@ export component Pannello inherits Window {
             // nella voce); altrove Ctrl+Invio non fa nulla.
             if (zona == Zona.contenuto && vista == "coda" && coda-aperta-valida) {
                 coda-permesso.tasto(Key.Return, true);
+            } else if (zona == Zona.contenuto && vista == "agenti" && elenco-lato-valido == 1 && agenti-con-permesso) {
+                agenti-permesso.tasto(Key.Return, true);
             } else if (pool-attivo) {
                 attiva-panoramica(true);
             }
@@ -1440,7 +1500,7 @@ export component Pannello inherits Window {
                     }
                     voce-mostrata: root.voce-mostrata;
                     voce: root.attese[0];
-                    armamenti: root.armamenti;
+                    inerte: root.inerte;
                     altre: root.voce-mostrata ? root.attese.length - 1 : 0;
                     fuoco: pool-attivo ? root.fuoco : -1;
                     anello: da-tastiera && pool-attivo;
@@ -1545,7 +1605,7 @@ export component Pannello inherits Window {
                         width: parent.width;
                         height: parent.height;
                         righe: root.elenco-righe;
-                        attese: root.attese;
+                        dettaglio-permesso: root.agenti-con-permesso;
                         fuoco: root.elenco-riga;
                         lato: root.elenco-lato-valido;
                         con-fuoco: da-tastiera && zona == Zona.contenuto && vista == "agenti";
@@ -1588,6 +1648,7 @@ export component Pannello inherits Window {
                     // Come nelle altre viste, il fuoco chiede anche la vista (lasciandola non si
                     // accende su un elemento che sta sparendo).
                     con-fuoco: da-tastiera && zona == Zona.contenuto && vista == "coda";
+                    inerte: root.inerte;
                     // Un clic su un pulsante di una riga è un gesto; su un permesso passa dalla
                     // guardia di Rust.
                     azione(voce, pulsante, permesso) => {
@@ -1621,7 +1682,7 @@ export component Pannello inherits Window {
                         ? root.attese[root.coda-riga] : root.coda-voce-aperta;
                     pulsanti-in-alto: true;
                     con-torna: true;
-                    armamenti: root.armamenti;
+                    inerte: root.inerte;
                     con-fuoco: da-tastiera && zona == Zona.contenuto && vista == "coda" && root.coda-aperta-valida;
                     // Un clic, Narrator, Invio su «Nega» o Ctrl+Invio esatto su «Consenti»: la
                     // decisione passa dalla guardia di Rust (600 ms dopo ogni riarmo).
@@ -1643,6 +1704,41 @@ export component Pannello inherits Window {
                     // Nella Coda l'elenco non si vede: ← e ↑ in cima non escono (Esc, Backspace e
                     // «Torna all'elenco» sì).
                     lascia => { }
+                }
+
+                // Il permesso nel dettaglio della pagina Agenti (ridisegno F2, Task 7): il secondo
+                // componente del guscio fisso, mai dentro un `if` (pre-flight C1), sopra il posto
+                // che l'impianto lascia vuoto (`GeometriaElencoDettaglio`). Pulsanti in basso a
+                // destra: lontani dalle righe a sinistra e dal pulsante del dettaglio, in alto a
+                // destra, che c'era prima (nessun pulsante nasce sotto un clic precedente).
+                agenti-permesso := Permesso {
+                    visible: root.agenti-permesso-mostrato;
+                    x: GeometriaElencoDettaglio.x-dettaglio;
+                    y: GeometriaElencoDettaglio.cima;
+                    width: parent.width - self.x;
+                    height: parent.height - self.y;
+                    voce: root.agenti-voce;
+                    pulsanti-in-alto: false;
+                    con-torna: false;
+                    inerte: root.inerte;
+                    con-fuoco: da-tastiera && zona == Zona.contenuto && vista == "agenti" && root.elenco-lato-valido == 1
+                        && root.agenti-con-permesso;
+                    // Un clic, Narrator, Invio su «Nega» o Ctrl+Invio esatto su «Consenti»: la
+                    // decisione passa dalla guardia di Rust (600 ms dopo ogni riarmo).
+                    decidi(pulsante) => {
+                        if (root.agenti-permesso-mostrato) {
+                            root.azione-voce(root.agenti-voce.id, pulsante);
+                        }
+                    }
+                    // «Consenti» compare (fondo del testo visto): Rust lo arma di nuovo (pre-flight C8).
+                    visto-fondo => {
+                        if (root.agenti-permesso-mostrato) {
+                            root.consenti-compare();
+                        }
+                    }
+                    usato-mouse => { da-tastiera = false; }
+                    // ← dal primo bersaglio o ↑ dal testo in cima: di nuovo la riga.
+                    lascia => { root.elenco-lato = 0; }
                 }
 
                 if vista == "collegamenti": VistaCollegamenti {

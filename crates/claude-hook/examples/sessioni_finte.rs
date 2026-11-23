@@ -1,7 +1,13 @@
 //! Sessioni finte di Claude Code verso l'assistente, per prove e misure (M3). NON è codice di
 //! prodotto.
 //!
-//! Uso: `cargo run -p claude-hook --example sessioni_finte -- --assistente <percorso di assistente.exe> [--sessioni 3] [--secondi 60]`
+//! Uso: `cargo run -p claude-hook --example sessioni_finte -- --assistente <percorso di assistente.exe> [--sessioni 3] [--secondi 60] [--permesso]`
+//!
+//! Con `--permesso` la sessione 0 chiede anche un permesso finto (`PermissionRequest`, strumento
+//! `Bash`, comando «npm test -- checkout --watch=false», cartella «progetto-a»), in un suo thread
+//! che aspetta la decisione come l'aiutante vero e la stampa; senza risposta rinuncia da sé
+//! (`ATTESA_MASSIMA`), e a fine prova il processo esce comunque. Serve per le foto e le prove del
+//! permesso nella Coda e nel dettaglio della pagina Agenti.
 //!
 //! Parla per il tubo protetto di un'isola **di prova** (`isola-claude-<SID>-prova`) come
 //! l'aiutante (`aiutante::evento`, `barra::esegui`): verifica che il server sia l'`assistente.exe`
@@ -76,6 +82,16 @@ fn evento(sessione: &str, cartella: &str, nome: &str, strumento: Option<&str>) -
     )
 }
 
+/// Il permesso finto della sessione 0, come lo manda Claude Code all'hook.
+fn permesso(sessione: &str, cartella: &str) -> String {
+    let cwd = json_testo(&format!("C:\\finto\\{cartella}"));
+    format!(
+        "{{\"session_id\":{},\"cwd\":{cwd},\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"Bash\",\"tool_input\":{{\"command\":{}}}}}",
+        json_testo(sessione),
+        json_testo("npm test -- checkout --watch=false")
+    )
+}
+
 fn barra(sessione: &str, cartella: &str, titolo: Option<&str>, t: u64) -> String {
     let cwd = json_testo(&format!("C:\\finto\\{cartella}"));
     // Come Claude Code: `session_name` c'è solo se la sessione ha un nome.
@@ -95,8 +111,13 @@ fn main() {
     let mut assistente: Option<PathBuf> = None;
     let mut sessioni: usize = 3;
     let mut secondi: u64 = 60;
+    let mut con_permesso = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
+        if a == "--permesso" {
+            con_permesso = true;
+            continue;
+        }
         let valore = args.next();
         if a == "--assistente" {
             assistente = valore.map(PathBuf::from);
@@ -106,7 +127,7 @@ fn main() {
             ("--sessioni", Some(v)) => sessioni = (v as usize).clamp(1, CARTELLE.len()),
             ("--secondi", Some(v)) => secondi = v,
             _ => {
-                eprintln!("uso: sessioni_finte --assistente <assistente.exe> [--sessioni 3] [--secondi 60]");
+                eprintln!("uso: sessioni_finte --assistente <assistente.exe> [--sessioni 3] [--secondi 60] [--permesso]");
                 std::process::exit(2);
             }
         }
@@ -144,6 +165,18 @@ fn main() {
             "UserPromptSubmit",
             None,
         )));
+    }
+    if con_permesso {
+        // Come l'aiutante vero: manda il permesso e aspetta la decisione, in un suo thread (il
+        // resto delle sessioni va avanti). Non lo si aspetta a fine prova.
+        let d = d.clone();
+        let json = permesso(&id(0), CARTELLE[0]);
+        std::thread::spawn(move || {
+            match claude_hook::aiutante::evento(json.as_bytes(), Some(&d)) {
+                Some(decisione) => println!("decisione del permesso: {decisione}"),
+                None => println!("permesso senza decisione"),
+            }
+        });
     }
     for t in 1..=secondi {
         // Un passo al secondo, con i secondi contati dall'inizio (nessuna deriva).

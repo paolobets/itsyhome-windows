@@ -56,6 +56,11 @@ export component RigaElenco inherits Rectangle {
     // Il fuoco da tastiera è sulla riga (vero) o su un suo pulsante (indice, -1 nessuno).
     in property <bool> fuoco-riga;
     in property <int> fuoco-pulsante: -1;
+    // La guardia di Rust in corso (l'`Inerzia` del pannello): in una riga col permesso il pulsante
+    // non delicato («Nega») passa da lei e si vede inerte; «Apri» (porta solo al permesso) e i
+    // pulsanti delle altre voci (`azione`, senza guardia) no.
+    in property <bool> inerte;
+    property <bool> con-guardia: root.inerte && Permessi.chiede(root.voce);
     // Clic sulla riga o su «Apri».
     callback scelta();
     callback azione(string);
@@ -135,6 +140,7 @@ export component RigaElenco inherits Rectangle {
             // La tastiera la governa il pannello.
             tasti-propri: false;
             delicato: root.voce.pulsanti[0].delicato;
+            inerte: root.con-guardia && !root.voce.pulsanti[0].delicato;
             premuto => {
                 if (root.voce.pulsanti[0].delicato) {
                     root.scelta();
@@ -153,6 +159,7 @@ export component RigaElenco inherits Rectangle {
             chiede-fuoco: root.fuoco-pulsante == 1;
             tasti-propri: false;
             delicato: root.voce.pulsanti[1].delicato;
+            inerte: root.con-guardia && !root.voce.pulsanti[1].delicato;
             premuto => {
                 if (root.voce.pulsanti[1].delicato) {
                     root.scelta();
@@ -182,6 +189,8 @@ export component ImpiantoElenco inherits Rectangle {
     in property <bool> aperta;
     // Il fuoco da tastiera è qui (altrimenti nessun anello e nessun fuoco vero).
     in property <bool> con-fuoco;
+    // La guardia di Rust in corso: le righe col permesso la mostrano (`RigaElenco.inerte`).
+    in property <bool> inerte;
     // Un pulsante premuto col clic: (id della voce, id del pulsante, la voce è un permesso). Le
     // decisioni su un permesso il pannello le manda alla guardia di Rust (`azione-voce`).
     callback azione(string, string, bool);
@@ -233,6 +242,7 @@ export component ImpiantoElenco inherits Rectangle {
             totale: root.voci.length;
             fuoco-riga: root.con-fuoco && !root.aperta && i == root.fuoco-riga && root.fuoco-pulsante < 0;
             fuoco-pulsante: root.con-fuoco && !root.aperta && i == root.fuoco-riga ? root.fuoco-pulsante : -1;
+            inerte: root.inerte;
             scelta => { root.riga-scelta(i); }
             azione(id) => { root.azione(v.id, id, Permessi.chiede(v)); }
         }

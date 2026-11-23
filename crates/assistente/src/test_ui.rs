@@ -1412,6 +1412,56 @@ mod accessibilita {
         assert!(inerte(&p, "VoceInAttesa::nega"));
     }
 
+    /// Ruling del Task 4 (dubbio 4), fatto nel Task 7: le righe della Coda col permesso hanno il
+    /// loro «Nega» che passa dalla guardia di Rust (`azione-voce`), e si vede inerte come quello
+    /// del permesso; «Apri» (porta solo al permesso) e i pulsanti delle altre voci (`azione`, senza
+    /// guardia) restano attivi.
+    #[test]
+    fn coda_righe_col_permesso_inerti() {
+        let mut casa = voce_coda("r", "Casa non raggiungibile", LivelloUi::Attenzione, "Guarda presto · Casa", false);
+        casa.pulsanti = ModelRc::new(VecModel::from(vec![PulsanteUi { id: "riprova".into(), testo: "Riprova".into(), delicato: false }]));
+        let (p, azioni) = pannello_in_coda(ModelRc::new(VecModel::from(vec![permesso_con_dati(VOCE_P, "npm test"), casa])));
+        fine_arrivo();
+        avanza(700);
+        slint::platform::update_timers_and_animations();
+        let attivo = |p: &Pannello, nome: &str| elemento(p, nome).accessible_enabled();
+        assert_eq!((attivo(&p, "Nega"), attivo(&p, "Apri"), attivo(&p, "Riprova")), (Some(true), Some(true), Some(true)));
+        p.set_armamenti(p.get_armamenti() + 1);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(attivo(&p, "Nega"), Some(false), "«Nega» della riga inerte");
+        assert_eq!((attivo(&p, "Apri"), attivo(&p, "Riprova")), (Some(true), Some(true)), "«Apri» e «Riprova» attivi");
+        let (x, y) = centro(&elemento(&p, "Nega"));
+        clic_in(&p, x, y);
+        elemento(&p, "Nega").invoke_accessible_default_action();
+        assert!(azioni.borrow().is_empty(), "{:?}", azioni.borrow());
+        avanza(610);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(attivo(&p, "Nega"), Some(true));
+        clic_in(&p, x, y);
+        assert_eq!(*azioni.borrow(), ["nega"]);
+    }
+
+    /// Ruling del Task 4 (dubbio 4; revisione m4, m5): un solo `Inerzia`, fisso nel pannello (mai
+    /// dentro un `if` o un `for`: un'istanza nata dopo un incremento resterebbe inerte), che passa
+    /// `inerte` a voce, permessi, righe della Coda e dettaglio di Agenti. Nessun componente ne ha
+    /// uno suo.
+    #[test]
+    fn una_sola_inerzia_nel_pannello() {
+        let senza_commenti = |s: &str| s.lines().map(super::senza_commento).collect::<Vec<_>>().join("\n");
+        let pannello = senza_commenti(include_str!("../ui/pannello.slint"));
+        assert_eq!(pannello.matches("Inerzia {").count(), 1, "un solo `Inerzia` nel pannello");
+        fuori_dagli_if(include_str!("../ui/pannello.slint"), "inerzia := Inerzia", 1);
+        for (nome, sorgente) in [
+            ("permesso", include_str!("../ui/guscio/permesso.slint")),
+            ("voce", include_str!("../ui/guscio/voce.slint")),
+            ("panoramica", include_str!("../ui/guscio/panoramica.slint")),
+            ("elenco", include_str!("../ui/impianti/elenco.slint")),
+            ("elenco_dettaglio", include_str!("../ui/impianti/elenco_dettaglio.slint")),
+        ] {
+            assert!(!senza_commenti(sorgente).contains("Inerzia {"), "`Inerzia` in {nome}.slint");
+        }
+    }
+
     /// Ridisegno F2, Task 4: col movimento ridotto nulla si muove (il cambio d'aspetto è di colpo
     /// anche senza), ma i 600 ms restano: sono il tempo in cui Rust ignora i pulsanti, non un moto.
     #[test]
@@ -1683,11 +1733,20 @@ mod accessibilita {
     /// pannello, mai dentro un `if` né un `for`. Un id dentro un `if` non si raggiunge da fuori
     /// (spike del Task 3: «Cannot access id»), e un componente creato al momento dell'apertura
     /// non vedrebbe l'incremento di `armamenti` che la accompagna (l'aspetto inerte del Task 4).
+    /// Ridisegno F2, Task 7 (pre-flight C1): lo stesso per il secondo permesso fisso, quello del
+    /// dettaglio di Agenti.
     #[test]
     fn permesso_fisso_fuori_dagli_if() {
         let sorgente = include_str!("../ui/pannello.slint");
+        fuori_dagli_if(sorgente, "coda-permesso := Permesso", 2);
+        fuori_dagli_if(sorgente, "agenti-permesso := Permesso", 2);
+    }
+
+    /// L'elemento che comincia con `inizio` in `sorgente` non sta dentro un `if` né un `for`, ed è
+    /// dentro almeno `minimo` blocchi (il componente stesso è il primo).
+    fn fuori_dagli_if(sorgente: &str, inizio: &str, minimo: usize) {
         let righe: Vec<&str> = sorgente.lines().map(super::senza_commento).collect();
-        let i = righe.iter().position(|r| r.contains("coda-permesso := Permesso")).expect("il permesso della Coda");
+        let i = righe.iter().position(|r| r.contains(inizio)).unwrap_or_else(|| panic!("manca «{inizio}»"));
         let mut profondita = 0i32;
         let mut contenitori = 0;
         for r in righe[..i].iter().rev() {
@@ -1699,7 +1758,7 @@ mod accessibilita {
                 profondita = 0;
             }
         }
-        assert!(contenitori >= 2, "dentro il pannello: {contenitori} blocchi");
+        assert!(contenitori >= minimo, "«{inizio}» dentro {contenitori} blocchi");
     }
 
     /// Ridisegno F1, Task 7: → su una riga di permesso porta il fuoco vero su «Nega» (mai su
@@ -4531,28 +4590,432 @@ mod accessibilita {
         assert_eq!(p.get_vista().as_str(), "panoramica");
     }
 
-    /// La riga col permesso (fino al Task 7): Invio non decide nulla, porta il fuoco sul pulsante
-    /// del dettaglio, «Apri il permesso», che apre il permesso nella Coda (le regole M3 sono là).
-    /// Ctrl+Invio nella pagina non fa nulla.
+    /// L'id della voce del permesso nelle prove della pagina Agenti.
+    const VOCE_P: &str = "claude.permesso.1";
+
+    /// Una riga di Agenti col permesso in attesa, come la scrive `pagina_agenti::riga` dal Task 7:
+    /// nessun campo e nessuna azione (il dettaglio è il permesso), la voce `voce` al posto
+    /// `attesa` fra le attese.
+    fn riga_col_permesso(id: &str, nome: &str, voce: &str, attesa: i32) -> crate::RigaModuloUi {
+        crate::RigaModuloUi {
+            cosa: "Chiede: Comando".into(),
+            d1: Default::default(),
+            d2: Default::default(),
+            d3: Default::default(),
+            azione_id: Default::default(),
+            azione_testo: Default::default(),
+            voce: voce.into(),
+            attesa,
+            ..riga_agenti(id, nome, crate::TonoModuloUi::Aspetta)
+        }
+    }
+
+    type Registro = std::rc::Rc<std::cell::RefCell<Vec<String>>>;
+    type Riarmi = std::rc::Rc<std::cell::Cell<u32>>;
+
+    /// Un pannello sulla pagina Agenti con queste righe e queste voci in attesa, a fine arrivo e
+    /// passati 700 ms (nessuna inerzia in corso). Registra in ordine le decisioni (`azione-voce`,
+    /// «{voce} {pulsante}»), le azioni dirette («azione …») e quelle della pagina («pagina …»);
+    /// conta i `consenti-compare`, che qui come in Rust spostano la guardia (`armamenti` + 1).
+    fn agenti_col_permesso(righe: Vec<crate::RigaModuloUi>, attese: Vec<VoceAttesaUi>) -> (Pannello, Registro, Riarmi) {
+        piattaforma_di_prova();
+        let p = pannello();
+        p.set_schede(schede());
+        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        p.global::<crate::Fuochi>().set_pronti(true);
+        let eventi: Registro = Default::default();
+        let e = eventi.clone();
+        p.on_azione_voce(move |voce, id| e.borrow_mut().push(format!("{voce} {id}")));
+        let e = eventi.clone();
+        p.on_azione(move |_, id| e.borrow_mut().push(format!("azione {id}")));
+        let e = eventi.clone();
+        p.on_azione_pagina(move |modulo, azione, riga| e.borrow_mut().push(format!("pagina {modulo} {azione} {riga}").trim_end().to_owned()));
+        let riarmi: Riarmi = Default::default();
+        let r = riarmi.clone();
+        let debole = p.as_weak();
+        p.on_consenti_compare(move || {
+            r.set(r.get() + 1);
+            if let Some(p) = debole.upgrade() {
+                p.set_armamenti(p.get_armamenti() + 1);
+            }
+        });
+        p.set_attese(ModelRc::new(VecModel::from(attese)));
+        p.set_elenco_stato(pagina_piena());
+        p.set_elenco_righe(ModelRc::new(VecModel::from(righe)));
+        p.set_vista("agenti".into());
+        fine_arrivo();
+        avanza(700);
+        slint::platform::update_timers_and_animations();
+        (p, eventi, riarmi)
+    }
+
+    /// La pagina con «my-shop» che chiede «npm test -- checkout --watch=false» (corto: «Consenti»
+    /// c'è subito), scelta, e «uno» al lavoro.
+    fn agenti_permesso_corto() -> (Pannello, Registro, Riarmi) {
+        agenti_col_permesso(
+            vec![riga_col_permesso("pppp", "my-shop", VOCE_P, 0), riga_agenti("aaaa", "uno", crate::TonoModuloUi::Attivo)],
+            vec![permesso_con_dati(VOCE_P, "npm test -- checkout --watch=false")],
+        )
+    }
+
+    /// Il rettangolo della colonna del dettaglio, in coordinate della finestra.
+    const COLONNA_DETTAGLIO: (f32, f32, f32, f32) = (34.0 + 346.0, 44.0 + 48.0, 34.0 + 752.0, 44.0 + 224.0);
+
+    fn dentro_il_dettaglio(e: &ElementHandle) -> bool {
+        let (q, c) = (rettangolo(e), COLONNA_DETTAGLIO);
+        q.0 >= c.0 - 0.5 && q.2 <= c.2 + 0.5 && q.1 >= c.1 - 0.5 && q.3 <= c.3 + 0.5 && q.2 > q.0
+    }
+
+    /// Ridisegno F2, Task 7: la riga col permesso scelta mostra nel dettaglio il permesso intero,
+    /// col componente del guscio: capsula «Chiede il permesso», «TERMINALE», «$» e il comando, la
+    /// sessione, «Nega» e (testo corto) «Consenti». Nessun «Apri il permesso», nessun campo della
+    /// riga. Testo lungo: «Consenti» solo dopo il fondo. Senza dati divisi: titolo e dettaglio,
+    /// nessun campo vuoto (Review Focus 5).
     #[test]
-    fn agenti_riga_col_permesso_porta_alla_coda() {
+    fn agenti_permesso_nel_dettaglio() {
+        let (p, eventi, _) = agenti_permesso_corto();
+        for nome in ["chiesto alle 14:32", "TERMINALE", "Nega", "Consenti"] {
+            assert!(nel_dettaglio(&p, nome), "«{nome}» nel dettaglio");
+        }
+        // La capsula «Chiede il permesso» (decorativa: per Narrator lo dice il nome del gruppo).
+        assert!(dentro_il_dettaglio(&parte(&p, "capsula")), "la capsula nel dettaglio");
+        let gruppo = elemento(&p, "Ti aspetta · Agenti: my-shop chiede: Comando");
+        assert_eq!(gruppo.accessible_description().as_deref(), Some("npm test -- checkout --watch=false\nmy-shop"));
+        assert_eq!(rettangolo(&gruppo), COLONNA_DETTAGLIO, "il permesso occupa la colonna del dettaglio");
+        for id in ["dollaro", "comando", "sessione"] {
+            let e = parte(&p, id);
+            assert!(dentro_il_dettaglio(&e), "«{id}» nel dettaglio: {:?}", rettangolo(&e));
+        }
+        assert!(ElementHandle::find_by_element_type_name(&p, "DettaglioRiga").next().is_none(), "il dettaglio è il permesso");
+        assert!(!c_e(&p, "Apri il permesso") && !c_e(&p, "Apri il terminale"));
+        assert!(eventi.borrow().is_empty());
+
+        // Testo lungo: «Consenti» non c'è finché il fondo non si vede.
+        let (p, _, _) = agenti_col_permesso(
+            vec![riga_col_permesso("pppp", "my-shop", VOCE_P, 0)],
+            vec![permesso_con_dati(VOCE_P, &"alfa ".repeat(400))],
+        );
+        assert!(nel_dettaglio(&p, "Nega") && !c_e(&p, "Consenti"));
+        assert!(nel_dettaglio(&p, "Leggi fino in fondo per consentire"));
+        // Il perché sta tutto prima di «Nega» (sulla stessa riga), mai sotto.
+        let (leggi, nega) = (rettangolo(&elemento(&p, "Leggi fino in fondo per consentire")), rettangolo(&elemento(&p, "Nega")));
+        assert!(leggi.2 + 12.0 <= nega.0 + 0.5, "«Leggi fino in fondo» {leggi:?} sotto «Nega» {nega:?}");
+
+        // Senza dati divisi (una voce di prova): il titolo e il dettaglio interi, nessuna etichetta.
+        let (p, _, _) = agenti_col_permesso(
+            vec![riga_col_permesso("pppp", "my-shop", VOCE_P, 0)],
+            vec![voce_coda(VOCE_P, "Claude chiede: Comando npm test", LivelloUi::Bloccante, "Ti aspetta · Agenti", true)],
+        );
+        assert!(nel_dettaglio(&p, "Nega"));
+        assert!(!c_e(&p, "TERMINALE") && ElementHandle::find_by_element_id(&p, "Permesso::capsula").next().is_none());
+        assert!(dentro_il_dettaglio(&parte(&p, "titolo")) && dentro_il_dettaglio(&parte(&p, "dettaglio")));
+    }
+
+    /// Ridisegno F2, Task 7 (pre-flight C6): → o Invio sulla riga col permesso portano il fuoco
+    /// vero su «Nega», qualunque sia l'ordine dei pulsanti, mai una decisione; ← da «Nega» torna
+    /// alla riga. Invio su «Nega» nega (passando dalla guardia, `azione-voce`).
+    #[test]
+    fn agenti_entra_su_nega() {
         use slint::platform::Key;
-        let permesso = crate::RigaModuloUi {
-            azione_id: crate::moduli::pagina_agenti::PERMESSO.into(),
-            azione_testo: "Apri il permesso".into(),
-            voce: "claude.permesso.7".into(),
-            attesa: 0,
-            ..riga_agenti("pppp", "my-shop", crate::TonoModuloUi::Aspetta)
+        for consenti_primo in [false, true] {
+            let mut voce = permesso_con_dati(VOCE_P, "npm test");
+            if consenti_primo {
+                let v: Vec<PulsanteUi> = voce.pulsanti.iter().collect();
+                voce.pulsanti = ModelRc::new(VecModel::from(vec![v[1].clone(), v[0].clone()]));
+            }
+            let (p, eventi, _) = agenti_col_permesso(
+                vec![riga_col_permesso("pppp", "my-shop", VOCE_P, 0), riga_agenti("aaaa", "uno", crate::TonoModuloUi::Attivo)],
+                vec![voce],
+            );
+            tasto(&p, Key::RightArrow);
+            assert_eq!((p.get_elenco_lato(), etichetta_col_fuoco(&p).as_str()), (1, "Nega"), "consenti_primo={consenti_primo}: →");
+            tasto(&p, Key::LeftArrow);
+            assert_eq!((p.get_elenco_lato(), etichetta_col_fuoco(&p).as_str()), (0, "my-shop, Claude"), "← alla riga");
+            tasto(&p, Key::Return);
+            assert_eq!((p.get_elenco_lato(), etichetta_col_fuoco(&p).as_str()), (1, "Nega"), "consenti_primo={consenti_primo}: Invio");
+            assert!(eventi.borrow().is_empty(), "Invio sulla riga non decide: {:?}", eventi.borrow());
+            tasto(&p, Key::Return);
+            assert_eq!(*eventi.borrow(), [format!("{VOCE_P} nega")], "Invio su «Nega» nega");
+        }
+    }
+
+    /// La pagina col permesso corto e il fuoco vero su «Consenti» (→ «Nega», → «Consenti»).
+    fn agenti_sul_consenso() -> (Pannello, Registro, Riarmi) {
+        use slint::platform::Key;
+        let (p, eventi, riarmi) = agenti_permesso_corto();
+        tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Nega");
+        tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Consenti", "il fuoco vero è su «Consenti»");
+        assert!(eventi.borrow().is_empty());
+        (p, eventi, riarmi)
+    }
+
+    /// Ridisegno F2, Task 7: le nove combinazioni di `coda_consenti_solo_con_ctrl_invio_esatto`
+    /// col fuoco su «Consenti» nel dettaglio di Agenti: nessuna concede; solo Ctrl+Invio esatto, e
+    /// passando dalla guardia (`azione-voce`).
+    #[test]
+    fn agenti_consenti_solo_con_ctrl_invio_esatto() {
+        use slint::platform::Key;
+        let casi: [(&str, &[Key], Key); 9] = [
+            ("Invio", &[], Key::Return),
+            ("Spazio", &[], Key::Space),
+            ("Alt+Invio", &[Key::Alt], Key::Return),
+            ("Ctrl+Spazio", &[Key::Control], Key::Space),
+            ("Maiusc+Invio", &[Key::Shift], Key::Return),
+            ("Alt+Spazio", &[Key::Alt], Key::Space),
+            ("Ctrl+Alt+Invio (qui arriva come Invio semplice)", &[Key::Control, Key::Alt], Key::Return),
+            ("AltGr+Invio", &[Key::AltGr], Key::Return),
+            ("Maiusc+Ctrl+Invio", &[Key::Shift, Key::Control], Key::Return),
+        ];
+        for (nome, modificatori, t) in casi {
+            let (p, eventi, _) = agenti_sul_consenso();
+            con_modificatori(&p, modificatori, t);
+            assert!(eventi.borrow().is_empty(), "{nome} ha concesso: {:?}", eventi.borrow());
+        }
+        let (p, eventi, _) = agenti_sul_consenso();
+        con_modificatori(&p, &[Key::Control], Key::Return);
+        assert_eq!(*eventi.borrow(), [format!("{VOCE_P} consenti")], "Ctrl+Invio concede");
+    }
+
+    /// Ridisegno F2, Task 7: Invio e Spazio su «Consenti» non fanno nulla (il fuoco resta lì);
+    /// Ctrl+Invio sulla riga col permesso nemmeno. Invio concede solo un pulsante non delicato.
+    #[test]
+    fn agenti_invio_su_consenti_non_concede() {
+        use slint::platform::Key;
+        let (p, eventi, _) = agenti_sul_consenso();
+        tasto(&p, Key::Return);
+        tasto(&p, Key::Space);
+        assert!(eventi.borrow().is_empty(), "{:?}", eventi.borrow());
+        assert_eq!(etichetta_col_fuoco(&p), "Consenti");
+        tasto(&p, Key::LeftArrow);
+        tasto(&p, Key::Return);
+        assert_eq!(*eventi.borrow(), [format!("{VOCE_P} nega")]);
+        // Sulla riga Ctrl+Invio non concede e non entra.
+        let (p, eventi, _) = agenti_permesso_corto();
+        con_modificatori(&p, &[Key::Control], Key::Return);
+        assert!(eventi.borrow().is_empty());
+        assert_eq!((p.get_elenco_lato(), etichetta_col_fuoco(&p).as_str()), (0, "my-shop, Claude"));
+    }
+
+    /// Review Focus 4: la scelta arriva su un permesso senza un gesto sul permesso. ↓ su una riga
+    /// col permesso, e la riga col fuoco (sul suo «Apri il terminale») tolta che lascia il posto a
+    /// una col permesso: un `consenti-compare` per ciascuno, «Nega» e «Consenti» inerti, il fuoco
+    /// sulla riga (mai su «Consenti»), Invio non concede. Il testo è lungo, così il fondo non si
+    /// vede all'arrivo e il riarmo contato è solo quello della scelta (un testo corto ne aggiunge
+    /// un secondo, `visto-fondo`: lo prova `agenti_fondo_del_testo_riarma`).
+    #[test]
+    fn agenti_dettaglio_che_diventa_permesso_riarma() {
+        use slint::platform::Key;
+        let (p, eventi, riarmi) = agenti_col_permesso(
+            vec![
+                riga_agenti("aaaa", "uno", crate::TonoModuloUi::Attivo),
+                riga_col_permesso("pppp", "my-shop", VOCE_P, 0),
+                riga_agenti("bbbb", "due", crate::TonoModuloUi::Fatto),
+            ],
+            vec![permesso_con_dati(VOCE_P, &"alfa ".repeat(400))],
+        );
+        assert_eq!(riarmi.get(), 0, "la riga scelta non è un permesso");
+        tasto(&p, Key::DownArrow);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(riarmi.get(), 1, "↓ sul permesso riarma");
+        assert!(inerte(&p, "Permesso::nega"), "e si vede");
+        assert!(!c_e(&p, "Consenti"), "il fondo non si è visto");
+        assert_eq!(etichetta_col_fuoco(&p), "my-shop, Claude");
+        tasto(&p, Key::Return);
+        assert_eq!(etichetta_col_fuoco(&p), "Nega");
+        assert!(eventi.borrow().is_empty());
+        // Il fuoco su «Apri il terminale» di «uno»; la sua riga sparisce e il permesso prende il
+        // suo posto.
+        tasto(&p, Key::LeftArrow);
+        tasto(&p, Key::UpArrow);
+        tasto(&p, Key::RightArrow);
+        assert_eq!((p.get_elenco_lato(), etichetta_col_fuoco(&p).as_str()), (1, "Apri il terminale"));
+        avanza(700);
+        slint::platform::update_timers_and_animations();
+        let n = riarmi.get();
+        p.set_elenco_righe(ModelRc::new(VecModel::from(vec![
+            riga_col_permesso("pppp", "my-shop", VOCE_P, 0),
+            riga_agenti("bbbb", "due", crate::TonoModuloUi::Fatto),
+        ])));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(riarmi.get(), n + 1, "il permesso al posto della riga riarma");
+        assert!(inerte(&p, "Permesso::nega"));
+        assert_eq!((p.get_elenco_lato(), etichetta_col_fuoco(&p).as_str()), (0, "my-shop, Claude"), "il fuoco sulla riga");
+        tasto(&p, Key::Return);
+        assert_eq!(etichetta_col_fuoco(&p), "Nega");
+        assert!(eventi.borrow().is_empty(), "{:?}", eventi.borrow());
+    }
+
+    /// Pre-flight C8: nel dettaglio di Agenti «Consenti» che compare in fondo al testo riarma
+    /// (`visto-fondo` → `consenti-compare`), e nasce inerte; entrare nel permesso no (è lo stesso).
+    #[test]
+    fn agenti_fondo_del_testo_riarma() {
+        use slint::platform::Key;
+        let (p, eventi, riarmi) = agenti_col_permesso(
+            vec![riga_col_permesso("pppp", "my-shop", VOCE_P, 0)],
+            vec![permesso_con_dati(VOCE_P, &"alfa ".repeat(400))],
+        );
+        let n = riarmi.get();
+        assert_eq!(n, 1, "la pagina che si apre sul permesso riarma");
+        tasto(&p, Key::RightArrow);
+        tasto(&p, Key::UpArrow);
+        assert_eq!(riarmi.get(), n, "entrare non riarma");
+        for _ in 0..200 {
+            if c_e(&p, "Consenti") {
+                break;
+            }
+            tasto(&p, Key::DownArrow);
+            lascia_girare(&p);
+        }
+        assert!(c_e(&p, "Consenti"), "letto il fondo, «Consenti» c'è");
+        assert_eq!(riarmi.get(), n + 1, "«Consenti» comparso: riarmo");
+        assert!(inerte(&p, "Permesso::altro"), "e nasce inerte");
+        assert!(eventi.borrow().is_empty());
+    }
+
+    /// Fix 1 del Task 3 sulla superficie nuova (Review Focus 1): il clic che sceglie la riga col
+    /// permesso, e il secondo clic di un doppio clic, non trovano «Nega» o «Consenti» sotto: i loro
+    /// rettangoli interi stanno a 2 px da ogni bersaglio di prima (righe, comprese quella cliccata,
+    /// e «Apri il terminale»). «Apri il permesso» non c'è più. Tornando a una riga senza permesso il
+    /// suo «Apri il terminale» non nasce dove erano «Nega» e «Consenti».
+    #[test]
+    fn agenti_nessun_pulsante_nasce_sotto_il_clic() {
+        let mut righe = vec![riga_agenti("aaaa", "uno", crate::TonoModuloUi::Attivo), riga_col_permesso("pppp", "my-shop", VOCE_P, 0)];
+        righe.extend((0..14).map(|i| riga_agenti(&format!("id{i}"), &format!("s{i}"), crate::TonoModuloUi::Attivo)));
+        let (p, eventi, _) = agenti_col_permesso(righe, vec![permesso_con_dati(VOCE_P, "npm test")]);
+        let prima = bersagli_nel_corpo(&p);
+        assert!(prima.iter().any(|(n, _)| n == "Apri il terminale") && prima.iter().any(|(n, _)| n == "my-shop, Claude"), "{prima:?}");
+        let (x, y) = centro(&elemento(&p, "my-shop, Claude"));
+        clic_in(&p, x, y);
+        lascia_girare(&p);
+        clic_in(&p, x, y);
+        lascia_girare(&p);
+        fine_arrivo();
+        let dopo = bersagli_nel_corpo(&p);
+        let mut pulsanti: Vec<_> = dopo.iter().filter(|(n, _)| n == "Nega" || n == "Consenti").cloned().collect();
+        pulsanti.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+        pulsanti.sort_by(|a, b| a.0.cmp(&b.0));
+        pulsanti.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+        assert_eq!(pulsanti.len(), 2, "«Nega» e «Consenti» nel dettaglio: {pulsanti:?}");
+        for (n, r) in &pulsanti {
+            for (m, q) in prima.iter().chain(dopo.iter().filter(|(m, _)| m != "Nega" && m != "Consenti")) {
+                assert!(staccati(*r, *q, 2.0), "«{n}» {r:?} nasce sotto «{m}» {q:?}");
+            }
+        }
+        assert!(eventi.borrow().is_empty(), "il doppio clic sulla riga ha deciso: {:?}", eventi.borrow());
+        assert!(dopo.iter().chain(prima.iter()).all(|(n, _)| n != "Apri il permesso"));
+        // Di nuovo una riga senza permesso: il suo pulsante non nasce sotto i pulsanti di prima.
+        let (x, y) = centro(&elemento(&p, "uno, Claude"));
+        clic_in(&p, x, y);
+        fine_arrivo();
+        let terminale = rettangolo(&elemento(&p, "Apri il terminale"));
+        for (n, r) in &pulsanti {
+            assert!(staccati(terminale, *r, 2.0), "«Apri il terminale» {terminale:?} nasce sotto «{n}» {r:?}");
+        }
+    }
+
+    /// Review Focus 1: col fuoco su «Consenti» nel dettaglio, il permesso si risolve nel terminale
+    /// (la voce sparisce, la riga della sessione torna al lavoro): il fuoco torna sulla riga della
+    /// stessa sessione nell'elenco, il Tab seguente non si perde, e «Apri il terminale» non nasce
+    /// dov'erano «Nega» e «Consenti».
+    #[test]
+    fn permesso_risolto_col_fuoco_sul_dettaglio() {
+        use slint::platform::Key;
+        let (p, eventi, _) = agenti_sul_consenso();
+        let (nega, consenti) = (rettangolo(&elemento(&p, "Nega")), rettangolo(&elemento(&p, "Consenti")));
+        p.set_attese(ModelRc::new(VecModel::from(Vec::<VoceAttesaUi>::new())));
+        p.set_elenco_righe(ModelRc::new(VecModel::from(vec![
+            riga_agenti("pppp", "my-shop", crate::TonoModuloUi::Attivo),
+            riga_agenti("aaaa", "uno", crate::TonoModuloUi::Attivo),
+        ])));
+        slint::platform::update_timers_and_animations();
+        assert_eq!((p.get_elenco_lato(), etichetta_col_fuoco(&p).as_str()), (0, "my-shop, Claude"), "il fuoco sulla riga");
+        let terminale = rettangolo(&elemento(&p, "Apri il terminale"));
+        assert!(staccati(terminale, nega, 2.0) && staccati(terminale, consenti, 2.0), "{terminale:?} {nega:?} {consenti:?}");
+        tasto(&p, Key::Tab);
+        let dopo = etichetta_col_fuoco(&p);
+        assert!(dopo.contains("scheda"), "il Tab seguente va alle schede: {dopo:?}");
+        assert!(eventi.borrow().is_empty(), "{:?}", eventi.borrow());
+    }
+
+    /// Ridisegno F2, Task 7: la validità del permesso nel dettaglio la decide l'id. Una riga che
+    /// punta a un posto delle attese dove sta un'altra voce (o fuori dalle attese) mostra il suo
+    /// dettaglio, senza «Nega»; né →, né Invio, né Ctrl+Invio fanno nulla, e nessun riarmo.
+    #[test]
+    fn agenti_permesso_di_un_altro_non_si_mostra() {
+        use slint::platform::Key;
+        let (p, eventi, riarmi) = agenti_col_permesso(
+            vec![riga_col_permesso("pppp", "my-shop", VOCE_P, 0), riga_agenti("aaaa", "uno", crate::TonoModuloUi::Attivo)],
+            vec![permesso_con_dati("claude.permesso.2", "npm test")],
+        );
+        let prova = |p: &Pannello| {
+            assert!(!c_e(p, "Nega") && !c_e(p, "Consenti"));
+            assert!(ElementHandle::find_by_element_type_name(p, "DettaglioRiga").next().is_some(), "il dettaglio della riga");
+            assert!(nel_dettaglio(p, "my-shop"));
+            tasto(p, Key::RightArrow);
+            tasto(p, Key::Return);
+            con_modificatori(p, &[Key::Control], Key::Return);
+            assert_eq!(p.get_elenco_lato(), 0);
         };
-        let (p, eventi) = pannello_agenti(pagina_piena(), vec![permesso, riga_agenti("aaaa", "uno", crate::TonoModuloUi::Attivo)]);
-        con_modificatori(&p, &[Key::Control], Key::Return);
-        tasto(&p, Key::Return);
-        assert!(eventi.borrow().is_empty(), "Invio sulla riga del permesso non decide e non apre");
-        assert_eq!((p.get_elenco_lato(), etichetta_col_fuoco(&p).as_str()), (1, "Apri il permesso"));
-        con_modificatori(&p, &[Key::Control], Key::Return);
-        assert!(eventi.borrow().is_empty(), "Ctrl+Invio nella pagina Agenti non fa nulla");
-        tasto(&p, Key::Return);
-        assert_eq!(*eventi.borrow(), ["agenti agenti.permesso pppp"]);
+        prova(&p);
+        // Un posto fuori dalle attese.
+        p.set_elenco_righe(ModelRc::new(VecModel::from(vec![riga_col_permesso("pppp", "my-shop", VOCE_P, 5)])));
+        slint::platform::update_timers_and_animations();
+        prova(&p);
+        assert!(eventi.borrow().is_empty(), "{:?}", eventi.borrow());
+        assert_eq!(riarmi.get(), 0);
+    }
+
+    /// Mutazioni O e P del Task 3 sulla superficie nuova: prima del fondo «Nega» sta già al suo
+    /// posto e il posto di «Consenti» (all'estremità, 8 dopo «Nega») è vuoto: un clic lì non decide.
+    /// Visto il fondo «Consenti» nasce in quel posto, «Nega» non si è mosso e il clic dove era
+    /// «Nega» nega.
+    #[test]
+    fn agenti_nega_fermo_e_posto_di_consenti_vuoto() {
+        use slint::platform::Key;
+        let (p, eventi, _) = agenti_col_permesso(
+            vec![riga_col_permesso("pppp", "my-shop", VOCE_P, 0)],
+            vec![permesso_con_dati(VOCE_P, &"alfa ".repeat(400))],
+        );
+        let nega = rettangolo(&elemento(&p, "Nega"));
+        let posto = (nega.2 + 8.0, nega.1, nega.2 + 8.0 + (nega.2 - nega.0), nega.3);
+        assert!((posto.2 - COLONNA_DETTAGLIO.2).abs() < 0.5, "il posto di «Consenti» all'estremità: {posto:?}");
+        assert!(!c_e(&p, "Consenti"));
+        let (cx, cy) = ((posto.0 + posto.2) / 2.0, (posto.1 + posto.3) / 2.0);
+        clic_in(&p, cx, cy);
+        clic_in(&p, cx, cy);
+        assert!(eventi.borrow().is_empty(), "il posto vuoto di «Consenti» ha deciso: {:?}", eventi.borrow());
+        tasto(&p, Key::RightArrow);
+        tasto(&p, Key::UpArrow);
+        for _ in 0..200 {
+            if c_e(&p, "Consenti") {
+                break;
+            }
+            tasto(&p, Key::DownArrow);
+            lascia_girare(&p);
+        }
+        let consenti = rettangolo(&elemento(&p, "Consenti"));
+        assert_eq!(rettangolo(&elemento(&p, "Nega")), nega, "«Nega» non si è mosso");
+        assert!((consenti.0 - posto.0).abs() < 0.5 && (consenti.2 - posto.2).abs() < 0.5, "«Consenti» nel suo posto: {consenti:?} {posto:?}");
+        avanza(700);
+        slint::platform::update_timers_and_animations();
+        clic_in(&p, (nega.0 + nega.2) / 2.0, (nega.1 + nega.3) / 2.0);
+        assert_eq!(*eventi.borrow(), [format!("{VOCE_P} nega")]);
+    }
+
+    /// Revisione del Task 4, m3: «Nega» è inerte nell'istante stesso dell'incremento, senza un giro
+    /// del ciclo d'eventi in mezzo (nessun `dispatch_event`, nessun `update_timers_and_animations`):
+    /// non aspetta il `changed` dell'`Inerzia`.
+    #[test]
+    fn inerte_nell_istante_dell_incremento() {
+        let (p, _, _) = agenti_permesso_corto();
+        let nega = ElementHandle::find_by_element_id(&p, "Permesso::nega").next().expect("«Nega»");
+        assert_eq!(nega.accessible_enabled(), Some(true));
+        assert!(!p.get_inerte());
+        p.set_armamenti(p.get_armamenti() + 1);
+        assert!(p.get_inerte(), "il pannello inerte subito");
+        assert_eq!(nega.accessible_enabled(), Some(false), "«Nega» inerte subito");
     }
 
     /// RC-57: «Apre l'ultimo terminale usato» lo dice il dettaglio della riga che ripiega; senza

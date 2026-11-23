@@ -16,9 +16,6 @@ use gestione_protocollo::testo_pulito;
 
 /// L'azione «Dettagli» della sintesi: la spesa API nel dettaglio (solo con la chiave).
 pub const DETTAGLI: &str = "agenti.dettagli";
-/// L'azione «Apri il permesso» della riga col permesso (fino al Task 7: poi il dettaglio è il
-/// permesso stesso).
-pub const PERMESSO: &str = "agenti.permesso";
 
 /// Il fornitore, come parola (mai come colore).
 const FORNITORE: &str = "Claude";
@@ -47,10 +44,9 @@ pub fn riga(r: &RigaSessione, permesso: Option<(&str, i32, &DatiPermesso)>, ripi
     let vuoto = CampoDettaglioUi::default;
     let terminale = (TERMINALE, "Apri il terminale");
     let (tono, cosa, valore, [d1, d2, d3], (azione_id, azione_testo)) = match permesso {
-        // Il dettaglio della riga col permesso è il `Permesso` stesso: nessun campo.
-        Some((_, _, d)) => {
-            (Tono::Aspetta, format!("Chiede: {}", d.strumento), "", [vuoto(), vuoto(), vuoto()], (PERMESSO, "Apri il permesso"))
-        }
+        // Il dettaglio della riga col permesso è il `Permesso` stesso (ridisegno F2, Task 7): nessun
+        // campo e nessuna azione; → o Invio sulla riga portano il fuoco su «Nega».
+        Some((_, _, d)) => (Tono::Aspetta, format!("Chiede: {}", d.strumento), "", [vuoto(), vuoto(), vuoto()], ("", "")),
         None => match r.stato {
             Stato::Lavora => (
                 Tono::Attivo,
@@ -241,7 +237,7 @@ mod test {
         let d = dati();
         let casi = [
             (riga(&sessione(Stato::TiAspetta, false), Some(("claude.permesso.7", 0, &d)), false, false),
-                (TonoModuloUi::Aspetta, "Aspetta", "Chiede: Comando", "", PERMESSO, "Apri il permesso")),
+                (TonoModuloUi::Aspetta, "Aspetta", "Chiede: Comando", "", "", "")),
             (riga(&sessione(Stato::Lavora, false), None, false, false),
                 (TonoModuloUi::Attivo, "Al lavoro", "Modifica", "3:12", TERMINALE, "Apri il terminale")),
             (riga(&sessione(Stato::TiAspetta, false), None, false, false),
@@ -302,7 +298,8 @@ mod test {
         assert_eq!((r.tono, r.cosa.as_str()), (TonoModuloUi::Aspetta, "Chiede: Comando"));
         // Anche una sessione che lavora (il permesso arriva prima del suo stato) è un permesso.
         let r = riga(&sessione(Stato::Lavora, false), Some(("claude.permesso.8", 0, &d)), false, false);
-        assert_eq!((r.tono, r.valore.as_str(), r.azione_id.as_str()), (TonoModuloUi::Aspetta, "", PERMESSO));
+        // Nessuna azione (Task 7): il dettaglio della riga è il permesso stesso.
+        assert_eq!((r.tono, r.valore.as_str(), r.azione_id.as_str(), r.azione_testo.as_str()), (TonoModuloUi::Aspetta, "", "", ""));
         // Senza permesso: nessuna voce, indice -1.
         let r = riga(&sessione(Stato::TiAspetta, false), None, false, false);
         assert_eq!((r.voce.as_str(), r.attesa), ("", -1));
