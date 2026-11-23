@@ -295,6 +295,8 @@ fn contrasti_dei_token() {
         }
     }
     verifica("bordo-ctl", "g1", 3.0);
+    // Ridisegno F2, Task 4: il testo di un pulsante inerte (tenue sul fondo neutro, g3) si legge.
+    verifica("testo-tenue", "g3", 4.5);
     verifica("testo-su-primario", "primario", 4.5);
     assert!(sotto.is_empty(), "contrasti sotto soglia:\n{}", sotto.join("\n"));
 }
@@ -1283,6 +1285,151 @@ mod accessibilita {
         assert_eq!(*azioni.borrow(), ["nega", "nega", "consenti", "nega", "nega"]);
     }
 
+    /// Ridisegno F2, Task 4: il pulsante `id` del componente (`Permesso::nega`,
+    /// `VoceInAttesa::altro`…) è inerte per Narrator (`accessible-enabled` falso) o attivo.
+    fn inerte(p: &Pannello, id: &str) -> bool {
+        let e = ElementHandle::find_by_element_id(p, id).next().unwrap_or_else(|| panic!("nessun «{id}»"));
+        match e.accessible_enabled() {
+            Some(attivo) => !attivo,
+            None => panic!("«{id}» senza accessible-enabled"),
+        }
+    }
+
+    /// Un clic al centro del pulsante `id` e un'azione predefinita di Narrator.
+    fn premi_in_ogni_modo(p: &Pannello, id: &str) {
+        let e = ElementHandle::find_by_element_id(p, id).next().unwrap_or_else(|| panic!("nessun «{id}»"));
+        let (x, y) = centro(&e);
+        clic_in(p, x, y);
+        e.invoke_accessible_default_action();
+    }
+
+    /// Un permesso aperto nella Coda («npm test»: «Consenti» c'è subito), passati i suoi 600 ms.
+    fn coda_col_permesso_aperto() -> (Pannello, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
+        use slint::platform::Key;
+        let (p, azioni) = pannello_in_coda(ModelRc::new(VecModel::from(vec![permesso_con_dati("claude.permesso.1", "npm test")])));
+        tasto(&p, Key::Return);
+        lascia_girare(&p);
+        avanza(700);
+        slint::platform::update_timers_and_animations();
+        assert!(permesso_aperto(&p));
+        (p, azioni)
+    }
+
+    /// Ridisegno F2, Task 4 (F1 m2: «Nega» muto senza segno): a ogni riarmo (`armamenti` + 1)
+    /// «Nega» e «Consenti» del permesso aperto sono inerti per 600 ms — Narrator li sente spenti,
+    /// clic e Narrator non producono eventi —, poi tornano attivi e il clic decide.
+    #[test]
+    fn permesso_inerte_per_600_ms() {
+        let (p, azioni) = coda_col_permesso_aperto();
+        assert!(!inerte(&p, "Permesso::nega") && !inerte(&p, "Permesso::altro"), "armato: attivi");
+        p.set_armamenti(p.get_armamenti() + 1);
+        slint::platform::update_timers_and_animations();
+        assert!(inerte(&p, "Permesso::nega") && inerte(&p, "Permesso::altro"), "riarmato: inerti");
+        premi_in_ogni_modo(&p, "Permesso::nega");
+        premi_in_ogni_modo(&p, "Permesso::altro");
+        assert!(azioni.borrow().is_empty(), "inerti, eppure: {:?}", azioni.borrow());
+        avanza(590);
+        slint::platform::update_timers_and_animations();
+        assert!(inerte(&p, "Permesso::nega"), "a 590 ms ancora inerte");
+        avanza(20);
+        slint::platform::update_timers_and_animations();
+        assert!(!inerte(&p, "Permesso::nega") && !inerte(&p, "Permesso::altro"), "dopo 600 ms attivi");
+        let (x, y) = centro(&parte(&p, "nega"));
+        clic_in(&p, x, y);
+        assert_eq!(*azioni.borrow(), ["nega"], "attivo, il clic decide");
+        // Un riarmo durante l'inerzia la fa ripartire da lì (come `dal`).
+        p.set_armamenti(p.get_armamenti() + 1);
+        slint::platform::update_timers_and_animations();
+        avanza(400);
+        slint::platform::update_timers_and_animations();
+        p.set_armamenti(p.get_armamenti() + 1);
+        slint::platform::update_timers_and_animations();
+        avanza(400);
+        slint::platform::update_timers_and_animations();
+        assert!(inerte(&p, "Permesso::altro"), "400 ms dal secondo riarmo: ancora inerte");
+        avanza(210);
+        slint::platform::update_timers_and_animations();
+        assert!(!inerte(&p, "Permesso::altro"));
+    }
+
+    /// Ridisegno F2, Task 4 (pre-flight C2): sulla strada vera l'apertura del permesso chiama
+    /// `consenti-compare`, Rust sposta `dal` e conta un armamento (qui uno stub che fa lo stesso):
+    /// «Nega» e «Consenti» nascono già inerti, senza un istante attivi mentre Rust li ignora.
+    #[test]
+    fn permesso_inerte_all_apertura() {
+        use slint::platform::Key;
+        let (p, azioni) = pannello_in_coda(ModelRc::new(VecModel::from(vec![permesso_con_dati("claude.permesso.1", "npm test")])));
+        let debole = p.as_weak();
+        p.on_consenti_compare(move || {
+            if let Some(p) = debole.upgrade() {
+                p.set_armamenti(p.get_armamenti() + 1);
+            }
+        });
+        avanza(700);
+        slint::platform::update_timers_and_animations();
+        tasto(&p, Key::Return);
+        assert!(p.get_armamenti() > 0, "l'apertura ha chiesto il riarmo");
+        assert!(inerte(&p, "Permesso::nega"), "«Nega» inerte appena aperto, prima di un fotogramma");
+        lascia_girare(&p);
+        assert!(inerte(&p, "Permesso::nega") && inerte(&p, "Permesso::altro"), "aperto: inerti");
+        premi_in_ogni_modo(&p, "Permesso::nega");
+        premi_in_ogni_modo(&p, "Permesso::altro");
+        assert!(azioni.borrow().is_empty(), "{:?}", azioni.borrow());
+        avanza(610);
+        slint::platform::update_timers_and_animations();
+        assert!(!inerte(&p, "Permesso::nega") && !inerte(&p, "Permesso::altro"));
+        let (x, y) = centro(&parte(&p, "nega"));
+        clic_in(&p, x, y);
+        assert_eq!(*azioni.borrow(), ["nega"]);
+    }
+
+    /// Ridisegno F2, Task 4: lo stesso sulla voce che ti aspetta della Panoramica (F1 Task 8 m2).
+    /// «Apri» non passa dalla guardia (porta solo alla Coda): resta attivo, mai nascosto.
+    #[test]
+    fn voce_inerte_per_600_ms() {
+        let (p, azioni) = panoramica_con_voci(ModelRc::new(VecModel::from(vec![permesso_corto()])));
+        avanza(700);
+        slint::platform::update_timers_and_animations();
+        assert!(!inerte(&p, "VoceInAttesa::nega") && !inerte(&p, "VoceInAttesa::altro"));
+        p.set_armamenti(p.get_armamenti() + 1);
+        slint::platform::update_timers_and_animations();
+        assert!(inerte(&p, "VoceInAttesa::nega") && inerte(&p, "VoceInAttesa::altro"), "riarmata: inerti");
+        premi_in_ogni_modo(&p, "VoceInAttesa::nega");
+        premi_in_ogni_modo(&p, "VoceInAttesa::altro");
+        assert!(azioni.borrow().is_empty(), "{:?}", azioni.borrow());
+        avanza(610);
+        slint::platform::update_timers_and_animations();
+        assert!(!inerte(&p, "VoceInAttesa::nega") && !inerte(&p, "VoceInAttesa::altro"));
+        let e = ElementHandle::find_by_element_id(&p, "VoceInAttesa::nega").next().unwrap();
+        let (x, y) = centro(&e);
+        clic_in(&p, x, y);
+        assert_eq!(*azioni.borrow(), ["nega"]);
+        // Testo lungo: il secondo pulsante è «Apri», che non decide: non diventa inerte.
+        let (p, _) = panoramica_con_voci(ModelRc::new(VecModel::from(vec![permesso_lungo(2)])));
+        p.set_armamenti(p.get_armamenti() + 1);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(elemento(&p, "Apri").accessible_enabled(), Some(true), "«Apri» resta attivo");
+        assert!(inerte(&p, "VoceInAttesa::nega"));
+    }
+
+    /// Ridisegno F2, Task 4: col movimento ridotto nulla si muove (il cambio d'aspetto è di colpo
+    /// anche senza), ma i 600 ms restano: sono il tempo in cui Rust ignora i pulsanti, non un moto.
+    #[test]
+    fn inerte_anche_col_movimento_ridotto() {
+        let (p, azioni) = coda_col_permesso_aperto();
+        p.global::<crate::Movimento>().set_ridotto(true);
+        p.set_armamenti(p.get_armamenti() + 1);
+        slint::platform::update_timers_and_animations();
+        avanza(300);
+        slint::platform::update_timers_and_animations();
+        assert!(inerte(&p, "Permesso::nega") && inerte(&p, "Permesso::altro"), "dopo 300 ms ancora inerti");
+        premi_in_ogni_modo(&p, "Permesso::nega");
+        assert!(azioni.borrow().is_empty(), "{:?}", azioni.borrow());
+        avanza(310);
+        slint::platform::update_timers_and_animations();
+        assert!(!inerte(&p, "Permesso::nega"), "dopo 600 ms attivo");
+    }
+
     /// Il rettangolo di un elemento in coordinate della finestra: (sinistra, alto, destra, basso).
     fn rettangolo(e: &ElementHandle) -> (f32, f32, f32, f32) {
         let (a, l) = (e.absolute_position(), e.size());
@@ -1436,6 +1583,45 @@ mod accessibilita {
         let (nega, consenti) = (colore("Nega"), colore("Consenti"));
         assert!(vicino(nega), "«Nega» disegnato {nega:?}, atteso il neutro {atteso:?}");
         assert!(vicino(consenti), "«Consenti» disegnato {consenti:?}, atteso il neutro {atteso:?}");
+    }
+
+    /// Ridisegno F2, Task 4: l'inerzia si vede nel disegno vero (skia senza schermo). Il punto più
+    /// chiaro dentro «Nega» e «Consenti» è il testo: attivi è bianco (`testo`), inerti non va oltre
+    /// il tenue (`testo-tenue`) e il fondo resta il neutro.
+    #[test]
+    fn inerte_disegnato_tenue() {
+        use slint::platform::Key;
+        super::piattaforma_che_disegna();
+        let (p, _) = pannello_in_coda(ModelRc::new(VecModel::from(vec![permesso_con_dati("claude.permesso.1", "npm test")])));
+        fine_arrivo();
+        tasto(&p, Key::Return);
+        lascia_girare(&p);
+        fine_arrivo();
+        let piu_chiaro = |p: &Pannello, nome: &str| {
+            let foto = p.window().take_snapshot().expect("il disegno del pannello");
+            let scala = foto.width() as f32 / p.window().size().to_logical(p.window().scale_factor()).width;
+            let (x0, y0, x1, y1) = rettangolo(&elemento(p, nome));
+            let mut massimo = 0u8;
+            for y in ((y0 + 2.0) * scala) as usize..((y1 - 2.0) * scala) as usize {
+                for x in ((x0 + 2.0) * scala) as usize..((x1 - 2.0) * scala) as usize {
+                    massimo = massimo.max(foto.as_slice()[y * foto.width() as usize + x].r);
+                }
+            }
+            massimo
+        };
+        let tenue = u8::from_str_radix(&super::colore_del_token(&super::tema_slint(), "testo-tenue")[1..3], 16).unwrap();
+        for nome in ["Nega", "Consenti"] {
+            assert!(piu_chiaro(&p, nome) > tenue + 40, "«{nome}» attivo: testo bianco");
+        }
+        p.set_armamenti(p.get_armamenti() + 1);
+        slint::platform::update_timers_and_animations();
+        for nome in ["Nega", "Consenti"] {
+            let c = piu_chiaro(&p, nome);
+            assert!(c <= tenue + 2, "«{nome}» inerte disegnato fino a {c}, atteso al più il tenue {tenue}");
+        }
+        avanza(610);
+        slint::platform::update_timers_and_animations();
+        assert!(piu_chiaro(&p, "Nega") > tenue + 40, "di nuovo attivo");
     }
 
     /// Fix 1 del Task 3 (revisione I2b, minor 1): letto A fino in fondo, un altro permesso B

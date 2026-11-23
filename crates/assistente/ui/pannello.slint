@@ -212,6 +212,10 @@ export component Pannello inherits Window {
     // che ti aspetta compare nella Panoramica: Rust riarma «Consenti» per 600 ms
     // (`claude_superficie_compare`).
     callback consenti-compare();
+    // I riarmi della guardia di Rust a pannello aperto (ridisegno F2, Task 4; pre-flight C5): +1
+    // se e solo se `dal` si sposta, scritto da Rust. A ogni incremento «Nega» e «Consenti» della
+    // voce che ti aspetta e del permesso aperto si vedono inerti per i 600 ms in cui Rust li ignora.
+    in property <int> armamenti;
     // Dove sta adesso la voce con questo id fra le `attese` (-1: non c'è più). Lo dice Rust, che
     // tiene il modello: il permesso aperto nella Coda segue il suo id quando cambia posto, e si
     // chiude solo quando l'id sparisce (pre-flight C14).
@@ -1405,6 +1409,7 @@ export component Pannello inherits Window {
                     }
                     voce-mostrata: root.voce-mostrata;
                     voce: root.attese[0];
+                    armamenti: root.armamenti;
                     altre: root.voce-mostrata ? root.attese.length - 1 : 0;
                     fuoco: pool-attivo ? root.fuoco : -1;
                     anello: da-tastiera && pool-attivo;
@@ -1551,6 +1556,7 @@ export component Pannello inherits Window {
                         ? root.attese[root.coda-riga] : root.coda-voce-aperta;
                     pulsanti-in-alto: true;
                     con-torna: true;
+                    armamenti: root.armamenti;
                     con-fuoco: da-tastiera && zona == Zona.contenuto && vista == "coda" && root.coda-aperta-valida;
                     // Un clic, Narrator, Invio su «Nega» o Ctrl+Invio esatto su «Consenti»: la
                     // decisione passa dalla guardia di Rust (600 ms dopo ogni riarmo).

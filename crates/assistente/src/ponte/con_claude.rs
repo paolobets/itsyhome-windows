@@ -843,18 +843,32 @@ impl Ponte {
                     .collect::<Vec<_>>(),
             )
         };
-        let mut arm = self.claude_armamento.borrow_mut();
-        // Un permesso nuovo o spostato (una sua coppia posto-id che prima non c'era); toglierne uno
-        // senza spostare gli altri non riarma.
-        let spostati = permessi.iter().any(|p| !arm.permessi.contains(p));
-        if arm.pillola != pillola || arm.pannello != pannello || spostati {
-            if (pillola.is_some() && arm.pillola != pillola) || (pannello.is_some() && arm.pannello != pannello) || spostati {
-                arm.dal.set(ora + ARMAMENTO_CONSENTI);
-            }
+        let riarma = {
+            let mut arm = self.claude_armamento.borrow_mut();
+            // Un permesso nuovo o spostato (una sua coppia posto-id che prima non c'era); toglierne
+            // uno senza spostare gli altri non riarma.
+            let spostati = permessi.iter().any(|p| !arm.permessi.contains(p));
+            let riarma = (pillola.is_some() && arm.pillola != pillola) || (pannello.is_some() && arm.pannello != pannello) || spostati;
             arm.pillola = pillola;
             arm.pannello = pannello;
+            arm.permessi = permessi;
+            riarma
+        };
+        if riarma {
+            self.sposta_armamento(ora);
         }
-        arm.permessi = permessi;
+    }
+
+    /// L'unica strada che sposta `dal`: la guardia ignora «Consenti» (e, in `azione_voce`, anche
+    /// «Nega») fino a `ora + ARMAMENTO_CONSENTI`. A pannello aperto conta un armamento
+    /// (`Pannello.armamenti`, ridisegno F2 Task 4; pre-flight C5: +1 se e solo se `dal` si sposta a
+    /// pannello aperto), e il pannello mostra i pulsanti inerti per gli stessi 600 ms. Il pannello
+    /// non decide la guardia: la segue.
+    fn sposta_armamento(&self, ora: Instant) {
+        self.claude_armamento.borrow().dal.set(ora + ARMAMENTO_CONSENTI);
+        if let Some(p) = self.pannello.borrow().upgrade() {
+            p.set_armamenti(p.get_armamenti().wrapping_add(1));
+        }
     }
 
     /// Un pulsante della voce che ti aspetta, nella Panoramica (ridisegno F1, Task 8): nei 600 ms
@@ -872,7 +886,7 @@ impl Ponte {
     /// permesso in attesa «Consenti» si arma fra `ARMAMENTO_CONSENTI`.
     pub(super) fn claude_superficie_compare(&self, ora: Instant) {
         if !self.claude_permessi.borrow().is_empty() {
-            self.claude_armamento.borrow().dal.set(ora + ARMAMENTO_CONSENTI);
+            self.sposta_armamento(ora);
         }
     }
 
@@ -2427,6 +2441,62 @@ mod test {
         let prima = p.claude_armamento.borrow().dal.get();
         p.ridisegna_pillola();
         assert_eq!(p.claude_armamento.borrow().dal.get(), prima);
+    }
+
+    /// Ridisegno F2, Task 4 (pre-flight C5): `Pannello.armamenti` cresce di uno **se e solo se**
+    /// `dal` si sposta a pannello aperto, perché è lì che la guardia di `azione_voce` ignora anche
+    /// «Nega» e il pannello deve dirlo. Con un permesso in attesa la superficie che compare e il
+    /// permesso che cambia posto contano uno ciascuno; senza permessi la superficie che compare
+    /// non conta, il primo bloccante che cambia sì; nulla che non sposti `dal`; nulla a pannello
+    /// chiuso. Due spostamenti di fila (consenti-compare più `claude_riarma`, nota del Task 1)
+    /// contano due: l'aspetto riparte dall'ultimo, come `dal`.
+    #[test]
+    fn armamenti_contano_ogni_riarmo() {
+        // `Inerzia` (ui/componenti.slint) dura 600 ms: i due tempi vanno cambiati insieme.
+        assert_eq!(ARMAMENTO_CONSENTI, Duration::from_millis(600));
+        let (_s, p, _pillola, _d) = ponte_di_prova();
+        let pannello = crate::Pannello::new().unwrap();
+        p.pannello_aperto(&pannello);
+        let prima = pannello.get_armamenti();
+        // Senza permessi: la superficie che compare non sposta `dal`, nessun conteggio.
+        p.claude_superficie_compare(Instant::now());
+        assert_eq!(pannello.get_armamenti(), prima, "senza permessi nessun cambio");
+        // Il primo bloccante (non un permesso) cambia: `dal` si sposta, «Nega» è ignorato: +1.
+        armato(&p);
+        p.metti_voce(voce_di_prova("casa.blocco", Fonte::Casa, Livello::Bloccante, false), false);
+        assert!(p.claude_armamento.borrow().dal.get() > Instant::now());
+        assert_eq!(pannello.get_armamenti(), prima + 1, "il bloccante nuovo arma");
+        p.togli_voce("casa.blocco");
+        // Tre permessi; poi la superficie che compare: +1.
+        let _r1 = permesso(&p, 1, "a");
+        let _r2 = permesso(&p, 2, "b");
+        let _r3 = permesso(&p, 3, "c");
+        armato(&p);
+        let n = pannello.get_armamenti();
+        p.claude_superficie_compare(Instant::now());
+        assert_eq!(pannello.get_armamenti(), n + 1, "la superficie che compare arma");
+        // Il permesso di mezzo tolto: quello sotto sale, `claude_riarma` sposta `dal`: +1.
+        armato(&p);
+        p.togli_voce(&voce_di(2));
+        assert!(p.claude_armamento.borrow().dal.get() > Instant::now());
+        assert_eq!(pannello.get_armamenti(), n + 2, "il permesso spostato arma");
+        // Una voce che non sposta nessun permesso né la prima: `dal` fermo, nessun conteggio.
+        armato(&p);
+        p.metti_voce(voce_di_prova("casa.info", Fonte::Casa, Livello::Informazione, false), false);
+        p.togli_voce("casa.info");
+        assert!(p.claude_armamento.borrow().dal.get() <= Instant::now());
+        assert_eq!(pannello.get_armamenti(), n + 2, "dal fermo: nessun conteggio");
+        // Due spostamenti di fila contano due.
+        p.claude_superficie_compare(Instant::now());
+        p.claude_superficie_compare(Instant::now());
+        assert_eq!(pannello.get_armamenti(), n + 4);
+        // A pannello chiuso `dal` si sposta ancora (la pillola), ma nessuno scrive sul pannello.
+        p.pannello_chiuso();
+        let chiuso = pannello.get_armamenti();
+        p.claude_superficie_compare(Instant::now());
+        p.togli_voce(&voce_di(1));
+        assert!(p.claude_armamento.borrow().dal.get() > Instant::now());
+        assert_eq!(pannello.get_armamenti(), chiuso, "nessuna scrittura a pannello chiuso");
     }
 
     #[test]

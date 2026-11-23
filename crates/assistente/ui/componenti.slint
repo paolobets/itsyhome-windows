@@ -32,6 +32,29 @@ export component Fuoco inherits FocusScope {
     focus-on-tab-navigation: false;
 }
 
+// L'aspetto inerte durante l'armamento (ridisegno F2, Task 4; pre-flight C21: un solo componente
+// per la voce che ti aspetta e per il permesso). `armamenti` è il conteggio dei riarmi della
+// guardia di Rust (`Pannello.armamenti`, +1 a ogni spostamento di `dal`); `inerte` è vero dal
+// momento dell'incremento per i 600 ms di `ARMAMENTO_CONSENTI`, poi falso.
+//
+// Nessun timer: `corsa` insegue `armamenti` con un'animazione lineare di 600 ms, avviata una volta
+// sola dal `changed` a ogni incremento e poi ferma (nessuna animazione continua). `inerte` è vero
+// finché `corsa` non l'ha raggiunto: subito, nello stesso istante dell'incremento (il confronto
+// non aspetta il `changed`), e fino alla fine dell'animazione; un riarmo durante l'inerzia la fa
+// ripartire da lì, come `dal`. `corsa` non si disegna: è un orologio, non un moto, e per questo
+// dura 600 ms anche col movimento ridotto (ciò che si vede cambia di colpo, in entrambi i casi).
+// La guardia resta in Rust: questo è solo l'aspetto, che segue `dal` e non lo anticipa mai (al
+// più finisce un fotogramma dopo).
+export component Inerzia {
+    in property <int> armamenti;
+    property <float> corsa;
+    animate corsa { duration: 600ms; easing: linear; }
+    changed armamenti => {
+        corsa = armamenti;
+    }
+    out property <bool> inerte: corsa < armamenti;
+}
+
 // Tipo di un pulsante: neutro (grigio pieno), azione (bianco con testo nero), pericolo (rosa).
 export enum TipoPulsante { neutro, azione, pericolo }
 
@@ -105,6 +128,9 @@ export component Pulsante inherits FocusScope {
     // Tab può portargli il fuoco. Falso nella pillola, dove nessun pulsante deve avere il fuoco
     // né l'anello (lì il fuoco lo tiene la `tastiera` della pillola: vedi pillola.slint).
     in property <bool> focalizzabile: true;
+    // Inerte durante l'armamento (`Inerzia`, Task 4): testo tenue sul fondo neutro, niente
+    // passaggio né puntatore a mano, nessun clic, nessuna azione di Narrator, che lo sente spento.
+    in property <bool> inerte;
     property <bool> vuole-fuoco: chiede-fuoco && Fuochi.pronti;
     callback premuto();
     // Ha appena preso il fuoco (Tab): chi lo contiene lo porta in vista.
@@ -131,9 +157,14 @@ export component Pulsante inherits FocusScope {
     focus-on-tab-navigation: focalizzabile;
     accessible-role: button;
     accessible-label: testo;
-    accessible-action-default => { root.premuto(); }
+    accessible-enabled: !inerte;
+    accessible-action-default => {
+        if (!root.inerte) {
+            root.premuto();
+        }
+    }
     key-pressed(evento) => {
-        if (!tasti-propri || delicato) {
+        if (!tasti-propri || delicato || inerte) {
             return reject;
         }
         if (evento.modifiers.alt || evento.modifiers.control || evento.modifiers.meta || evento.modifiers.shift) {
@@ -146,15 +177,19 @@ export component Pulsante inherits FocusScope {
         return reject;
     }
 
+    // Inerte: sempre neutro, senza passaggio (un primario bianco non sembra mai spento).
+    property <TipoPulsante> tipo-visto: inerte ? TipoPulsante.neutro : tipo;
+    property <bool> sopra: area.has-hover && !inerte;
+
     fondo := Rectangle {
         border-radius: raggio;
-        border-width: tipo == TipoPulsante.neutro ? 0px : 1px;
-        border-color: tipo == TipoPulsante.azione ? Tema.azione-bordo : Tema.pericolo-bordo;
-        background: tipo == TipoPulsante.azione
-            ? (area.has-hover ? Tema.azione-sopra : Tema.azione-fondo)
-            : tipo == TipoPulsante.pericolo
-                ? (area.has-hover ? Tema.pericolo-sopra : Tema.pericolo-fondo)
-                : (area.has-hover ? Tema.neutro-sopra : Tema.neutro-fondo);
+        border-width: tipo-visto == TipoPulsante.neutro ? 0px : 1px;
+        border-color: tipo-visto == TipoPulsante.azione ? Tema.azione-bordo : Tema.pericolo-bordo;
+        background: tipo-visto == TipoPulsante.azione
+            ? (sopra ? Tema.azione-sopra : Tema.azione-fondo)
+            : tipo-visto == TipoPulsante.pericolo
+                ? (sopra ? Tema.pericolo-sopra : Tema.pericolo-fondo)
+                : (sopra ? Tema.neutro-sopra : Tema.neutro-fondo);
 
         etichetta := Text {
             width: min(self.preferred-width, root.width - 12px);
@@ -166,15 +201,19 @@ export component Pulsante inherits FocusScope {
             font-family: Tema.carattere;
             font-weight: 500;
             font-size: corpo-testo;
-            // Sul primario bianco il testo è nero.
-            color: tipo == TipoPulsante.azione ? Tema.testo-su-primario : Tema.testo;
+            // Sul primario bianco il testo è nero; inerte, tenue.
+            color: inerte ? Tema.testo-tenue : tipo-visto == TipoPulsante.azione ? Tema.testo-su-primario : Tema.testo;
             accessible-role: none;
         }
     }
 
     area := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.premuto(); }
+        mouse-cursor: root.inerte ? MouseCursor.default : MouseCursor.pointer;
+        clicked => {
+            if (!root.inerte) {
+                root.premuto();
+            }
+        }
     }
 
     if root.anello: Anello { raggio: root.raggio; }

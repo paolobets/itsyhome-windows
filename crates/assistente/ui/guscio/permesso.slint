@@ -20,7 +20,7 @@
 // lo mostra con `visible`. Un id dentro un `if` non si raggiunge da fuori, e un componente creato
 // al momento non vedrebbe l'incremento di `armamenti` che accompagna l'apertura (Task 4).
 import { Tema } from "../tema.slint";
-import { Anello, Fuoco, Pulsante, RegolaPulsanti } from "../componenti.slint";
+import { Anello, Fuoco, Inerzia, Pulsante, RegolaPulsanti } from "../componenti.slint";
 import { VoceAttesaUi, TonoModuloUi } from "../voci.slint";
 import { Capsula } from "carta.slint";
 
@@ -40,8 +40,11 @@ export component Permesso inherits Rectangle {
     in property <bool> con-torna;
     // Il fuoco da tastiera è qui (altrimenti nessun anello e nessun fuoco vero).
     in property <bool> con-fuoco;
-    // I riarmi di «Consenti» (Task 4: l'aspetto inerte per 600 ms a ogni incremento).
+    // I riarmi della guardia di Rust (`Pannello.armamenti`): a ogni incremento «Nega» e
+    // «Consenti» si vedono inerti per i 600 ms in cui Rust li ignora (Task 4, `Inerzia`).
     in property <int> armamenti;
+    out property <bool> inerte: inerzia.inerte;
+    inerzia := Inerzia { armamenti: root.armamenti; }
     // Il bersaglio col fuoco: -2 il testo, 0/1 un pulsante (indice in `voce.pulsanti`).
     out property <int> fuoco: -2;
     // Il fondo del testo si è visto, per questa voce: vale per l'id (`visto-di`), così un'altra
@@ -437,6 +440,7 @@ export component Permesso inherits Rectangle {
         testo: root.indice-altro >= 0 ? root.voce.pulsanti[root.indice-altro].testo : "";
         delicato: root.indice-altro >= 0 && root.voce.pulsanti[root.indice-altro].delicato;
         tipo: RegolaPulsanti.tipo(true, root.indice-altro >= 0 && root.voce.pulsanti[root.indice-altro].delicato);
+        inerte: root.inerte;
         tasti-propri: false;
         focalizzabile: false;
         chiede-fuoco: root.con-fuoco && root.fuoco == root.indice-altro && root.mostra(root.indice-altro);
@@ -458,6 +462,7 @@ export component Permesso inherits Rectangle {
         raggio: Tema.raggio-l;
         testo: root.indice-nega >= 0 ? root.voce.pulsanti[root.indice-nega].testo : "";
         tipo: RegolaPulsanti.tipo(false, false);
+        inerte: root.inerte;
         tasti-propri: false;
         focalizzabile: false;
         chiede-fuoco: root.con-fuoco && root.fuoco == root.indice-nega && root.mostra(root.indice-nega);
