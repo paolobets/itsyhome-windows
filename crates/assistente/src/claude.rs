@@ -116,7 +116,14 @@ pub fn voce_permesso(id: u64, e: &EventoHook, titolo: &str, ora: Instant, alle: 
     } else {
         vec![Pulsante::new(PULSANTE_TERMINALE, "Apri il terminale")]
     };
-    let dati = DatiPermesso { sessione: cartella, strumento, comando: riassunto, cartella: testo_pulito(&e.cartella), alle };
+    let dati = DatiPermesso {
+        sessione: cartella,
+        strumento,
+        campo: campo_del_permesso(e.strumento.as_deref()).into(),
+        comando: riassunto,
+        cartella: testo_pulito(&e.cartella),
+        alle,
+    };
     Voce {
         id: id_voce_permesso(id),
         livello: Livello::Bloccante,
@@ -221,6 +228,18 @@ pub fn voce_sessione(s: &Sessione, ora: Instant) -> Option<Voce> {
         _ => vec![],
     };
     Some(Voce { id, livello, fonte: Fonte::Claude, titolo, dettaglio, pulsanti, creata: ora, permesso: None })
+}
+
+/// L'etichetta sopra il testo del permesso, dal nome vero dello strumento (in italiano WebFetch e
+/// WebSearch sono entrambi «Web»): cosa è il testo che si legge prima di consentire.
+pub fn campo_del_permesso(s: Option<&str>) -> &'static str {
+    match s {
+        Some("Bash" | "PowerShell") => "TERMINALE",
+        Some("Read" | "Edit" | "MultiEdit" | "Write") => "FILE",
+        Some("WebFetch") => "INDIRIZZO",
+        Some("WebSearch") => "RICERCA",
+        _ => "",
+    }
 }
 
 /// Il nome dello strumento in italiano per la pillola. Un nome che non conosciamo si mostra
@@ -1262,6 +1281,29 @@ mod test {
         assert_eq!(PULSANTE_TERMINALE, "terminale");
     }
 
+    /// Fix 1 del Task 3: l'etichetta sopra il testo del permesso dal nome vero dello strumento
+    /// (in italiano WebFetch e WebSearch sono entrambi «Web»).
+    #[test]
+    fn campo_del_permesso_dallo_strumento() {
+        for (strumento, campo) in [
+            ("Bash", "TERMINALE"),
+            ("PowerShell", "TERMINALE"),
+            ("Read", "FILE"),
+            ("Edit", "FILE"),
+            ("MultiEdit", "FILE"),
+            ("Write", "FILE"),
+            ("WebFetch", "INDIRIZZO"),
+            ("WebSearch", "RICERCA"),
+            ("Grep", ""),
+            ("Agent", ""),
+            ("mcp__x", ""),
+        ] {
+            assert_eq!(campo_del_permesso(Some(strumento)), campo, "{strumento}");
+        }
+        assert_eq!(campo_del_permesso(None), "");
+        assert_eq!(voce_permesso(1, &permesso("ls"), "", Instant::now(), 0).permesso.unwrap().campo, "TERMINALE");
+    }
+
     /// Ridisegno F2, Task 2: la voce del permesso porta i dati divisi per il componente del guscio,
     /// ripuliti come il titolo; titolo e dettaglio restano quelli di prima.
     #[test]
@@ -1274,6 +1316,7 @@ mod test {
             Some(DatiPermesso {
                 sessione: "progetto-a".into(),
                 strumento: "Comando".into(),
+                campo: "TERMINALE".into(),
                 comando: "rm -rf /tmp/x".into(),
                 cartella: "progetto-a".into(),
                 alle,
@@ -1293,6 +1336,7 @@ mod test {
             DatiPermesso {
                 sessione: "Claude".into(),
                 strumento: "Strumento".into(),
+                campo: String::new(),
                 comando: String::new(),
                 cartella: String::new(),
                 alle: 0

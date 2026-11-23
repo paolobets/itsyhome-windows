@@ -36,26 +36,36 @@ export component Permesso inherits Rectangle {
     // «Nega» e «Consenti» in alto a destra (la Coda: lontani dalle sue righe e da «+N»),
     // altrimenti in basso a destra.
     in property <bool> pulsanti-in-alto;
+    // «Torna all'elenco» in alto a sinistra, per chi usa il mouse (la Coda: l'elenco non si vede).
+    in property <bool> con-torna;
     // Il fuoco da tastiera è qui (altrimenti nessun anello e nessun fuoco vero).
     in property <bool> con-fuoco;
     // I riarmi di «Consenti» (Task 4: l'aspetto inerte per 600 ms a ogni incremento).
     in property <int> armamenti;
     // Il bersaglio col fuoco: -2 il testo, 0/1 un pulsante (indice in `voce.pulsanti`).
     out property <int> fuoco: -2;
-    // Il fondo del testo si è visto (una volta per voce).
-    out property <bool> visto: false;
+    // Il fondo del testo si è visto, per questa voce: vale per l'id (`visto-di`), così un'altra
+    // voce non lo eredita nemmeno per un istante, prima che giri un `changed` (fix 1, I2b).
+    property <string> visto-di;
+    out property <bool> visto: voce.id != "" && visto-di == voce.id;
     // Una decisione, con un gesto (clic, Narrator, Invio su un pulsante non delicato, Ctrl+Invio
     // esatto sul consenso): l'id del pulsante.
     callback decidi(string);
+    // Un pulsante premuto col mouse (o da Narrator): chi lo contiene spegne l'anello da tastiera.
+    callback usato-mouse();
     // Il fondo del testo si è visto: «Consenti» compare.
     callback visto-fondo();
     // ← dal primo bersaglio o ↑ dal testo in cima: torna a chi lo contiene.
     callback lascia();
+    // «Torna all'elenco» (con `con-torna`).
+    callback torna();
 
     // I dati divisi del permesso (Task 2) ci sono: sessione, strumento, comando, cartella.
     property <bool> con-dati: voce.permesso.sessione != "";
     // «$» solo davanti a un comando (per Legge/Modifica/Scrive è un percorso, per Web un indirizzo).
-    property <bool> con-dollaro: con-dati && voce.permesso.strumento == "Comando";
+    property <bool> con-dollaro: con-dati && voce.permesso.campo == "TERMINALE";
+    // L'etichetta sopra il testo: cosa è («TERMINALE», «FILE», «INDIRIZZO», «RICERCA»).
+    property <bool> con-campo: con-dati && voce.permesso.campo != "";
     // «{sessione} · {cartella}»: la cartella solo se c'è e non è la sessione.
     property <string> riga-sessione: voce.permesso.cartella == "" || voce.permesso.cartella == voce.permesso.sessione
         ? voce.permesso.sessione : voce.permesso.sessione + " · " + voce.permesso.cartella;
@@ -159,27 +169,36 @@ export component Permesso inherits Rectangle {
     property <bool> a-fondo: testo.content-y <= scorrimento-minimo + 0.5px;
     changed a-fondo => { root.segna-fondo(); }
     init => { root.segna-fondo(); }
+    // Di quale voce è lo scorrimento del testo: finché il `changed` qui sotto non l'ha riportato
+    // in cima, il fondo raggiunto con la voce di prima non vale per quella nuova.
+    property <string> scorrimento-di;
     // Un'altra voce: il testo da capo e il fondo va rivisto; il fuoco non resta su un consenso.
     property <string> id-voce: voce.id;
     changed id-voce => {
-        visto = false;
+        visto-di = "";
         testo.content-y = 0px;
+        scorrimento-di = voce.id;
         if (fuoco >= 0 && !mostra(fuoco)) {
             entra();
         }
         root.segna-fondo();
     }
     function segna-fondo() {
-        if (a-fondo && !visto && voce.id != "") {
-            visto = true;
+        if (a-fondo && !visto && voce.id != "" && scorrimento-di == voce.id) {
+            visto-di = voce.id;
             root.visto-fondo();
         }
     }
 
-    // Geometria: pulsanti 112 × 40 r 12 a posti fissi; testata alta quanto i pulsanti (o il
-    // titolo a capo); riquadro sotto; in fondo la riga di «Leggi fino in fondo» / «Ctrl Invio».
+    // Geometria: pulsanti 112 a posti fissi, alti 40 (r 12); in alto (la Coda) 32, così con lo
+    // stacco finiscono a 32 e non coprono la prima riga dell'elenco, che parte a 36 (fix 1, I1:
+    // a 40 ne coprivano i 4 px alti e un doppio clic sul bordo della riga premeva «Nega» o
+    // «Consenti» appena nati). Testata alta quanto i pulsanti (o il titolo a capo); riquadro
+    // sotto; in fondo la riga di «Leggi fino in fondo» / «Ctrl Invio».
     property <length> largo-pulsante: 112px;
-    property <length> alto-pulsanti: 40px;
+    property <length> alto-pulsanti: pulsanti-in-alto ? 32px : 40px;
+    // Dove cominciano capsula e titolo: dopo «Torna all'elenco», se c'è.
+    property <length> inizio-testata: con-torna ? torna-el.width + 12px : 0px;
     property <length> y-pulsanti: pulsanti-in-alto ? 0px : root.height - alto-pulsanti;
     property <length> alto-testata: con-dati ? (pulsanti-in-alto ? alto-pulsanti : 22px)
         : max(pulsanti-in-alto ? alto-pulsanti : 0px, titolo.height);
@@ -192,10 +211,29 @@ export component Permesso inherits Rectangle {
 
     Fuoco { chiede: root.con-fuoco && root.fuoco == -2; }
 
+    // Per chi usa il mouse: richiude il permesso. In alto a sinistra, nella fascia dei pulsanti,
+    // fuori da quella delle righe dell'elenco: mai dove c'era il bersaglio di un clic. La tastiera
+    // non ci arriva (Esc e Backspace fanno lo stesso).
+    torna-el := Pulsante {
+        visible: root.con-torna;
+        x: 0;
+        y: root.y-pulsanti;
+        altezza: root.alto-pulsanti;
+        largo-min: 60px;
+        corpo-testo: Tema.testo-piccolo;
+        testo: "Torna all'elenco";
+        tasti-propri: false;
+        focalizzabile: false;
+        premuto => {
+            root.usato-mouse();
+            root.torna();
+        }
+    }
+
     // Testata con i dati: la capsula del tono e, accanto, quando è stato chiesto.
     capsula := Capsula {
         visible: root.con-dati;
-        x: 0;
+        x: root.inizio-testata;
         y: pulsanti-in-alto ? (alto-pulsanti - self.height) / 2 : 1px;
         tono: TonoModuloUi.aspetta;
         parola: "Chiede il permesso";
@@ -218,9 +256,9 @@ export component Permesso inherits Rectangle {
     // Senza dati: il titolo a capo, fino a 3 righe, a sinistra dei pulsanti in alto.
     titolo := Text {
         visible: !root.con-dati;
-        x: 0;
+        x: root.inizio-testata;
         y: 0;
-        width: (pulsanti-in-alto ? nega.x : root.width) - 12px;
+        width: (pulsanti-in-alto ? nega.x : root.width) - 12px - self.x;
         height: root.con-dati ? 0px : min(self.preferred-height, 54px);
         text: root.voce.titolo;
         wrap: word-wrap;
@@ -245,11 +283,13 @@ export component Permesso inherits Rectangle {
         border-width: 1px;
         border-color: Tema.filo;
 
-        if root.con-dati: Text {
+        // Cosa è il testo, dallo strumento (ruling del coordinatore, fix 1): «TERMINALE» per un
+        // comando, «FILE», «INDIRIZZO», «RICERCA»; nessuna etichetta per gli altri.
+        if root.con-campo: Text {
             x: 14px;
             y: 12px;
             height: 16px;
-            text: "TERMINALE";
+            text: root.voce.permesso.campo;
             vertical-alignment: center;
             font-family: Tema.carattere-mono;
             font-size: Tema.etichetta-corpo;
@@ -259,7 +299,7 @@ export component Permesso inherits Rectangle {
 
         testo := Flickable {
             x: 14px;
-            y: root.con-dati ? 34px : 12px;
+            y: root.con-campo ? 34px : 12px;
             width: parent.width - 28px;
             height: (root.con-dati ? sessione.y - 8px : parent.height - 12px) - self.y;
             content-height: max(self.height, root.con-dati ? comando.height : dettaglio.height);
@@ -272,6 +312,8 @@ export component Permesso inherits Rectangle {
                 font-family: Tema.carattere-mono;
                 font-size: Tema.testo-medio;
                 color: Tema.dollaro;
+                // Comando e sessione Narrator li legge una volta, nella descrizione del gruppo.
+                accessible-role: none;
             }
 
             // Il comando si legge carattere per carattere: va a capo fra le parole e, una parola
@@ -288,6 +330,7 @@ export component Permesso inherits Rectangle {
                 font-family: Tema.carattere-mono;
                 font-size: Tema.testo-medio;
                 color: Tema.testo;
+                accessible-role: none;
             }
 
             dettaglio := Text {
@@ -327,6 +370,7 @@ export component Permesso inherits Rectangle {
             font-family: Tema.carattere-mono;
             font-size: Tema.testo-piccolo;
             color: Tema.testo-tenue;
+            accessible-role: none;
         }
 
         // Il fuoco sul testo: l'anello sul bordo del riquadro.
@@ -399,6 +443,7 @@ export component Permesso inherits Rectangle {
         anello: root.con-fuoco && root.fuoco == root.indice-altro && root.mostra(root.indice-altro);
         premuto => {
             if (root.mostra(root.indice-altro)) {
+                root.usato-mouse();
                 root.decidi(root.voce.pulsanti[root.indice-altro].id);
             }
         }
@@ -419,6 +464,7 @@ export component Permesso inherits Rectangle {
         anello: root.con-fuoco && root.fuoco == root.indice-nega && root.mostra(root.indice-nega);
         premuto => {
             if (root.mostra(root.indice-nega)) {
+                root.usato-mouse();
                 root.decidi(root.voce.pulsanti[root.indice-nega].id);
             }
         }

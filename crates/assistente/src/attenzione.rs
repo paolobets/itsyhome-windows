@@ -105,6 +105,9 @@ pub struct DatiPermesso {
     pub sessione: String,
     /// Lo strumento in italiano («Comando», «Modifica»…).
     pub strumento: String,
+    /// L'etichetta sopra il testo, dal nome vero dello strumento: «TERMINALE», «FILE»,
+    /// «INDIRIZZO», «RICERCA»; vuota per gli altri (`claude::campo_del_permesso`).
+    pub campo: String,
     /// Il riassunto di cosa Claude sta per fare, ripulito; vuoto se Claude non l'ha dato.
     pub comando: String,
     /// Il nome finale della cartella di lavoro, ripulito; vuoto se manca.

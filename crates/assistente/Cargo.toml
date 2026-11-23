@@ -88,8 +88,9 @@ tempfile = "3"
 # Solo nei test del collegamento (costruire e rileggere `settings.json` di prova); stessa versione di claude-hook.
 serde_json = { version = "1", features = ["preserve_order"] }
 # Backend di prova di Slint: crea pillola, pannello e Impostazioni nei test, senza finestre
-# (misure Slint↔Rust, ruoli e nomi per l'accessibilità).
-i-slint-backend-testing = "=1.18.1"
+# (misure Slint↔Rust, ruoli e nomi per l'accessibilità). Con skia senza schermo per i pochi test
+# che controllano i colori disegnati (lo skia del pannello vero, nessuna libreria in più).
+i-slint-backend-testing = { version = "=1.18.1", features = ["renderer-skia"] }
 # Solo per leggere nei test quale elemento ha il fuoco (`WindowInner::focus_item`): stessa
 # versione di Slint, nessuna funzione in più.
 i-slint-core = { version = "=1.18.1", default-features = false }

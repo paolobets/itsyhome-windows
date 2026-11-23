@@ -649,6 +649,7 @@ fn permesso_ui(d: &attenzione::DatiPermesso) -> PermessoUi {
     PermessoUi {
         sessione: d.sessione.as_str().into(),
         strumento: d.strumento.as_str().into(),
+        campo: d.campo.as_str().into(),
         comando: d.comando.as_str().into(),
         cartella: d.cartella.as_str().into(),
         chiesto: chiesto.into(),

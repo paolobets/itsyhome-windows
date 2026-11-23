@@ -1550,6 +1550,7 @@ export component Pannello inherits Window {
                     voce: root.coda-aperta-valida && root.attese[root.coda-riga].id == root.coda-aperta
                         ? root.attese[root.coda-riga] : root.coda-voce-aperta;
                     pulsanti-in-alto: true;
+                    con-torna: true;
                     con-fuoco: da-tastiera && zona == Zona.contenuto && vista == "coda" && root.coda-aperta-valida;
                     // Un clic, Narrator, Invio su «Nega» o Ctrl+Invio esatto su «Consenti»: la
                     // decisione passa dalla guardia di Rust (600 ms dopo ogni riarmo).
@@ -1564,7 +1565,12 @@ export component Pannello inherits Window {
                             root.consenti-compare();
                         }
                     }
-                    // Nella Coda l'elenco non si vede: ← e ↑ in cima non escono (Esc e Backspace sì).
+                    // Un clic su un pulsante: l'anello da tastiera si spegne.
+                    usato-mouse => { da-tastiera = false; }
+                    // «Torna all'elenco» (mouse): di nuovo l'elenco, sulla riga del permesso.
+                    torna => { chiudi-permesso(); }
+                    // Nella Coda l'elenco non si vede: ← e ↑ in cima non escono (Esc, Backspace e
+                    // «Torna all'elenco» sì).
                     lascia => { }
                 }
 
