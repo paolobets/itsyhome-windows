@@ -68,6 +68,11 @@ pub struct Config {
     /// `agenti` (lo fa il registro dell'assistente).
     #[serde(default)]
     pub moduli: Vec<ConfigModulo>,
+    /// La modalità della Panoramica (ridisegno F1, Task 9): «griglia» o «orologio». Vuota (un
+    /// file di prima, senza la chiave) o con un altro valore = Griglia; lo decide l'assistente
+    /// (`ModoPanoramica::da_config`).
+    #[serde(default)]
+    pub panoramica: String,
 }
 
 /// Un modulo nell'ordine scelto dall'utente. Entrambi i campi hanno un valore di serie: una voce
@@ -167,6 +172,7 @@ impl Default for Config {
             bt_avvisati: HashMap::new(),
             claude: ConfigClaude::default(),
             moduli: Vec::new(),
+            panoramica: String::new(),
         }
     }
 }
@@ -353,5 +359,7 @@ pub fn importa_v2(v2: &Path, segreti: &dyn Segreti) -> Result<Option<Config>, St
         claude: ConfigClaude::default(),
         // Né i moduli del pannello: l'ordine del registro.
         moduli: Vec::new(),
+        // Né la scelta della Panoramica: la Griglia di serie.
+        panoramica: String::new(),
     }))
 }

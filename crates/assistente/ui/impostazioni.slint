@@ -790,6 +790,10 @@ export component FinestraImpostazioni inherits Window {
     // «Automatico» e le entità meteo.
     in property <[string]> scelte-meteo;
     in property <int> indice-meteo;
+    // La modalità della Panoramica (ridisegno F1, Task 9): 0 Griglia, 1 Orologio; Rust la
+    // riscrive solo se cambia e salva la scelta solo se è diversa.
+    in property <int> panoramica-scelta;
+    callback scegli-panoramica(int);
     // (0 sinistra / 1 destra, indice in `scelte-lati`).
     callback scegli-lato(int, int);
     callback scegli-meteo(int);
@@ -2088,6 +2092,21 @@ export component FinestraImpostazioni inherits Window {
                         width: parent.width;
                         alignment: start;
                         spacing: 8px;
+
+                        // La modalità della Panoramica (ridisegno F1, Task 9; spec §5.5): vale dal
+                        // prossimo pannello.
+                        Etichetta {
+                            height: 30px;
+                            text: "PANORAMICA";
+                        }
+
+                        RigaScelta {
+                            titolo: "Panoramica";
+                            voci: ["Griglia", "Orologio"];
+                            indice: panoramica-scelta;
+                            scelto(i) => { root.scegli-panoramica(i); }
+                            fuoco-preso => { isola.porta-in-vista(self.y, self.height); }
+                        }
 
                         Etichetta {
                             height: 30px;

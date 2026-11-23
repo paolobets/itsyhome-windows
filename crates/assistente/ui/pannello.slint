@@ -4,9 +4,10 @@
 // pillola), a sinistra data e meteo (solo nella Panoramica; nelle app resta vuota), l'ora a destra
 // e dopo di lei «⋯» (Task 14i: il menu dell'isola senza «Apri», con Impostazioni in testa); niente
 // «‹ Indietro» (Task 14g: alla Panoramica si torna dalla barra, con Backspace o Alt+←; nella vista
-// Casa «Preferiti» è la prima voce dell'elenco). Corpo 752 × 224 a (34, 44): la Panoramica a
-// griglia (`guscio/panoramica.slint`: l'orologio grande o, al suo posto, la voce che ti aspetta, e
-// sotto le carte dei moduli; «N in attesa ›» nella riga alta) o la vista di un'app. Barra bassa 64:
+// Casa «Preferiti» è la prima voce dell'elenco). Corpo 752 × 224 a (34, 44): la Panoramica
+// (`guscio/panoramica.slint`: l'orologio grande o, al suo posto, la voce che ti aspetta, e sotto
+// le carte dei moduli; «N in attesa ›» nella riga alta. In Orologio, Task 9: fascia e tessere, gli
+// avvisi nella fascia) o la vista di un'app. Barra bassa 64:
 // ricerca (inerte in F1), le schede con la capsula che scivola, il volume.
 //
 // Tastiera: nella Panoramica Tab / Maiusc+Tab seguono l'ordine che calcola Rust
@@ -51,7 +52,7 @@ import { VistaPc } from "viste/pc.slint";
 import { VistaClaude } from "viste/claude.slint";
 import { VistaCasa } from "viste/casa.slint";
 import { VistaCollegamenti } from "viste/collegamenti.slint";
-import { Griglia, Bersagli } from "guscio/panoramica.slint";
+import { Panoramica, Bersagli } from "guscio/panoramica.slint";
 
 export { SchedaBarraUi, StatPcUi, PreferitoUi, PulsanteUi, VoceAttesaUi, StanzaUi, RigaSessioneUi, LimiteClaudeUi }
 
@@ -75,6 +76,15 @@ export component Pannello inherits Window {
     // «N in attesa ›» della riga alta (`moduli::panoramica::in_attesa_non_mostrate`, scritto da
     // Rust solo quando cambia): le voci in attesa che la Panoramica non mostra già.
     in property <int> in-attesa;
+    // La modalità della Panoramica (Impostazioni › Isola › Panoramica): 0 Griglia, 1 Orologio.
+    // La scrive Rust all'apertura (`ModoPanoramica::indice`). Nell'Orologio «N in attesa ›» non
+    // sta nella riga alta ma nella fascia («{n} avvisi ›», stesso bersaglio e posto di Tab).
+    in property <int> panoramica;
+    property <bool> orologio: panoramica == 1;
+    // La fascia dell'Orologio (`moduli::panoramica::fascia`, scritta da Rust solo se cambia).
+    in property <string> fascia-testo;
+    in property <string> fascia-nome;
+    in property <string> fascia-avvisi;
     // L'ora piccola della riga alta: nascosta quando la Panoramica mostra l'orologio grande.
     out property <bool> ora-riga-visibile: !(vista == "panoramica" && !voce-mostrata);
     // Il bersaglio col fuoco nella Panoramica (`Bersagli`: 2k la carta k, 2k + 1 la sua azione,
@@ -541,10 +551,10 @@ export component Pannello inherits Window {
     // Il bersaglio `id` c'è adesso nella Panoramica.
     pure function esiste(id: int) -> bool {
         if (id == Bersagli.nega) {
-            return voce-mostrata && griglia-el.indice-nega >= 0;
+            return voce-mostrata && panoramica-el.indice-nega >= 0;
         }
         if (id == Bersagli.consenti) {
-            return voce-mostrata && griglia-el.indice-altro >= 0;
+            return voce-mostrata && panoramica-el.indice-altro >= 0;
         }
         if (id == Bersagli.altre) {
             return voce-altre;
@@ -604,7 +614,7 @@ export component Pannello inherits Window {
     // pulsante è «Apri» e porta al permesso aperto della Coda (il testo intero, «Consenti» dopo
     // il fondo). Ctrl+Invio su un pulsante che non concede non fa nulla.
     function premi-voce(id: int, gesto: int) {
-        let i = id == Bersagli.nega ? griglia-el.indice-nega : griglia-el.indice-altro;
+        let i = id == Bersagli.nega ? panoramica-el.indice-nega : panoramica-el.indice-altro;
         if (!voce-mostrata || i < 0) {
             return;
         }
@@ -613,7 +623,7 @@ export component Pannello inherits Window {
             if (gesto < 2) {
                 root.azione-voce(attese[0].id, p.id);
             }
-        } else if (!griglia-el.voce-intera) {
+        } else if (!panoramica-el.voce-intera) {
             if (gesto < 2) {
                 apri-coda(0);
             }
@@ -1268,8 +1278,9 @@ export component Pannello inherits Window {
                 sinistra: root.riga-sinistra;
                 sinistra-nome: root.riga-sinistra-nome;
                 sinistra-visibile: vista == "panoramica";
-                in-attesa: vista == "panoramica" ? root.in-attesa : 0;
-                fuoco-in-attesa: da-tastiera && zona == Zona.attesa && vista == "panoramica" && root.in-attesa > 0;
+                // Nell'Orologio gli avvisi li dice la fascia (stesso bersaglio, stesso posto di Tab).
+                in-attesa: vista == "panoramica" && !root.orologio ? root.in-attesa : 0;
+                fuoco-in-attesa: da-tastiera && zona == Zona.attesa && vista == "panoramica" && !root.orologio && root.in-attesa > 0;
                 anello-in-attesa: da-tastiera && zona == Zona.attesa;
                 in-attesa-premuto => {
                     da-tastiera = false;
@@ -1321,9 +1332,9 @@ export component Pannello inherits Window {
                 height: centro-a;
                 opacity: opacita-contenuto;
 
-                // La Panoramica a griglia: sempre presente (i suoi bersagli di fuoco non nascono e
-                // muoiono con la vista), visibile solo nella Panoramica.
-                griglia-el := Griglia {
+                // La Panoramica (Griglia o Orologio): sempre presente (i suoi bersagli di fuoco
+                // non nascono e muoiono con la vista), visibile solo nella Panoramica.
+                panoramica-el := Panoramica {
                     visible: vista == "panoramica";
                     x: 0;
                     y: 0;
@@ -1332,6 +1343,16 @@ export component Pannello inherits Window {
                     moduli: root.moduli;
                     ora: root.ora;
                     cifre-ora: root.ora-cifre;
+                    orologio: root.orologio;
+                    fascia-testo: root.fascia-testo;
+                    fascia-nome: root.fascia-nome;
+                    fascia-avvisi: vista == "panoramica" && root.in-attesa > 0 ? root.fascia-avvisi : "";
+                    fuoco-avvisi: da-tastiera && zona == Zona.attesa && vista == "panoramica" && root.in-attesa > 0;
+                    anello-avvisi: da-tastiera && zona == Zona.attesa;
+                    avvisi-premuto => {
+                        da-tastiera = false;
+                        apri-elenco(0);
+                    }
                     voce-mostrata: root.voce-mostrata;
                     voce: root.attese[0];
                     altre: root.voce-mostrata ? root.attese.length - 1 : 0;

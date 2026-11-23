@@ -211,6 +211,24 @@ fn configurazione_coi_quadranti_si_legge() {
     assert_eq!(st.leggi(), c, "riletto uguale");
 }
 
+/// Ridisegno F1, Task 9: un file di prima senza la chiave `panoramica` si legge con la scelta
+/// vuota (= Griglia) senza perdere il resto; la scelta salvata si rilegge uguale.
+#[test]
+fn scelta_della_panoramica_salvata() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("assistente.json"), r#"{ "favorites": ["light.a"], "latoSinistro": "cpu" }"#).unwrap();
+    let st = ConfigStore::apri(d.path());
+    let mut c = st.leggi();
+    assert_eq!(c.favorites, vec!["light.a"], "letto davvero, non il predefinito");
+    assert_eq!(c.panoramica, "", "senza la chiave: nessuna scelta");
+    assert_eq!(Config::default().panoramica, "");
+    c.panoramica = "orologio".into();
+    st.salva(&c).unwrap();
+    let testo = std::fs::read_to_string(d.path().join("assistente.json")).unwrap();
+    assert!(testo.contains(r#""panoramica": "orologio""#), "{testo}");
+    assert_eq!(st.leggi(), c, "riletto uguale");
+}
+
 /// M2 Task 4: i lati salvati e riletti; i sensori scelti sono quelli col prefisso.
 #[test]
 fn lati_salvati_e_sensori_scelti() {

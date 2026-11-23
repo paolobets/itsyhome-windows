@@ -1592,6 +1592,190 @@ mod accessibilita {
         assert!((sinistra - 34.0 - (786.0 - destra)).abs() < 0.5, "centrate: {sinistra}..{destra}");
     }
 
+    // ─── Ridisegno F1, Task 9: Panoramica Orologio ───
+
+    /// La Panoramica in modalità Orologio coi quattro moduli di prova e la fascia scritta come
+    /// la scrive il ponte (nessun modulo in attesa di dati).
+    fn pannello_orologio() -> Pannello {
+        let p = pannello_panoramica(ModelRc::from(quattro_moduli()));
+        p.set_panoramica(1);
+        crate::pannello::scrivi_fascia(&p, 0);
+        slint::platform::update_timers_and_animations();
+        p
+    }
+
+    /// L'elemento `Fascia` (uno solo, sempre al suo posto).
+    fn fascia_el(p: &Pannello) -> ElementHandle {
+        let mut v: Vec<ElementHandle> = ElementHandle::find_by_element_type_name(p, "Fascia").collect();
+        assert_eq!(v.len(), 1, "una fascia sola");
+        v.remove(0)
+    }
+
+    /// Orologio: quattro tessere 182 × 84 alla stessa y, centrate, sopra la barra; l'azione di
+    /// chi ce l'ha si vede senza passaggio né fuoco (valore e riga a 116, la carta PC a 154); la
+    /// fascia alta 32 fra orologio e tessere, alla stessa y con e senza la voce che ti aspetta.
+    #[test]
+    fn panoramica_orologio_con_quattro_tessere() {
+        let p = pannello_orologio();
+        let posti = posti(&p);
+        assert_eq!(posti.len(), 4);
+        let y = posti[0].absolute_position().y;
+        for (k, posto) in posti.iter().enumerate() {
+            assert_eq!(posto.absolute_position().y, y, "tessera {k} alla stessa y");
+            assert_eq!((posto.size().width, posto.size().height), (182.0, 84.0), "tessera {k}");
+        }
+        assert_eq!(y + 84.0, 44.0 + 224.0, "le tessere in fondo al corpo, sopra la barra");
+        let (sinistra, destra) = (posti[0].absolute_position().x, posti[3].absolute_position().x + 182.0);
+        assert!((sinistra - 34.0 - (786.0 - destra)).abs() < 0.5, "centrate {sinistra}..{destra}");
+        for (k, largo) in [(0, 116.0), (1, 116.0), (2, 154.0), (3, 116.0)] {
+            assert_eq!(nella_carta(&p, k, "CartaVista::riga").size().width, largo, "tessera {k}: azione sempre visibile");
+        }
+        assert_eq!(pulsanti_senza_nome(&p), 0);
+        let fascia = fascia_el(&p);
+        assert_eq!(fascia.size().height, 32.0);
+        assert_eq!(fascia.absolute_position().y + 32.0, y, "la fascia subito sopra le tessere");
+        let orologio = elemento(&p, "09:45");
+        assert!(orologio.absolute_position().y + orologio.size().height <= fascia.absolute_position().y + 0.01, "l'orologio sopra la fascia");
+        assert_eq!(elemento(&p, "Niente ti aspetta").accessible_role(), Some(AccessibleRole::Text));
+        let prima = fascia.absolute_position().y;
+        let posti_prima: Vec<_> = posti.iter().map(|e| (e.absolute_position(), e.size())).collect();
+        p.set_attese(ModelRc::new(VecModel::from(vec![permesso_corto()])));
+        avanza(400);
+        assert_eq!(fascia_el(&p).absolute_position().y, prima, "la fascia alla stessa quota con la voce");
+        let posti_dopo: Vec<_> = self::posti(&p).iter().map(|e| (e.absolute_position(), e.size())).collect();
+        assert_eq!(posti_prima, posti_dopo, "le tessere non si muovono");
+        assert!(ElementHandle::find_by_accessible_label(&p, "Niente ti aspetta").next().is_none(), "con la voce la fascia tace");
+        // La Griglia: carte 108, nessuna fascia visibile.
+        p.set_attese(ModelRc::new(VecModel::from(Vec::<VoceAttesaUi>::new())));
+        p.set_panoramica(0);
+        avanza(400);
+        assert_eq!(self::posti(&p)[0].size().height, 108.0);
+        assert!(ElementHandle::find_by_accessible_label(&p, "Niente ti aspetta").next().is_none(), "nella Griglia niente fascia");
+        // (Il fuoco della voce sparita è andato sulla carta 0: si guarda la carta 1, che ha l'azione.)
+        assert_eq!(nella_carta(&p, 1, "CartaVista::riga").size().width, 154.0, "nella Griglia l'azione solo al passaggio");
+    }
+
+    /// Orologio con la voce che ti aspetta: l'orologio grande sparisce (dissolvenza) e la voce
+    /// prende il suo posto, alla stessa posizione della Griglia (gli stessi punti dei pulsanti: le
+    /// regole sul doppio clic valgono uguali); le tessere restano ferme; il fuoco su «Nega»;
+    /// Invio su «Consenti» non concede, Ctrl+Invio esatto sì; col movimento ridotto tutto subito.
+    #[test]
+    fn orologio_voce_al_posto_dell_ora() {
+        use slint::platform::Key;
+        let posizioni = |p: &Pannello| -> Vec<(String, f32, f32)> {
+            ["Nega", "Consenti"]
+                .iter()
+                .map(|n| {
+                    let e = elemento(p, n);
+                    (n.to_string(), e.absolute_position().x, e.absolute_position().y)
+                })
+                .collect()
+        };
+        let (g, _) = panoramica_con_voci(ModelRc::new(VecModel::from(vec![permesso_corto()])));
+        let nella_griglia = posizioni(&g);
+
+        let p = pannello_orologio();
+        let azioni = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let a = azioni.clone();
+        p.on_azione_voce(move |_, id| a.borrow_mut().push(id.to_string()));
+        let prima: Vec<_> = posti(&p).iter().map(|e| (e.absolute_position(), e.size())).collect();
+        assert!(!p.get_ora_riga_visibile());
+        assert!(prima.iter().all(|(_, lato)| lato.height == 84.0), "tessere dell'Orologio");
+        p.set_attese(ModelRc::new(VecModel::from(vec![permesso_corto()])));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&p), "Nega", "fuoco iniziale su «Nega»");
+        avanza(60);
+        assert!(
+            ElementHandle::find_by_accessible_label(&p, "09:45").any(|e| e.absolute_position().y >= 44.0),
+            "a metà dei 160 ms l'orologio si sta ancora dissolvendo"
+        );
+        avanza(400);
+        assert!(ElementHandle::find_by_accessible_label(&p, "09:45").all(|e| e.absolute_position().y < 44.0), "niente orologio grande, solo l'ora piccola");
+        assert!(p.get_ora_riga_visibile(), "l'ora va nella riga alta");
+        let voce = elemento(&p, "Ti aspetta · Agenti: Claude chiede: PowerShell npm test");
+        assert_eq!((voce.size().width, voce.size().height), (752.0, 108.0));
+        assert_eq!(posizioni(&p), nella_griglia, "pulsanti agli stessi punti della Griglia");
+        let dopo: Vec<_> = posti(&p).iter().map(|e| (e.absolute_position(), e.size())).collect();
+        assert_eq!(prima, dopo, "le tessere non si muovono");
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Consenti");
+        tasto(&p, Key::Return);
+        assert!(azioni.borrow().is_empty(), "Invio su «Consenti» ha concesso: {:?}", azioni.borrow());
+        con_modificatori(&p, &[Key::Control], Key::Return);
+        assert_eq!(*azioni.borrow(), ["consenti"], "Ctrl+Invio esatto concede");
+
+        // Movimento ridotto: la voce entra senza scala né dissolvenza, l'orologio sparisce subito.
+        let p = pannello_orologio();
+        p.global::<crate::Movimento>().set_ridotto(true);
+        p.set_attese(ModelRc::new(VecModel::from(vec![permesso_corto()])));
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&p, "09:45").all(|e| e.absolute_position().y < 44.0), "col movimento ridotto subito");
+    }
+
+    /// Orologio: «2 avvisi ›» nella fascia (non nella riga alta) è un bersaglio: Tab ci arriva
+    /// prima delle tessere (C11), Narrator lo legge senza freccia, Invio e clic aprono la Coda.
+    #[test]
+    fn orologio_avvisi_nella_fascia() {
+        use slint::platform::Key;
+        let p = pannello_orologio();
+        let voci: Vec<VoceAttesaUi> =
+            (0..2).map(|i| voce_coda(&format!("a{i}"), &format!("Avviso {i}"), LivelloUi::Attenzione, "Guarda presto · Casa", false)).collect();
+        p.set_attese(ModelRc::new(VecModel::from(voci)));
+        crate::pannello::scrivi_in_attesa(&p, 2, false);
+        crate::pannello::scrivi_fascia(&p, 0);
+        slint::platform::update_timers_and_animations();
+        let avvisi = elemento(&p, "2 avvisi");
+        assert_eq!(avvisi.accessible_role(), Some(AccessibleRole::Button));
+        let fascia = fascia_el(&p);
+        assert!(avvisi.absolute_position().y >= fascia.absolute_position().y, "nella fascia");
+        assert!(ElementHandle::find_by_accessible_label(&p, "2 in attesa").next().is_none(), "nell'Orologio non nella riga alta");
+        assert_eq!(elemento(&p, "Niente ti aspetta").accessible_role(), Some(AccessibleRole::Text));
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "2 avvisi", "prima delle tessere");
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Agenti, 2 al lavoro");
+        con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
+        tasto(&p, Key::Return);
+        assert_eq!(p.get_vista(), "coda", "Invio apre la Coda");
+        p.set_vista("panoramica".into());
+        lascia_girare(&p);
+        let (x, y) = centro(&elemento(&p, "2 avvisi"));
+        clic_in(&p, x, y);
+        assert_eq!(p.get_vista(), "coda", "il clic apre la Coda");
+        // Gli avvisi risolti col fuoco addosso: il fuoco va alle tessere.
+        p.set_vista("panoramica".into());
+        lascia_girare(&p);
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "2 avvisi");
+        crate::pannello::scrivi_in_attesa(&p, 0, false);
+        crate::pannello::scrivi_fascia(&p, 0);
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&p, "2 avvisi").next().is_none());
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Apri il terminale, Agenti", "il fuoco non si perde");
+    }
+
+    /// Impostazioni › Isola: la riga «Panoramica» («Griglia» / «Orologio») c'è, nessuna riga dei
+    /// quadranti; scegliere «Orologio» chiama `scegli-panoramica(1)`.
+    #[test]
+    fn impostazioni_scelta_della_panoramica() {
+        let (f, _) = scheda_isola();
+        let scelte = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let s = scelte.clone();
+        f.on_scegli_panoramica(move |i| s.borrow_mut().push(i));
+        assert!(ElementHandle::find_by_accessible_label(&f, "Quadrante 1").next().is_none());
+        let riga = selettore(&f, "Panoramica");
+        assert_eq!(riga.accessible_value().as_deref(), Some("Griglia"), "di serie la Griglia");
+        riga.invoke_accessible_default_action();
+        ElementHandle::find_by_accessible_label(&f, "Orologio")
+            .find(|e| e.accessible_role() == Some(AccessibleRole::ListItem))
+            .expect("voce «Orologio»")
+            .invoke_accessible_default_action();
+        assert_eq!(*scelte.borrow(), [1]);
+        f.set_panoramica_scelta(1);
+        assert_eq!(selettore(&f, "Panoramica").accessible_value().as_deref(), Some("Orologio"));
+    }
+
     /// `n` voci «In attesa» di prova: «Titolo 0», «Titolo 1»… con livello «Quando vuoi».
     fn voci_attesa(n: usize) -> ModelRc<VoceAttesaUi> {
         ModelRc::new(VecModel::from(
@@ -4133,7 +4317,7 @@ mod accessibilita {
         let sinistra = selettore(&f, "A sinistra degli occhi");
         assert_eq!(sinistra.accessible_value().as_deref(), Some("Niente"));
         assert_eq!(sinistra.accessible_expanded(), Some(false));
-        // Tab fino al primo selettore (dopo le sei sezioni).
+        // Tab fino al primo selettore (dopo le sei sezioni: «Panoramica», Task 9), poi al secondo.
         for _ in 0..12 {
             if col_fuoco(&f).ends_with("selettore") {
                 break;
@@ -4141,6 +4325,11 @@ mod accessibilita {
             tasto_finestra(&f, Key::Tab);
         }
         assert!(col_fuoco(&f).ends_with("selettore"), "Tab arriva al selettore: {}", col_fuoco(&f));
+        tasto_finestra(&f, Key::Return);
+        assert_eq!(sinistra.accessible_expanded(), Some(false), "il primo selettore è «Panoramica»");
+        tasto_finestra(&f, Key::Escape);
+        tasto_finestra(&f, Key::Tab);
+        assert!(col_fuoco(&f).ends_with("selettore"), "Tab arriva al selettore dei lati: {}", col_fuoco(&f));
         tasto_finestra(&f, Key::Return);
         assert_eq!(sinistra.accessible_expanded(), Some(true), "Invio apre l'elenco");
         assert!(ElementHandle::find_by_accessible_label(&f, "Ora")

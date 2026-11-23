@@ -7,7 +7,7 @@
 //! la sua finestra né i suoi buffer né animazioni in sospeso, e la pillola torna al suo peso.
 //! I dati della casa e l'umore arrivano dal `Ponte`, che il pannello riprende a ogni apertura.
 
-use crate::moduli::panoramica::{in_attesa_non_mostrate, ordine_tab, prossimo, Composizione};
+use crate::moduli::panoramica::{fascia, in_attesa_non_mostrate, ordine_tab, prossimo, Composizione};
 use crate::moduli::registro::Registro;
 use crate::moduli::{panoramica, Tono};
 use crate::pc_stats::{formatta_usato_totale, formatta_velocita, tinta_batteria, Campionatore, Fonti, StatPc, TintaBatteria};
@@ -163,6 +163,22 @@ pub(crate) fn scrivi_in_attesa(p: &Pannello, voci: usize, voce_mostrata: bool) {
     let n = in_attesa_non_mostrate(voci, voce_mostrata) as i32;
     if p.get_in_attesa() != n {
         p.set_in_attesa(n);
+    }
+}
+
+/// La fascia dell'Orologio: gli avvisi sono le voci che la Panoramica non mostra già (quelle di
+/// «N in attesa ›», `in-attesa`), `in_attesa_di_dati` i moduli senza il primo riassunto. Ogni
+/// proprietà solo se cambia.
+pub(crate) fn scrivi_fascia(p: &Pannello, in_attesa_di_dati: usize) {
+    let f = fascia(p.get_in_attesa().max(0) as usize, in_attesa_di_dati);
+    if p.get_fascia_testo() != f.testo.as_str() {
+        p.set_fascia_testo(f.testo.into());
+    }
+    if p.get_fascia_nome() != f.nome.as_str() {
+        p.set_fascia_nome(f.nome.into());
+    }
+    if p.get_fascia_avvisi() != f.avvisi.as_str() {
+        p.set_fascia_avvisi(f.avvisi.into());
     }
 }
 

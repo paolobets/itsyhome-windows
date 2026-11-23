@@ -1,13 +1,16 @@
 // La Panoramica a griglia (ridisegno F1, Task 8; spec §5.5–§5.6 e §13.8, spike 11 §1–§2): in
 // alto l'orologio grande o, al suo posto, la voce che ti aspetta; sotto le carte dei moduli in
-// una riga (182 × 108, spazio 8, gruppo centrato), che non si spostano mai.
+// una riga (182 × 108, spazio 8, gruppo centrato), che non si spostano mai. In modalità Orologio
+// (Task 9) gli stessi posti diventano tessere 182 × 84 sotto la fascia «parlata».
 //
 // Il fuoco da tastiera è un numero (`fuoco`) che il pannello muove con Tab (l'ordine lo calcola
 // Rust, `moduli::panoramica::ordine_tab`): `2k` il corpo della carta k, `2k + 1` il suo bottone
 // d'azione, 100/101/102 «Nega», l'altro pulsante e «+N» della voce. Le costanti sono le stesse di
 // `panoramica.rs` (un test le confronta). I bersagli sono posti fissi, mai dentro `if`/`for`: un
 // elemento distrutto col fuoco addosso lascerebbe il pannello senza tastiera.
-import { Tema } from "../tema.slint";
+import { Tema, Movimento } from "../tema.slint";
+import { Anello, Fuoco } from "../componenti.slint";
+import { Icone } from "../icone.slint";
 import { ModuloUi, VoceAttesaUi } from "../voci.slint";
 import { Posto } from "carta.slint";
 import { VoceInAttesa } from "voce.slint";
@@ -64,42 +67,164 @@ export component OrologioGrande inherits Rectangle {
     }
 }
 
-export component Griglia inherits Rectangle {
+// La fascia «parlata» dell'Orologio (Task 9; spec §5.5, 07 §3.1.2): alta 32, senza fondo,
+// sempre alla stessa quota fra l'orologio e le tessere. Il testo per regola lo scrive Rust
+// (`moduli::panoramica::fascia`); «{n} avvisi ›» è un bersaglio (`Bersagli.in-attesa`, lo stesso
+// posto di Tab di «N in attesa ›» della Griglia) che apre la Coda; la freccia è un'icona e
+// Narrator non la legge (§13.10). Con la voce che ti aspetta al posto dell'orologio la fascia
+// tace (non direbbe «Niente ti aspetta») ma resta al suo posto.
+export component Fascia inherits Rectangle {
+    in property <string> testo;
+    in property <string> nome;
+    in property <string> avvisi;
+    in property <bool> zitta;
+    // Fuoco e anello sugli avvisi li decide il pannello.
+    in property <bool> fuoco-avvisi;
+    in property <bool> anello-avvisi;
+    callback avvisi-premuto();
+
+    property <bool> con-avvisi: !root.zitta && root.avvisi != "";
+    // Testo, «·» e il bottone degli avvisi in fila, il gruppo centrato.
+    property <length> largo: testo-el.preferred-width + (con-avvisi ? 6px + punto.preferred-width + 2px + avvisi-el.width : 0px);
+    property <length> inizio: (root.width - largo) / 2;
+
+    height: 32px;
+    accessible-role: none;
+
+    testo-el := Text {
+        visible: !root.zitta && root.testo != "";
+        x: inizio;
+        height: root.height;
+        text: root.testo;
+        font-size: Tema.testo-corpo;
+        color: Tema.testo-2;
+        vertical-alignment: center;
+        accessible-role: text;
+        accessible-label: root.nome;
+    }
+
+    punto := Text {
+        visible: con-avvisi;
+        x: inizio + testo-el.preferred-width + 6px;
+        height: root.height;
+        text: "·";
+        font-size: Tema.testo-corpo;
+        color: Tema.testo-2;
+        vertical-alignment: center;
+        accessible-role: none;
+    }
+
+    avvisi-el := Rectangle {
+        visible: con-avvisi;
+        x: punto.x + punto.preferred-width + 2px;
+        y: (root.height - self.height) / 2;
+        height: 28px;
+        width: testo-avvisi.preferred-width + 4px + 14px + 16px;
+        border-radius: Tema.raggio-m;
+        background: area-avvisi.has-hover ? Tema.g3 : transparent;
+        accessible-role: button;
+        accessible-label: root.avvisi;
+        accessible-action-default => { root.avvisi-premuto(); }
+
+        testo-avvisi := Text {
+            x: 8px;
+            height: parent.height;
+            text: root.avvisi;
+            font-size: Tema.testo-corpo;
+            color: Tema.testo-2;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+
+        Image {
+            x: testo-avvisi.x + testo-avvisi.preferred-width + 4px;
+            y: (parent.height - self.height) / 2;
+            width: 14px;
+            height: 14px;
+            source: Icone.destra;
+            colorize: Tema.testo-2;
+            accessible-role: none;
+        }
+
+        area-avvisi := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.avvisi-premuto(); }
+        }
+
+        Fuoco { chiede: con-avvisi && root.fuoco-avvisi; }
+
+        if con-avvisi && root.anello-avvisi: Anello { raggio: parent.border-radius; }
+    }
+}
+
+// La Panoramica nelle sue due modalità (spec §5.5) sugli stessi posti del pool e con lo stesso
+// ordine di Tab:
+// - Griglia (Task 8): orologio grande (o la voce) e sotto le carte 182 × 108; l'azione della
+//   carta al passaggio o col fuoco.
+// - Orologio (Task 9): orologio grande (o la voce), sotto la fascia (alta 32, sempre alla stessa
+//   quota) e le tessere 182 × 84 centrate, con l'azione sempre visibile. Quando la voce che ti
+//   aspetta compare l'orologio si dissolve (160 ms) e la voce entra da scala 0,96 (280 ms); col
+//   movimento ridotto tutto subito. La voce sta nello stesso punto della Griglia (y = 0, alta
+//   108), quindi i suoi pulsanti nascono negli stessi punti: le regole sul doppio clic del Task 7
+//   e 8 valgono uguali. Le tessere non si muovono mai.
+export component Panoramica inherits Rectangle {
     in property <[ModuloUi]> moduli;
     in property <string> ora;
     in property <[string]> cifre-ora;
+    // La modalità Orologio (falso: Griglia).
+    in property <bool> orologio;
     // La voce che ti aspetta (la prima di `attese`, se è bloccante) e quante altre ce ne sono.
     in property <bool> voce-mostrata;
     in property <VoceAttesaUi> voce;
     in property <int> altre;
     in property <int> fuoco: -1;
     in property <bool> anello;
+    // La fascia dell'Orologio.
+    in property <string> fascia-testo;
+    in property <string> fascia-nome;
+    in property <string> fascia-avvisi;
+    in property <bool> fuoco-avvisi;
+    in property <bool> anello-avvisi;
     // Le misure della voce, per il pannello (che decide Invio e Ctrl+Invio).
     out property <int> indice-nega: voce-el.indice-nega;
     out property <int> indice-altro: voce-el.indice-altro;
     out property <bool> voce-intera: voce-el.intera;
     callback scelta(int);
     callback ripara(int);
+    callback avvisi-premuto();
 
     property <int> carte: min(4, moduli.length);
     property <length> passo: 182px + 8px;
     property <length> x0: (root.width - carte * passo + 8px) / 2;
-    property <length> y-carte: root.height - 108px;
+    property <length> alta-carta: root.orologio ? 84px : 108px;
+    property <length> y-carte: root.height - alta-carta;
+    property <length> alta-fascia: root.orologio ? 32px : 0px;
+    // Le transizioni della voce solo nell'Orologio (la Griglia cambia di colpo, come nel Task 8).
+    property <bool> anima: root.orologio && !Movimento.ridotto;
 
-    orologio := OrologioGrande {
-        visible: !root.voce-mostrata;
+    orologio-el := OrologioGrande {
+        opacity: root.voce-mostrata ? 0 : 1;
+        animate opacity { duration: root.anima ? 160ms : 0ms; }
+        // Dissolto, non c'è più (nemmeno per Narrator).
+        visible: self.opacity > 0;
         x: 0;
         y: 0;
         width: root.width;
-        height: y-carte;
+        height: y-carte - alta-fascia;
         ora: root.ora;
         cifre: root.cifre-ora;
     }
 
     voce-el := VoceInAttesa {
+        // Entra da scala 0,96 (solo nell'Orologio): da nascosta torna a 0,96, pronta alla
+        // prossima entrata.
+        property <float> scala: root.orologio && !root.voce-mostrata ? 0.96 : 1;
+        animate scala { duration: root.anima ? 280ms : 0ms; easing: ease-out; }
         visible: root.voce-mostrata;
         x: 0;
         y: 0;
+        transform-scale-x: self.scala;
+        transform-scale-y: self.scala;
         voce: root.voce;
         altre: root.altre;
         fuoco: root.voce-mostrata ? root.fuoco : -1;
@@ -107,10 +232,26 @@ export component Griglia inherits Rectangle {
         scelta(id) => { root.scelta(id); }
     }
 
+    fascia-el := Fascia {
+        visible: root.orologio;
+        x: 0;
+        y: y-carte - 32px;
+        width: root.width;
+        testo: root.fascia-testo;
+        nome: root.fascia-nome;
+        avvisi: root.fascia-avvisi;
+        zitta: root.voce-mostrata;
+        fuoco-avvisi: root.orologio && root.fuoco-avvisi;
+        anello-avvisi: root.anello-avvisi;
+        avvisi-premuto => { root.avvisi-premuto(); }
+    }
+
     p0 := Posto {
         k: 0;
         x: x0;
         y: y-carte;
+        altezza: alta-carta;
+        azione-sempre: root.orologio;
         presente: root.carte > 0;
         // Fuori dall'elenco Slint dà il modulo vuoto (e il posto non si vede).
         modulo: root.moduli[0];
@@ -123,6 +264,8 @@ export component Griglia inherits Rectangle {
         k: 1;
         x: x0 + passo;
         y: y-carte;
+        altezza: alta-carta;
+        azione-sempre: root.orologio;
         presente: root.carte > 1;
         modulo: root.moduli[1];
         fuoco: root.fuoco;
@@ -134,6 +277,8 @@ export component Griglia inherits Rectangle {
         k: 2;
         x: x0 + 2 * passo;
         y: y-carte;
+        altezza: alta-carta;
+        azione-sempre: root.orologio;
         presente: root.carte > 2;
         modulo: root.moduli[2];
         fuoco: root.fuoco;
@@ -145,6 +290,8 @@ export component Griglia inherits Rectangle {
         k: 3;
         x: x0 + 3 * passo;
         y: y-carte;
+        altezza: alta-carta;
+        azione-sempre: root.orologio;
         presente: root.carte > 3;
         modulo: root.moduli[3];
         fuoco: root.fuoco;

@@ -9,6 +9,7 @@ use crate::attenzione::{
 };
 use crate::claude::PREFISSO_CLAUDE;
 use crate::lati::{self, Lato};
+use crate::moduli::panoramica::ModoPanoramica;
 use crate::orologio;
 use crate::pc_stats::LetturaBatteria;
 use crate::sorgenti_lati;
@@ -1250,6 +1251,10 @@ impl Ponte {
         if f.get_indice_meteo() != nuova.indice_meteo {
             f.set_indice_meteo(nuova.indice_meteo);
         }
+        let panoramica = ModoPanoramica::da_config(&config.panoramica).indice();
+        if f.get_panoramica_scelta() != panoramica {
+            f.set_panoramica_scelta(panoramica);
+        }
         *self.isola.borrow_mut() = nuova;
     }
 
@@ -1271,6 +1276,34 @@ impl Ponte {
         }
         self.aggiorna_lati();
         self.aggiorna_pannello();
+    }
+
+    /// La modalità della Panoramica scelta nelle Impostazioni (0 Griglia, 1 Orologio): salvata
+    /// solo se cambia; vale dal prossimo pannello (e subito in quello aperto, se c'è).
+    fn scegli_panoramica(&self, i: i32) {
+        let scelta = ModoPanoramica::da_indice(i).come_str();
+        if self.casa.con_config(|c| c.panoramica == scelta) {
+            return;
+        }
+        self.casa.aggiorna_config(|c| c.panoramica = scelta.into());
+        if let Some(p) = self.pannello.borrow().upgrade() {
+            self.scrivi_panoramica(&p);
+        }
+    }
+
+    /// La modalità salvata nel pannello (all'apertura e quando cambia), solo se diversa.
+    fn scrivi_panoramica(&self, p: &Pannello) {
+        let modo = self.casa.con_config(|c| ModoPanoramica::da_config(&c.panoramica)).indice();
+        if p.get_panoramica() != modo {
+            p.set_panoramica(modo);
+        }
+    }
+
+    /// La fascia dell'Orologio dagli avvisi già scritti (`in-attesa`) e dai moduli che aspettano
+    /// il primo riassunto; solo ciò che cambia.
+    pub(super) fn scrivi_fascia(&self, p: &Pannello) {
+        let dati = self.registro.borrow().in_attesa_di_dati();
+        crate::pannello::scrivi_fascia(p, dati);
     }
 
     /// «Meteo da»: 0 automatico, poi le entità meteo.
@@ -1726,6 +1759,15 @@ impl Ponte {
                 p.scegli_meteo(indice);
             }
         });
+        // Impostazioni › Isola › Panoramica: Griglia o Orologio.
+        f.on_scegli_panoramica(|i| {
+            if let Some(p) = ponte() {
+                p.scegli_panoramica(i);
+                if let Some(f) = p.finestra.borrow().upgrade() {
+                    p.riempi_isola(&f);
+                }
+            }
+        });
         f.set_collegamenti(ModelRc::from(self.collegamenti.clone()));
         f.on_controlla_nome_collegamento(|nome| collegamenti::valida_nome(&nome).err().unwrap_or_default().into());
         f.on_controlla_indirizzo_collegamento(|url| collegamenti::valida_indirizzo(&url).err().unwrap_or_default().into());
@@ -1980,6 +2022,8 @@ impl Ponte {
             }
         });
         p.set_attese(ModelRc::from(self.modello_attese.clone()));
+        // La modalità della Panoramica (Impostazioni › Isola › Panoramica), prima delle voci.
+        self.scrivi_panoramica(p);
         self.scrivi_moduli_in_attesa(p);
         // Un permesso aperto nella Coda, il suo «Consenti» che compare o la voce che ti aspetta
         // nella Panoramica: si arma di nuovo.
@@ -2372,6 +2416,7 @@ impl Ponte {
             p.set_moduli_in_attesa(n);
         }
         crate::pannello::scrivi_in_attesa(p, voci, voce_mostrata);
+        self.scrivi_fascia(p);
     }
 
     /// Un pulsante di una voce (nella pillola o nel pannello).
@@ -3872,6 +3917,41 @@ pub(crate) mod test {
         assert_eq!(p.casa.config().lato_destro, "cpu");
         assert_eq!(pillola.get_lato_destro().testo, "CPU —", "subito nella pillola, la CPU arriva dopo");
         sorgenti_lati::spegni();
+    }
+
+    /// Ridisegno F1, Task 9: Impostazioni › Panoramica. Di serie la Griglia; «Orologio» (1) si
+    /// salva come «orologio» senza toccare nient'altro della configurazione, la finestra delle
+    /// Impostazioni lo mostra scelto e il pannello che si apre dopo è in Orologio. La fascia del
+    /// pannello nuovo dice «Niente ti aspetta» (i moduli hanno già il loro primo riassunto).
+    #[test]
+    fn panoramica_scelta_salvata() {
+        let (_spegni, p, _pillola, _dir) = ponte_di_prova();
+        p.casa.aggiorna_config(|c| c.lato_destro = "cpu".into());
+        let prima = p.casa.config();
+        let pannello = crate::Pannello::new().unwrap();
+        p.riempi(&pannello);
+        assert_eq!(pannello.get_panoramica(), 0, "di serie la Griglia");
+        let f = crate::FinestraImpostazioni::new().unwrap();
+        p.riempi_isola(&f);
+        assert_eq!(f.get_panoramica_scelta(), 0);
+
+        p.scegli_panoramica(1);
+        let dopo = p.casa.config();
+        assert_eq!(dopo.panoramica, "orologio");
+        assert_eq!(Config { panoramica: String::new(), ..dopo.clone() }, prima, "nient'altro cambia");
+        p.riempi_isola(&f);
+        assert_eq!(f.get_panoramica_scelta(), 1, "le Impostazioni la mostrano scelta");
+        let nuovo = crate::Pannello::new().unwrap();
+        p.riempi(&nuovo);
+        assert_eq!(nuovo.get_panoramica(), 1, "il pannello seguente si apre in Orologio");
+        assert_eq!(nuovo.get_fascia_testo(), "Niente ti aspetta");
+
+        // Di nuovo la Griglia: «griglia» salvato, il pannello seguente in Griglia.
+        p.scegli_panoramica(0);
+        assert_eq!(p.casa.config().panoramica, "griglia");
+        let terzo = crate::Pannello::new().unwrap();
+        p.riempi(&terzo);
+        assert_eq!(terzo.get_panoramica(), 0);
     }
 
     /// Il finto del volume per i test del ponte: annota i comandi, il volume vero del PC non si

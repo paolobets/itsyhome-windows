@@ -48,6 +48,8 @@ impl Ponte {
             scrivi_tono_isola(p, tono);
             // Il tono di un modulo dà il segno e il nome per Narrator della sua scheda.
             self.scrivi_schede(p);
+            // Un modulo che dà il primo riassunto cambia la fascia dell'Orologio («Avvio in corso»).
+            self.scrivi_fascia(p);
         }
     }
 

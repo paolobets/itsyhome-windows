@@ -4,6 +4,9 @@
 //! La Panoramica a griglia (Task 8): i bersagli del fuoco da tastiera sono numeri fissi (le
 //! stesse costanti stanno in `ui/guscio/panoramica.slint`, un test le confronta) e l'ordine di Tab
 //! lo decide `ordine_tab` da ciò che c'è adesso (`Composizione`).
+//!
+//! L'Orologio (Task 9) usa gli stessi posti e lo stesso ordine: la modalità (`ModoPanoramica`) e
+//! il testo della fascia (`fascia`) sono qui.
 
 use super::misura::{larghezza, Stile};
 use super::Tono;
@@ -18,7 +21,7 @@ pub const ID_SCHEDA: i32 = 200;
 pub const ID_RICERCA: i32 = 300;
 pub const ID_VOLUME: i32 = 310;
 pub const ID_MENU: i32 = 320;
-/// «N in attesa ›» della riga alta.
+/// «N in attesa ›» della riga alta (Griglia) o «{n} avvisi ›» della fascia (Orologio).
 pub const ID_IN_ATTESA: i32 = 330;
 /// I posti delle carte: la carta k è `2k`, il suo bottone d'azione `2k + 1`.
 pub const POSTI: usize = 4;
@@ -89,6 +92,94 @@ pub fn in_attesa_non_mostrate(voci: usize, voce_mostrata: bool) -> usize {
     } else {
         voci
     }
+}
+
+/// Le due modalità della Panoramica (spec §5.5), scelte in Impostazioni › Isola › Panoramica e
+/// salvate in `Config.panoramica`. Predefinita Griglia (decisione di Paolo, 20/11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ModoPanoramica {
+    #[default]
+    Griglia,
+    Orologio,
+}
+
+impl ModoPanoramica {
+    /// Dalla configurazione: solo «orologio» è l'Orologio; vuoto, «griglia» e ogni altro valore
+    /// (un file scritto a mano, il «quadranti» di prima) sono la Griglia.
+    pub fn da_config(s: &str) -> ModoPanoramica {
+        if s == "orologio" {
+            ModoPanoramica::Orologio
+        } else {
+            ModoPanoramica::Griglia
+        }
+    }
+
+    /// Il valore da salvare.
+    pub fn come_str(self) -> &'static str {
+        match self {
+            ModoPanoramica::Griglia => "griglia",
+            ModoPanoramica::Orologio => "orologio",
+        }
+    }
+
+    /// L'indice della scelta (Impostazioni) e di `Pannello.panoramica`: 0 Griglia, 1 Orologio.
+    pub fn indice(self) -> i32 {
+        match self {
+            ModoPanoramica::Griglia => 0,
+            ModoPanoramica::Orologio => 1,
+        }
+    }
+
+    /// Dall'indice della scelta; uno sconosciuto è la Griglia.
+    pub fn da_indice(i: i32) -> ModoPanoramica {
+        if i == 1 {
+            ModoPanoramica::Orologio
+        } else {
+            ModoPanoramica::Griglia
+        }
+    }
+}
+
+/// La fascia «parlata» dell'Orologio (spec §5.5): `testo` si legge e basta, `avvisi` è il
+/// bersaglio «{n} avvisi ›» che apre la Coda (vuoto se non ce ne sono; la freccia è un'icona,
+/// §13.10), `nome` è il testo per Narrator.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Fascia {
+    pub testo: String,
+    pub avvisi: String,
+    pub nome: String,
+}
+
+impl Fascia {
+    /// Come si vede, con la freccia scritta come «›» (solo per i test e i messaggi).
+    #[cfg(test)]
+    pub fn come_si_legge(&self) -> String {
+        if self.avvisi.is_empty() {
+            self.testo.clone()
+        } else {
+            format!("{} · {} ›", self.testo, self.avvisi)
+        }
+    }
+}
+
+/// La fascia per regola, non per frasi (07 §3.1.2): `avvisi` sono le voci in attesa che la
+/// Panoramica non mostra già (`in_attesa_non_mostrate`), `in_attesa_di_dati` i moduli che non
+/// hanno ancora dato il primo riassunto (al primo avvio). Con la voce che ti aspetta la fascia
+/// tace: la scelta la fa il pannello, che la nasconde.
+pub fn fascia(avvisi: usize, in_attesa_di_dati: usize) -> Fascia {
+    let (testo, nome) = match in_attesa_di_dati {
+        0 => ("Niente ti aspetta".to_owned(), "Niente ti aspetta".to_owned()),
+        n => {
+            let moduli = if n == 1 { "1 modulo".to_owned() } else { format!("{n} moduli") };
+            (format!("Avvio in corso · {moduli} in attesa di dati"), format!("Avvio in corso, {moduli} in attesa di dati"))
+        }
+    };
+    let avvisi = match avvisi {
+        0 => String::new(),
+        1 => "1 avviso".to_owned(),
+        n => format!("{n} avvisi"),
+    };
+    Fascia { testo, avvisi, nome }
 }
 
 /// Una scheda inattiva: solo l'icona, in un cerchio di 36.
@@ -241,6 +332,40 @@ mod test {
         assert_eq!(prossimo(&ordine, -1, false), 320, "nessun fuoco indietro: l'ultimo");
         assert_eq!(prossimo(&ordine, 100, true), 0, "la voce sparita: il primo");
         assert_eq!(prossimo(&[], 5, true), 5);
+    }
+
+    /// La fascia dell'Orologio per regola (spec §5.5, 07 §3.1.2): «Niente ti aspetta», con gli
+    /// avvisi come bersaglio a parte («2 avvisi», la freccia è un'icona); al primo avvio i moduli
+    /// che non hanno ancora dato dati. Il nome per Narrator senza «·» né freccia.
+    #[test]
+    fn fascia_per_regola() {
+        let f = fascia(0, 0);
+        assert_eq!((f.testo.as_str(), f.avvisi.as_str(), f.nome.as_str()), ("Niente ti aspetta", "", "Niente ti aspetta"));
+        let f = fascia(2, 0);
+        assert_eq!((f.testo.as_str(), f.avvisi.as_str()), ("Niente ti aspetta", "2 avvisi"));
+        assert_eq!(f.come_si_legge(), "Niente ti aspetta · 2 avvisi ›");
+        assert_eq!(fascia(1, 0).avvisi, "1 avviso");
+        let f = fascia(0, 3);
+        assert_eq!(f.come_si_legge(), "Avvio in corso · 3 moduli in attesa di dati");
+        assert_eq!(f.nome, "Avvio in corso, 3 moduli in attesa di dati");
+        assert_eq!(fascia(0, 1).testo, "Avvio in corso · 1 modulo in attesa di dati");
+        assert_eq!(fascia(2, 1).come_si_legge(), "Avvio in corso · 1 modulo in attesa di dati · 2 avvisi ›");
+    }
+
+    /// La scelta salvata: vuota, «griglia» e ogni valore sconosciuto (anche il «quadranti» di
+    /// prima) = Griglia; solo «orologio» = Orologio. Andata e ritorno.
+    #[test]
+    fn modo_dalla_configurazione() {
+        for s in ["", "griglia", "quadranti", "boh", "Orologio "] {
+            assert_eq!(ModoPanoramica::da_config(s), ModoPanoramica::Griglia, "«{s}»");
+        }
+        assert_eq!(ModoPanoramica::da_config("orologio"), ModoPanoramica::Orologio);
+        for m in [ModoPanoramica::Griglia, ModoPanoramica::Orologio] {
+            assert_eq!(ModoPanoramica::da_config(m.come_str()), m);
+            assert_eq!(ModoPanoramica::da_indice(m.indice()), m);
+        }
+        assert_eq!((ModoPanoramica::Griglia.indice(), ModoPanoramica::Orologio.indice()), (0, 1));
+        assert_eq!(ModoPanoramica::da_indice(7), ModoPanoramica::Griglia, "un indice sconosciuto: Griglia");
     }
 
     #[test]

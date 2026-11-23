@@ -1,6 +1,7 @@
 // La carta di un modulo nella Panoramica a griglia (ridisegno F1, Task 8; spec §5.5, §13.5–§13.9,
 // spike 11 §1–§2). Due parti:
-// - `CartaVista`: solo l'aspetto, 182 × 108 r 20. Etichetta (icona 15 + nome mono maiuscolo coi
+// - `CartaVista`: solo l'aspetto, 182 × 108 r 20 (la tessera dell'Orologio, Task 9: 182 × 84,
+//   stesse parti, valore più piccolo). Etichetta (icona 15 + nome mono maiuscolo coi
 //   token di `Tema.etichetta-*`, gli stessi con cui Rust misura; col nome breve se c'è la
 //   capsula), capsula (occhietti + parola nel colore del tono), valore (Inter 700 18, o Mono 500 26
 //   se è un numero) e riga 12. Quando il bottone d'azione si vede, valore e riga si accorciano
@@ -9,7 +10,8 @@
 // - `Posto`: uno dei 4 posti fissi del pool di fuoco (mai dentro `if`/`for`, spike 11 §1). Il fuoco
 //   vero sta nel `Fuoco` del corpo (nome per Narrator dal modello) e in quello del bottone
 //   d'azione; il bottone c'è solo se il modulo ha un'azione (§13.9: nessun nodo vuoto per
-//   Narrator) e si vede al passaggio o col fuoco sulla carta (dissolvenza 120 ms).
+//   Narrator) e si vede al passaggio o col fuoco sulla carta (dissolvenza 120 ms); nella tessera
+//   dell'Orologio si vede sempre.
 import { Tema, Movimento } from "../tema.slint";
 import { Anello, Fuoco } from "../componenti.slint";
 import { ModuloUi, TonoModuloUi } from "../voci.slint";
@@ -58,15 +60,23 @@ export component CartaVista inherits Rectangle {
     in property <bool> sopra;
     // Il bottone d'azione si vede: valore e riga lasciano il suo posto.
     in property <bool> azione-visibile;
+    // 108 la carta della Griglia, 84 la tessera dell'Orologio (spec §5.5, Task 9): nella tessera
+    // il valore è più piccolo (Inter 700 16, Mono 500 20) e tutto sta 2 px più in basso.
+    in property <length> altezza: 108px;
 
     // Spazi della carta (spec §13.6): margine 14, testo pieno 154, col bottone 116.
     property <length> margine: 14px;
     property <length> pieno: root.width - 2 * margine;
     property <length> spazio: azione-visibile ? pieno - 38px : pieno;
     property <bool> con-capsula: modulo.parola != "";
+    property <bool> tessera: root.altezza < 100px;
+    // Dal fondo: margine, riga (16), spazio, valore.
+    property <length> fondo: tessera ? 10px : 12px;
+    property <length> stacco: tessera ? 2px : 3px;
+    property <length> alto-valore: tessera ? (modulo.numerico ? 24px : 20px) : (modulo.numerico ? 30px : 24px);
 
     width: 182px;
-    height: 108px;
+    height: root.altezza;
     border-radius: 20px;
     clip: true;
     background: sopra ? Tema.g2 : Tema.g1;
@@ -121,14 +131,14 @@ export component CartaVista inherits Rectangle {
 
     valore := Text {
         x: margine;
-        y: root.modulo.numerico ? root.height - 12px - 16px - 3px - 30px : root.height - 12px - 16px - 3px - 24px;
+        y: root.height - fondo - 16px - stacco - alto-valore;
         width: spazio;
-        height: root.modulo.numerico ? 30px : 24px;
+        height: alto-valore;
         text: root.modulo.titolo;
         font-family: root.modulo.numerico ? Tema.carattere-mono : Tema.carattere;
         font-weight: root.modulo.numerico ? 500 : 700;
-        font-size: root.modulo.numerico ? 26px : 18px;
-        letter-spacing: root.modulo.numerico ? -0.52px : -0.27px;
+        font-size: tessera ? (root.modulo.numerico ? 20px : 16px) : (root.modulo.numerico ? 26px : 18px);
+        letter-spacing: tessera ? (root.modulo.numerico ? -0.4px : -0.24px) : (root.modulo.numerico ? -0.52px : -0.27px);
         color: Tema.testo;
         vertical-alignment: center;
         overflow: elide;
@@ -137,7 +147,7 @@ export component CartaVista inherits Rectangle {
 
     riga := Text {
         x: margine;
-        y: root.height - 12px - 16px;
+        y: root.height - fondo - 16px;
         width: spazio;
         height: 16px;
         text: root.modulo.sec;
@@ -157,9 +167,14 @@ export component Posto inherits Rectangle {
     // Il bersaglio della Panoramica col fuoco (-1 nessuno) e se l'anello si vede (da tastiera).
     in property <int> fuoco: -1;
     in property <bool> anello;
+    // La carta della Griglia (108, l'azione al passaggio o col fuoco) o la tessera dell'Orologio
+    // (84, l'azione sempre visibile: con 4 tessere non c'è il «muro di comandi», spec §5.5). Lo
+    // stesso posto del pool nelle due modalità.
+    in property <length> altezza: 108px;
+    in property <bool> azione-sempre;
     out property <bool> sopra: area.has-hover || area-azione.has-hover;
-    // Il bottone si vede al passaggio o col fuoco sulla carta o sul bottone.
-    out property <bool> mostra-azione: modulo.con-azione && (sopra || fuoco == k * 2 || fuoco == k * 2 + 1);
+    // Il bottone si vede sempre (tessera) o al passaggio o col fuoco sulla carta o sul bottone.
+    out property <bool> mostra-azione: modulo.con-azione && (azione-sempre || sopra || fuoco == k * 2 || fuoco == k * 2 + 1);
     // Clic (o Narrator) sul corpo (`2k`) o sul bottone (`2k + 1`).
     callback scelta(int);
     // Il bottone d'azione sparisce col fuoco addosso: il pannello porta il fuoco sul corpo.
@@ -173,10 +188,11 @@ export component Posto inherits Rectangle {
     }
 
     width: 182px;
-    height: 108px;
+    height: root.altezza;
     visible: presente;
 
     vista := CartaVista {
+        altezza: root.altezza;
         modulo: root.modulo;
         sopra: root.sopra;
         azione-visibile: root.mostra-azione;

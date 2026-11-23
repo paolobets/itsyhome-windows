@@ -109,6 +109,14 @@ impl Registro {
             .unwrap_or(Tono::Vuoto)
     }
 
+    /// Quanti moduli non hanno ancora dato il primo riassunto (la fascia dell'Orologio, al primo
+    /// avvio: «Avvio in corso · {n} moduli in attesa di dati»). Un «—» con un altro motivo (la
+    /// casa da collegare, il PC che legge) è un dato vero, non un'attesa d'avvio.
+    pub fn in_attesa_di_dati(&self) -> usize {
+        let avvio = Riassunto::primo_avvio(MOTIVO_AVVIO);
+        self.posti.iter().filter(|p| p.riassunto == avvio).count()
+    }
+
     pub fn ordine(&self) -> Vec<&'static Identita> {
         self.posti.iter().map(|p| p.identita).collect()
     }
@@ -263,6 +271,17 @@ mod test {
         // Anche la riga ha il suo limite.
         let riga_larga = calmo("PC", &"W".repeat(20));
         assert!(matches!(r.aggiorna("pc", riga_larga), Err(FuoriMisura { campo: "sec", .. })));
+    }
+
+    /// La fascia dell'Orologio al primo avvio: contano solo i moduli senza il primo riassunto, non
+    /// un «—» con un motivo vero (il PC che legge).
+    #[test]
+    fn moduli_in_attesa_di_dati() {
+        let mut r = Registro::nuovo(&[]);
+        assert_eq!(r.in_attesa_di_dati(), 4);
+        r.aggiorna("pc", Riassunto::primo_avvio("Lettura in corso")).unwrap();
+        r.aggiorna("casa", calmo("4 luci", "21,5° dentro")).unwrap();
+        assert_eq!(r.in_attesa_di_dati(), 2);
     }
 
     #[test]
