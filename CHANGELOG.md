@@ -9,6 +9,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 > **Nota sul trasporto di M3.** Le sezioni «Task 1», «Task 2», «Task 4», «Task 6» e «Task 7» qui sotto raccontano il primo giro, con hook HTTP su `127.0.0.1`, porta, codice segreto, variabile `ISOLA_HOOK_TOKEN`, `assistente --barra-stato` e «Rigenera il codice». **Nulla di tutto ciò è mai stato rilasciato**: i Task 7A/7B (18/11) lo hanno sostituito con l'aiutante `isola-hook.exe` e un tubo con nome riservato all'utente (spec M3 §10). Le sezioni restano come storia.
 
+### Fixed (Ridisegno F2, Task 7, giro di correzioni 2)
+- **Il movimento che conta è solo quello a pulsante del mouse alzato**: premere sul punto fermo, scivolare di un pixel e rilasciare (un secondo clic che trema) faceva decidere «Consenti». Ora la pressione non dà il punto di partenza e i movimenti a pulsante premuto non contano.
+- **Conseguenza voluta: un tocco sullo schermo touch non decide mai un permesso** (un dito non passa sopra il pulsante senza toccarlo). I permessi si decidono con il mouse, la tastiera (Ctrl+Invio esatto; Invio su «Nega») o Narrator.
+
 ### Fixed (Ridisegno F2, Task 7, giro di correzioni 1)
 - **Nessun clic ripetuto su un permesso nato sotto il puntatore**: con la carta Agenti al 3° o 4° posto della Panoramica, il clic sulla carta apriva la pagina e «Nega» o «Consenti» del permesso scelto nascevano sotto lo stesso punto; un secondo clic lì dopo i 600 ms decideva senza che si fosse guardato. Ora «Nega» e «Consenti» di ogni permesso (Coda, dettaglio di Agenti) e della voce che ti aspetta contano il clic solo se il puntatore si è **mosso** sopra di loro dopo la comparsa (o dopo un'altra voce, o «Consenti» comparso in fondo al testo); basta un pixel. Tastiera (Ctrl+Invio, Invio su «Nega») e Narrator invariati; nessun timer. Il confronto è in coordinate della finestra: lo scivolamento d'arrivo della vista non conta come movimento.
 - Un test per un permesso che ne sostituisce un altro col fuoco su «Nega»; la sonda conferma che l'assegnazione in `init` di `Inerzia` si anima (commento corretto); la promessa del Task 4 «non la anticipa mai» corretta qui sotto.

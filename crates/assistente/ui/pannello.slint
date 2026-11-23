@@ -221,7 +221,8 @@ export component Pannello inherits Window {
     // `inerte` alla voce che ti aspetta, ai due permessi (Coda e dettaglio di Agenti) e alle righe
     // della Coda col permesso. Una sola animazione per riarmo.
     inerzia := Inerzia { armamenti: root.armamenti; }
-    out property <bool> inerte: inerzia.inerte;    // Dove sta adesso la voce con questo id fra le `attese` (-1: non c'è più). Lo dice Rust, che
+    out property <bool> inerte: inerzia.inerte;
+    // Dove sta adesso la voce con questo id fra le `attese` (-1: non c'è più). Lo dice Rust, che
     // tiene il modello: il permesso aperto nella Coda segue il suo id quando cambia posto, e si
     // chiude solo quando l'id sparisce (pre-flight C14).
     callback indice-voce(string) -> int;

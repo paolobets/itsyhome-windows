@@ -146,8 +146,9 @@ export component Pulsante inherits FocusScope {
     // Task 7, I1: «Nega» e «Consenti» dei permessi e della voce che ti aspetta). Una superficie
     // nata sotto un puntatore fermo (la pagina aperta da una carta, un permesso che si apre) non
     // prende il clic ripetuto nello stesso punto. `comparsa`: chi lo contiene la cambia quando il
-    // pulsante compare (o cambia voce): si riparte da capo. Il primo punto visto (un movimento, o
-    // la pressione) è quello di partenza; un movimento in un altro punto è il gesto. Niente timer;
+    // pulsante compare (o cambia voce): si riparte da capo. Il primo movimento a pulsante alzato dà
+    // il punto di partenza; un altro movimento a pulsante alzato in un punto diverso è il gesto.
+    // Niente timer;
     // Narrator e la tastiera non passano di qui.
     in property <bool> chiede-movimento;
     in property <string> comparsa;
@@ -237,17 +238,21 @@ export component Pulsante inherits FocusScope {
 
     area := TouchArea {
         mouse-cursor: root.inerte ? MouseCursor.default : MouseCursor.pointer;
-        // In coordinate della finestra: durante lo scivolamento d'arrivo della vista il pulsante si
-        // sposta sotto un puntatore fermo, e quello non è un gesto.
+        // Contano solo i movimenti a pulsante del mouse alzato (ruling I1-bis): la pressione non dà
+        // il punto di partenza, e trascinare a pulsante premuto (un secondo clic che trema) non è
+        // un gesto. Conseguenza voluta: un tocco sullo schermo non decide mai un permesso
+        // (restano tastiera e Narrator). In coordinate della finestra: durante lo scivolamento
+        // d'arrivo della vista il pulsante si sposta sotto un puntatore fermo, e quello non è un
+        // gesto.
         pointer-event(e) => {
-            if (e.kind == PointerEventKind.move || e.kind == PointerEventKind.down) {
+            if (e.kind == PointerEventKind.move && !self.pressed) {
                 let x = self.absolute-position.x + self.mouse-x;
                 let y = self.absolute-position.y + self.mouse-y;
                 if (!root.con-punto) {
                     root.punto-x = x;
                     root.punto-y = y;
                     root.con-punto = true;
-                } else if (e.kind == PointerEventKind.move && (abs(x - root.punto-x) > 0.5px || abs(y - root.punto-y) > 0.5px)) {
+                } else if (abs(x - root.punto-x) > 0.5px || abs(y - root.punto-y) > 0.5px) {
                     root.mosso = true;
                 }
             }

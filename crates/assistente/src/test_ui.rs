@@ -5115,6 +5115,27 @@ mod accessibilita {
         }
     }
 
+    /// Ruling del Task 7, I1-bis: conta solo un movimento a pulsante del mouse alzato. Premuto sul
+    /// punto fermo, trascinato di 1 px e rilasciato (un secondo clic un po' tremolante) non decide,
+    /// né su «Consenti» né su «Nega»; un passaggio sopra il pulsante e poi il clic sì.
+    #[test]
+    fn pressione_trascinata_non_e_un_gesto() {
+        use slint::platform::{PointerEventButton, WindowEvent};
+        for (nome, atteso) in [("Consenti", "consenti"), ("Nega", "nega")] {
+            let (p, eventi, _) = agenti_permesso_corto();
+            let (x, y) = centro(&elemento(&p, nome));
+            let punto = |x: f32| slint::LogicalPosition::new(x, y);
+            p.window().dispatch_event(WindowEvent::PointerPressed { position: punto(x), button: PointerEventButton::Left });
+            p.window().dispatch_event(WindowEvent::PointerMoved { position: punto(x + 1.0) });
+            p.window().dispatch_event(WindowEvent::PointerMoved { position: punto(x + 2.0) });
+            p.window().dispatch_event(WindowEvent::PointerReleased { position: punto(x + 2.0), button: PointerEventButton::Left });
+            clic_fermo(&p, x + 2.0, y);
+            assert!(eventi.borrow().is_empty(), "«{nome}» trascinato a pulsante premuto: {:?}", eventi.borrow());
+            clic_deciso(&p, x + 4.0, y);
+            assert_eq!(*eventi.borrow(), [format!("{VOCE_P} {atteso}")], "«{nome}» dopo un passaggio a pulsante alzato");
+        }
+    }
+
     /// Ruling del Task 7, I1: il movimento vale per la voce sulla quale è stato fatto. Deciso A
     /// col clic, B prende il suo posto sotto il puntatore fermo: il clic ripetuto non decide B.
     #[test]
