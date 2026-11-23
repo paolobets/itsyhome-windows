@@ -202,6 +202,7 @@ mod test {
     use crate::{Pannello, TonoModuloUi};
     use casa_core::eventi::{CasaEvento, StatoConnessione};
     use claude_hook::evento::{EventoHook, TipoEvento};
+    use i_slint_backend_testing::ElementHandle;
     use slint::{ComponentHandle, Model};
     use std::sync::Arc;
     use std::time::Instant;
@@ -377,7 +378,7 @@ mod test {
         p.set_vista("agenti".into());
         ponte.azione_pagina("agenti", pagina_agenti::PERMESSO, &crate::claude::id_sessione("b"));
         assert_eq!(p.get_vista().as_str(), "agenti");
-        // Un permesso di «b», dietro una voce della casa: la Coda si apre su di lui.
+        // Un permesso di «b», dietro una voce bloccante della casa: la Coda si apre su di lui.
         ponte.metti_voce(
             crate::attenzione::Voce {
                 id: "prova.casa".into(),
@@ -386,7 +387,8 @@ mod test {
                 titolo: "Prova".into(),
                 dettaglio: String::new(),
                 pulsanti: vec![],
-                creata: Instant::now() - std::time::Duration::from_secs(60),
+                // Più recente del permesso: gli sta davanti nella Coda.
+                creata: Instant::now() + std::time::Duration::from_secs(60),
                 permesso: None,
             },
             false,
@@ -394,11 +396,54 @@ mod test {
         let e = EventoHook { strumento: Some("Bash".into()), riassunto: Some("npm test".into()), ..evento("b", TipoEvento::PermissionRequest) };
         ponte.claude_permesso(9, e, None, 3, Instant::now());
         let indice = crate::pannello::indice_voce(&p.get_attese(), &crate::claude::id_voce_permesso(9));
-        assert!(indice >= 0);
+        assert!(indice > 0, "il permesso non è la prima voce: «0» aprirebbe la voce della casa");
+        // La strada vera, da tastiera: la riga di «b» scelta, → al pulsante del dettaglio
+        // («Apri il permesso»), Invio. Il pannello è mostrato (le parti dentro `if` esistono).
+        ponte.casa().aggiorna_config(|c| c.claude.collegato = true);
+        ponte.vista_claude(true);
+        p.set_aperto(true);
+        p.show().expect("pannello mostrato nel backend di prova");
+        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+        p.global::<crate::Fuochi>().set_pronti(true);
+        let righe = p.get_elenco_righe();
+        let riga_b = (0..righe.row_count()).position(|i| righe.row_data(i).is_some_and(|r| r.id == crate::claude::id_sessione("b"))).expect("la riga di «b»");
+        assert_eq!(righe.row_data(riga_b).map(|r| r.azione_id.to_string()).as_deref(), Some(pagina_agenti::PERMESSO));
+        p.set_elenco_fuoco(riga_b as i32);
         let armamenti = p.get_armamenti();
-        ponte.azione_pagina("agenti", pagina_agenti::PERMESSO, &crate::claude::id_sessione("b"));
+        tasto(&p, slint::platform::Key::RightArrow);
+        tasto(&p, slint::platform::Key::Return);
         assert_eq!(p.get_vista().as_str(), "coda");
+        // È proprio il permesso di «b» (il suo comando), non la voce della casa davanti a lui, e il
+        // fuoco è su «Nega».
+        slint::platform::update_timers_and_animations();
+        // Il gruppo del permesso dice a Narrator il comando e la sessione (descrizione).
+        let aperto = ElementHandle::find_by_element_id(&p, "Permesso::riquadro").next().is_some();
+        assert!(aperto, "il permesso è aperto");
+        let permesso = ElementHandle::find_by_element_type_name(&p, "Permesso").next().expect("il componente");
+        let detto = permesso.accessible_description().unwrap_or_default().to_string();
+        assert!(detto.starts_with("npm test\n"), "il comando di «b», non la voce della casa: {detto:?}");
+        assert_eq!(etichetta_col_fuoco(&p), "Nega");
         assert!(p.get_armamenti() > armamenti, "il permesso che si apre riarma «Consenti»");
+    }
+
+    fn tasto(p: &Pannello, k: slint::platform::Key) {
+        use slint::platform::WindowEvent;
+        p.window().dispatch_event(WindowEvent::KeyPressed { text: k.into() });
+        p.window().dispatch_event(WindowEvent::KeyReleased { text: k.into() });
+    }
+
+    /// Il nome accessibile dell'elemento col fuoco vero, o del primo antenato che ne ha uno.
+    fn etichetta_col_fuoco(p: &Pannello) -> String {
+        use i_slint_core::accessibility::AccessibleStringProperty;
+        use i_slint_core::item_tree::ParentItemTraversalMode;
+        let mut corrente = i_slint_core::window::WindowInner::from_pub(p.window()).focus_item.borrow().upgrade();
+        while let Some(item) = corrente {
+            if let Some(e) = item.accessible_string_property(AccessibleStringProperty::Label).filter(|e| !e.is_empty()) {
+                return e.to_string();
+            }
+            corrente = item.parent_item(ParentItemTraversalMode::StopAtPopups);
+        }
+        String::new()
     }
 
     /// A pannello chiuso un evento della casa non tocca il registro né scrive `modello_moduli`;

@@ -4642,9 +4642,29 @@ mod accessibilita {
             .find_all();
         assert!(limiti.is_empty(), "{:?}", limiti.iter().map(|e| e.accessible_label()).collect::<Vec<_>>());
         assert!(ElementHandle::find_by_element_type_name(&p, "LimiteBarra").next().is_none());
-        // Senza la chiave: né spesa né «Dettagli».
+        // Senza la chiave (fix 1, I1): niente «Dettagli», ma al posto dell'importo la nota, tenue,
+        // che Narrator legge come valore; tutta nella testata, a destra dei limiti, senza
+        // sovrapporsi. Con la chiave ma senza dati: «nessun dato», accanto a «Dettagli».
         p.set_elenco_sintesi(sintesi_agenti(false));
-        assert!(!c_e(&p, "Dettagli") && !c_e(&p, "Spesa API del mese"));
+        assert!(!c_e(&p, "Dettagli"));
+        let nota_al_posto = |p: &Pannello, nota: &str| {
+            let spesa = elemento(p, "Spesa API del mese");
+            assert_eq!(spesa.accessible_value().as_deref(), Some(nota));
+            let s = rettangolo(&spesa);
+            assert!(s.0 >= 34.0 - 0.5 && s.2 <= 34.0 + 752.0 + 0.5 && s.1 >= 44.0 - 0.5 && s.3 <= 44.0 + 40.0 + 0.5, "nella testata: {s:?}");
+            for e in spesa.query_descendants().find_all() {
+                let t = rettangolo(&e);
+                assert!(t.0 >= s.0 - 0.5 && t.2 <= s.2 + 0.5 && t.1 >= s.1 - 0.5 && t.3 <= s.3 + 0.5, "il testo della nota esce: {t:?} {s:?}");
+            }
+            let limite = rettangolo(&elemento(p, "Claude, limite 7 giorni, 61 %, si azzera mercoledì alle 14:30"));
+            assert!(limite.2 <= s.0 + 0.5, "dopo i limiti, senza sovrapporsi: {limite:?} {s:?}");
+            let titolo = rettangolo(&elemento(p, "1 al lavoro"));
+            assert!(titolo.2 <= rettangolo(&elemento(p, "Claude, limite 5 ore, 34 %, si azzera alle 14:30")).0 + 0.5);
+        };
+        nota_al_posto(&p, crate::claude::SPESA_SENZA_CHIAVE);
+        p.set_elenco_sintesi(crate::SintesiUi { spesa: "".into(), spesa_nota: "nessun dato".into(), ..sintesi_agenti(true) });
+        nota_al_posto(&p, "nessun dato");
+        assert!(c_e(&p, "Dettagli"));
     }
 
     /// «Dettagli» sta nella testata: ↑ dalla prima riga ci arriva, Invio apre le schede delle API,

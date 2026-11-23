@@ -145,20 +145,27 @@ export component TestataPagina inherits Rectangle {
         if root.l1.presente: LimiteBarra { limite: root.l1; }
         if root.l2.presente: LimiteBarra { limite: root.l2; }
 
-        if root.spesa != "": Rectangle {
-            width: spesa-testo.preferred-width;
+        // L'importo in mono; senza (nessuna chiave, nessun dato) la nota al suo posto, tenue, su
+        // due righe al più in 200 px (come diceva la card della vista di prima). Narrator legge
+        // sempre come valore quello che si vede.
+        if root.spesa != "" || root.spesa-nota != "": Rectangle {
+            width: root.spesa != "" ? spesa-testo.preferred-width : min(spesa-testo.preferred-width, 200px);
             accessible-role: text;
             accessible-label: "Spesa API del mese";
-            accessible-value: root.spesa;
-            accessible-description: root.spesa-nota;
+            accessible-value: root.spesa != "" ? root.spesa : root.spesa-nota;
+            accessible-description: root.spesa != "" ? root.spesa-nota : "";
 
             spesa-testo := Text {
-                text: root.spesa;
+                width: parent.width;
+                height: parent.height;
+                text: root.spesa != "" ? root.spesa : root.spesa-nota;
                 vertical-alignment: center;
-                font-family: Tema.carattere-mono;
+                wrap: root.spesa != "" ? no-wrap : word-wrap;
+                overflow: elide;
+                font-family: root.spesa != "" ? Tema.carattere-mono : Tema.carattere;
                 font-weight: 500;
                 font-size: Tema.testo-piccolo;
-                color: Tema.testo;
+                color: root.spesa != "" ? Tema.testo : Tema.testo-tenue;
                 accessible-role: none;
             }
         }
