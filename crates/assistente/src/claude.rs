@@ -41,7 +41,7 @@ pub const ID_DECISIONE_TARDIVA: &str = "claude.decisione.tardiva";
 const MASSIMO_RIASSUNTO_TITOLO: usize = 60;
 
 /// Lunghezza massima del nome di uno strumento sconosciuto nella pillola.
-const MASSIMO_STRUMENTO: usize = 12;
+pub(crate) const MASSIMO_STRUMENTO: usize = 12;
 /// Come si chiama una sessione senza cartella (il `cwd` mancava).
 const SENZA_CARTELLA: &str = "Claude";
 

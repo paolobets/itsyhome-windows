@@ -164,8 +164,9 @@ export component VoceInAttesa inherits Rectangle {
         premuto => { root.scelta(100); }
     }
 
-    // Il testo a sinistra dei pulsanti.
-    property <length> fine-testo: (root.indice-nega >= 0 ? nega.x : root.width - margine) - 12px;
+    // Il testo a sinistra dei pulsanti: del primo che c'è (con il solo pulsante delicato il posto
+    // di «Nega» è vuoto e il primo è «Apri», rimandato n2 di F1).
+    property <length> fine-testo: (root.indice-nega >= 0 ? nega.x : root.indice-altro >= 0 ? altro.x : root.width - margine) - 12px;
 
     titolo := Text {
         x: margine;

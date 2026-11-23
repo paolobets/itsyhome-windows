@@ -1780,6 +1780,150 @@ mod accessibilita {
         assert!(azioni.borrow().is_empty(), "Invio ha risposto: {:?}", azioni.borrow());
     }
 
+    /// La voce `v` con un solo pulsante, delicato («Consenti»).
+    fn solo_delicato(id: &str, v: VoceAttesaUi) -> VoceAttesaUi {
+        VoceAttesaUi {
+            id: id.into(),
+            pulsanti: ModelRc::new(VecModel::from(vec![PulsanteUi { id: "consenti".into(), testo: "Consenti".into(), delicato: true }])),
+            ..v
+        }
+    }
+
+    /// Una voce bloccante qualunque dopo la prima (per «+1 in attesa»).
+    fn seconda_voce() -> VoceAttesaUi {
+        voce_coda("b2", "Secondo", LivelloUi::Bloccante, "Aspetta te · Agenti", true)
+    }
+
+    /// Rimandato n1 di F1: col fuoco su «Nega» della voce A, il modello mette al suo posto una
+    /// voce B con il solo pulsante delicato. Il posto di «Nega» resta vuoto: il fuoco non si perde
+    /// ma va su «Apri» (testo lungo), su «+1 in attesa» o sulla carta 0 (testo intero: «Consenti»
+    /// visibile, mai col fuoco addosso). La tastiera regge: Esc chiude, Tab va avanti.
+    #[test]
+    fn voce_sostituita_da_una_con_solo_pulsante_delicato_tiene_il_fuoco() {
+        use slint::platform::Key;
+        // B col testo lungo: il fuoco su «Apri», Esc chiude subito il pannello.
+        let voci = std::rc::Rc::new(VecModel::from(vec![permesso_corto()]));
+        let (p, azioni) = panoramica_con_voci(ModelRc::from(voci.clone()));
+        let chiuso = std::rc::Rc::new(std::cell::Cell::new(false));
+        let c = chiuso.clone();
+        p.on_chiudi(move || c.set(true));
+        assert_eq!(etichetta_col_fuoco(&p), "Nega");
+        voci.set_row_data(0, solo_delicato("b", permesso_lungo(2)));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&p), "Apri", "il fuoco va su «Apri», non si perde");
+        tasto(&p, Key::Escape);
+        assert!(chiuso.get(), "la tastiera regge: Esc chiude il pannello");
+        // Lo stesso, poi Tab: la carta 0.
+        let voci = std::rc::Rc::new(VecModel::from(vec![permesso_corto()]));
+        let (p, _) = panoramica_con_voci(ModelRc::from(voci.clone()));
+        voci.set_row_data(0, solo_delicato("b", permesso_lungo(2)));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&p), "Apri");
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Agenti, 2 al lavoro", "Tab da «Apri» alla carta 0");
+        // B col testo intero («Consenti» visibile) e una seconda voce: «+1 in attesa».
+        let voci = std::rc::Rc::new(VecModel::from(vec![permesso_corto(), seconda_voce()]));
+        let (p, _) = panoramica_con_voci(ModelRc::from(voci.clone()));
+        assert_eq!(etichetta_col_fuoco(&p), "Nega");
+        voci.set_row_data(0, solo_delicato("b", permesso_corto()));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(ElementHandle::find_by_accessible_label(&p, "Consenti").count(), 1, "«Consenti» visibile");
+        assert_eq!(etichetta_col_fuoco(&p), "Un'altra voce in attesa", "il fuoco su «+1 in attesa», mai sul consenso");
+        // Senza la seconda voce: la carta 0.
+        let voci = std::rc::Rc::new(VecModel::from(vec![permesso_corto()]));
+        let (p, _) = panoramica_con_voci(ModelRc::from(voci.clone()));
+        voci.set_row_data(0, solo_delicato("b", permesso_corto()));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&p), "Agenti, 2 al lavoro", "il fuoco sulla carta 0, mai sul consenso");
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Apri il terminale, Agenti", "il Tab seguente non si perde");
+        // Senza carte né altre voci nessun bersaglio: la tastiera resta al pannello, Esc chiude.
+        let p = pannello_panoramica(ModelRc::new(VecModel::from(Vec::<crate::ModuloUi>::new())));
+        let voci = std::rc::Rc::new(VecModel::from(vec![permesso_corto()]));
+        p.set_attese(ModelRc::from(voci.clone()));
+        slint::platform::update_timers_and_animations();
+        let chiuso = std::rc::Rc::new(std::cell::Cell::new(false));
+        let c = chiuso.clone();
+        p.on_chiudi(move || c.set(true));
+        assert_eq!(etichetta_col_fuoco(&p), "Nega");
+        voci.set_row_data(0, solo_delicato("b", permesso_corto()));
+        slint::platform::update_timers_and_animations();
+        assert_ne!(etichetta_col_fuoco(&p), "Consenti");
+        tasto(&p, Key::Escape);
+        assert!(chiuso.get(), "senza bersaglio la tastiera regge: Esc chiude il pannello");
+        // Pre-flight C20: col fuoco su «Apri» la stessa voce si aggiorna e il testo ora sta tutto
+        // («Apri» diventa «Consenti»): il fuoco lascia il posto e «Consenti» si riarma.
+        let voci = std::rc::Rc::new(VecModel::from(vec![solo_delicato("b", permesso_lungo(2)), seconda_voce()]));
+        let (p, _) = panoramica_con_voci(ModelRc::from(voci.clone()));
+        let armamenti = std::rc::Rc::new(std::cell::Cell::new(0u32));
+        let a = armamenti.clone();
+        p.on_consenti_compare(move || a.set(a.get() + 1));
+        assert_eq!(etichetta_col_fuoco(&p), "Apri", "la voce che compare: fuoco su «Apri»");
+        voci.set_row_data(0, solo_delicato("b", permesso_corto()));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(ElementHandle::find_by_accessible_label(&p, "Consenti").count(), 1);
+        assert_eq!(etichetta_col_fuoco(&p), "Un'altra voce in attesa", "«Apri» diventato «Consenti»: il fuoco se ne va");
+        assert_eq!(armamenti.get(), 1, "«Consenti» comparso: si riarma");
+        assert!(azioni.borrow().is_empty(), "{:?}", azioni.borrow());
+    }
+
+    /// La voce con il solo pulsante delicato che compare su una Panoramica senza voce: stesso
+    /// bersaglio di `voce_sostituita_da_una_con_solo_pulsante_delicato_tiene_il_fuoco`.
+    #[test]
+    fn voce_che_compare_con_solo_pulsante_delicato() {
+        use slint::platform::Key;
+        let casi: [(&str, Vec<VoceAttesaUi>, &str); 3] = [
+            ("testo lungo", vec![solo_delicato("b", permesso_lungo(2))], "Apri"),
+            ("testo intero e una seconda voce", vec![solo_delicato("b", permesso_corto()), seconda_voce()], "Un'altra voce in attesa"),
+            ("testo intero", vec![solo_delicato("b", permesso_corto())], "Agenti, 2 al lavoro"),
+        ];
+        for (nome, nuove, atteso) in casi {
+            let voci = std::rc::Rc::new(VecModel::from(Vec::<VoceAttesaUi>::new()));
+            let (p, azioni) = panoramica_con_voci(ModelRc::from(voci.clone()));
+            // Il fuoco sulla carta 1, poi la voce compare.
+            tasto(&p, Key::Tab);
+            tasto(&p, Key::Tab);
+            tasto(&p, Key::Tab);
+            assert_eq!(etichetta_col_fuoco(&p), "Casa, 4 luci", "{nome}");
+            for v in nuove {
+                voci.push(v);
+            }
+            slint::platform::update_timers_and_animations();
+            assert_eq!(etichetta_col_fuoco(&p), atteso, "{nome}");
+            tasto(&p, Key::Return);
+            assert!(azioni.borrow().iter().all(|a| a != "consenti"), "{nome}: {:?}", azioni.borrow());
+        }
+    }
+
+    /// Rimandato n2 di F1: con il solo «Apri» (il posto di «Nega» vuoto) titolo e riquadro del
+    /// dettaglio finiscono 12 px prima di «Apri», non ci passano sotto.
+    #[test]
+    fn testo_della_voce_non_passa_sotto_apri() {
+        let (p, _) = panoramica_con_voci(ModelRc::new(VecModel::from(vec![solo_delicato("b", permesso_lungo(2))])));
+        let apri = elemento(&p, "Apri");
+        let limite = apri.absolute_position().x - 12.0;
+        for id in ["VoceInAttesa::titolo", "VoceInAttesa::scatola"] {
+            let e = ElementHandle::find_by_element_id(&p, id).next().unwrap_or_else(|| panic!("nessun {id}"));
+            let fine = e.absolute_position().x + e.size().width;
+            assert!(fine <= limite + 0.01, "{id} finisce a {fine}, oltre {limite}");
+            assert!(e.size().width > 0.0, "{id} vuoto");
+        }
+    }
+
+    /// F1 Task 8 m5: con due pulsanti il titolo della voce è largo 476 px (752 − 16 − 112 − 8 −
+    /// 112 − 12 − 16) e ci sta «Claude chiede: » più lo strumento più lungo che la pillola mostra
+    /// (`MASSIMO_STRUMENTO` caratteri, «W» il più largo).
+    #[test]
+    fn titolo_della_voce_con_strumento_al_massimo() {
+        use crate::moduli::misura::{larghezza, Stile};
+        let (p, _) = panoramica_con_voci(ModelRc::new(VecModel::from(vec![permesso_corto()])));
+        let titolo = ElementHandle::find_by_element_id(&p, "VoceInAttesa::titolo").next().expect("titolo della voce");
+        assert_eq!(titolo.size().width, 476.0, "il titolo della voce con due pulsanti");
+        let piu_lungo = format!("Claude chiede: {}", "W".repeat(crate::claude::MASSIMO_STRUMENTO));
+        let l = larghezza(&piu_lungo, Stile::Titolo);
+        assert!(l <= titolo.size().width, "«{piu_lungo}» largo {l} px non sta in {}", titolo.size().width);
+    }
+
     /// Review Focus 2: fuoco su «Consenti», la voce tolta da Rust (permesso risolto nel
     /// terminale): il fuoco va sulla carta 0 e il Tab seguente alla sua azione.
     #[test]

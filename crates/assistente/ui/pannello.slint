@@ -276,33 +276,74 @@ export component Pannello inherits Window {
     // Il pool vale solo nella Panoramica col fuoco sul contenuto.
     property <bool> pool-attivo: vista == "panoramica" && zona == Zona.contenuto;
     property <int> carte: min(4, moduli.length);
-    // La voce compare (anche entrando nella Panoramica): il fuoco va su «Nega» e, se è un permesso,
-    // «Consenti» si arma di nuovo. La voce sparisce col fuoco addosso (permesso risolto nel
-    // terminale): il fuoco va alla prima carta, non si perde.
+    // Dove va il fuoco quando la voce che ti aspetta compare o cambia: su «Nega»; senza «Nega» (una
+    // voce col solo pulsante delicato) su «Apri», che porta al permesso intero; se quel pulsante è
+    // «Consenti» (testo intero nella voce) mai su di lui, ma su «+N» o sulla prima carta (-1 se non
+    // c'è nulla). Mai un consenso.
+    pure function bersaglio-iniziale-voce() -> int {
+        if (panoramica-el.indice-nega >= 0) {
+            return Bersagli.nega;
+        }
+        if (panoramica-el.indice-altro >= 0 && attese[0].pulsanti[panoramica-el.indice-altro].delicato
+            && !panoramica-el.voce-intera) {
+            return Bersagli.consenti;
+        }
+        if (voce-altre) {
+            return Bersagli.altre;
+        }
+        return carte > 0 ? 0 : -1;
+    }
+    // Porta il fuoco della Panoramica su `id`. Se cambia, col fuoco sul contenuto, il fuoco vero
+    // passa prima a `tasti`: l'elemento di prima può essere sparito (il «Nega» di una voce che non
+    // l'ha più) e quello nuovo lo riprende da sé (`chiede-fuoco`); se non c'è, la tastiera resta.
+    function sposta-fuoco-voce(id: int) {
+        if (id != fuoco && zona == Zona.contenuto) {
+            tasti.focus();
+        }
+        fuoco = id;
+    }
+    // La voce compare (anche entrando nella Panoramica): il fuoco va al suo bersaglio iniziale e,
+    // se è un permesso, «Consenti» si arma di nuovo. La voce sparisce col fuoco addosso (permesso
+    // risolto nel terminale): il fuoco va alla prima carta, non si perde.
     changed voce-mostrata => {
         if (voce-mostrata) {
             if (Permessi.chiede(attese[0])) {
                 root.consenti-compare();
             }
             if (zona == Zona.contenuto) {
-                fuoco = Bersagli.nega;
+                sposta-fuoco-voce(bersaglio-iniziale-voce());
             }
         } else if (fuoco >= Bersagli.nega && fuoco <= Bersagli.altre) {
             fuoco = carte > 0 ? 0 : -1;
         }
     }
     // Un'altra voce al posto della prima: mai il fuoco sul consenso o su «+N» di una richiesta che
-    // non si è scelta; torna su «Nega».
+    // non si è scelta, né su un «Nega» che la voce nuova non ha (rimandato n1 di F1); torna al
+    // bersaglio iniziale.
     property <string> voce-id: voce-mostrata ? attese[0].id : "";
     changed voce-id => {
-        if (voce-mostrata && fuoco > Bersagli.nega && fuoco <= Bersagli.altre) {
-            fuoco = Bersagli.nega;
+        if (voce-mostrata && fuoco >= Bersagli.nega && fuoco <= Bersagli.altre) {
+            sposta-fuoco-voce(bersaglio-iniziale-voce());
         }
     }
-    // «+N» sparisce col fuoco addosso (le altre voci risolte): il fuoco va su «Nega».
+    // La stessa voce si aggiorna e il suo testo ora sta tutto: il pulsante delicato da «Apri»
+    // diventa «Consenti». «Consenti» è comparso, quindi si riarma; e se il fuoco era su «Apri»
+    // se ne va (pre-flight C20): mai un consenso col fuoco addosso senza averlo scelto.
+    changed voce-intera => {
+        if (voce-mostrata && panoramica-el.voce-intera && panoramica-el.indice-altro >= 0
+            && attese[0].pulsanti[panoramica-el.indice-altro].delicato) {
+            root.consenti-compare();
+            if (fuoco == Bersagli.consenti) {
+                sposta-fuoco-voce(bersaglio-iniziale-voce());
+            }
+        }
+    }
+    property <bool> voce-intera: panoramica-el.voce-intera;
+    // «+N» sparisce col fuoco addosso (le altre voci risolte): il fuoco torna al bersaglio
+    // iniziale della voce.
     changed voce-altre => {
         if (!voce-altre && fuoco == Bersagli.altre) {
-            fuoco = voce-mostrata ? Bersagli.nega : (carte > 0 ? 0 : -1);
+            sposta-fuoco-voce(voce-mostrata ? bersaglio-iniziale-voce() : (carte > 0 ? 0 : -1));
         }
     }
     // Le carte calano col fuoco sull'ultima: il fuoco va alla più vicina.
@@ -315,7 +356,7 @@ export component Pannello inherits Window {
     changed in-attesa => {
         if (in-attesa == 0 && zona == Zona.attesa) {
             zona = Zona.contenuto;
-            fuoco = voce-mostrata ? Bersagli.nega : (carte > 0 ? 0 : -1);
+            fuoco = voce-mostrata ? bersaglio-iniziale-voce() : (carte > 0 ? 0 : -1);
         }
     }
 
@@ -866,8 +907,9 @@ export component Pannello inherits Window {
         }
         filtro-luci = false;
         vista = v;
-        // Nella Panoramica il fuoco riparte da «Nega» se la voce ti aspetta, altrimenti da nessuno.
-        fuoco = v == "panoramica" && voce-mostrata ? Bersagli.nega : -1;
+        // Nella Panoramica il fuoco riparte dal bersaglio iniziale della voce che ti aspetta (di
+        // solito «Nega»), altrimenti da nessuno.
+        fuoco = v == "panoramica" && voce-mostrata ? bersaglio-iniziale-voce() : -1;
         fuoco-casa = 0;
         fuoco-pc = 0;
         fuoco-stanza = -1;
@@ -976,8 +1018,10 @@ export component Pannello inherits Window {
                 freccia-panoramica(false);
             } else if (k == Key.RightArrow) {
                 freccia-panoramica(true);
-            } else if (k == Key.UpArrow && fuoco < Bersagli.nega && voce-mostrata) {
-                fuoco = Bersagli.nega;
+            } else if (k == Key.UpArrow && fuoco < Bersagli.nega && voce-mostrata
+                && bersaglio-iniziale-voce() >= Bersagli.nega) {
+                // ↑ dalle carte alla voce: il suo bersaglio iniziale, se è sulla voce.
+                fuoco = bersaglio-iniziale-voce();
             } else if (k == Key.DownArrow && (fuoco < 0 || fuoco >= Bersagli.nega) && carte > 0) {
                 fuoco = 0;
             }
@@ -1633,11 +1677,11 @@ export component Pannello inherits Window {
     }
 
     // Il fuoco vero sugli elementi solo a pannello sceso (vedi `Fuochi`): l'apertura dura 200 ms.
-    // Se la voce ti aspetta già all'apertura, il fuoco parte da «Nega».
+    // Se la voce ti aspetta già all'apertura, il fuoco parte dal suo bersaglio iniziale («Nega»).
     init => {
         Fuochi.pronti = false;
         if (voce-mostrata) {
-            fuoco = Bersagli.nega;
+            fuoco = bersaglio-iniziale-voce();
         }
     }
     Timer {
