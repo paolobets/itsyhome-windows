@@ -50,8 +50,9 @@ export component Fuoco inherits FocusScope {
 // dalla parte sicura.
 //
 // Uno solo, fisso nel pannello (ruling del Task 4, dubbio 4): mai dentro un `if` o un `for`. Se
-// nascesse dopo un incremento, `init` lo allinea al conteggio: non resta inerte fino al riarmo
-// seguente (m4).
+// nascesse dopo un incremento, `init` lo allinea al conteggio: l'assegnazione in `init` si anima
+// (provato con una sonda nel Task 7: inerte subito e a 300 ms, attivo a 700), quindi è inerte per
+// 600 ms e poi fermo, dalla parte sicura; senza `init` resterebbe inerte fino al riarmo seguente (m4).
 export component Inerzia {
     in property <int> armamenti;
     property <float> corsa;
@@ -141,6 +142,23 @@ export component Pulsante inherits FocusScope {
     // Inerte durante l'armamento (`Inerzia`, Task 4): testo tenue sul fondo neutro, niente
     // passaggio né puntatore a mano, nessun clic, nessuna azione di Narrator, che lo sente spento.
     in property <bool> inerte;
+    // Il clic vale solo col puntatore MOSSO sopra il pulsante dopo la sua comparsa (ruling del
+    // Task 7, I1: «Nega» e «Consenti» dei permessi e della voce che ti aspetta). Una superficie
+    // nata sotto un puntatore fermo (la pagina aperta da una carta, un permesso che si apre) non
+    // prende il clic ripetuto nello stesso punto. `comparsa`: chi lo contiene la cambia quando il
+    // pulsante compare (o cambia voce): si riparte da capo. Il primo punto visto (un movimento, o
+    // la pressione) è quello di partenza; un movimento in un altro punto è il gesto. Niente timer;
+    // Narrator e la tastiera non passano di qui.
+    in property <bool> chiede-movimento;
+    in property <string> comparsa;
+    property <bool> mosso;
+    property <bool> con-punto;
+    property <length> punto-x;
+    property <length> punto-y;
+    changed comparsa => {
+        mosso = false;
+        con-punto = false;
+    }
     property <bool> vuole-fuoco: chiede-fuoco && Fuochi.pronti;
     callback premuto();
     // Ha appena preso il fuoco (Tab): chi lo contiene lo porta in vista.
@@ -219,8 +237,23 @@ export component Pulsante inherits FocusScope {
 
     area := TouchArea {
         mouse-cursor: root.inerte ? MouseCursor.default : MouseCursor.pointer;
+        // In coordinate della finestra: durante lo scivolamento d'arrivo della vista il pulsante si
+        // sposta sotto un puntatore fermo, e quello non è un gesto.
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.move || e.kind == PointerEventKind.down) {
+                let x = self.absolute-position.x + self.mouse-x;
+                let y = self.absolute-position.y + self.mouse-y;
+                if (!root.con-punto) {
+                    root.punto-x = x;
+                    root.punto-y = y;
+                    root.con-punto = true;
+                } else if (e.kind == PointerEventKind.move && (abs(x - root.punto-x) > 0.5px || abs(y - root.punto-y) > 0.5px)) {
+                    root.mosso = true;
+                }
+            }
+        }
         clicked => {
-            if (!root.inerte) {
+            if (!root.inerte && (!root.chiede-movimento || root.mosso)) {
                 root.premuto();
             }
         }

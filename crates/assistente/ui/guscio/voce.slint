@@ -133,6 +133,8 @@ export component VoceInAttesa inherits Rectangle {
 
     // I pulsanti a posti fissi in basso a destra: l'altro (101) all'estremità, «Nega» (100) prima.
     property <length> alto-pulsanti: 36px;
+    // La voce compare (anche con la Panoramica che arriva), cambia, o «Apri» diventa «Consenti».
+    property <string> comparsa: (root.visible ? "v" : "") + root.voce.id + (root.intera ? "i" : "");
     property <length> larghezza-pulsante: 112px;
     property <length> y-pulsanti: root.height - 14px - alto-pulsanti;
 
@@ -149,6 +151,10 @@ export component VoceInAttesa inherits Rectangle {
         delicato: root.indice-altro >= 0 && root.voce.pulsanti[root.indice-altro].delicato;
         tipo: RegolaPulsanti.tipo(true, root.indice-altro >= 0 && root.voce.pulsanti[root.indice-altro].delicato);
         inerte: root.inerte && !root.apre(root.indice-altro);
+        // Di un permesso, il clic solo col puntatore mosso sopra dopo la comparsa (ruling del Task
+        // 7, I1); «Apri» non decide e resta libero.
+        chiede-movimento: root.permesso && !root.apre(root.indice-altro);
+        comparsa: root.comparsa;
         tasti-propri: false;
         focalizzabile: false;
         chiede-fuoco: root.indice-altro >= 0 && root.fuoco == 101;
@@ -168,6 +174,8 @@ export component VoceInAttesa inherits Rectangle {
         delicato: root.indice-nega >= 0 && root.voce.pulsanti[root.indice-nega].delicato;
         tipo: RegolaPulsanti.tipo(root.indice-altro < 0, root.indice-nega >= 0 && root.voce.pulsanti[root.indice-nega].delicato);
         inerte: root.inerte && !root.apre(root.indice-nega);
+        chiede-movimento: root.permesso && !root.apre(root.indice-nega);
+        comparsa: root.comparsa;
         tasti-propri: false;
         focalizzabile: false;
         chiede-fuoco: root.indice-nega >= 0 && root.fuoco == 100;

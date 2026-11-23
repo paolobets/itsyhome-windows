@@ -1266,7 +1266,7 @@ mod accessibilita {
         tasto(&p, Key::Return);
         lascia_girare(&p);
         let (x, y) = centro(&elemento(&p, "Nega"));
-        clic_in(&p, x, y);
+        clic_deciso(&p, x, y);
         // Fix 1 (minor 5): dopo un clic l'anello da tastiera si spegne, il fuoco torna al pannello.
         assert_eq!(etichetta_col_fuoco(&p), "Pannello di ItsyHome");
         tasto(&p, Key::Return);
@@ -1295,11 +1295,12 @@ mod accessibilita {
         }
     }
 
-    /// Un clic al centro del pulsante `id` e un'azione predefinita di Narrator.
+    /// Un clic al centro del pulsante `id` (col puntatore mosso: lo ferma solo l'inerzia) e
+    /// un'azione predefinita di Narrator.
     fn premi_in_ogni_modo(p: &Pannello, id: &str) {
         let e = ElementHandle::find_by_element_id(p, id).next().unwrap_or_else(|| panic!("nessun «{id}»"));
         let (x, y) = centro(&e);
-        clic_in(p, x, y);
+        clic_deciso(p, x, y);
         e.invoke_accessible_default_action();
     }
 
@@ -1335,7 +1336,7 @@ mod accessibilita {
         slint::platform::update_timers_and_animations();
         assert!(!inerte(&p, "Permesso::nega") && !inerte(&p, "Permesso::altro"), "dopo 600 ms attivi");
         let (x, y) = centro(&parte(&p, "nega"));
-        clic_in(&p, x, y);
+        clic_deciso(&p, x, y);
         assert_eq!(*azioni.borrow(), ["nega"], "attivo, il clic decide");
         // Un riarmo durante l'inerzia la fa ripartire da lì (come `dal`).
         p.set_armamenti(p.get_armamenti() + 1);
@@ -1379,7 +1380,7 @@ mod accessibilita {
         slint::platform::update_timers_and_animations();
         assert!(!inerte(&p, "Permesso::nega") && !inerte(&p, "Permesso::altro"));
         let (x, y) = centro(&parte(&p, "nega"));
-        clic_in(&p, x, y);
+        clic_deciso(&p, x, y);
         assert_eq!(*azioni.borrow(), ["nega"]);
     }
 
@@ -1402,7 +1403,7 @@ mod accessibilita {
         assert!(!inerte(&p, "VoceInAttesa::nega") && !inerte(&p, "VoceInAttesa::altro"));
         let e = ElementHandle::find_by_element_id(&p, "VoceInAttesa::nega").next().unwrap();
         let (x, y) = centro(&e);
-        clic_in(&p, x, y);
+        clic_deciso(&p, x, y);
         assert_eq!(*azioni.borrow(), ["nega"]);
         // Testo lungo: il secondo pulsante è «Apri», che non decide: non diventa inerte.
         let (p, _) = panoramica_con_voci(ModelRc::new(VecModel::from(vec![permesso_lungo(2)])));
@@ -1493,15 +1494,20 @@ mod accessibilita {
 
     /// I bersagli del clic nel corpo del pannello (fra la riga alta e la barra): righe d'elenco e
     /// pulsanti visibili, col nome e il rettangolo.
+    /// Ognuno una volta sola: la ricerca per discendenti ritrova lo stesso elemento più volte
+    /// (revisione del Task 7, m4).
     fn bersagli_nel_corpo(p: &Pannello) -> Vec<(String, (f32, f32, f32, f32))> {
-        i_slint_backend_testing::ElementQuery::from_root(p)
+        let mut v: Vec<_> = i_slint_backend_testing::ElementQuery::from_root(p)
             .match_descendants()
             .match_predicate(|e| matches!(e.accessible_role(), Some(AccessibleRole::Button | AccessibleRole::ListItem)))
             .find_all()
             .into_iter()
             .map(|e| (e.accessible_label().unwrap_or_default().to_string(), rettangolo(&e)))
             .filter(|(_, r)| r.1 >= 44.0 - 0.5 && r.3 <= 44.0 + 224.0 + 0.5 && r.2 > r.0 && r.3 > r.1)
-            .collect()
+            .collect();
+        v.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)));
+        v.dedup();
+        v
     }
 
     /// Lascia finire l'arrivo della vista (il timer da 16 ms, poi i 280 ms dello scorrimento).
@@ -1843,6 +1849,23 @@ mod accessibilita {
         p.window().dispatch_event(WindowEvent::PointerReleased { position: posizione, button: PointerEventButton::Left });
     }
 
+    /// Un clic voluto, come lo fa una mano: il puntatore arriva (un punto accanto), si posa sul
+    /// punto e preme. Ruling del Task 7, I1: «Nega» e «Consenti» contano il clic solo col
+    /// puntatore mosso sopra di loro dopo la comparsa.
+    fn clic_deciso(p: &Pannello, x: f32, y: f32) {
+        use slint::platform::WindowEvent;
+        p.window().dispatch_event(WindowEvent::PointerMoved { position: slint::LogicalPosition::new(x - 1.0, y) });
+        clic_in(p, x, y);
+    }
+
+    /// Premuto e rilasciato senza alcun movimento (il puntatore è già lì).
+    fn clic_fermo(p: &Pannello, x: f32, y: f32) {
+        use slint::platform::{PointerEventButton, WindowEvent};
+        let posizione = slint::LogicalPosition::new(x, y);
+        p.window().dispatch_event(WindowEvent::PointerPressed { position: posizione, button: PointerEventButton::Left });
+        p.window().dispatch_event(WindowEvent::PointerReleased { position: posizione, button: PointerEventButton::Left });
+    }
+
     /// Il centro di un elemento, in coordinate della finestra.
     fn centro(e: &ElementHandle) -> (f32, f32) {
         let (pos, lato) = (e.absolute_position(), e.size());
@@ -1874,7 +1897,7 @@ mod accessibilita {
         let nega = elemento(&p, "Nega");
         assert_eq!((nega.absolute_position(), nega.size()), (prima, lato_prima), "«Nega» non si è spostato");
         // Il clic dove si era visto «Nega» nega.
-        clic_in(&p, prima.x + lato_prima.width / 2.0, prima.y + lato_prima.height / 2.0);
+        clic_deciso(&p, prima.x + lato_prima.width / 2.0, prima.y + lato_prima.height / 2.0);
         assert_eq!(*azioni.borrow(), ["nega"], "il clic dove era «Nega» nega");
         // «Consenti» non sta sopra «Nega».
         let (cx, _) = centro(&consenti);
@@ -4893,10 +4916,7 @@ mod accessibilita {
         lascia_girare(&p);
         fine_arrivo();
         let dopo = bersagli_nel_corpo(&p);
-        let mut pulsanti: Vec<_> = dopo.iter().filter(|(n, _)| n == "Nega" || n == "Consenti").cloned().collect();
-        pulsanti.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
-        pulsanti.sort_by(|a, b| a.0.cmp(&b.0));
-        pulsanti.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+        let pulsanti: Vec<_> = dopo.iter().filter(|(n, _)| n == "Nega" || n == "Consenti").cloned().collect();
         assert_eq!(pulsanti.len(), 2, "«Nega» e «Consenti» nel dettaglio: {pulsanti:?}");
         for (n, r) in &pulsanti {
             for (m, q) in prima.iter().chain(dopo.iter().filter(|(m, _)| m != "Nega" && m != "Consenti")) {
@@ -5000,8 +5020,149 @@ mod accessibilita {
         assert!((consenti.0 - posto.0).abs() < 0.5 && (consenti.2 - posto.2).abs() < 0.5, "«Consenti» nel suo posto: {consenti:?} {posto:?}");
         avanza(700);
         slint::platform::update_timers_and_animations();
-        clic_in(&p, (nega.0 + nega.2) / 2.0, (nega.1 + nega.3) / 2.0);
+        clic_deciso(&p, (nega.0 + nega.2) / 2.0, (nega.1 + nega.3) / 2.0);
         assert_eq!(*eventi.borrow(), [format!("{VOCE_P} nega")]);
+    }
+
+    /// Revisione del Task 7, I1 (ruling: il clic vale solo col puntatore mosso). La carta Agenti al
+    /// 4° posto della Panoramica: il clic sulla carta apre la pagina, e «Nega» o «Consenti» del
+    /// permesso scelto nascono sotto lo stesso punto. Ripetuto lì dopo i 600 ms (fermo, o con un
+    /// movimento allo stesso punto) non decide; spostato di un pixel sì. Narrator non è un
+    /// puntatore: la sua azione resta com'era.
+    #[test]
+    fn carta_agenti_al_quarto_posto_niente_clic_ripetuto() {
+        for nome in ["Consenti", "Nega"] {
+            let p = pannello_panoramica(ModelRc::new(VecModel::from(vec![
+                modulo("casa", "Casa", "4 luci", None),
+                modulo("pc", "PC", "Tutto regolare", None),
+                modulo("collegamenti", "Collegamenti", "6 link", None),
+                modulo("agenti", "Agenti", "1 ti aspetta", None),
+            ])));
+            let eventi: Registro = Default::default();
+            let e = eventi.clone();
+            p.on_azione_voce(move |voce, id| e.borrow_mut().push(format!("{voce} {id}")));
+            p.set_attese(ModelRc::new(VecModel::from(vec![VoceAttesaUi {
+                livello: LivelloUi::Attenzione,
+                ..permesso_con_dati(VOCE_P, "npm test")
+            }])));
+            p.set_elenco_stato(pagina_piena());
+            p.set_elenco_righe(ModelRc::new(VecModel::from(vec![riga_col_permesso("pppp", "my-shop", VOCE_P, 0)])));
+            fine_arrivo();
+            // Dove nasceranno «Nega» e «Consenti» nel dettaglio (finestra): dentro la 4ª carta.
+            let (x, y) = if nome == "Consenti" { (730.0, 248.0) } else { (610.0, 248.0) };
+            let carta = rettangolo(&posti(&p)[3]);
+            assert!(x > carta.0 && x < carta.2 && y > carta.1 && y < carta.3, "il punto sta nella 4ª carta: {carta:?}");
+            clic_in(&p, x, y);
+            assert_eq!(p.get_vista().as_str(), "agenti", "il clic sulla carta apre la pagina");
+            fine_arrivo();
+            avanza(700);
+            slint::platform::update_timers_and_animations();
+            let pulsante = elemento(&p, nome);
+            let r = rettangolo(&pulsante);
+            assert!(x > r.0 && x < r.2 && y > r.1 && y < r.3, "«{nome}» {r:?} è nato sotto il clic");
+            clic_fermo(&p, x, y);
+            clic_in(&p, x, y);
+            assert!(eventi.borrow().is_empty(), "il clic ripetuto senza muovere ha deciso: {:?}", eventi.borrow());
+            clic_deciso(&p, x + 2.0, y);
+            let atteso = if nome == "Consenti" { "consenti" } else { "nega" };
+            assert_eq!(*eventi.borrow(), [format!("{VOCE_P} {atteso}")], "mosso sopra «{nome}», il clic decide");
+            // Narrator (non un puntatore) com'era.
+            pulsante.invoke_accessible_default_action();
+            assert_eq!(eventi.borrow().len(), 2, "l'azione di Narrator");
+        }
+    }
+
+    /// Lo stesso ruling nella Coda e sulla voce della Panoramica: «Consenti» e «Nega» che compaiono
+    /// sotto un puntatore fermo non prendono il clic in quel punto; dopo un movimento sì.
+    #[test]
+    fn coda_e_voce_niente_clic_col_puntatore_fermo() {
+        use slint::platform::{Key, WindowEvent};
+        let fermo_poi_mosso = |p: &Pannello, azioni: &Registro, nome: &str, atteso: &str, mostra: &dyn Fn()| {
+            let (x, y) = centro(&elemento(p, nome));
+            // Si nasconde, il puntatore va lì, ricompare sotto di lui.
+            p.set_attese(ModelRc::new(VecModel::from(Vec::<VoceAttesaUi>::new())));
+            slint::platform::update_timers_and_animations();
+            p.window().dispatch_event(WindowEvent::PointerMoved { position: slint::LogicalPosition::new(x, y) });
+            mostra();
+            avanza(700);
+            slint::platform::update_timers_and_animations();
+            assert!(c_e(p, nome));
+            clic_fermo(p, x, y);
+            clic_in(p, x, y);
+            assert!(azioni.borrow().is_empty(), "«{nome}» col puntatore fermo: {:?}", azioni.borrow());
+            clic_deciso(p, x + 2.0, y);
+            assert_eq!(*azioni.borrow(), [atteso], "«{nome}» dopo un movimento");
+        };
+        for (nome, atteso) in [("Consenti", "consenti"), ("Nega", "nega")] {
+            // Coda: il permesso aperto (Invio), richiuso col puntatore fermo dove sta il pulsante.
+            let (p, azioni) = pannello_in_coda(ModelRc::new(VecModel::from(vec![permesso_con_dati(VOCE_P, "npm test")])));
+            tasto(&p, Key::Return);
+            lascia_girare(&p);
+            let pp = p.clone_strong();
+            fermo_poi_mosso(&p, &azioni, nome, atteso, &|| {
+                pp.set_attese(ModelRc::new(VecModel::from(vec![permesso_con_dati(VOCE_P, "npm test")])));
+                slint::platform::update_timers_and_animations();
+                tasto(&pp, Key::Return);
+                lascia_girare(&pp);
+            });
+            // La voce della Panoramica (testo intero: «Consenti» c'è nella voce).
+            let (p, azioni) = panoramica_con_voci(ModelRc::new(VecModel::from(vec![permesso_corto()])));
+            let pp = p.clone_strong();
+            fermo_poi_mosso(&p, &azioni, nome, atteso, &|| {
+                pp.set_attese(ModelRc::new(VecModel::from(vec![permesso_corto()])));
+                slint::platform::update_timers_and_animations();
+            });
+        }
+    }
+
+    /// Ruling del Task 7, I1: il movimento vale per la voce sulla quale è stato fatto. Deciso A
+    /// col clic, B prende il suo posto sotto il puntatore fermo: il clic ripetuto non decide B.
+    #[test]
+    fn voce_nuova_sotto_il_puntatore_fermo_riparte() {
+        let b = || VoceAttesaUi { id: "p2".into(), ..permesso_corto() };
+        let voci = std::rc::Rc::new(VecModel::from(vec![permesso_corto(), b()]));
+        let (p, azioni) = panoramica_con_voci(ModelRc::from(voci.clone()));
+        avanza(700);
+        slint::platform::update_timers_and_animations();
+        let (x, y) = centro(&elemento(&p, "Consenti"));
+        clic_deciso(&p, x, y);
+        assert_eq!(*azioni.borrow(), ["consenti"]);
+        voci.remove(0);
+        slint::platform::update_timers_and_animations();
+        avanza(700);
+        slint::platform::update_timers_and_animations();
+        assert!(c_e(&p, "Consenti"), "B al posto di A");
+        clic_fermo(&p, x, y);
+        clic_in(&p, x, y);
+        assert_eq!(azioni.borrow().len(), 1, "B deciso col puntatore fermo: {:?}", azioni.borrow());
+        clic_deciso(&p, x + 2.0, y);
+        assert_eq!(azioni.borrow().len(), 2);
+    }
+
+    /// Revisione del Task 7, m1: un permesso che ne sostituisce un altro col fuoco su «Nega» nel
+    /// dettaglio: riarmo, il fuoco torna sulla riga (mai sul «Nega» della richiesta nuova senza
+    /// averla scelta), Invio porta su «Nega» del nuovo e solo il secondo Invio nega.
+    #[test]
+    fn agenti_permesso_sostituito_col_fuoco_su_nega() {
+        use slint::platform::Key;
+        let (p, eventi, riarmi) = agenti_col_permesso(
+            vec![riga_col_permesso("pppp", "my-shop", VOCE_P, 0)],
+            vec![permesso_con_dati(VOCE_P, &"alfa ".repeat(400))],
+        );
+        tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Nega");
+        let n = riarmi.get();
+        let altro = "claude.permesso.2";
+        p.set_attese(ModelRc::new(VecModel::from(vec![permesso_con_dati(altro, &"beta ".repeat(400))])));
+        p.set_elenco_righe(ModelRc::new(VecModel::from(vec![riga_col_permesso("pppp", "my-shop", altro, 0)])));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(riarmi.get(), n + 1, "il permesso nuovo riarma");
+        assert_eq!((p.get_elenco_lato(), etichetta_col_fuoco(&p).as_str()), (0, "my-shop, Claude"), "il fuoco sulla riga");
+        tasto(&p, Key::Return);
+        assert_eq!(etichetta_col_fuoco(&p), "Nega");
+        assert!(eventi.borrow().is_empty());
+        tasto(&p, Key::Return);
+        assert_eq!(*eventi.borrow(), [format!("{altro} nega")]);
     }
 
     /// Revisione del Task 4, m3: «Nega» è inerte nell'istante stesso dell'incremento, senza un giro

@@ -448,6 +448,10 @@ export component Permesso inherits Rectangle {
         delicato: root.indice-altro >= 0 && root.voce.pulsanti[root.indice-altro].delicato;
         tipo: RegolaPulsanti.tipo(true, root.indice-altro >= 0 && root.voce.pulsanti[root.indice-altro].delicato);
         inerte: root.inerte;
+        // Il clic solo col puntatore mosso sopra dopo la comparsa (ruling del Task 7, I1): il
+        // permesso che si mostra, un'altra voce, «Consenti» che compare in fondo al testo.
+        chiede-movimento: true;
+        comparsa: (root.visible ? "v" : "") + root.voce.id + (root.mostra(root.indice-altro) ? "+" : "");
         tasti-propri: false;
         focalizzabile: false;
         chiede-fuoco: root.con-fuoco && root.fuoco == root.indice-altro && root.mostra(root.indice-altro);
@@ -470,6 +474,8 @@ export component Permesso inherits Rectangle {
         testo: root.indice-nega >= 0 ? root.voce.pulsanti[root.indice-nega].testo : "";
         tipo: RegolaPulsanti.tipo(false, false);
         inerte: root.inerte;
+        chiede-movimento: true;
+        comparsa: (root.visible ? "v" : "") + root.voce.id + (root.mostra(root.indice-nega) ? "+" : "");
         tasti-propri: false;
         focalizzabile: false;
         chiede-fuoco: root.con-fuoco && root.fuoco == root.indice-nega && root.mostra(root.indice-nega);
