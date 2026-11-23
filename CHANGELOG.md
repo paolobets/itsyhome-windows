@@ -68,6 +68,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Parole e tinte**: nella vista Agenti chi lavora ha l'arancio del lavoro (prima il verde acqua del «fatto») e la sessione che aspetta un tuo messaggio dice «Tocca a te», come la carta («Ti aspetta» resta del permesso); il nome della pillola durante il volume è «Volume 40 %», con lo spazio come la barra e la vista PC; l'avviso di prova (`--prova-avviso --lungo`) parla del permesso aperto nella Coda.
 - La traccia di barre e archi resta il grigio appena sopra la carta delle bozze: un test controlla che il pieno si legga (≥ 3:1) sulla traccia, sulla carta e sul nero.
 
+### Changed (Ridisegno F1, chiusura: misure e confronto)
+- **Verifiche**: `cargo test --workspace` 983 passati, 0 falliti, 4 ignorati; `cargo clippy --workspace --all-targets -- -D warnings` pulito; `cargo build --release -p assistente` ok.
+- **Misure** (exe release su istanza di prova, cartella finta, nessuna casa, `tools\misura.ps1 -Secondi 60`; partenza = HEAD a3da924, stesse condizioni):
+
+  | | Partenza | Dopo F1 |
+  |---|---|---|
+  | A riposo (solo pillola), RAM privata | 7,8 MB | **7,8–8,0 MB** (media 7,8) |
+  | A riposo, CPU media | 0,03 % | **0,02 %** (picchi isolati 0,11–0,34 %) |
+  | Pannello aperto fermo (`--apri`), RAM privata | 13,0 MB | **13,9–14,0 MB** |
+  | Pannello aperto fermo, CPU media | 0,08 % | **0,04 %** (picco 0,44 %) |
+  | Dopo la chiusura del pannello (Esc, 15 s), RAM privata | 9,8–10,2 MB | **10,4–10,6 MB** |
+
+  Il ritorno dopo la chiusura è circa 0,3–0,6 MB sopra quello di partenza (e sopra il riposo puro di 7,8 MB, come già prima di F1: il pannello lascia in memoria ciò che Skia ha messo in cache).
+- **Fotogrammi** (contati dai `RedrawRequested` di winit con una build usa e getta, mai committata): a riposo la pillola ridisegna solo per il battito di ciglia (ogni 4,6 s una chiusura di 110 ms, circa 12 fotogrammi: 182 in 70 s); con il pannello aperto fermo lo stesso battito degli occhi (circa 13 fotogrammi ogni 4,4 s). Con gli occhi che non battono (umore `sleep` o `happy`) i fotogrammi dopo l'avvio sono **0** sulla pillola e uno solo in 45 s a pannello aperto (oltre all'animazione d'apertura di 0,4 s).
+- **Confronto visivo** con `tc-griglia-4`, `tc-griglia-aspetta`, `tc-pan-lavora` e `tc-stati-misto` (le foto dei crate di prova che compilano l'interfaccia del repo): composizione, gerarchia, luce dal basso, capsule e anello del fuoco coincidono. Differenze volute o note: «Consenti» è neutro (regola M3), i moduli sono quattro (niente Mail, Focus, Musica, Agenda), il meteo è testo («9°») e non l'icona della nuvola, gli occhi nelle foto sono bianchi.
+
 ### Changed (giro grafico dopo M3, 18–19/11)
 - **Un clic, il dettaglio**: dalla pillola con l'attività di Claude (o una sua voce che non è un permesso) il pannello si apre sulla vista Claude. «N luci accese» nella Panoramica apre la Casa filtrata sulle luci accese («Luci accese (N)», un interruttore per luce, «Spegni tutte», «Tutta la casa»; a zero «Nessuna luce accesa»). La riga e il quadrante CASA si raggiungono con ↓ o Tab e per Narrator sono un pulsante solo, grande quanto la riga o la card.
 - **Panoramica**: quadranti bordo a bordo con «In attesa» e a 8 px l'uno dall'altro; casa non configurata = invito «Collega la casa ›» (nel quadrante la casa verde acqua al posto dell'arco, una volta sola) che porta alle Impostazioni; con tre o più voci in attesa due card larghe e «+N»; l'arco dei limiti e della spesa si scalda alla soglia dell'utente; «Limite 7 giorni» e «Spesa API del mese» con lo stesso nome ovunque; nel primo minuto il quadrante della spesa dice «prima lettura fra poco». La rotella non cambia più layout sotto il menu «⋯» aperto.

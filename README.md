@@ -16,7 +16,7 @@ Controlla luci, termostati, cover, scene e molto altro direttamente dalla barra 
 Sul ramo `v3-assistente` nasce la v3: un assistente «isola» sempre presente in alto al centro dello schermo, al posto del menu nella tray. **Non è ancora una versione da installare.**
 
 - **Pillola** di 124 × 32 con due occhi che cambiano umore; si allarga quando qualcosa chiede attenzione e si può ritirare in una linea sottile.
-- **Pannello** 800 × 300 al bordo alto: riga «In attesa», layout Orologio e Quadranti, app Casa e PC, Impostazioni in una finestra dedicata.
+- **Pannello** 800 × 340, un'isola nera al bordo alto con la barra in basso (ricerca, schede, volume): la **Panoramica** è una griglia di carte (di serie) o un orologio con la fascia e le tessere, a scelta in Impostazioni › Isola › Panoramica; poi le pagine **Agenti** (le sessioni di Claude Code), Casa, PC e Collegamenti, e la **Coda** delle cose in attesa. Impostazioni in una finestra dedicata.
 - **Menu ed «Esci»**: il menu dell'isola (Impostazioni, Informazioni, Ritira l'isola, Esci) sta nel «⋯» in alto a destra del pannello; il clic destro sulla pillola non fa nulla. L'icona nella barra è facoltativa e spenta di serie (Impostazioni › Sistema). Fuori da Windows, dove menu e icona non ci sono, «Esci» sta in Impostazioni › Sistema.
 - **Finestra di gestione** in un processo separato (`itsyhome-gestione`), con riquadro web senza JavaScript e senza risorse remote.
 - Home Assistant solo via eventi WebSocket (nessun polling); token nell'archivio sicuro del sistema (Gestione credenziali su Windows), mai nel file di configurazione.
@@ -49,15 +49,15 @@ L'isola può dirti che cosa fanno le tue sessioni di Claude Code (lavora, ti asp
 
 **Se l'isola è chiusa**, Claude Code continua a lavorare come sempre: i permessi si decidono nel terminale, come se l'isola non ci fosse. Se il canale è occupato da un altro programma l'isola lo dice con un avviso e non si collega.
 
-**La scheda Claude** (icona fra Casa e PC): le sessioni aperte nell'ordine di urgenza, i due limiti dell'abbonamento («5 ore» e «7 giorni», con l'ora in cui si azzerano) e la spesa del mese. Dopo un riavvio, finché non arriva un dato nuovo, i limiti mostrano l'ultimo valore visto, attenuato, con «dalle 20:29» (anche nei quadranti). Un clic su una sessione porta davanti il suo terminale. Se un dato manca, l'isola scrive «—» o «nessun dato», mai uno zero inventato.
+**La pagina Agenti** (la scheda col terminale, subito dopo la Panoramica; prima si chiamava «Claude»): le sessioni aperte nell'ordine di urgenza, i due limiti dell'abbonamento («5 ore» e «7 giorni», con l'ora in cui si azzerano) e la spesa del mese. Dopo un riavvio, finché non arriva un dato nuovo, i limiti mostrano l'ultimo valore visto, attenuato, con «dalle 20:29» (anche nella carta di Agenti). Un clic su una sessione porta davanti il suo terminale. Se un dato manca, l'isola scrive «—» o «nessun dato», mai uno zero inventato.
 
 **La chiave da amministratore (facoltativa).** Per la spesa e i consumi serve una chiave da amministratore dell'organizzazione Anthropic. L'isola la usa **solo per leggere** (un elenco chiuso di sette letture, nessuna modifica possibile). Creala nella Console (Impostazioni › Admin keys) **con una scadenza**, incollala in Impostazioni › Claude › «Chiave da amministratore» e usa «Prova». Resta nell'archivio sicuro di Windows (Gestione credenziali), mai in un file; dopo il salvataggio se ne vedono solo le ultime 4 cifre. «Togli» la cancella. I dati arrivano con 4–24 ore di ritardo e si rileggono ogni 3 ore.
 
 **«Dettagli delle API»**: dalla card della spesa si apre una finestra con cinque schede di sola lettura (Spesa, Token, Chiavi, Workspace e membri, Limiti), con «Apri la Console» per andare alla pagina giusta del sito.
 
-**Quadranti e soglie.** Nella Panoramica puoi mettere tre quadranti: «Limite 5 ore», «Limite 7 giorni» e «Spesa API del mese». In Impostazioni › Claude › Avvisi scegli la soglia dei limiti (da 50 a 100 %, di serie 80 %) e, se vuoi, una soglia di spesa mensile in dollari: l'isola avvisa una volta per finestra o per gradino, e segnala una spesa insolita (ieri più di tre volte la media). Lasciando vuota la soglia di spesa non ci sono avvisi di spesa.
+**Soglie.** I quadranti della Panoramica non ci sono più (la carta di Agenti riassume le sessioni; i limiti e la spesa stanno nella pagina Agenti). In Impostazioni › Claude › Avvisi scegli la soglia dei limiti (da 50 a 100 %, di serie 80 %) e, se vuoi, una soglia di spesa mensile in dollari: l'isola avvisa una volta per finestra o per gradino, e segnala una spesa insolita (ieri più di tre volte la media). Lasciando vuota la soglia di spesa non ci sono avvisi di spesa.
 
-**Solo su Windows:** il canale protetto e il collegamento con Claude Code (hook, barra di stato, permessi dalla pillola) e il «porta davanti» del terminale di una sessione. Su macOS e Linux la sezione di collegamento dice «Disponibile solo su Windows»; la chiave da amministratore, i dettagli delle API, i quadranti e le soglie funzionano ovunque.
+**Solo su Windows:** il canale protetto e il collegamento con Claude Code (hook, barra di stato, permessi dalla pillola) e il «porta davanti» del terminale di una sessione. Su macOS e Linux la sezione di collegamento dice «Disponibile solo su Windows»; la chiave da amministratore, i dettagli delle API e le soglie funzionano ovunque.
 
 ---
 

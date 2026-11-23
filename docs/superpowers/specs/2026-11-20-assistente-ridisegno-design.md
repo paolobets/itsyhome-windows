@@ -410,6 +410,29 @@ Ogni fetta lascia isola completa, test e CI verdi, CHANGELOG aggiornato, prova d
 F4 può salire subito dopo F1 se Paolo vuole vedere prima la pillola nuova (è indipendente dalle pagine). F6 non dà
 nulla di visibile con 4 moduli e può aspettare il quinto.
 
+**F1 fatta (23/11/2026, ramo `v3-assistente`; prova dal vivo con Paolo ancora da fare).** Contratto dei moduli, cornice
+nera, barra con ricerca inerte e volume, Panoramica Griglia e Orologio, Coda minima, Impostazioni › Panoramica e passata
+sulle pagine vecchie sono dentro; misure di chiusura nel CHANGELOG («Ridisegno F1, chiusura»). Ciò che il piano ha
+deciso diversamente da questa spec:
+- **«Consenti» neutro come «Nega»** (regola M3), non bianco primario come nelle bozze: il bianco resta all'azione
+  primaria (pulsante d'azione, interruttore).
+- **L'ordine del dock cambia**: Panoramica, Agenti, Casa, PC, Collegamenti; l'id `claude` di un file di prima si legge
+  come `agenti`.
+- **Un permesso nella Coda si legge intero prima di concedere**: la riga ha «Apri», mai «Consenti»; aperto, titolo a
+  capo e dettaglio scorrevole in mono, «Consenti» solo dopo aver visto il fondo (come in M3). Il brief chiedeva il
+  titolo in ellissi: ha prevalso la sicurezza invariata di §7. Il riarmo di 600 ms vale anche quando una riga cambia
+  posto.
+- **Testi delle scale accorciati** («Collega Claude», «7 giorni 61 %», «A riposo», «Scollegata», «{n} luci», «{n} link»,
+  «Nessun link»): i limiti in pixel (§13.7) sono vincolanti, il `Registro` rifiuta ciò che sta fuori misura.
+- **«Tocca a te»** (tono Guarda) per la sessione ferma in attesa di un messaggio: «Ti aspetta» è riservata al tono
+  Aspetta del permesso bloccante.
+- **Fatto non visto = blu** (petalo-3), non più verde acqua; colori dei token non elencati per regola unica (neutro →
+  g3/g4, azione → primario, pericolo → errore, vetri → g1/g2/filo); tracking mono .07em; «›» come `Path`, tolto dal
+  nome per Narrator.
+- **La luce che sale in 1,2 s all'apertura** del pannello con un tono acceso resta (l'apertura è una transizione
+  ammessa); a riposo nessun fotogramma.
+- **Rimandati**: `Registro::config()` e il «fissato» di una voce `claude` (F6); la ricerca resta inerte (F5).
+
 **Scelte del coordinatore sulle fette (20/11).**
 - *Coda minima e via la riga «In attesa» già in F1*: le voci non bloccanti devono restare raggiungibili in ogni fetta
   da F1 a F5, così ognuna lascia isola completa; la Coda minima usa l'impianto Elenco, che F2 poi riusa.
