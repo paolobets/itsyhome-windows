@@ -112,7 +112,8 @@ pub fn riga(r: &RigaSessione, permesso: Option<(&str, i32, &DatiPermesso)>, ripi
 /// legge, arriva alla soglia dell'utente.
 fn limite(nome: &str, l: Option<(TestoLimite, bool)>, con_fornitore: bool, soglia: u8) -> LimiteUi {
     let Some((t, ricordato)) = l else { return LimiteUi::default() };
-    let p = (t.frazione.clamp(0.0, 1.0) * 100.0).round() as u32;
+    // Il numero di `testo_limite`, lo stesso della carta e della vista di oggi.
+    let p = t.percento;
     let testo = format!("{p} %");
     let quale = format!("limite {nome}");
     let narratore = [FORNITORE, quale.as_str(), testo.as_str(), t.azzera.as_str()]
@@ -145,7 +146,8 @@ pub fn sintesi(
 ) -> SintesiUi {
     let n = righe.len();
     let permessi = righe.iter().filter(|r| !r.voce.is_empty()).count();
-    let lavorano = righe.iter().filter(|r| r.voce.is_empty() && r.tono == tono_ui(Tono::Attivo)).count();
+    // Una riga col permesso ha sempre il tono Aspetta: basta il tono.
+    let lavorano = righe.iter().filter(|r| r.tono == tono_ui(Tono::Attivo)).count();
     let (tono, titolo, sotto) = if !collegato {
         (Tono::Vuoto, "Da collegare".to_owned(), String::new())
     } else if permessi > 0 {
@@ -284,8 +286,12 @@ mod test {
     fn errore_e_rosa_non_blu() {
         let r = riga(&sessione(Stato::Errore, false), None, false, false);
         assert_eq!((r.tono, r.parola.as_str()), (TonoModuloUi::Errore, "Errore"));
-        assert_ne!(r.tono, TonoModuloUi::Guarda, "non il tono blu di «guarda presto»");
-        assert_ne!(r.tono, TonoModuloUi::Fatto, "non il blu del fatto");
+        // Confronto con le righe vere dei due toni blu, non con costanti: cade se la scala dà
+        // all'errore lo stesso tono di «Tocca a te» o di «Ha finito».
+        let tocca = riga(&sessione(Stato::TiAspetta, false), None, false, false);
+        let finito = riga(&sessione(Stato::Fatto, false), None, false, false);
+        assert_ne!(r.tono, tocca.tono, "non il tono blu di «guarda presto»");
+        assert_ne!(r.tono, finito.tono, "non il blu del fatto");
     }
 
     #[test]
@@ -312,6 +318,10 @@ mod test {
         // Un titolo di soli invisibili vale come assente.
         let invisibile = RigaSessione { titolo: "\u{200b}\u{202e}".into(), ..sessione(Stato::Fatto, true) };
         let r = riga(&invisibile, None, false, false);
+        assert_eq!((r.nome.as_str(), r.sotto.as_str()), ("my-shop", ""));
+        // Un titolo uguale alla cartella: la cartella non si ripete sotto.
+        let uguale = RigaSessione { titolo: "my-shop".into(), ..sessione(Stato::Fatto, true) };
+        let r = riga(&uguale, None, false, false);
         assert_eq!((r.nome.as_str(), r.sotto.as_str()), ("my-shop", ""));
     }
 
@@ -386,12 +396,30 @@ mod test {
     }
 
     fn limite(frazione: f32, azzera: &str) -> TestoLimite {
-        TestoLimite { frazione, testo: format!("{}%", (frazione * 100.0).round() as u32), azzera: azzera.into() }
+        // Come `testo_limite` (percentuale arrotondata dalla stessa fonte): i casi a metà sono in
+        // `limiti_col_numero_della_carta`, che passa dalla funzione vera.
+        let percento = (frazione * 100.0).round() as u32;
+        TestoLimite { frazione, percento, testo: format!("{percento}%"), azzera: azzera.into() }
     }
 
     fn limiti(l: [Option<(TestoLimite, bool)>; 2], soglia: u8) -> [LimiteUi; 2] {
         let s = sintesi(true, &[], l, soglia, ("", ""), false);
         [s.l1, s.l2]
+    }
+
+    /// Revisione I1: una sola fonte del numero. Sui valori a metà (26,5, 29,5, 52,5, 58,5) la
+    /// frazione in f32 rifatta per 100 arrotondava a un altro intero di quello della carta e della
+    /// vista di oggi (`testo_limite`): «52 %» contro «53%», e `caldo` sbagliato con soglia 53.
+    #[test]
+    fn limiti_col_numero_della_carta() {
+        let ora = chrono::Local::now();
+        for (p, atteso) in [(26.5, 27), (29.5, 30), (52.5, 53), (58.5, 59)] {
+            let t = crate::claude::testo_limite(&claude_hook::Limite { percentuale: p, azzera_alle: 0 }, ora);
+            assert_eq!(t.testo, format!("{atteso}%"), "la carta e la vista di oggi");
+            let soglia = atteso as u8;
+            let [l, _] = limiti([Some((t, false)), None], soglia);
+            assert_eq!((l.testo.to_string(), l.caldo), (format!("{atteso} %"), true), "{p} con soglia {soglia}");
+        }
     }
 
     #[test]

@@ -555,6 +555,9 @@ where
 #[derive(Debug, Clone, PartialEq)]
 pub struct TestoLimite {
     pub frazione: f32,
+    /// La percentuale come si legge (arrotondata): l'unica fonte del numero per l'anello, la carta
+    /// e la pagina Agenti (rifarla da `frazione` in f32 sbaglia di 1 sui valori a metà).
+    pub percento: u32,
     pub testo: String,
     pub azzera: String,
 }
@@ -589,7 +592,8 @@ pub fn testo_limite(l: &Limite, ora: DateTime<Local>) -> TestoLimite {
             }
         }
     };
-    TestoLimite { frazione: pct / 100.0, testo: format!("{}%", pct.round() as u32), azzera }
+    let percento = pct.round() as u32;
+    TestoLimite { frazione: pct / 100.0, percento, testo: format!("{percento}%"), azzera }
 }
 
 /// Il testo di un limite ricordato dal file di stato (RC-56): la percentuale di quando lo si è
