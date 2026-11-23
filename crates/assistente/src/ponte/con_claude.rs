@@ -1351,17 +1351,27 @@ fn raggiungibili(catene: &[Vec<(u32, String)>]) -> Vec<bool> {
 /// terminale usato (solo Windows). `finestra_non_scheda`: il terminale probabile è Windows Terminal
 /// o VS Code, di cui si porta davanti la finestra e non la scheda.
 fn riga_ui(r: claude::RigaSessione, ripiego: bool, finestra_non_scheda: bool) -> RigaSessioneUi {
+    use claude_hook::sessioni::Stato;
+    // Le parole e i colori della vista di F1, come prima (la pagina Agenti di F2 usa
+    // `moduli::pagina_agenti`). «Tocca a te», come la carta: «Ti aspetta» è la parola del tono
+    // Aspetta, del permesso bloccante (vocabolario chiuso).
+    let (stato, livello) = match r.stato {
+        Stato::Lavora => ("Lavora", None),
+        Stato::TiAspetta => ("Tocca a te", Some(Livello::Attenzione)),
+        Stato::Fatto => ("Fatto", Some(Livello::Informazione)),
+        Stato::Errore => ("Errore", Some(Livello::Attenzione)),
+    };
     RigaSessioneUi {
         terminale: if ripiego && cfg!(windows) { "ultimo terminale usato" } else { "" }.into(),
         avviso: if finestra_non_scheda && cfg!(windows) { "Apre la finestra del terminale, non la scheda" } else { "" }.into(),
         id: r.id.into(),
         cartella: r.cartella.into(),
         titolo: r.titolo.into(),
-        stato: r.stato_testo.into(),
-        livello: r.livello.map_or(LivelloUi::Nessuno, pillola::livello_ui),
+        stato: stato.into(),
+        livello: livello.map_or(LivelloUi::Nessuno, pillola::livello_ui),
         strumento: r.strumento.into(),
         durata: r.durata.into(),
-        contesto: r.contesto.unwrap_or_default().into(),
+        contesto: r.contesto.map(|c| format!("{c}%")).unwrap_or_default().into(),
         contesto_caldo: r.contesto_caldo,
     }
 }
@@ -1538,8 +1548,9 @@ mod test {
                 id: "x".into(),
                 cartella: "c".into(),
                 titolo: String::new(),
-                stato_testo: "Fatto",
-                livello: None,
+                stato: claude_hook::sessioni::Stato::Fatto,
+                vista: false,
+                errore: None,
                 strumento: String::new(),
                 durata: String::new(),
                 contesto: None,
@@ -1735,8 +1746,9 @@ mod test {
             id: "x".into(),
             cartella: "c".into(),
             titolo: String::new(),
-            stato_testo: "Fatto",
-            livello: None,
+            stato: claude_hook::sessioni::Stato::Fatto,
+            vista: false,
+            errore: None,
             strumento: String::new(),
             durata: String::new(),
             contesto: None,

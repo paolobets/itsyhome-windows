@@ -375,13 +375,18 @@ pub struct RigaSessione {
     /// Il nome della sessione (dalla barra di stato), se ne ha uno; vuoto altrimenti. Quando c'è,
     /// è il nome della riga e la cartella passa in secondo piano.
     pub titolo: String,
-    pub stato_testo: &'static str,
-    /// Il livello che dà il colore allo stato; `None` per chi lavora.
-    pub livello: Option<Livello>,
+    /// Lo stato vero della sessione: le parole e il tono li sceglie chi mostra la riga
+    /// (`moduli::pagina_agenti`, la vista Claude di F1 in `con_claude::riga_ui`).
+    pub stato: Stato,
+    /// Il `Fatto` è già stato guardato (calmo, non più blu).
+    pub vista: bool,
+    /// La frase dell'errore (`frase_errore_claude`), solo per chi si è fermato.
+    pub errore: Option<&'static str>,
     pub strumento: String,
     pub durata: String,
-    /// «42%», se la barra di stato l'ha detto.
-    pub contesto: Option<String>,
+    /// Il contesto in percentuale arrotondata, se la barra di stato l'ha detto; il formato
+    /// («42%», «42 %») lo sceglie chi mostra la riga.
+    pub contesto: Option<u32>,
     /// Il contesto, com'è scritto, supera `CONTESTO_CALDO`.
     pub contesto_caldo: bool,
 }
@@ -412,29 +417,22 @@ pub fn righe_sessioni(
         .map(|x| {
             let cartella = testo_pulito(&x.cartella);
             let cartella = if cartella.is_empty() { SENZA_CARTELLA.to_owned() } else { cartella };
-            let (stato_testo, livello) = match x.stato {
-                Stato::Lavora => ("Lavora", None),
-                // «Tocca a te», come la carta di Agenti (tono Guarda): «Ti aspetta» è la parola
-                // del tono Aspetta, del permesso bloccante (vocabolario chiuso).
-                Stato::TiAspetta => ("Tocca a te", Some(Livello::Attenzione)),
-                Stato::Fatto => ("Fatto", Some(Livello::Informazione)),
-                Stato::Errore => ("Errore", Some(Livello::Attenzione)),
-            };
             let lavora = x.stato == Stato::Lavora;
             let percento = contesto.get(&x.id).map(|c| c.round().clamp(0.0, 100.0) as u32);
             RigaSessione {
                 id: id_sessione(&x.id),
                 cartella,
                 titolo: testo_pulito(&x.titolo),
-                stato_testo,
-                livello,
+                stato: x.stato,
+                vista: x.vista,
+                errore: (x.stato == Stato::Errore).then(|| frase_errore_claude(x.errore.as_deref().unwrap_or(""))),
                 strumento: if lavora { strumento_italiano(x.strumento.as_deref()) } else { String::new() },
                 durata: if lavora {
                     durata_breve(x.lavora_da.map_or(Duration::ZERO, |da| ora.saturating_duration_since(da)))
                 } else {
                     String::new()
                 },
-                contesto: percento.map(|c| format!("{c}%")),
+                contesto: percento,
                 contesto_caldo: percento.is_some_and(|c| c > CONTESTO_CALDO),
             }
         })
@@ -1380,10 +1378,11 @@ mod test {
         // Nell'ordine di urgenza dell'elenco: chi aspetta, chi si è fermato, chi ha finito.
         let attesi: Vec<_> = s.elenco().iter().map(|x| id_sessione(&x.id)).collect();
         assert_eq!(righe.iter().map(|r| r.id.clone()).collect::<Vec<_>>(), attesi);
-        // «Tocca a te», come la carta di Agenti: «Ti aspetta» è la parola del tono Aspetta.
-        assert_eq!(righe[0].stato_testo, "Tocca a te");
-        assert_eq!(righe[1].stato_testo, "Errore");
-        assert_eq!(righe[2].stato_testo, "Fatto");
+        // Lo stato vero della sessione (le parole le sceglie chi mostra la riga); l'errore con la
+        // sua frase, solo per chi si è fermato.
+        assert_eq!(righe[0].stato, Stato::TiAspetta);
+        assert_eq!((righe[1].stato, righe[1].errore), (Stato::Errore, Some("Limite raggiunto")));
+        assert_eq!((righe[2].stato, righe[2].vista, righe[2].errore), (Stato::Fatto, false, None));
         assert_eq!(ordine, s.elenco().iter().map(|x| x.id.clone()).collect::<Vec<_>>());
         assert_eq!(righe_sessioni(&Sessioni::new(), &HashMap::new(), t, &[]), (vec![], vec![]));
         // Con dieci sessioni (il tetto è 16) nessuna resta fuori.
@@ -1410,7 +1409,7 @@ mod test {
         con(&mut s, EventoHook { cartella: "quattro".into(), ..ev("d", TipoEvento::Stop) }, t);
         let (r1, ordine) = righe_sessioni(&s, &HashMap::new(), t, &ordine);
         assert_eq!(cartelle(&r1), cartelle(&r0));
-        assert_eq!(r1[0].stato_testo, "Fatto");
+        assert_eq!(r1[0].stato, Stato::Fatto);
         // Una sessione nuova, anche la più urgente, va in fondo.
         con(&mut s, EventoHook { cartella: "sei".into(), ..ev("f", TipoEvento::PermissionRequest) }, t);
         let (r2, ordine) = righe_sessioni(&s, &HashMap::new(), t, &ordine);
@@ -1518,20 +1517,24 @@ mod test {
         let contesto: HashMap<String, f32> = [("a".to_owned(), 41.6)].into();
         let (righe, _) = righe_sessioni(&s, &contesto, t + Duration::from_secs(192), &[]);
         let r = &righe[0];
-        assert_eq!((r.stato_testo, r.livello), ("Lavora", None));
+        assert_eq!((r.stato, r.errore), (Stato::Lavora, None));
         assert_eq!((r.cartella.as_str(), r.strumento.as_str(), r.durata.as_str()), ("progetto-a", "Modifica", "3:12"));
-        assert_eq!(r.contesto.as_deref(), Some("42%"));
+        // Il numero arrotondato: il formato («42%», «42 %») lo sceglie chi mostra la riga.
+        assert_eq!(r.contesto, Some(42));
         assert_eq!(r.id, id_sessione("a"), "l'impronta, mai il session_id");
-        // Chi non lavora: niente strumento né durata (non cambierebbe a ogni secondo), e il livello.
+        // Chi non lavora: niente strumento né durata (non cambierebbe a ogni secondo), e lo stato.
         con(&mut s, ev("a", TipoEvento::PermissionRequest), t);
         let (righe, _) = righe_sessioni(&s, &HashMap::new(), t + Duration::from_secs(300), &[]);
         let r = &righe[0];
         assert_eq!(
-            (r.livello, r.strumento.as_str(), r.durata.as_str(), r.contesto.clone()),
-            (Some(Livello::Attenzione), "", "", None)
+            (r.stato, r.strumento.as_str(), r.durata.as_str(), r.contesto),
+            (Stato::TiAspetta, "", "", None)
         );
         con(&mut s, ev("a", TipoEvento::Stop), t);
-        assert_eq!(righe_sessioni(&s, &HashMap::new(), t, &[]).0[0].livello, Some(Livello::Informazione));
+        let r = &righe_sessioni(&s, &HashMap::new(), t, &[]).0[0];
+        assert_eq!((r.stato, r.vista), (Stato::Fatto, false));
+        s.segna_viste();
+        assert!(righe_sessioni(&s, &HashMap::new(), t, &[]).0[0].vista, "il fatto già guardato");
     }
 
     #[test]

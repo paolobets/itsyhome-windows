@@ -278,3 +278,81 @@ export struct LimiteClaudeUi {
     azzera: string,
     vecchio: bool,
 }
+
+// ─── La pagina Agenti sull'impianto Elenco + dettaglio (ridisegno F2) ─────────────────────────
+// Tutto già pronto da `moduli::pagina_agenti`. Niente array nelle strutture (si confrontano prima
+// di scriverle): il dettaglio ha tre posti fissi, la sintesi due posti di limite.
+
+// Un campo del dettaglio di una riga: «Contesto» «42 %»; `caldo`: il valore nel colore del tono
+// attivo. Etichetta vuota = posto vuoto.
+export struct CampoDettaglioUi {
+    etichetta: string,
+    valore: string,
+    caldo: bool,
+}
+
+// Una riga della pagina Agenti (una sessione). `tono` e `parola` (la capsula, vuota se calmo);
+// `nome` è il titolo della scheda di Claude Code, altrimenti la cartella, e `sotto` la cartella
+// quando c'è un titolo; `chi` il fornitore come parola («Claude»); `cosa` e `valore` (la durata in
+// mono per chi lavora); `narratore` il nome intero per Narrator; `nota` cosa fa il terminale
+// (solo per Narrator); `azione-id`/`azione-testo` l'azione del dettaglio; `voce` l'id della voce
+// del permesso in attesa ("" senza) e `attesa` il suo indice nel modello delle attese (-1 senza).
+export struct RigaModuloUi {
+    id: string,
+    tono: TonoModuloUi,
+    parola: string,
+    nome: string,
+    chi: string,
+    cosa: string,
+    valore: string,
+    narratore: string,
+    sotto: string,
+    d1: CampoDettaglioUi,
+    d2: CampoDettaglioUi,
+    d3: CampoDettaglioUi,
+    nota: string,
+    azione-id: string,
+    azione-testo: string,
+    voce: string,
+    attesa: int,
+}
+
+// Un limite a barra nella sintesi: `presente` falso = nessun elemento (mai «0 %»); `fornitore`
+// in grassetto solo sul primo; `testo` «61 %»; `caldo` oltre la soglia dell'utente; `vecchio` il
+// valore ricordato da prima del riavvio (tenue); `narratore` «Claude, limite 5 ore, 61 %, si
+// azzera alle 14:30».
+export struct LimiteUi {
+    presente: bool,
+    fornitore: string,
+    nome: string,
+    frazione: float,
+    testo: string,
+    caldo: bool,
+    vecchio: bool,
+    narratore: string,
+}
+
+// La riga di sintesi in cima alla pagina Agenti: titolo e sotto-testo, due limiti, la spesa API
+// del mese con la nota e l'azione «Dettagli» (solo con la chiave da amministratore).
+export struct SintesiUi {
+    tono: TonoModuloUi,
+    titolo: string,
+    sotto: string,
+    l1: LimiteUi,
+    l2: LimiteUi,
+    spesa: string,
+    spesa-nota: string,
+    azione-id: string,
+    azione-testo: string,
+}
+
+// Lo stato di una pagina: `pieno` mostra l'elenco; gli altri una frase con al più un'azione.
+export enum TipoStatoPaginaUi { pieno, vuoto, fuori-servizio, primo-avvio }
+
+export struct StatoPaginaUi {
+    tipo: TipoStatoPaginaUi,
+    frase: string,
+    sotto: string,
+    azione-id: string,
+    azione-testo: string,
+}

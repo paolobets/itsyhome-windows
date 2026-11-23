@@ -12,6 +12,9 @@ pub mod agenti;
 pub mod casa;
 pub mod collegamenti;
 pub mod misura;
+// Le funzioni della pagina Agenti le usa il ponte dal Task 6 (come la Ruling C3 di F1).
+#[cfg_attr(not(test), allow(dead_code))]
+pub mod pagina_agenti;
 pub mod panoramica;
 pub mod pc;
 pub mod registro;
