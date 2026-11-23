@@ -69,6 +69,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - La traccia di barre e archi resta il grigio appena sopra la carta delle bozze: un test controlla che il pieno si legga (≥ 3:1) sulla traccia, sulla carta e sul nero.
 
 ### Changed (Ridisegno F1, chiusura: misure e confronto)
+- **Prova dal vivo (23/11, build b2c07e9 nell'isola di Paolo, casa e Claude Code collegati)**: Paolo ha visto Panoramica e pagine — «mi piace tutto». A riposo 17,5 MB privata (48,2 MB WS) e CPU 0,043 %. Il battito degli occhi a riposo resta (decisione di Paolo). Restano da provare dal vivo con permessi veri (negato e consentito da Panoramica e Coda), Narrator con UI Automation vera, volume, scelta Griglia/Orologio e scala 175 %: elenco in `docs/superpowers/plans/2026-11-20-assistente-ridisegno-f1-rimandati.md`. CI b2c07e9 verde su Windows, Linux e macOS.
 - **Verifiche**: `cargo test --workspace` 983 passati, 0 falliti, 4 ignorati; `cargo clippy --workspace --all-targets -- -D warnings` pulito; `cargo build --release -p assistente` ok.
 - **Misure** (exe release su istanza di prova, cartella finta, nessuna casa, `tools\misura.ps1 -Secondi 60`; partenza = HEAD a3da924, stesse condizioni):
 
