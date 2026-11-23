@@ -2048,6 +2048,8 @@ impl Ponte {
                 ponte.claude_superficie_compare(Instant::now());
             }
         });
+        // Dove sta una voce fra quelle in attesa: il permesso aperto nella Coda segue il suo id.
+        p.on_indice_voce(|id| ponte().map_or(-1, |ponte| crate::pannello::indice_voce(&*ponte.modello_attese, &id)));
         // Un pulsante della voce che ti aspetta: ignorato appena dopo un cambio della voce.
         p.on_azione_voce(|voce, pulsante| {
             if let Some(ponte) = ponte() {

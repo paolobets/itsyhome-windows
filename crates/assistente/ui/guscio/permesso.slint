@@ -1,0 +1,426 @@
+// Il permesso del guscio (ridisegno F2, Task 3; spec §7, §13): un permesso di un agente con tutte
+// le regole di M3 dentro. Lo usano la Coda (al posto della `VoceAperta` di F1) e, dal Task 7, il
+// dettaglio della pagina Agenti; un secondo agente lo usa così com'è e non lo riscrive.
+//
+// Regole di M3, invariate (spec §7):
+// - il fuoco entra su «Nega» (`entra()`), mai sul consenso;
+// - «Consenti» c'è solo dopo che il fondo del testo intero si è visto (`visto`, che resta vero per
+//   questa voce anche risalendo); prima il suo posto è vuoto, invisibile, inerte e senza nome per
+//   Narrator, e la tastiera non lo raggiunge;
+// - lo concede solo Ctrl+Invio esatto (`tasto(k, ctrl-esatto)`: il controllo dei modificatori lo
+//   fa chi tiene la tastiera) o il clic; Invio preme solo un pulsante non delicato;
+// - «Nega» e «Consenti» stanno a posti fissi e sono neutri tutti e due (`RegolaPulsanti`: il
+//   colore inviterebbe a concedere; decisione di Paolo 23/11), nessun «Sempre»;
+// - ogni decisione esce da `decidi`, e chi lo contiene la manda alla guardia di Rust
+//   (`azione-voce`, 600 ms dopo ogni riarmo); quando «Consenti» compare (`visto-fondo`) chi lo
+//   contiene chiede il riarmo.
+// Un'altra voce (altro id) riparte da capo: testo in cima, `visto` falso.
+//
+// Il componente non nasce e muore con l'apertura (pre-flight C1, C2): chi lo usa lo tiene fisso e
+// lo mostra con `visible`. Un id dentro un `if` non si raggiunge da fuori, e un componente creato
+// al momento non vedrebbe l'incremento di `armamenti` che accompagna l'apertura (Task 4).
+import { Tema } from "../tema.slint";
+import { Anello, Fuoco, Pulsante, RegolaPulsanti } from "../componenti.slint";
+import { VoceAttesaUi, TonoModuloUi } from "../voci.slint";
+import { Capsula } from "carta.slint";
+
+// La voce ha un pulsante delicato (un permesso): al massimo 2 pulsanti per voce.
+export global Permessi {
+    public pure function chiede(v: VoceAttesaUi) -> bool {
+        return (v.pulsanti.length > 0 && v.pulsanti[0].delicato) || (v.pulsanti.length > 1 && v.pulsanti[1].delicato);
+    }
+}
+
+export component Permesso inherits Rectangle {
+    in property <VoceAttesaUi> voce;
+    // «Nega» e «Consenti» in alto a destra (la Coda: lontani dalle sue righe e da «+N»),
+    // altrimenti in basso a destra.
+    in property <bool> pulsanti-in-alto;
+    // Il fuoco da tastiera è qui (altrimenti nessun anello e nessun fuoco vero).
+    in property <bool> con-fuoco;
+    // I riarmi di «Consenti» (Task 4: l'aspetto inerte per 600 ms a ogni incremento).
+    in property <int> armamenti;
+    // Il bersaglio col fuoco: -2 il testo, 0/1 un pulsante (indice in `voce.pulsanti`).
+    out property <int> fuoco: -2;
+    // Il fondo del testo si è visto (una volta per voce).
+    out property <bool> visto: false;
+    // Una decisione, con un gesto (clic, Narrator, Invio su un pulsante non delicato, Ctrl+Invio
+    // esatto sul consenso): l'id del pulsante.
+    callback decidi(string);
+    // Il fondo del testo si è visto: «Consenti» compare.
+    callback visto-fondo();
+    // ← dal primo bersaglio o ↑ dal testo in cima: torna a chi lo contiene.
+    callback lascia();
+
+    // I dati divisi del permesso (Task 2) ci sono: sessione, strumento, comando, cartella.
+    property <bool> con-dati: voce.permesso.sessione != "";
+    // «$» solo davanti a un comando (per Legge/Modifica/Scrive è un percorso, per Web un indirizzo).
+    property <bool> con-dollaro: con-dati && voce.permesso.strumento == "Comando";
+    // «{sessione} · {cartella}»: la cartella solo se c'è e non è la sessione.
+    property <string> riga-sessione: voce.permesso.cartella == "" || voce.permesso.cartella == voce.permesso.sessione
+        ? voce.permesso.sessione : voce.permesso.sessione + " · " + voce.permesso.cartella;
+
+    // Il primo pulsante non delicato («Nega», posto fisso) e l'altro («Consenti», posto fisso
+    // all'estremità); -1 se non c'è. Senza un non delicato il pulsante delicato va solo
+    // sull'altro posto: mai un consenso al posto di «Nega».
+    property <int> indice-nega: voce.pulsanti.length > 0 && !voce.pulsanti[0].delicato ? 0
+        : voce.pulsanti.length > 1 && !voce.pulsanti[1].delicato ? 1 : -1;
+    property <int> indice-altro: indice-nega < 0 ? (voce.pulsanti.length > 0 ? 0 : -1)
+        : voce.pulsanti.length > 1 ? (indice-nega == 0 ? 1 : 0) : -1;
+
+    // Il pulsante `i` si mostra (un consenso solo dopo il fondo del testo).
+    pure function mostra(i: int) -> bool {
+        return i >= 0 && i < voce.pulsanti.length && (!voce.pulsanti[i].delicato || visto);
+    }
+
+    // Entra nel permesso: il fuoco su «Nega», altrimenti sul testo.
+    public function entra() {
+        fuoco = indice-nega >= 0 ? indice-nega : -2;
+    }
+
+    // Dal testo ai pulsanti: «Nega»; senza, il consenso solo se si è visto il fondo, se no il
+    // fuoco resta sul testo.
+    function ai-pulsanti() {
+        fuoco = indice-nega >= 0 ? indice-nega : mostra(indice-altro) ? indice-altro : -2;
+    }
+
+    // Un tasto, da chi tiene la tastiera; vero se l'ha usato. `ctrl-esatto`: Ctrl+Invio senza
+    // altri modificatori, l'unico che concede.
+    public function tasto(k: string, ctrl-esatto: bool) -> bool {
+        if (ctrl-esatto) {
+            if (k == Key.Return && visto && mostra(fuoco) && voce.pulsanti[fuoco].delicato) {
+                root.decidi(voce.pulsanti[fuoco].id);
+            }
+            return k == Key.Return;
+        }
+        if (k == Key.Return || k == Key.Space) {
+            if (fuoco < 0) {
+                ai-pulsanti();
+            } else if (mostra(fuoco) && !voce.pulsanti[fuoco].delicato) {
+                root.decidi(voce.pulsanti[fuoco].id);
+            }
+            // Su un consenso Invio e Spazio da soli non fanno nulla.
+            return true;
+        }
+        if (fuoco >= 0) {
+            // Sui pulsanti: ↑ torna al testo, ←/→ fra loro (un consenso non visto non si
+            // raggiunge), ← dal primo esce.
+            if (k == Key.UpArrow) {
+                fuoco = -2;
+                return true;
+            }
+            if (k == Key.LeftArrow) {
+                if (fuoco == indice-altro && indice-nega >= 0) {
+                    fuoco = indice-nega;
+                } else {
+                    root.lascia();
+                }
+                return true;
+            }
+            if (k == Key.RightArrow) {
+                if (fuoco == indice-nega && mostra(indice-altro)) {
+                    fuoco = indice-altro;
+                }
+                return true;
+            }
+            return false;
+        }
+        // Sul testo: ↑/↓ lo scorrono; visto il fondo ↓ passa ai pulsanti, come → (che non porta mai
+        // a un consenso non visto); ↑ in cima e ← escono.
+        if (k == Key.UpArrow) {
+            if (testo.content-y >= 0px) {
+                root.lascia();
+            } else {
+                testo.content-y = min(0px, testo.content-y + passo);
+            }
+            return true;
+        }
+        if (k == Key.DownArrow) {
+            if (!visto) {
+                testo.content-y = max(scorrimento-minimo, testo.content-y - passo);
+            } else {
+                ai-pulsanti();
+            }
+            return true;
+        }
+        if (k == Key.RightArrow) {
+            ai-pulsanti();
+            return true;
+        }
+        if (k == Key.LeftArrow) {
+            root.lascia();
+            return true;
+        }
+        return false;
+    }
+
+    property <length> passo: 36px;
+    property <length> scorrimento-minimo: min(0px, testo.height - testo.content-height);
+    property <bool> a-fondo: testo.content-y <= scorrimento-minimo + 0.5px;
+    changed a-fondo => { root.segna-fondo(); }
+    init => { root.segna-fondo(); }
+    // Un'altra voce: il testo da capo e il fondo va rivisto; il fuoco non resta su un consenso.
+    property <string> id-voce: voce.id;
+    changed id-voce => {
+        visto = false;
+        testo.content-y = 0px;
+        if (fuoco >= 0 && !mostra(fuoco)) {
+            entra();
+        }
+        root.segna-fondo();
+    }
+    function segna-fondo() {
+        if (a-fondo && !visto && voce.id != "") {
+            visto = true;
+            root.visto-fondo();
+        }
+    }
+
+    // Geometria: pulsanti 112 × 40 r 12 a posti fissi; testata alta quanto i pulsanti (o il
+    // titolo a capo); riquadro sotto; in fondo la riga di «Leggi fino in fondo» / «Ctrl Invio».
+    property <length> largo-pulsante: 112px;
+    property <length> alto-pulsanti: 40px;
+    property <length> y-pulsanti: pulsanti-in-alto ? 0px : root.height - alto-pulsanti;
+    property <length> alto-testata: con-dati ? (pulsanti-in-alto ? alto-pulsanti : 22px)
+        : max(pulsanti-in-alto ? alto-pulsanti : 0px, titolo.height);
+    property <length> alto-fondo: pulsanti-in-alto ? 24px : alto-pulsanti;
+
+    accessible-role: groupbox;
+    accessible-label: con-dati ? "Ti aspetta · " + voce.modulo + ": " + voce.permesso.sessione + " chiede: " + voce.permesso.strumento
+        : "Ti aspetta · " + voce.modulo + ": " + voce.titolo;
+    accessible-description: con-dati ? voce.permesso.comando + "\n" + riga-sessione : voce.dettaglio;
+
+    Fuoco { chiede: root.con-fuoco && root.fuoco == -2; }
+
+    // Testata con i dati: la capsula del tono e, accanto, quando è stato chiesto.
+    capsula := Capsula {
+        visible: root.con-dati;
+        x: 0;
+        y: pulsanti-in-alto ? (alto-pulsanti - self.height) / 2 : 1px;
+        tono: TonoModuloUi.aspetta;
+        parola: "Chiede il permesso";
+    }
+
+    chiesto := Text {
+        visible: root.con-dati && root.voce.permesso.chiesto != "";
+        // Con i pulsanti in alto accanto alla capsula (l'angolo destro è loro: pre-flight C13),
+        // altrimenti a destra.
+        x: pulsanti-in-alto ? capsula.x + capsula.width + 10px : root.width - self.width;
+        y: capsula.y;
+        width: self.preferred-width;
+        height: capsula.height;
+        text: "chiesto " + root.voce.permesso.chiesto;
+        vertical-alignment: center;
+        font-size: Tema.testo-piccolo;
+        color: Tema.testo-tenue;
+    }
+
+    // Senza dati: il titolo a capo, fino a 3 righe, a sinistra dei pulsanti in alto.
+    titolo := Text {
+        visible: !root.con-dati;
+        x: 0;
+        y: 0;
+        width: (pulsanti-in-alto ? nega.x : root.width) - 12px;
+        height: root.con-dati ? 0px : min(self.preferred-height, 54px);
+        text: root.voce.titolo;
+        wrap: word-wrap;
+        overflow: elide;
+        vertical-alignment: top;
+        font-weight: 700;
+        font-size: Tema.testo-medio;
+        color: Tema.testo;
+        accessible-role: none;
+    }
+
+    // Il testo intero in un riquadro nero: col comando «TERMINALE», «$» e il comando (mono 14, a
+    // capo, scorrevole con una sfumatura se c'è altro) e sotto, sempre in vista, la sessione;
+    // senza dati il dettaglio intero in mono 13.
+    riquadro := Rectangle {
+        x: 0;
+        y: root.alto-testata + 8px;
+        width: root.width;
+        height: root.height - self.y - root.alto-fondo - 8px;
+        border-radius: Tema.raggio-xl;
+        background: Tema.nero;
+        border-width: 1px;
+        border-color: Tema.filo;
+
+        if root.con-dati: Text {
+            x: 14px;
+            y: 12px;
+            height: 16px;
+            text: "TERMINALE";
+            vertical-alignment: center;
+            font-family: Tema.carattere-mono;
+            font-size: Tema.etichetta-corpo;
+            letter-spacing: Tema.etichetta-spaziatura;
+            color: Tema.testo-tenue;
+        }
+
+        testo := Flickable {
+            x: 14px;
+            y: root.con-dati ? 34px : 12px;
+            width: parent.width - 28px;
+            height: (root.con-dati ? sessione.y - 8px : parent.height - 12px) - self.y;
+            content-height: max(self.height, root.con-dati ? comando.height : dettaglio.height);
+
+            dollaro := Text {
+                visible: root.con-dollaro;
+                x: 0;
+                y: 0;
+                text: "$";
+                font-family: Tema.carattere-mono;
+                font-size: Tema.testo-medio;
+                color: Tema.dollaro;
+            }
+
+            // Il comando si legge carattere per carattere: va a capo fra le parole e, una parola
+            // più larga del riquadro (una riga sola senza spazi), dove capita; mai oltre il bordo.
+            comando := Text {
+                visible: root.con-dati;
+                x: root.con-dollaro ? dollaro.preferred-width + 8px : 0px;
+                y: 0;
+                width: parent.width - self.x;
+                height: root.con-dati ? self.preferred-height : 0px;
+                text: root.voce.permesso.comando;
+                wrap: word-wrap;
+                vertical-alignment: top;
+                font-family: Tema.carattere-mono;
+                font-size: Tema.testo-medio;
+                color: Tema.testo;
+            }
+
+            dettaglio := Text {
+                visible: !root.con-dati;
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: root.con-dati ? 0px : self.preferred-height;
+                text: root.voce.dettaglio;
+                wrap: word-wrap;
+                vertical-alignment: top;
+                font-family: Tema.carattere-mono;
+                font-size: Tema.testo-corpo;
+                color: Tema.testo-2;
+                accessible-role: none;
+            }
+        }
+
+        if !root.a-fondo: Rectangle {
+            x: testo.x;
+            y: testo.y + testo.height - self.height;
+            width: testo.width;
+            height: 16px;
+            background: @linear-gradient(180deg, Tema.nero.with-alpha(0) 0%, Tema.nero 100%);
+        }
+
+        // La sessione, sempre in vista sotto il comando (a capo se lunga): si legge prima del
+        // consenso.
+        sessione := Text {
+            visible: root.con-dati;
+            x: 14px;
+            y: parent.height - 12px - self.height;
+            width: parent.width - 28px;
+            height: root.con-dati ? self.preferred-height : 0px;
+            text: root.riga-sessione;
+            wrap: word-wrap;
+            font-family: Tema.carattere-mono;
+            font-size: Tema.testo-piccolo;
+            color: Tema.testo-tenue;
+        }
+
+        // Il fuoco sul testo: l'anello sul bordo del riquadro.
+        if root.con-fuoco && root.fuoco == -2: Anello { raggio: parent.border-radius; distanza: -2px; }
+    }
+
+    // In fondo a sinistra: perché «Consenti» non c'è ancora, o il tasto che lo concede.
+    property <length> y-fondo: root.height - root.alto-fondo;
+    if Permessi.chiede(root.voce) && !root.visto: Text {
+        x: 0;
+        y: root.y-fondo;
+        width: self.preferred-width;
+        height: root.alto-fondo;
+        text: "Leggi fino in fondo per consentire";
+        vertical-alignment: center;
+        font-size: Tema.testo-piccolo;
+        color: Tema.testo-tenue;
+    }
+    if Permessi.chiede(root.voce) && root.visto: HorizontalLayout {
+        x: 0;
+        y: root.y-fondo;
+        height: root.alto-fondo;
+        width: self.preferred-width;
+        spacing: 8px;
+        alignment: start;
+
+        VerticalLayout {
+            alignment: center;
+
+            Rectangle {
+                height: 20px;
+                width: chip.preferred-width + 12px;
+                border-radius: 6px;
+                background: Tema.g3;
+
+                chip := Text {
+                    text: "Ctrl Invio";
+                    font-family: Tema.carattere-mono;
+                    font-size: Tema.testo-piccolo;
+                    color: Tema.testo;
+                    accessible-label: "Control Invio";
+                }
+            }
+        }
+
+        Text {
+            text: "consente";
+            vertical-alignment: center;
+            font-size: Tema.testo-piccolo;
+            color: Tema.testo-tenue;
+        }
+    }
+
+    // I pulsanti a posti fissi: l'altro («Consenti») all'estremità destra, «Nega» prima. Il posto
+    // di «Consenti» c'è anche quando è nascosto, così «Nega» non si sposta mai e «Consenti» non
+    // nasce dove un attimo prima c'era un altro bersaglio.
+    altro := Pulsante {
+        visible: root.mostra(root.indice-altro);
+        x: root.width - self.width;
+        y: root.y-pulsanti;
+        width: root.largo-pulsante;
+        altezza: root.alto-pulsanti;
+        raggio: Tema.raggio-l;
+        testo: root.indice-altro >= 0 ? root.voce.pulsanti[root.indice-altro].testo : "";
+        delicato: root.indice-altro >= 0 && root.voce.pulsanti[root.indice-altro].delicato;
+        tipo: RegolaPulsanti.tipo(true, root.indice-altro >= 0 && root.voce.pulsanti[root.indice-altro].delicato);
+        tasti-propri: false;
+        focalizzabile: false;
+        chiede-fuoco: root.con-fuoco && root.fuoco == root.indice-altro && root.mostra(root.indice-altro);
+        anello: root.con-fuoco && root.fuoco == root.indice-altro && root.mostra(root.indice-altro);
+        premuto => {
+            if (root.mostra(root.indice-altro)) {
+                root.decidi(root.voce.pulsanti[root.indice-altro].id);
+            }
+        }
+    }
+
+    nega := Pulsante {
+        visible: root.mostra(root.indice-nega);
+        x: root.width - root.largo-pulsante - 8px - self.width;
+        y: root.y-pulsanti;
+        width: root.largo-pulsante;
+        altezza: root.alto-pulsanti;
+        raggio: Tema.raggio-l;
+        testo: root.indice-nega >= 0 ? root.voce.pulsanti[root.indice-nega].testo : "";
+        tipo: RegolaPulsanti.tipo(false, false);
+        tasti-propri: false;
+        focalizzabile: false;
+        chiede-fuoco: root.con-fuoco && root.fuoco == root.indice-nega && root.mostra(root.indice-nega);
+        anello: root.con-fuoco && root.fuoco == root.indice-nega && root.mostra(root.indice-nega);
+        premuto => {
+            if (root.mostra(root.indice-nega)) {
+                root.decidi(root.voce.pulsanti[root.indice-nega].id);
+            }
+        }
+    }
+}

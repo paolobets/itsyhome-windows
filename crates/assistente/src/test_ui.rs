@@ -678,6 +678,9 @@ mod accessibilita {
         let p = Pannello::new().expect("pannello");
         // Tab nella Panoramica: l'ordine lo calcola Rust, come nel pannello vero.
         crate::pannello::collega_fuoco(&p);
+        // Dove sta una voce fra le attese, come lo dice il ponte (`indice_voce` sul modello).
+        let debole = p.as_weak();
+        p.on_indice_voce(move |id| debole.upgrade().map_or(-1, |p| crate::pannello::indice_voce(&p.get_attese(), &id)));
         p.set_aperto(true);
         p.show().expect("pannello mostrato nel backend di prova");
         p
@@ -975,7 +978,11 @@ mod accessibilita {
     }
 
     /// Un pannello aperto sulla Coda con queste voci, la tastiera pronta; restituisce le azioni
-    /// arrivate (id del pulsante).
+    /// arrivate. Ridisegno F2, Task 3 (pre-flight C3): ascolta tutte e due le callback in un solo
+    /// registro. Le decisioni su un permesso passano dalla guardia di Rust (`azione-voce`) e si
+    /// registrano col solo id del pulsante («nega», «consenti»); un'`azione` diretta col prefisso
+    /// («azione riprova»). Così un test che aspetta «consenti» fallisce se il consenso salta la
+    /// guardia, e un test che aspetta il registro vuoto vede anche le azioni dirette.
     fn pannello_in_coda(voci: ModelRc<VoceAttesaUi>) -> (Pannello, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
         piattaforma_di_prova();
         let p = pannello();
@@ -984,9 +991,264 @@ mod accessibilita {
         p.set_attese(voci);
         let azioni = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
         let a = azioni.clone();
-        p.on_azione(move |_, id| a.borrow_mut().push(id.to_string()));
+        p.on_azione(move |_, id| a.borrow_mut().push(format!("azione {id}")));
+        let a = azioni.clone();
+        p.on_azione_voce(move |_, id| a.borrow_mut().push(id.to_string()));
         p.set_vista("coda".into());
         (p, azioni)
+    }
+
+    /// Il permesso del guscio è aperto nella Coda (il suo riquadro si vede).
+    fn permesso_aperto(p: &Pannello) -> bool {
+        ElementHandle::find_by_element_id(p, "Permesso::riquadro").next().is_some()
+    }
+
+    /// Un permesso di Claude Code coi dati divisi (Task 2): sessione e cartella «my-shop»,
+    /// strumento «Comando», chiesto «alle 14:32».
+    fn permesso_con_dati(id: &str, comando: &str) -> VoceAttesaUi {
+        VoceAttesaUi {
+            dettaglio: format!("{comando}\nSessione: my-shop").into(),
+            permesso: crate::PermessoUi {
+                sessione: "my-shop".into(),
+                strumento: "Comando".into(),
+                comando: comando.into(),
+                cartella: "my-shop".into(),
+                chiesto: "alle 14:32".into(),
+            },
+            ..voce_coda(id, &format!("Claude chiede: Comando {comando}"), LivelloUi::Bloccante, "Ti aspetta · Agenti", true)
+        }
+    }
+
+    /// Un elemento visibile `nome` dentro il rettangolo di `dentro` (per intero).
+    fn sta_dentro(e: &ElementHandle, dentro: &ElementHandle) -> bool {
+        let (a, la, b, lb) = (e.absolute_position(), e.size(), dentro.absolute_position(), dentro.size());
+        a.x >= b.x - 0.5 && a.y >= b.y - 0.5 && a.x + la.width <= b.x + lb.width + 0.5 && a.y + la.height <= b.y + lb.height + 0.5
+    }
+
+    /// Ridisegno F2, Task 3: un permesso coi dati divisi si apre nel componente del guscio.
+    /// Capsula «Chiede il permesso», «chiesto alle 14:32» accanto (mai sotto i pulsanti, che con
+    /// `pulsanti-in-alto` stanno nello stesso angolo: pre-flight C13), «TERMINALE», «$» e il
+    /// comando, sotto la sessione; Narrator legge «Ti aspetta · Agenti: my-shop chiede: Comando»
+    /// col comando come descrizione. La cartella si vede solo se c'è e non è la sessione; «$» solo
+    /// per lo strumento «Comando» (requisito del Task 2).
+    #[test]
+    fn permesso_mostra_comando_e_cartella() {
+        use slint::platform::Key;
+        let voci = std::rc::Rc::new(VecModel::from(vec![permesso_con_dati("claude.permesso.1", "npm test -- checkout")]));
+        let (p, azioni) = pannello_in_coda(ModelRc::from(voci.clone()));
+        tasto(&p, Key::Return);
+        lascia_girare(&p);
+        let gruppo = elemento(&p, "Ti aspetta · Agenti: my-shop chiede: Comando");
+        assert_eq!(gruppo.accessible_role(), Some(AccessibleRole::Groupbox));
+        let descrizione = gruppo.accessible_description().unwrap_or_default();
+        assert!(descrizione.contains("npm test -- checkout") && descrizione.contains("my-shop"), "{descrizione}");
+        let riquadro = ElementHandle::find_by_element_id(&p, "Permesso::riquadro").next().expect("il riquadro");
+        for testo in ["TERMINALE", "$", "npm test -- checkout", "my-shop"] {
+            let e = elemento(&p, testo);
+            assert!(sta_dentro(&e, &riquadro), "«{testo}» fuori dal riquadro");
+        }
+        // Sessione e cartella coincidono: una volta sola.
+        assert!(ElementHandle::find_by_accessible_label(&p, "my-shop · my-shop").next().is_none());
+        // La capsula del tono sta nel permesso, sopra il riquadro (decorativa: il tono lo dice il nome).
+        let capsula = ElementHandle::find_by_element_type_name(&p, "Capsula")
+            .find(|c| sta_dentro(c, &gruppo))
+            .expect("la capsula «Chiede il permesso»");
+        assert!(capsula.absolute_position().y + capsula.size().height <= riquadro.absolute_position().y);
+        assert!(include_str!("../ui/guscio/permesso.slint").contains("parola: \"Chiede il permesso\""));
+        // «chiesto alle 14:32» accanto alla capsula, a sinistra di «Nega».
+        let chiesto = elemento(&p, "chiesto alle 14:32");
+        let nega = elemento(&p, "Nega");
+        assert!(chiesto.absolute_position().x >= capsula.absolute_position().x + capsula.size().width);
+        assert!(chiesto.absolute_position().x + chiesto.size().width <= nega.absolute_position().x, "«chiesto» sotto «Nega»");
+        // Una cartella diversa dalla sessione si vede dopo il punto.
+        let mut v = voci.row_data(0).unwrap();
+        v.permesso.cartella = "shop-api".into();
+        voci.set_row_data(0, v.clone());
+        slint::platform::update_timers_and_animations();
+        assert!(sta_dentro(&elemento(&p, "my-shop · shop-api"), &riquadro));
+        // Un altro strumento (un percorso, un indirizzo): niente «$».
+        v.permesso.strumento = "Modifica".into();
+        voci.set_row_data(0, v);
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&p, "$").next().is_none(), "«$» per uno strumento che non è un comando");
+        assert!(elemento(&p, "npm test -- checkout").absolute_position().x <= riquadro.absolute_position().x + 16.0);
+        assert!(azioni.borrow().is_empty());
+    }
+
+    /// Ridisegno F2, Task 3 (Review Focus 5): un permesso senza dati di sessione (la voce di prova,
+    /// domani un agente che non dà la cartella) mostra titolo e dettaglio intero in mono, nessun
+    /// campo vuoto a vista («TERMINALE», «$», capsula), con le stesse regole: Ctrl+Invio concede
+    /// solo dopo il fondo del testo.
+    #[test]
+    fn permesso_senza_dati_mostra_il_dettaglio() {
+        use slint::platform::Key;
+        let voce = permesso_lungo(12);
+        let (p, azioni) = pannello_in_coda(ModelRc::new(VecModel::from(vec![voce.clone()])));
+        tasto(&p, Key::Return);
+        lascia_girare(&p);
+        let gruppo = elemento(&p, &format!("Ti aspetta · Agenti: {}", voce.titolo));
+        assert_eq!(gruppo.accessible_role(), Some(AccessibleRole::Groupbox));
+        assert_eq!(gruppo.accessible_description().as_deref(), Some(voce.dettaglio.as_str()));
+        for vuoto in ["TERMINALE", "$", "chiesto alle 14:32"] {
+            assert!(ElementHandle::find_by_accessible_label(&p, vuoto).next().is_none(), "«{vuoto}» senza dati");
+        }
+        assert!(ElementHandle::find_by_element_type_name(&p, "Capsula").all(|c| !sta_dentro(&c, &gruppo)), "capsula senza dati");
+        let titolo = ElementHandle::find_by_element_id(&p, "Permesso::titolo").next().expect("il titolo");
+        let dettaglio = ElementHandle::find_by_element_id(&p, "Permesso::dettaglio").next().expect("il dettaglio");
+        assert!(dettaglio.absolute_position().y >= titolo.absolute_position().y + titolo.size().height);
+        assert!(ElementHandle::find_by_element_id(&p, "Permesso::comando").next().is_none(), "il comando senza dati");
+        // Ctrl+Invio prima del fondo: nulla; il consenso non si raggiunge.
+        con_modificatori(&p, &[Key::Control], Key::Return);
+        tasto(&p, Key::RightArrow);
+        con_modificatori(&p, &[Key::Control], Key::Return);
+        assert!(azioni.borrow().is_empty(), "concesso senza aver letto: {:?}", azioni.borrow());
+        tasto(&p, Key::UpArrow);
+        for _ in 0..40 {
+            if ElementHandle::find_by_accessible_label(&p, "Consenti").next().is_some() {
+                break;
+            }
+            tasto(&p, Key::DownArrow);
+            lascia_girare(&p);
+        }
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Consenti");
+        con_modificatori(&p, &[Key::Control], Key::Return);
+        assert_eq!(*azioni.borrow(), ["consenti"]);
+    }
+
+    /// Ridisegno F2, Task 3 (Review Focus 2): un comando di 2000 caratteri senza spazi va a capo
+    /// nel riquadro (nessun testo oltre il bordo destro: tante righe, non una), la sessione resta
+    /// leggibile e «Consenti» c'è solo dopo ↓ fino in fondo.
+    #[test]
+    fn permesso_lungo_su_una_riga_si_legge_tutto() {
+        use slint::platform::Key;
+        let comando = "x".repeat(2000);
+        let (p, azioni) = pannello_in_coda(ModelRc::new(VecModel::from(vec![permesso_con_dati("claude.permesso.1", &comando)])));
+        tasto(&p, Key::Return);
+        lascia_girare(&p);
+        let riquadro = ElementHandle::find_by_element_id(&p, "Permesso::riquadro").next().expect("il riquadro");
+        let testo = ElementHandle::find_by_element_id(&p, "Permesso::comando").next().expect("il comando");
+        let (r, lr, t, lt) = (riquadro.absolute_position(), riquadro.size(), testo.absolute_position(), testo.size());
+        assert!(t.x + lt.width <= r.x + lr.width, "il comando passa il bordo destro");
+        assert!(lt.height > 10.0 * 16.0, "il comando non va a capo: alto {}", lt.height);
+        assert!(sta_dentro(&elemento(&p, "my-shop"), &riquadro), "la sessione si legge");
+        assert!(ElementHandle::find_by_accessible_label(&p, "Consenti").next().is_none());
+        tasto(&p, Key::UpArrow);
+        let mut passi = 0;
+        while ElementHandle::find_by_accessible_label(&p, "Consenti").next().is_none() {
+            con_modificatori(&p, &[Key::Control], Key::Return);
+            tasto(&p, Key::DownArrow);
+            lascia_girare(&p);
+            passi += 1;
+            assert!(passi < 200, "il fondo del testo non arriva");
+        }
+        assert!(passi > 1, "il testo doveva scorrere: {passi} passi");
+        assert!(azioni.borrow().is_empty(), "concesso prima del fondo: {:?}", azioni.borrow());
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::RightArrow);
+        con_modificatori(&p, &[Key::Control], Key::Return);
+        assert_eq!(*azioni.borrow(), ["consenti"]);
+    }
+
+    /// Ridisegno F2, Task 3 (rimandato di F1, pre-flight C14): il permesso aperto alla riga 1 e la
+    /// voce 0 tolta: resta aperto (la validità la decide l'id, non la riga), il fuoco resta sul
+    /// suo bersaglio e «Nega» non si sposta. Un permesso diverso al suo posto lo chiude e il fuoco
+    /// torna sulla riga.
+    #[test]
+    fn permesso_che_cambia_posto_resta_aperto() {
+        use slint::platform::Key;
+        let voci = std::rc::Rc::new(VecModel::from(vec![
+            voce_coda("a", "Primo", LivelloUi::Bloccante, "Ti aspetta · Agenti", true),
+            permesso_con_dati("claude.permesso.2", "npm test"),
+            voce_coda("c", "Terzo", LivelloUi::Bloccante, "Ti aspetta · Agenti", true),
+        ]));
+        let (p, azioni) = pannello_in_coda(ModelRc::from(voci.clone()));
+        tasto(&p, Key::DownArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Claude chiede: Comando npm test, Ti aspetta · Agenti", "la riga 1");
+        tasto(&p, Key::Return);
+        lascia_girare(&p);
+        tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Consenti");
+        let nega = elemento(&p, "Nega");
+        let prima = (nega.absolute_position(), nega.size());
+        voci.remove(0);
+        slint::platform::update_timers_and_animations();
+        lascia_girare(&p);
+        assert!(permesso_aperto(&p), "il permesso spostato si è chiuso");
+        let gruppi: Vec<String> = ElementHandle::find_by_element_type_name(&p, "Permesso")
+            .filter_map(|e| e.accessible_label().map(|s| s.to_string()))
+            .collect();
+        assert_eq!(gruppi, ["Ti aspetta · Agenti: my-shop chiede: Comando"], "lo stesso permesso");
+        assert_eq!(etichetta_col_fuoco(&p), "Consenti", "il fuoco resta sul suo bersaglio");
+        let nega = elemento(&p, "Nega");
+        assert_eq!((nega.absolute_position(), nega.size()), prima, "«Nega» si è spostato");
+        // Esc: di nuovo la sua riga, alla posizione nuova.
+        tasto(&p, Key::Escape);
+        lascia_girare(&p);
+        assert_eq!(etichetta_col_fuoco(&p), "Claude chiede: Comando npm test, Ti aspetta · Agenti");
+        // Riaperto, un permesso diverso al suo posto lo chiude: il fuoco torna sulla riga.
+        tasto(&p, Key::Return);
+        lascia_girare(&p);
+        assert!(permesso_aperto(&p));
+        voci.set_row_data(0, permesso_con_dati("claude.permesso.3", "rm -rf build"));
+        slint::platform::update_timers_and_animations();
+        lascia_girare(&p);
+        assert!(!permesso_aperto(&p), "un altro permesso al suo posto: si chiude");
+        assert_eq!(etichetta_col_fuoco(&p), "Claude chiede: Comando rm -rf build, Ti aspetta · Agenti");
+        assert_eq!(ruolo_col_fuoco(&p), i_slint_core::items::AccessibleRole::ListItem);
+        con_modificatori(&p, &[Key::Control], Key::Return);
+        assert!(azioni.borrow().is_empty(), "{:?}", azioni.borrow());
+    }
+
+    /// Ridisegno F2, Task 3: nella Coda ogni decisione su un permesso (clic e Invio su «Nega»,
+    /// Ctrl+Invio su «Consenti», nel permesso aperto e nella riga) passa da `azione-voce`, la
+    /// guardia dei 600 ms di Rust; nessuna da `azione`.
+    #[test]
+    fn decisioni_del_permesso_passano_dalla_guardia() {
+        use slint::platform::Key;
+        let (p, azioni) = pannello_in_coda(ModelRc::new(VecModel::from(vec![permesso_con_dati("claude.permesso.1", "npm test")])));
+        tasto(&p, Key::Return);
+        lascia_girare(&p);
+        let (x, y) = centro(&elemento(&p, "Nega"));
+        clic_in(&p, x, y);
+        assert_eq!(etichetta_col_fuoco(&p), "Nega");
+        tasto(&p, Key::Return);
+        tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Consenti");
+        con_modificatori(&p, &[Key::Control], Key::Return);
+        // La riga chiusa: «Nega» da tastiera e col clic.
+        tasto(&p, Key::Escape);
+        lascia_girare(&p);
+        tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Nega");
+        tasto(&p, Key::Return);
+        let (x, y) = centro(&elemento(&p, "Nega"));
+        clic_in(&p, x, y);
+        assert_eq!(*azioni.borrow(), ["nega", "nega", "consenti", "nega", "nega"]);
+    }
+
+    /// Ridisegno F2, Task 3 (pre-flight C1, C2): il permesso della Coda è un'istanza fissa del
+    /// pannello, mai dentro un `if` né un `for`. Un id dentro un `if` non si raggiunge da fuori
+    /// (spike del Task 3: «Cannot access id»), e un componente creato al momento dell'apertura
+    /// non vedrebbe l'incremento di `armamenti` che la accompagna (l'aspetto inerte del Task 4).
+    #[test]
+    fn permesso_fisso_fuori_dagli_if() {
+        let sorgente = include_str!("../ui/pannello.slint");
+        let righe: Vec<&str> = sorgente.lines().map(super::senza_commento).collect();
+        let i = righe.iter().position(|r| r.contains("coda-permesso := Permesso")).expect("il permesso della Coda");
+        let mut profondita = 0i32;
+        let mut contenitori = 0;
+        for r in righe[..i].iter().rev() {
+            profondita += r.matches('}').count() as i32 - r.matches('{').count() as i32;
+            if profondita < 0 {
+                let t = r.trim_start();
+                assert!(!(t.starts_with("if ") && !t.starts_with("if (")) && !t.starts_with("for "), "il permesso sta dentro «{t}»");
+                contenitori += 1;
+                profondita = 0;
+            }
+        }
+        assert!(contenitori >= 2, "dentro il pannello: {contenitori} blocchi");
     }
 
     /// Ridisegno F1, Task 7: → su una riga di permesso porta il fuoco vero su «Nega» (mai su
@@ -1038,6 +1300,8 @@ mod accessibilita {
     /// Fix 1 del Task 7 (C1, sostituisce `titolo_della_voce_espansa_va_a_capo`): un permesso si
     /// apre col titolo a capo (più righe, non tagliato in una) e il testo intero (comando e
     /// sessione) per Narrator e sullo schermo; la riga chiusa non offre «Consenti» ma «Apri».
+    /// Ridisegno F2, Task 3: lo apre il componente `Permesso` del guscio (senza dati divisi:
+    /// titolo e dettaglio), non più `VoceAperta`.
     #[test]
     fn permesso_aperto_si_legge_intero() {
         let (p, _) = pannello_in_coda(ModelRc::new(VecModel::from(vec![permesso_lungo(2)])));
@@ -1045,21 +1309,19 @@ mod accessibilita {
         assert_eq!(elemento(&p, "Apri").accessible_role(), Some(AccessibleRole::Button));
         elemento(&p, "Apri").invoke_accessible_default_action();
         lascia_girare(&p);
-        let titolo = ElementHandle::find_by_element_id(&p, "VoceAperta::titolo").next().expect("il titolo della voce aperta");
-        let sotto = ElementHandle::find_by_element_id(&p, "VoceAperta::sotto-testo").next().expect("la riga sotto");
+        let titolo = ElementHandle::find_by_element_id(&p, "Permesso::titolo").next().expect("il titolo del permesso");
         assert!(titolo.size().height > 30.0, "titolo lungo a capo: {}", titolo.size().height);
-        assert!(sotto.absolute_position().y >= titolo.absolute_position().y + titolo.size().height, "la riga sotto scende");
-        let voce = ElementHandle::find_by_accessible_label(&p, &format!("{}, Aspetta te · Agenti", permesso_lungo(2).titolo))
+        let voce = ElementHandle::find_by_accessible_label(&p, &format!("Ti aspetta · Agenti: {}", permesso_lungo(2).titolo))
             .find(|e| e.accessible_role() == Some(AccessibleRole::Groupbox))
-            .expect("la voce aperta");
+            .expect("il permesso aperto");
         let descrizione = voce.accessible_description().unwrap_or_default();
         assert!(descrizione.contains("cartella-1") && descrizione.ends_with("Sessione: progetto-a"), "{descrizione}");
-        // Il testo sta in un riquadro visibile sotto la riga, in mono.
-        let dettaglio = ElementHandle::find_by_element_id(&p, "VoceAperta::dettaglio").next().expect("il testo intero");
-        assert!(dettaglio.size().height > 0.0 && dettaglio.absolute_position().y > sotto.absolute_position().y);
-        let sorgente = include_str!("../ui/impianti/elenco.slint");
+        // Il testo sta in un riquadro visibile sotto il titolo, in mono.
+        let dettaglio = ElementHandle::find_by_element_id(&p, "Permesso::dettaglio").next().expect("il testo intero");
+        assert!(dettaglio.size().height > 0.0 && dettaglio.absolute_position().y >= titolo.absolute_position().y + titolo.size().height);
+        let sorgente = include_str!("../ui/guscio/permesso.slint");
         let inizio = sorgente.find("dettaglio := Text").expect("il testo intero");
-        assert!(sorgente[inizio..inizio + 400].contains("font-family: Tema.carattere-mono"), "il comando in mono");
+        assert!(sorgente[inizio..inizio + 500].contains("font-family: Tema.carattere-mono"), "il comando in mono");
     }
 
     /// Un clic sinistro (premuto e rilasciato) in questo punto della finestra.
@@ -1110,9 +1372,10 @@ mod accessibilita {
     }
 
     /// Fix 2 del Task 7 (N1, caso secondario): un doppio clic su «Apri» di una riga bassa non
-    /// concede mai: il secondo clic non trova «Consenti» dove c'era «Apri».
+    /// concede mai: il secondo clic non trova «Consenti» dove c'era «Apri». Ridisegno F2, Task 3
+    /// (F1 Task 7 n3): era `doppio_clic_su_apri_non_consente`; prova la posizione, il nome lo dice.
     #[test]
-    fn doppio_clic_su_apri_non_consente() {
+    fn consenti_non_nasce_sotto_apri() {
         let mut voci: Vec<VoceAttesaUi> =
             (0..3).map(|i| voce_coda(&format!("i{i}"), &format!("Avviso {i}"), LivelloUi::Informazione, "Quando vuoi · PC", false)).collect();
         voci.push(voce_coda("claude.permesso.9", "Permesso basso", LivelloUi::Bloccante, "Aspetta te · Agenti", true));
@@ -1121,7 +1384,7 @@ mod accessibilita {
         let (x, y) = centro(&apri);
         clic_in(&p, x, y);
         lascia_girare(&p);
-        assert!(ElementHandle::find_by_element_id(&p, "VoceAperta::dettaglio").next().is_some(), "il primo clic apre");
+        assert!(permesso_aperto(&p), "il primo clic apre");
         clic_in(&p, x, y);
         lascia_girare(&p);
         assert!(azioni.borrow().iter().all(|a| a != "consenti"), "il doppio clic ha concesso: {:?}", azioni.borrow());
@@ -1145,7 +1408,7 @@ mod accessibilita {
         p.invoke_apri_coda_su(1);
         lascia_girare(&p);
         assert_eq!(p.get_vista(), "coda");
-        assert!(ElementHandle::find_by_element_id(&p, "VoceAperta::dettaglio").next().is_some(), "il testo intero");
+        assert!(permesso_aperto(&p), "il testo intero");
         tasto(&p, Key::Escape);
         tasto(&p, Key::Return);
         lascia_girare(&p);
@@ -1174,7 +1437,7 @@ mod accessibilita {
         tasto(&p, Key::UpArrow);
         let mut passi = 0;
         while ElementHandle::find_by_accessible_label(&p, "Consenti").next().is_none() {
-            assert_eq!(etichetta_col_fuoco(&p), format!("{}, Aspetta te · Agenti", permesso_lungo(12).titolo), "sul testo");
+            assert_eq!(etichetta_col_fuoco(&p), format!("Ti aspetta · Agenti: {}", permesso_lungo(12).titolo), "sul testo");
             tasto(&p, Key::DownArrow);
             lascia_girare(&p);
             passi += 1;
@@ -1244,6 +1507,7 @@ mod accessibilita {
         // sé (ultimo = azione) questo test deve fallire.
         for (nome, sorgente) in [
             ("impianti/elenco.slint", include_str!("../ui/impianti/elenco.slint")),
+            ("guscio/permesso.slint", include_str!("../ui/guscio/permesso.slint")),
             ("pillola.slint", include_str!("../ui/pillola.slint")),
             ("guscio/voce.slint", include_str!("../ui/guscio/voce.slint")),
         ] {
@@ -1673,7 +1937,7 @@ mod accessibilita {
         tasto(&p, Key::Return);
         lascia_girare(&p);
         assert_eq!(p.get_vista(), "coda");
-        assert!(ElementHandle::find_by_element_id(&p, "VoceAperta::dettaglio").next().is_some(), "il testo intero");
+        assert!(permesso_aperto(&p), "il testo intero");
         assert_eq!(etichetta_col_fuoco(&p), "Nega");
         assert!(azioni.borrow().is_empty(), "{:?}", azioni.borrow());
     }
@@ -1688,7 +1952,7 @@ mod accessibilita {
         let (x, y) = centro(&elemento(&p, "Apri"));
         clic_in(&p, x, y);
         lascia_girare(&p);
-        assert!(ElementHandle::find_by_element_id(&p, "VoceAperta::dettaglio").next().is_some(), "il primo clic apre");
+        assert!(permesso_aperto(&p), "il primo clic apre");
         for nome in ["Nega", "Consenti"] {
             for e in ElementHandle::find_by_accessible_label(&p, nome) {
                 let (pos, lato) = (e.absolute_position(), e.size());
@@ -1704,7 +1968,7 @@ mod accessibilita {
         clic_in(&p, x, y);
         lascia_girare(&p);
         assert_eq!(p.get_vista(), "coda");
-        assert!(ElementHandle::find_by_element_id(&p, "VoceAperta::dettaglio").next().is_none(), "«+N» non apre un permesso");
+        assert!(!permesso_aperto(&p), "«+N» non apre un permesso");
         clic_in(&p, x, y);
         lascia_girare(&p);
         assert!(azioni.borrow().is_empty(), "il doppio clic su «+N» ha risposto: {:?}", azioni.borrow());
@@ -3252,12 +3516,12 @@ mod accessibilita {
         i_slint_core::items::AccessibleRole::None
     }
 
-    /// Dopo l'apertura di un permesso: lascia nascere la voce aperta e girare i suoi `init` e
-    /// `changed` (dice al pannello se il fondo del testo si è visto).
+    /// Dopo l'apertura di un permesso: lascia girare i `changed` del permesso (dice al pannello se
+    /// il fondo del testo si è visto).
     fn lascia_girare(p: &Pannello) {
-        let _ = ElementHandle::find_by_element_id(p, "VoceAperta::titolo").count();
+        let _ = ElementHandle::find_by_element_id(p, "Permesso::riquadro").count();
         slint::platform::update_timers_and_animations();
-        let _ = ElementHandle::find_by_element_id(p, "VoceAperta::titolo").count();
+        let _ = ElementHandle::find_by_element_id(p, "Permesso::riquadro").count();
         slint::platform::update_timers_and_animations();
     }
 

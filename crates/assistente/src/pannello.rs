@@ -157,6 +157,12 @@ pub(crate) fn collega_fuoco(p: &Pannello) {
     });
 }
 
+/// Dove sta la voce `id` fra le voci in attesa (-1: non c'è). Per `indice-voce` del pannello: il
+/// permesso aperto nella Coda segue il suo id quando cambia posto (ridisegno F2, Task 3).
+pub(crate) fn indice_voce(voci: &impl Model<Data = crate::VoceAttesaUi>, id: &str) -> i32 {
+    voci.iter().position(|v| v.id == id).map_or(-1, |i| i as i32)
+}
+
 /// «N in attesa ›» della riga alta: quante voci in attesa la Panoramica non mostra già (con la
 /// voce che ti aspetta, nessuna: le altre le conta il suo «+N»). Solo se cambia.
 pub(crate) fn scrivi_in_attesa(p: &Pannello, voci: usize, voce_mostrata: bool) {

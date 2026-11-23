@@ -46,7 +46,8 @@ import { Occhi } from "faccia.slint";
 import { Anello, Fuoco, Fuochi } from "componenti.slint";
 import { ContornoIsola, RigaAlta, Barra } from "guscio/cornice.slint";
 import { SchedaBarraUi, StatPcUi, PreferitoUi, PulsanteUi, VoceAttesaUi, UmoreUi, StanzaUi, CollegamentoUi, TipoReteUi, TintaBatteriaUi, RigaSessioneUi, LimiteClaudeUi, VoceMenuUi, SchermoMenuUi, ModuloUi, TonoModuloUi, LivelloUi } from "voci.slint";
-import { ImpiantoElenco, Permessi } from "impianti/elenco.slint";
+import { ImpiantoElenco } from "impianti/elenco.slint";
+import { Permesso, Permessi } from "guscio/permesso.slint";
 import { MenuScuro } from "menu.slint";
 import { VistaPc } from "viste/pc.slint";
 import { VistaClaude } from "viste/claude.slint";
@@ -211,6 +212,10 @@ export component Pannello inherits Window {
     // che ti aspetta compare nella Panoramica: Rust riarma «Consenti» per 600 ms
     // (`claude_superficie_compare`).
     callback consenti-compare();
+    // Dove sta adesso la voce con questo id fra le `attese` (-1: non c'è più). Lo dice Rust, che
+    // tiene il modello: il permesso aperto nella Coda segue il suo id quando cambia posto, e si
+    // chiude solo quando l'id sparisce (pre-flight C14).
+    callback indice-voce(string) -> int;
     // Il bottone d'azione di una carta: (id del modulo, id dell'azione). Lo traduce Rust
     // (`Ponte::azione_modulo`).
     callback azione-modulo(string, string);
@@ -270,6 +275,25 @@ export component Pannello inherits Window {
     property <int> n-attese: attese.length;
     changed n-attese => {
         fuoco-coda-riga = coda-riga;
+        segui-permesso-aperto();
+    }
+    // Il permesso aperto nella Coda segue il suo id (pre-flight C14: la validità la decide l'id,
+    // non la riga): se una voce prima di lui sparisce o arriva resta aperto e la riga col fuoco
+    // lo raggiunge; se il suo id non c'è più (risolto, o un altro permesso al suo posto) si chiude
+    // e il fuoco torna sulla riga. Lo chiamano i cambi del numero di voci e dell'id alla riga col
+    // fuoco (una voce sostituita sul posto).
+    property <string> id-alla-riga: attese[coda-riga].id;
+    changed id-alla-riga => { segui-permesso-aperto(); }
+    function segui-permesso-aperto() {
+        if (coda-aperta != "") {
+            let i = root.indice-voce(coda-aperta);
+            if (i < 0) {
+                chiudi-permesso();
+            } else {
+                fuoco-coda-riga = i;
+                coda-voce-aperta = attese[i];
+            }
+        }
     }
 
     // ─── Panoramica: il pool di fuoco (spike 11 §1) ───
@@ -461,26 +485,18 @@ export component Pannello inherits Window {
     property <int> fuoco-coda-pulsante: -1;
     property <string> coda-voce-pulsanti;
     property <int> coda-riga: max(0, min(fuoco-coda-riga, attese.length - 1));
-    // Un permesso aperto (`coda-aperta`, id; vale solo finché è ancora la voce della riga col fuoco:
-    // se sparisce o cambia posto si chiude) col testo intero; `coda-visto`: il fondo del suo testo
-    // si è visto (lo dice la voce aperta), e solo allora «Consenti» c'è e prende il fuoco.
+    // Un permesso aperto (`coda-aperta`, l'id; vuoto = nessuno) nel componente `Permesso` fisso
+    // (`coda-permesso`), che tiene da sé testo, fondo visto e fuoco. Resta aperto finché il suo id
+    // c'è (`segui-permesso-aperto`). `coda-voce-aperta`: la sua voce, copiata all'apertura e a ogni
+    // spostamento; il permesso la mostra solo nell'istante in cui la riga col fuoco non lo
+    // raggiunge ancora, così non vede mai un'altra voce (che lo farebbe ripartire da capo).
     property <string> coda-aperta;
-    property <bool> coda-visto;
-    property <bool> coda-aperta-valida: attese.length > 0 && coda-aperta != "" && attese[coda-riga].id == coda-aperta;
-    changed coda-aperta-valida => {
-        if (!coda-aperta-valida) {
-            coda-aperta = "";
-            coda-visto = false;
-        }
-    }
-    // Scorrimento del testo del permesso aperto da tastiera (contatori: ogni scatto è un passo).
-    property <int> coda-testo-su: 0;
-    property <int> coda-testo-giu: 0;
-    // Il pulsante col fuoco: nella riga chiusa il delicato è «Apri»; nel permesso aperto un
-    // delicato vale solo dopo il fondo del testo.
-    property <int> coda-pulsante: attese.length > 0 && fuoco-coda-pulsante >= 0
+    property <VoceAttesaUi> coda-voce-aperta;
+    property <VoceAttesaUi> voce-vuota;
+    property <bool> coda-aperta-valida: coda-aperta != "";
+    // Il pulsante col fuoco nella riga (chiusa: il delicato è «Apri»).
+    property <int> coda-pulsante: attese.length > 0 && !coda-aperta-valida && fuoco-coda-pulsante >= 0
         && fuoco-coda-pulsante < attese[coda-riga].pulsanti.length && attese[coda-riga].id == coda-voce-pulsanti
-        && (!coda-aperta-valida || !attese[coda-riga].pulsanti[fuoco-coda-pulsante].delicato || coda-visto)
         ? fuoco-coda-pulsante : -1;
     no-frame: true;
     always-on-top: true;
@@ -763,14 +779,14 @@ export component Pannello inherits Window {
         }
     }
 
-    // Apre il permesso della riga col fuoco: il testo intero, il fuoco su «Nega» (o sul testo se
-    // non c'è). «Consenti» aspetta il fondo del testo.
+    // Apre il permesso della riga col fuoco nel componente del guscio: il testo intero, il fuoco
+    // su «Nega» (o sul testo se non c'è). «Consenti» aspetta il fondo del testo.
     function apri-permesso() {
         coda-aperta = attese[coda-riga].id;
-        coda-visto = false;
+        coda-voce-aperta = attese[coda-riga];
         fuoco-coda-riga = coda-riga;
-        coda-voce-pulsanti = coda-aperta;
-        fuoco-coda-pulsante = primo-non-delicato(coda-riga);
+        fuoco-coda-pulsante = -1;
+        coda-permesso.entra();
         // Una superficie col permesso compare: «Consenti» si arma di nuovo (anche contro il
         // secondo clic di un doppio clic su «Apri»).
         root.consenti-compare();
@@ -779,32 +795,36 @@ export component Pannello inherits Window {
     // Chiude il permesso aperto: di nuovo l'elenco, il fuoco sulla sua riga.
     function chiudi-permesso() {
         coda-aperta = "";
-        coda-visto = false;
+        coda-voce-aperta = voce-vuota;
         fuoco-coda-pulsante = -1;
     }
 
+    // Un pulsante della riga `i` della Coda premuto (clic, Invio): su un permesso la decisione
+    // passa dalla guardia di Rust (`azione-voce`), le altre voci sono un'`azione`.
+    function premi-riga(voce: string, pulsante: string, permesso: bool) {
+        if (permesso) {
+            root.azione-voce(voce, pulsante);
+        } else {
+            root.azione(voce, pulsante);
+        }
+    }
+
     // Dalla riga ai suoi pulsanti (→ o Invio): si entra su «Nega» se c'è (il primo non delicato),
-    // altrimenti sul primo. Invio lì nega; «Consenti» vuole Ctrl+Invio.
+    // altrimenti sul primo («Apri» per un permesso). Invio lì nega.
     function entra-pulsanti() {
         if (attese.length > 0 && attese[coda-riga].pulsanti.length > 0) {
             coda-voce-pulsanti = attese[coda-riga].id;
             fuoco-coda-riga = coda-riga;
-            // Senza «Nega»: il primo, ma mai un consenso prima del fondo del testo (allora il
-            // fuoco resta sul testo).
-            fuoco-coda-pulsante = primo-non-delicato(coda-riga) >= 0 ? primo-non-delicato(coda-riga)
-                : coda-aperta-valida && !coda-visto ? -1 : 0;
+            fuoco-coda-pulsante = max(0, primo-non-delicato(coda-riga));
         }
     }
 
-    // ←/→ fra i pulsanti della riga o del permesso aperto: un consenso nascosto (fondo del testo
-    // non ancora visto) non si raggiunge.
+    // ←/→ fra i pulsanti della riga; ← dal primo torna alla riga.
     function pulsante-coda(passo: int) {
         let n = coda-pulsante + passo;
-        if (n >= 0 && n < attese[coda-riga].pulsanti.length
-                && (!coda-aperta-valida || !attese[coda-riga].pulsanti[n].delicato || coda-visto)) {
+        if (n >= 0 && n < attese[coda-riga].pulsanti.length) {
             fuoco-coda-pulsante = n;
-        } else if (n < 0 && !coda-aperta-valida) {
-            // Nella riga, ← dal primo pulsante torna alla riga.
+        } else if (n < 0) {
             fuoco-coda-pulsante = -1;
         }
     }
@@ -916,8 +936,7 @@ export component Pannello inherits Window {
         fuoco-collegamento = 0;
         fuoco-coda-riga = 0;
         fuoco-coda-pulsante = -1;
-        coda-aperta = "";
-        coda-visto = false;
+        chiudi-permesso();
         if (!ha-zona(zona)) {
             zona = ha-zona(Zona.contenuto) ? Zona.contenuto : Zona.dock;
         }
@@ -982,23 +1001,9 @@ export component Pannello inherits Window {
                 fuoco-dock = min(schede.length - 1, fuoco-dock + 1);
             }
         } else if (zona == Zona.contenuto && vista == "coda" && coda-aperta-valida) {
-            // Permesso aperto: sul testo ↑/↓ lo scorrono e, visto il fondo, ↓ (o →) passa ai
-            // pulsanti; sui pulsanti ←/→ fra loro, ↑ torna al testo.
-            if (coda-pulsante >= 0) {
-                if (k == Key.UpArrow) {
-                    fuoco-coda-pulsante = -1;
-                } else if (k == Key.LeftArrow) {
-                    pulsante-coda(-1);
-                } else if (k == Key.RightArrow) {
-                    pulsante-coda(1);
-                }
-            } else if (k == Key.UpArrow) {
-                coda-testo-su += 1;
-            } else if (k == Key.DownArrow && !coda-visto) {
-                coda-testo-giu += 1;
-            } else if (k == Key.DownArrow || k == Key.RightArrow) {
-                entra-pulsanti();
-            }
+            // Permesso aperto: i tasti li governa il componente del guscio. Nella Coda `lascia`
+            // non fa nulla (l'elenco non si vede): si torna con Esc o Backspace.
+            coda-permesso.tasto(k, false);
         } else if (zona == Zona.contenuto && vista == "coda" && attese.length > 0) {
             // ↑/↓ fra le righe; → ai pulsanti e fra loro; ← indietro fino alla riga.
             if (k == Key.UpArrow) {
@@ -1119,12 +1124,11 @@ export component Pannello inherits Window {
     // permesso (su un pulsante delicato Invio e Spazio da soli non fanno nulla).
     function attiva(ctrl: bool) {
         if (ctrl) {
-            // Solo un consenso col fuoco da tastiera nella Coda (nel permesso aperto e dopo il
-            // fondo del testo: `coda-pulsante` lo controlla) o sulla voce che ti aspetta (col
-            // testo intero nella voce); altrove Ctrl+Invio non fa nulla.
-            if (zona == Zona.contenuto && vista == "coda" && coda-aperta-valida && coda-visto && coda-pulsante >= 0
-                    && attese[coda-riga].pulsanti[coda-pulsante].delicato) {
-                root.azione(attese[coda-riga].id, attese[coda-riga].pulsanti[coda-pulsante].id);
+            // Solo un consenso col fuoco da tastiera nel permesso aperto della Coda (dopo il fondo
+            // del testo: lo controlla il componente) o sulla voce che ti aspetta (col testo intero
+            // nella voce); altrove Ctrl+Invio non fa nulla.
+            if (zona == Zona.contenuto && vista == "coda" && coda-aperta-valida) {
+                coda-permesso.tasto(Key.Return, true);
             } else if (pool-attivo) {
                 attiva-panoramica(true);
             }
@@ -1158,16 +1162,19 @@ export component Pannello inherits Window {
             // Vuota: «Torna alla Panoramica». Sulla riga Invio entra nei pulsanti (su «Nega»), su un
             // pulsante lo preme, mai se è un consenso.
             // Una riga di permesso (o il suo «Apri») apre il testo intero.
+            // Nel permesso aperto Invio lo governa il componente (preme solo un non delicato).
             if (attese.length == 0) {
                 fuoco-dock = 0;
                 vai("panoramica");
-            } else if (coda-pulsante < 0 && !coda-aperta-valida && Permessi.chiede(attese[coda-riga])) {
+            } else if (coda-aperta-valida) {
+                coda-permesso.tasto(Key.Return, false);
+            } else if (coda-pulsante < 0 && Permessi.chiede(attese[coda-riga])) {
                 apri-permesso();
             } else if (coda-pulsante < 0) {
                 entra-pulsanti();
             } else if (!attese[coda-riga].pulsanti[coda-pulsante].delicato) {
-                root.azione(attese[coda-riga].id, attese[coda-riga].pulsanti[coda-pulsante].id);
-            } else if (!coda-aperta-valida) {
+                premi-riga(attese[coda-riga].id, attese[coda-riga].pulsanti[coda-pulsante].id, Permessi.chiede(attese[coda-riga]));
+            } else {
                 apri-permesso();
             }
         } else if (vista == "collegamenti") {
@@ -1508,27 +1515,14 @@ export component Pannello inherits Window {
                     fuoco-riga: root.coda-riga;
                     fuoco-pulsante: root.coda-pulsante;
                     aperta: root.coda-aperta-valida;
-                    scorri-su: root.coda-testo-su;
-                    scorri-giu: root.coda-testo-giu;
-                    chiudi-voce => {
-                        da-tastiera = false;
-                        chiudi-permesso();
-                    }
-                    // «Consenti» compare: Rust lo arma di nuovo fra 600 ms (fix 2, N1).
-                    visto-fondo => {
-                        if (coda-aperta-valida) {
-                            coda-visto = true;
-                            root.consenti-compare();
-                        }
-                    }
                     // Come nelle altre viste, il fuoco chiede anche la vista (lasciandola non si
                     // accende su un elemento che sta sparendo).
                     con-fuoco: da-tastiera && zona == Zona.contenuto && vista == "coda";
-                    // Un clic su un pulsante è un gesto: «Consenti» compreso (l'armamento lo
-                    // controlla Rust).
-                    azione(voce, pulsante) => {
+                    // Un clic su un pulsante di una riga è un gesto; su un permesso passa dalla
+                    // guardia di Rust.
+                    azione(voce, pulsante, permesso) => {
                         da-tastiera = false;
-                        root.azione(voce, pulsante);
+                        premi-riga(voce, pulsante, permesso);
                     }
                     // Clic su una riga (un permesso si apre col testo intero) o sul suo «Apri».
                     riga-scelta(i) => {
@@ -1541,6 +1535,37 @@ export component Pannello inherits Window {
                         fuoco-dock = 0;
                         vai("panoramica");
                     }
+                }
+
+                // Il permesso aperto della Coda (ridisegno F2, Task 3): il componente del guscio,
+                // fisso e mai dentro un `if` (pre-flight C1, C2: il pannello gli passa i tasti per
+                // id, e non nasce al momento dell'apertura); si vede solo a permesso aperto, al
+                // posto dell'elenco, coi pulsanti in alto (lontani dalle righe e da «+N»).
+                coda-permesso := Permesso {
+                    visible: vista == "coda" && root.coda-aperta-valida;
+                    x: 0;
+                    y: 0;
+                    width: parent.width;
+                    height: parent.height;
+                    voce: root.coda-aperta-valida && root.attese[root.coda-riga].id == root.coda-aperta
+                        ? root.attese[root.coda-riga] : root.coda-voce-aperta;
+                    pulsanti-in-alto: true;
+                    con-fuoco: da-tastiera && zona == Zona.contenuto && vista == "coda" && root.coda-aperta-valida;
+                    // Un clic, Narrator, Invio su «Nega» o Ctrl+Invio esatto su «Consenti»: la
+                    // decisione passa dalla guardia di Rust (600 ms dopo ogni riarmo).
+                    decidi(pulsante) => {
+                        if (root.coda-aperta-valida) {
+                            root.azione-voce(root.coda-aperta, pulsante);
+                        }
+                    }
+                    // «Consenti» compare (fondo del testo visto): Rust lo arma di nuovo.
+                    visto-fondo => {
+                        if (root.coda-aperta-valida) {
+                            root.consenti-compare();
+                        }
+                    }
+                    // Nella Coda l'elenco non si vede: ← e ↑ in cima non escono (Esc e Backspace sì).
+                    lascia => { }
                 }
 
                 if vista == "collegamenti": VistaCollegamenti {
