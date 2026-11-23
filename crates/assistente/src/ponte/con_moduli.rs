@@ -12,7 +12,7 @@ use super::{aggiorna_modello, Ponte};
 use crate::claude;
 use crate::finestra_impostazioni::{apri_alla_sezione, SEZIONE_CASA, SEZIONE_CLAUDE, SEZIONE_COLLEGAMENTI};
 use crate::moduli::registro::tono_ui;
-use crate::moduli::{agenti, casa, collegamenti, pc, Riassunto};
+use crate::moduli::{agenti, casa, collegamenti, pagina_agenti, pc, Riassunto};
 use crate::pannello::schede_ui;
 use crate::{Pannello, TonoModuloUi};
 use slint::ModelRc;
@@ -176,6 +176,21 @@ impl Ponte {
             _ => eprintln!("azione di modulo sconosciuta: {modulo} {azione}"),
         }
     }
+
+    /// Un'azione di una pagina (`azione-pagina` del pannello, ridisegno F2): (id del modulo, id
+    /// dell'azione, id della riga o ""). Nella pagina Agenti la riga è l'impronta della sessione:
+    /// «Apri il terminale» la porta davanti (la stessa funzione della carta), «Collega» come la
+    /// carta, «Dettagli» le schede delle API, «Apri il permesso» la Coda col permesso di quella
+    /// sessione aperto. Va chiamata solo subito dopo il gesto dell'utente.
+    pub fn azione_pagina(&self, modulo: &str, azione: &str, riga: &str) {
+        match (modulo, azione) {
+            ("agenti", agenti::TERMINALE) => self.claude_apri_terminale(riga),
+            ("agenti", agenti::COLLEGA) => self.azione_modulo(modulo, azione),
+            ("agenti", pagina_agenti::DETTAGLI) => self.claude_apri_dettagli(),
+            ("agenti", pagina_agenti::PERMESSO) => self.claude_apri_permesso(riga),
+            _ => eprintln!("azione di pagina sconosciuta: {modulo} {azione}"),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -337,6 +352,53 @@ mod test {
         ponte.claude_evento(evento("b", TipoEvento::SessionEnd), 4, Instant::now());
         ponte.azione_modulo("agenti", crate::moduli::agenti::TERMINALE);
         assert!(portati_davanti_prova().is_empty());
+    }
+
+    /// Le azioni della pagina Agenti (ridisegno F2, Task 6): «Apri il terminale» della riga è la
+    /// stessa funzione della carta, sulla sessione della riga; «Apri il permesso» apre la Coda sul
+    /// permesso di quella sessione, col testo intero e «Consenti» di nuovo armato (le regole M3
+    /// stanno lì); un'impronta senza permesso non apre nulla.
+    #[test]
+    fn azioni_della_pagina_agenti() {
+        use crate::moduli::{agenti, pagina_agenti};
+        let (_spegni, ponte, _pillola, _cartella) = ponte_di_prova();
+        let p = Pannello::new().expect("pannello");
+        ponte.riempi(&p);
+        ponte.pannello_aperto(&p);
+        ponte.claude_evento(evento("a", TipoEvento::UserPromptSubmit), 1, Instant::now());
+        ponte.claude_evento(evento("b", TipoEvento::UserPromptSubmit), 2, Instant::now());
+        let catena = |n: u32| vec![(n, "claude.exe".to_owned()), (3, "WindowsTerminal.exe".to_owned())];
+        ponte.claude_imposta_catena("a", catena(5));
+        portati_davanti_prova();
+        ponte.azione_pagina("agenti", agenti::TERMINALE, &crate::claude::id_sessione("a"));
+        assert_eq!(portati_davanti_prova(), vec![catena(5)], "il terminale della riga");
+
+        // Senza permesso: «Apri il permesso» non apre nulla.
+        p.set_vista("agenti".into());
+        ponte.azione_pagina("agenti", pagina_agenti::PERMESSO, &crate::claude::id_sessione("b"));
+        assert_eq!(p.get_vista().as_str(), "agenti");
+        // Un permesso di «b», dietro una voce della casa: la Coda si apre su di lui.
+        ponte.metti_voce(
+            crate::attenzione::Voce {
+                id: "prova.casa".into(),
+                livello: Livello::Bloccante,
+                fonte: crate::attenzione::Fonte::Casa,
+                titolo: "Prova".into(),
+                dettaglio: String::new(),
+                pulsanti: vec![],
+                creata: Instant::now() - std::time::Duration::from_secs(60),
+                permesso: None,
+            },
+            false,
+        );
+        let e = EventoHook { strumento: Some("Bash".into()), riassunto: Some("npm test".into()), ..evento("b", TipoEvento::PermissionRequest) };
+        ponte.claude_permesso(9, e, None, 3, Instant::now());
+        let indice = crate::pannello::indice_voce(&p.get_attese(), &crate::claude::id_voce_permesso(9));
+        assert!(indice >= 0);
+        let armamenti = p.get_armamenti();
+        ponte.azione_pagina("agenti", pagina_agenti::PERMESSO, &crate::claude::id_sessione("b"));
+        assert_eq!(p.get_vista().as_str(), "coda");
+        assert!(p.get_armamenti() > armamenti, "il permesso che si apre riarma «Consenti»");
     }
 
     /// A pannello chiuso un evento della casa non tocca il registro né scrive `modello_moduli`;

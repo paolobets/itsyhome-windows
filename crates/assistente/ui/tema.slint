@@ -207,12 +207,6 @@ export global Tema {
         return petalo-6;
     }
 
-    // L'arco (di un limite, della spesa) diventa caldo ALLA soglia o sopra (frazione 0..1, come le voci
-    // d'avviso): quella dell'utente per i limiti, l'80 % della soglia di spesa, l'85 % per il PC.
-    public pure function oltre-soglia(frazione: float, soglia: float) -> bool {
-        return frazione >= soglia;
-    }
-
     // ─── Scale (FE11): raggi e corpi del testo, pochi valori e sempre gli stessi ───
     // Raggi: pulsanti della pillola e suggerimenti 8, pulsanti 10, voci e card piccole 12, card
     // e riquadri 16. Le forme a capsula usano metà dell'altezza.

@@ -1,0 +1,226 @@
+// La testata e lo stato di una pagina del guscio (ridisegno F2, Task 6; spec §5.6–§5.7, bozza
+// `tc-isola`, `.sintesi`). Comuni a tutti gli impianti: la Coda (Elenco) e la pagina Agenti
+// (Elenco + dettaglio).
+//
+// `TestataPagina`: occhietti del tono (se non è calmo né vuoto), titolo Inter 700 18 e sotto 13
+// tenue a sinistra; a destra i limiti a barra (`.lim` della bozza), la spesa in mono e un pulsante
+// d'azione 32 r9 neutro. Lo spazio che manca lo cede prima il sotto, poi il titolo (ellissi); il
+// gruppo di destra mai. Alta 40 (la Coda la tiene a 28 fino a F5, pre-flight C11).
+//
+// `StatoPagina`: una pagina senza elenco (scollegata, vuota): una frase, un sotto e al più un
+// pulsante, centrati nel corpo sotto la testata.
+import { Tema } from "../tema.slint";
+import { TonoModuloUi, LimiteUi, StatoPaginaUi } from "../voci.slint";
+import { Pulsante, TipoPulsante } from "../componenti.slint";
+import { Occhietti } from "occhietti.slint";
+
+// Un limite a barra: fornitore (in grassetto, solo sul primo), nome, barra 44 × 4 e numero mono.
+// Caldo oltre la soglia dell'utente (barra e numero nel colore del lavoro); il valore ricordato da
+// prima del riavvio è tenue. Per Narrator una riga sola: «Claude, limite 5 ore, 34 %, si azzera…».
+component LimiteBarra inherits Rectangle {
+    in property <LimiteUi> limite;
+    property <color> tinta: limite.caldo ? Tema.attivo : limite.vecchio ? Tema.testo-tenue : Tema.testo-2;
+
+    width: riga.preferred-width;
+    accessible-role: text;
+    accessible-label: limite.narratore;
+
+    riga := HorizontalLayout {
+        spacing: 8px;
+
+        if limite.fornitore != "": Text {
+            text: limite.fornitore;
+            vertical-alignment: center;
+            font-weight: 700;
+            font-size: Tema.testo-piccolo;
+            color: limite.vecchio ? Tema.testo-tenue : Tema.testo;
+            accessible-role: none;
+        }
+
+        Text {
+            text: limite.nome;
+            vertical-alignment: center;
+            font-size: Tema.testo-piccolo;
+            color: limite.vecchio ? Tema.testo-tenue : Tema.testo-2;
+            accessible-role: none;
+        }
+
+        Rectangle {
+            width: 44px;
+
+            Rectangle {
+                x: 0;
+                y: (parent.height - self.height) / 2;
+                width: parent.width;
+                height: 4px;
+                border-radius: 2px;
+                background: Tema.traccia;
+                clip: true;
+
+                Rectangle {
+                    x: 0;
+                    width: parent.width * max(0, min(1, limite.frazione));
+                    height: parent.height;
+                    border-radius: 2px;
+                    background: tinta;
+                }
+            }
+        }
+
+        Text {
+            text: limite.testo;
+            vertical-alignment: center;
+            font-family: Tema.carattere-mono;
+            font-weight: 500;
+            font-size: Tema.testo-piccolo;
+            color: limite.caldo ? Tema.attivo : limite.vecchio ? Tema.testo-tenue : Tema.testo;
+            accessible-role: none;
+        }
+    }
+}
+
+export component TestataPagina inherits Rectangle {
+    in property <string> titolo;
+    in property <string> sotto;
+    in property <TonoModuloUi> tono: TonoModuloUi.calmo;
+    in property <LimiteUi> l1;
+    in property <LimiteUi> l2;
+    // La spesa API del mese («412,80 $», vuota senza dati) e la sua nota (solo per Narrator).
+    in property <string> spesa;
+    in property <string> spesa-nota;
+    // Il pulsante d'azione della pagina («Dettagli»); vuoto = nessuno.
+    in property <string> azione-testo;
+    in property <bool> fuoco-azione;
+    // L'altezza: 40, la Coda 28 fino a F5 (pre-flight C11).
+    in property <length> alta: 40px;
+    callback azione();
+
+    height: alta;
+
+    property <bool> con-occhi: tono != TonoModuloUi.calmo && tono != TonoModuloUi.vuoto;
+    // Lo spazio che resta a sinistra del gruppo di destra (16 di respiro se il gruppo c'è).
+    property <length> libero: max(0px, root.width - destra.width - (destra.width > 0px ? 16px : 0px));
+    property <length> x-titolo: con-occhi ? 15px + 9px : 0px;
+
+    if con-occhi: Occhietti {
+        x: 0;
+        y: (parent.height - self.height) / 2;
+        tono: root.tono;
+    }
+
+    titolo-testo := Text {
+        x: root.x-titolo;
+        y: 0;
+        width: min(self.preferred-width, max(0px, root.libero - root.x-titolo));
+        height: parent.height;
+        text: root.titolo;
+        vertical-alignment: center;
+        overflow: elide;
+        font-weight: 700;
+        font-size: 18px;
+        color: Tema.testo;
+    }
+
+    // Il sotto prende quel che avanza dopo il titolo: si accorcia per primo.
+    if root.sotto != "": Text {
+        x: titolo-testo.x + titolo-testo.width + 10px;
+        y: 0;
+        width: max(0px, root.libero - self.x);
+        height: parent.height;
+        text: root.sotto;
+        vertical-alignment: center;
+        overflow: elide;
+        font-size: Tema.testo-corpo;
+        color: Tema.testo-tenue;
+    }
+
+    // A destra, mai accorciato: limiti, spesa, azione.
+    destra := HorizontalLayout {
+        x: root.width - self.width;
+        y: (parent.height - self.height) / 2;
+        width: self.preferred-width;
+        height: 32px;
+        spacing: 14px;
+
+        if root.l1.presente: LimiteBarra { limite: root.l1; }
+        if root.l2.presente: LimiteBarra { limite: root.l2; }
+
+        if root.spesa != "": Rectangle {
+            width: spesa-testo.preferred-width;
+            accessible-role: text;
+            accessible-label: "Spesa API del mese";
+            accessible-value: root.spesa;
+            accessible-description: root.spesa-nota;
+
+            spesa-testo := Text {
+                text: root.spesa;
+                vertical-alignment: center;
+                font-family: Tema.carattere-mono;
+                font-weight: 500;
+                font-size: Tema.testo-piccolo;
+                color: Tema.testo;
+                accessible-role: none;
+            }
+        }
+
+        if root.azione-testo != "": Pulsante {
+            testo: root.azione-testo;
+            tipo: TipoPulsante.neutro;
+            altezza: 32px;
+            raggio: 9px;
+            largo-min: 72px;
+            anello: root.fuoco-azione;
+            chiede-fuoco: root.fuoco-azione;
+            // La tastiera la governa il pannello.
+            tasti-propri: false;
+            premuto => { root.azione(); }
+        }
+    }
+}
+
+export component StatoPagina inherits Rectangle {
+    in property <StatoPaginaUi> stato;
+    // Il fuoco da tastiera è sul suo pulsante (se c'è).
+    in property <bool> con-fuoco;
+    callback azione();
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 6px;
+        padding-left: 16px;
+        padding-right: 16px;
+
+        Text {
+            text: root.stato.frase;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+            font-weight: 700;
+            font-size: Tema.testo-sottotitolo;
+            color: Tema.testo;
+        }
+
+        if root.stato.sotto != "": Text {
+            text: root.stato.sotto;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+            font-size: Tema.testo-piccolo;
+            color: Tema.testo-tenue;
+        }
+
+        if root.stato.azione-testo != "": HorizontalLayout {
+            alignment: center;
+            padding-top: 8px;
+
+            Pulsante {
+                testo: root.stato.azione-testo;
+                tipo: TipoPulsante.azione;
+                altezza: 32px;
+                raggio: 9px;
+                anello: root.con-fuoco;
+                chiede-fuoco: root.con-fuoco;
+                tasti-propri: false;
+                premuto => { root.azione(); }
+            }
+        }
+    }
+}

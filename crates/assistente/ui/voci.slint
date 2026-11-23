@@ -243,42 +243,6 @@ export struct ContenutoLatoUi {
     con-rete: bool,
 }
 
-// Una sessione di Claude Code nella vista Claude (M3, Task 9). `id`: l'impronta della sessione
-// (`claude::id_sessione`). `stato`: «Lavora», «Ti aspetta», «Fatto», «Errore»; `livello` ne dà il
-// colore (`nessuno` per chi lavora). `strumento` e `durata` solo per chi lavora; `contesto` «42%»,
-// vuoto se non si sa. `titolo`: il nome della sessione (di `--name`, `/rename` o generato da Claude
-// Code), vuoto se non ne ha: con il titolo la riga porta quello e la cartella sta sotto, attenuata.
-export struct RigaSessioneUi {
-    id: string,
-    cartella: string,
-    titolo: string,
-    stato: string,
-    livello: LivelloUi,
-    strumento: string,
-    durata: string,
-    contesto: string,
-    // Il contesto supera l'80 % (RC-55): «Contesto N%» è caldo.
-    contesto-caldo: bool,
-    // «ultimo terminale usato» se non si conosce il terminale della sessione (il clic ripiega
-    // sull'ultimo usato); vuoto altrimenti.
-    terminale: string,
-    // «Apre la finestra del terminale, non la scheda» per Windows Terminal e VS Code (solo
-    // lettori di schermo); vuoto altrimenti.
-    avviso: string,
-}
-
-// Un limite dell'abbonamento (5 ore o 7 giorni): `presente` falso = niente anello (limite assente
-// o già azzerato). `frazione` 0..1 dell'arco, `testo` «37%», `azzera` «si azzera alle 14:30».
-// `vecchio`: è l'ultimo valore ricordato da prima del riavvio (RC-56), attenuato, e `azzera` dice
-// «dalle 20:29».
-export struct LimiteClaudeUi {
-    presente: bool,
-    frazione: float,
-    testo: string,
-    azzera: string,
-    vecchio: bool,
-}
-
 // ─── La pagina Agenti sull'impianto Elenco + dettaglio (ridisegno F2) ─────────────────────────
 // Tutto già pronto da `moduli::pagina_agenti`. Niente array nelle strutture (si confrontano prima
 // di scriverle): il dettaglio ha tre posti fissi, la sintesi due posti di limite.

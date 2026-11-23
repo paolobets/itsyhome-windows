@@ -1,7 +1,8 @@
 // L'impianto Elenco (spec §5.7, ridisegno F1 Task 7): righe uniformi da 40 con segno, icona del
 // modulo, titolo che decide, «livello · modulo» e fino a 2 pulsanti; testata col totale scritto;
-// scorrimento con la riga col fuoco portata in vista. Oggi lo usa la Coda minima («In attesa»);
-// in F2 lo riusa la pagina Agenti.
+// scorrimento con la riga col fuoco portata in vista. Lo usa la Coda minima («In attesa»); la
+// pagina Agenti sta sull'impianto Elenco + dettaglio (`elenco_dettaglio.slint`, ridisegno F2). La
+// testata è quella comune (`guscio/pagina.slint`), alta 28 qui fino a F5 (pre-flight C11).
 //
 // Un permesso (voce con un pulsante delicato) nella riga non offre «Consenti» ma «Apri»: si apre
 // al posto dell'elenco nel componente `Permesso` del guscio (ridisegno F2, Task 3), col testo
@@ -18,35 +19,7 @@ import { VoceAttesaUi, LivelloUi, TonoModuloUi } from "../voci.slint";
 import { Anello, Fuoco, Pulsante, RegolaPulsanti } from "../componenti.slint";
 import { Occhietti } from "../guscio/occhietti.slint";
 import { Permessi } from "../guscio/permesso.slint";
-
-// La testata di una pagina: titolo (Inter 700 18) e, accanto, una riga tenue. Due testi: Narrator
-// li legge come testo, uno dopo l'altro.
-export component TestataPagina inherits Rectangle {
-    in property <string> titolo;
-    in property <string> sotto;
-
-    height: 28px;
-
-    HorizontalLayout {
-        alignment: start;
-        spacing: 10px;
-
-        Text {
-            text: root.titolo;
-            vertical-alignment: center;
-            font-weight: 700;
-            font-size: 18px;
-            color: Tema.testo;
-        }
-
-        if root.sotto != "": Text {
-            text: root.sotto;
-            vertical-alignment: center;
-            font-size: Tema.testo-piccolo;
-            color: Tema.testo-tenue;
-        }
-    }
-}
+import { TestataPagina } from "../guscio/pagina.slint";
 
 // Il segno del livello: la forma dice lo stato oltre al colore (occhietti tondi per «ti aspetta»,
 // a mandorla per «guarda presto», un trattino per «quando vuoi»). 15 × 8, decorativo.
@@ -236,6 +209,7 @@ export component ImpiantoElenco inherits Rectangle {
         x: 0;
         y: 0;
         width: parent.width;
+        alta: 28px;
         titolo: voci.length + " in attesa";
         sotto: "da " + moduli + (moduli == 1 ? " modulo" : " moduli");
     }

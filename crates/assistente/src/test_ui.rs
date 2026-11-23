@@ -2953,23 +2953,6 @@ mod accessibilita {
         ))
     }
 
-    /// RC-44: il colore caldo dell'arco parte SOPRA la soglia d'avviso dell'utente (70 → caldo a
-    /// 71, non a 85), nella vista Claude; il PC resta all'85 %.
-    #[test]
-    fn il_caldo_parte_oltre_la_soglia_dell_utente() {
-        piattaforma_di_prova();
-        let p = pannello();
-        let tema = p.global::<crate::Tema>();
-        assert!(tema.invoke_oltre_soglia(0.71, 0.70), "71 con soglia 70: caldo");
-        assert!(tema.invoke_oltre_soglia(0.70, 0.70), "alla soglia esatta come la voce d'avviso (>=)");
-        assert!(!tema.invoke_oltre_soglia(0.69, 0.70));
-        assert!(!tema.invoke_oltre_soglia(0.50, 0.70));
-        assert!(tema.invoke_oltre_soglia(0.80, 0.70), "a 80 con soglia 70 l'arco è caldo (prima no)");
-        let claude = include_str!("../ui/viste/claude.slint");
-        assert!(!claude.contains("0.85"), "la vista Claude non ha più un 85 % fisso");
-        assert!((p.get_claude_soglia() - 0.80).abs() < 1e-6, "di serie 80");
-    }
-
     #[test]
     fn la_vista_pc_dice_nome_e_valore() {
         piattaforma_di_prova();
@@ -4281,175 +4264,166 @@ mod accessibilita {
         assert!(ElementHandle::find_by_accessible_label(&p, "«NAS» non si è aperto").next().is_some());
     }
 
-    // ─── Task 9: vista Claude ───────────────────────────────────────────────
+    // ─── Ridisegno F2, Task 6: la pagina Agenti sull'impianto Elenco + dettaglio ───
 
-    fn riga_claude(id: &str, cartella: &str, stato: &str, livello: crate::LivelloUi) -> crate::RigaSessioneUi {
-        crate::RigaSessioneUi {
+    /// Una riga della pagina Agenti come la scrive `pagina_agenti::riga` (una sessione senza
+    /// permesso): il nome per Narrator è «{nome}, Claude».
+    fn riga_agenti(id: &str, nome: &str, tono: crate::TonoModuloUi) -> crate::RigaModuloUi {
+        use crate::TonoModuloUi as T;
+        let parola = match tono {
+            T::Attivo => "Al lavoro",
+            T::Aspetta => "Aspetta",
+            T::Guarda => "Guarda",
+            T::Fatto => "Fatto",
+            T::Errore => "Errore",
+            _ => "",
+        };
+        let campo = |e: &str, v: &str| crate::CampoDettaglioUi { etichetta: e.into(), valore: v.into(), caldo: false };
+        crate::RigaModuloUi {
             id: id.into(),
-            cartella: cartella.into(),
-            titolo: Default::default(),
-            stato: stato.into(),
-            livello,
-            strumento: Default::default(),
-            durata: Default::default(),
-            contesto: Default::default(),
-            contesto_caldo: false,
-            terminale: Default::default(),
-            avviso: Default::default(),
+            tono,
+            parola: parola.into(),
+            nome: nome.into(),
+            chi: "Claude".into(),
+            cosa: "Modifica".into(),
+            valore: if tono == T::Attivo { "3:12" } else { "" }.into(),
+            narratore: format!("{nome}, Claude").into(),
+            sotto: Default::default(),
+            d1: campo("Strumento", "Modifica"),
+            d2: campo("Da", "3:12"),
+            d3: campo("Contesto", "42 %"),
+            nota: Default::default(),
+            azione_id: crate::moduli::agenti::TERMINALE.into(),
+            azione_testo: "Apri il terminale".into(),
+            voce: Default::default(),
+            attesa: -1,
         }
     }
 
-    fn tre_righe_claude() -> ModelRc<crate::RigaSessioneUi> {
-        ModelRc::new(VecModel::from(vec![
-            riga_claude("aaaa", "uno", "Tocca a te", crate::LivelloUi::Attenzione),
-            riga_claude("bbbb", "due", "Fatto", crate::LivelloUi::Informazione),
-            riga_claude("cccc", "tre", "Lavora", crate::LivelloUi::Nessuno),
-        ]))
+    fn tre_righe_agenti() -> Vec<crate::RigaModuloUi> {
+        vec![
+            riga_agenti("aaaa", "uno", crate::TonoModuloUi::Guarda),
+            riga_agenti("bbbb", "due", crate::TonoModuloUi::Fatto),
+            riga_agenti("cccc", "tre", crate::TonoModuloUi::Attivo),
+        ]
     }
 
-    fn limite_claude(testo: &str, frazione: f32, azzera: &str) -> crate::LimiteClaudeUi {
-        crate::LimiteClaudeUi { presente: true, frazione, testo: testo.into(), azzera: azzera.into(), vecchio: false }
+    fn pagina_piena() -> crate::StatoPaginaUi {
+        crate::StatoPaginaUi { tipo: crate::TipoStatoPaginaUi::Pieno, ..Default::default() }
     }
 
-    /// Un pannello sulla vista Claude; restituisce gli eventi («apri <id>», «gestisci»).
-    fn pannello_claude(
-        collegato: bool,
-        righe: ModelRc<crate::RigaSessioneUi>,
+    /// Un pannello sulla pagina Agenti, a fine arrivo; restituisce le azioni della pagina
+    /// («agenti agenti.terminale aaaa», «agenti agenti.collega»).
+    fn pannello_agenti(
+        stato: crate::StatoPaginaUi,
+        righe: Vec<crate::RigaModuloUi>,
     ) -> (Pannello, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
         piattaforma_di_prova();
         let p = pannello();
         p.set_schede(schede());
         p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
         p.global::<crate::Fuochi>().set_pronti(true);
-        p.set_claude_collegato(collegato);
-        p.set_claude_righe(righe);
+        p.set_elenco_stato(stato);
+        p.set_elenco_righe(ModelRc::new(VecModel::from(righe)));
         let eventi = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
-        let (e1, e2) = (eventi.clone(), eventi.clone());
-        p.on_apri_sessione(move |id| e1.borrow_mut().push(format!("apri {id}")));
-        p.on_gestisci_claude(move || e2.borrow_mut().push("gestisci".into()));
+        let e = eventi.clone();
+        p.on_azione_pagina(move |modulo, azione, riga| e.borrow_mut().push(format!("{modulo} {azione} {riga}").trim_end().to_owned()));
         p.set_vista("agenti".into());
+        fine_arrivo();
         (p, eventi)
     }
 
-    /// Scollegato: la frase e «Impostazioni» (col mouse, con Narrator e con Invio); collegato ma
-    /// senza sessioni: «Nessuna sessione aperta», senza pulsanti.
-    #[test]
-    fn vista_claude_stati_vuoti() {
-        use slint::platform::Key;
-        let (p, eventi) = pannello_claude(false, ModelRc::new(VecModel::from(Vec::<crate::RigaSessioneUi>::new())));
-        assert!(ElementHandle::find_by_accessible_label(&p, "Collega Claude Code dalle Impostazioni").next().is_some());
-        assert!(ElementHandle::find_by_accessible_label(&p, "Nessuna sessione aperta").next().is_none());
-        let impostazioni = elemento(&p, "Impostazioni");
-        assert_eq!(impostazioni.accessible_role(), Some(AccessibleRole::Button));
-        impostazioni.invoke_accessible_default_action();
-        tasto(&p, Key::Return);
-        assert_eq!(*eventi.borrow(), ["gestisci", "gestisci"]);
+    /// Ce n'è almeno uno col nome per Narrator `nome`.
+    fn c_e(p: &Pannello, nome: &str) -> bool {
+        ElementHandle::find_by_accessible_label(p, nome).next().is_some()
+    }
 
-        p.set_claude_collegato(true);
-        assert!(ElementHandle::find_by_accessible_label(&p, "Nessuna sessione aperta").next().is_some());
-        assert!(ElementHandle::find_by_accessible_label(&p, "Collega Claude Code dalle Impostazioni").next().is_none());
-        assert!(ElementHandle::find_by_accessible_label(&p, "Impostazioni").next().is_none(), "niente pulsante");
-        // Invio senza righe non fa nulla.
+    /// Il testo `nome` si vede nella colonna del dettaglio (x da 34 + 346 a 34 + 752).
+    fn nel_dettaglio(p: &Pannello, nome: &str) -> bool {
+        ElementHandle::find_by_accessible_label(p, nome).any(|e| {
+            let (x0, _, x1, _) = rettangolo(&e);
+            x0 >= 34.0 + 346.0 - 0.5 && x1 <= 34.0 + 752.0 + 0.5 && x1 > x0
+        })
+    }
+
+    /// Scollegato: la frase, il sotto e «Collega» (col mouse, con Narrator e con Invio, verso
+    /// `azione-pagina`); collegato ma senza sessioni: «Nessuna sessione aperta», senza pulsanti
+    /// (pre-flight C19: non c'è un'azione vera).
+    #[test]
+    fn agenti_stati_vuoti() {
+        use crate::moduli::pagina_agenti::stato;
+        use slint::platform::Key;
+        let (p, eventi) = pannello_agenti(stato(false, 0), vec![]);
+        assert!(c_e(&p, "Collega Claude Code") && c_e(&p, "Qui vedrai sessioni, limiti e spesa."));
+        assert!(!c_e(&p, "Nessuna sessione aperta"));
+        let collega = elemento(&p, "Collega");
+        assert_eq!(collega.accessible_role(), Some(AccessibleRole::Button));
+        collega.invoke_accessible_default_action();
+        tasto(&p, Key::Return);
+        assert_eq!(*eventi.borrow(), ["agenti agenti.collega", "agenti agenti.collega"]);
+
+        p.set_elenco_stato(stato(true, 0));
+        assert!(c_e(&p, "Nessuna sessione aperta"));
+        assert!(c_e(&p, "Le sessioni di Claude Code compaiono qui mentre lavorano."));
+        assert!(!c_e(&p, "Collega Claude Code"));
+        assert!(!c_e(&p, "Collega"), "niente pulsante");
+        // Invio senza righe né azioni non fa nulla.
         tasto(&p, Key::Return);
         assert_eq!(eventi.borrow().len(), 2);
-    }
-
-    /// PF9: un limite assente non ha l'anello (mai «0%»); senza nessuno dei due la card dice
-    /// «Limiti non disponibili»; con i dati gli anelli hanno nome, valore e quando si azzerano.
-    #[test]
-    fn anelli_nascosti_senza_abbonamento() {
-        let (p, _) = pannello_claude(true, tre_righe_claude());
-        let ha = |nome: &str| ElementHandle::find_by_accessible_label(&p, nome).next().is_some();
-        assert!(!ha("Limite 5 ore") && !ha("Limite 7 giorni"), "senza limiti nessun anello");
-        assert!(ha("Limiti non disponibili"));
-
-        p.set_claude_cinque_ore(limite_claude("37%", 0.37, "si azzera alle 14:30"));
-        assert!(ha("Limite 5 ore") && !ha("Limite 7 giorni"), "solo la finestra che c'è");
-        assert!(!ha("Limiti non disponibili"));
-        let anello = elemento(&p, "Limite 5 ore");
-        assert_eq!(anello.accessible_role(), Some(AccessibleRole::ProgressIndicator));
-        assert_eq!(anello.accessible_value().as_deref(), Some("37%"));
-        assert_eq!(anello.accessible_description().as_deref(), Some("si azzera alle 14:30"));
-
-        p.set_claude_sette_giorni(limite_claude("61%", 0.61, "si azzera sabato alle 09:00"));
-        assert_eq!(elemento(&p, "Limite 7 giorni").accessible_value().as_deref(), Some("61%"));
-        // Un limite scaduto torna assente: l'anello sparisce.
-        p.set_claude_cinque_ore(Default::default());
-        assert!(!ha("Limite 5 ore") && ha("Limite 7 giorni"));
-    }
-
-    /// La spesa del mese: il valore e la nota; senza valore solo la nota (nessuno «0»).
-    #[test]
-    fn vista_claude_spesa_del_mese() {
-        let (p, _) = pannello_claude(true, tre_righe_claude());
-        let nota = "Aggiungi una chiave da amministratore nelle Impostazioni";
-        p.set_claude_spesa("".into());
-        p.set_claude_spesa_nota(nota.into());
-        assert_eq!(elemento(&p, "Spesa API del mese").accessible_value().as_deref(), Some(nota));
-        p.set_claude_spesa("412,80 $".into());
-        p.set_claude_spesa_nota("aggiornato alle 16:02".into());
-        let spesa = elemento(&p, "Spesa API del mese");
-        assert_eq!(spesa.accessible_value().as_deref(), Some("412,80 $"));
-        assert_eq!(spesa.accessible_description().as_deref(), Some("aggiornato alle 16:02"));
-    }
-
-    /// Il dettaglio di «Limiti non disponibili» dice il vero: scollegato si collega, collegato si aspetta.
-    #[test]
-    fn limiti_non_disponibili_spiega_il_motivo() {
-        let (p, _) = pannello_claude(false, ModelRc::new(VecModel::from(Vec::<crate::RigaSessioneUi>::new())));
-        let ha = |t: &str| ElementHandle::find_by_accessible_label(&p, t).next().is_some();
-        assert!(ha("Si vedono dopo aver collegato Claude Code."));
-        p.set_claude_collegato(true);
-        assert!(ha("Compaiono dopo la prima risposta di una sessione, con un abbonamento Claude."));
-        assert!(!ha("Si vedono dopo aver collegato Claude Code."));
+        assert!(ElementHandle::find_by_element_type_name(&p, "ImpiantoElencoDettaglio").next().is_none(), "nessun elenco vuoto");
     }
 
     /// Il fuoco è un indice che Rust tiene sulla sessione giusta (l'ordine è fermo): le frecce lo
-    /// muovono e Invio apre la riga che lo ha, sempre dentro le righe che ci sono.
+    /// muovono e Invio apre il terminale della riga che lo ha, sempre dentro le righe che ci sono.
     #[test]
-    fn il_fuoco_delle_righe_e_un_indice_sempre_valido() {
+    fn agenti_il_fuoco_e_un_indice_sempre_valido() {
         use slint::platform::Key;
-        let (p, eventi) = pannello_claude(true, tre_righe_claude());
+        let (p, eventi) = pannello_agenti(pagina_piena(), tre_righe_agenti());
         tasto(&p, Key::DownArrow);
-        assert_eq!(p.get_claude_fuoco(), 1);
+        assert_eq!(p.get_elenco_fuoco(), 1);
         tasto(&p, Key::Return);
-        assert_eq!(*eventi.borrow(), ["apri bbbb"]);
+        assert_eq!(*eventi.borrow(), ["agenti agenti.terminale bbbb"]);
         // Rust sposta il fuoco (la sua sessione è scesa): Invio apre quella riga.
-        p.set_claude_fuoco(2);
+        p.set_elenco_fuoco(2);
         tasto(&p, Key::Return);
-        assert_eq!(eventi.borrow().last().map(String::as_str), Some("apri cccc"));
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("agenti agenti.terminale cccc"));
         // Restano meno righe e l'indice non è ancora stato rimesso: Invio non va fuori dalle righe.
-        p.set_claude_righe(ModelRc::new(VecModel::from(vec![riga_claude("aaaa", "uno", "Lavora", crate::LivelloUi::Nessuno)])));
+        p.set_elenco_righe(ModelRc::new(VecModel::from(vec![riga_agenti("aaaa", "uno", crate::TonoModuloUi::Attivo)])));
         tasto(&p, Key::Return);
-        assert_eq!(eventi.borrow().last().map(String::as_str), Some("apri aaaa"));
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("agenti agenti.terminale aaaa"));
         tasto(&p, Key::DownArrow);
-        assert_eq!(p.get_claude_fuoco(), 0, "dall'ultima riga ↓ resta lì");
+        assert_eq!(p.get_elenco_fuoco(), 0, "dall'ultima riga ↓ resta lì");
     }
 
-    /// ↓ due volte e Invio: `apri-sessione` con l'id della terza riga; ↑ risale, e i bordi tengono.
+    /// ↓ due volte e Invio: il terminale della terza riga; ↑ risale, e i bordi tengono. La riga è
+    /// una voce d'elenco col nome per Narrator: la sua azione sceglie (il dettaglio), non apre.
     #[test]
-    fn righe_da_tastiera() {
+    fn agenti_righe_da_tastiera() {
         use slint::platform::Key;
-        let (p, eventi) = pannello_claude(true, tre_righe_claude());
+        let (p, eventi) = pannello_agenti(pagina_piena(), tre_righe_agenti());
         tasto(&p, Key::DownArrow);
         tasto(&p, Key::DownArrow);
         tasto(&p, Key::Return);
-        assert_eq!(*eventi.borrow(), ["apri cccc"]);
+        assert_eq!(*eventi.borrow(), ["agenti agenti.terminale cccc"]);
         tasto(&p, Key::DownArrow);
         tasto(&p, Key::Return);
-        assert_eq!(eventi.borrow().last().map(String::as_str), Some("apri cccc"), "in fondo resta lì");
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("agenti agenti.terminale cccc"), "in fondo resta lì");
         tasto(&p, Key::UpArrow);
         tasto(&p, Key::Return);
-        assert_eq!(eventi.borrow().last().map(String::as_str), Some("apri bbbb"));
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("agenti agenti.terminale bbbb"));
         tasto(&p, Key::UpArrow);
         tasto(&p, Key::UpArrow);
         tasto(&p, Key::Return);
-        assert_eq!(eventi.borrow().last().map(String::as_str), Some("apri aaaa"));
-        // Narrator e il mouse: la riga è un pulsante col nome e lo stato.
-        let riga = elemento(&p, "tre, Lavora");
-        assert_eq!(riga.accessible_role(), Some(AccessibleRole::Button));
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("agenti agenti.terminale aaaa"));
+        // Narrator: la riga è una voce d'elenco col suo posto; l'azione la sceglie e basta.
+        let riga = elemento(&p, "tre, Claude");
+        assert_eq!(riga.accessible_role(), Some(AccessibleRole::ListItem));
+        assert_eq!((riga.accessible_item_index(), riga.accessible_item_count()), (Some(2), Some(3)));
+        let n = eventi.borrow().len();
         riga.invoke_accessible_default_action();
-        assert_eq!(eventi.borrow().last().map(String::as_str), Some("apri cccc"));
+        assert_eq!(eventi.borrow().len(), n, "scegliere non apre il terminale");
+        assert_eq!(p.get_elenco_fuoco(), 2);
+        assert_eq!(riga.accessible_item_selected(), Some(true));
         // Esc chiude il pannello come altrove.
         let chiuso = std::rc::Rc::new(std::cell::Cell::new(false));
         let c = chiuso.clone();
@@ -4458,196 +4432,397 @@ mod accessibilita {
         assert!(chiuso.get());
     }
 
-    /// Con la chiave da amministratore «Dettagli» sta sotto l'ultima riga: ↓ dall'ultima ci arriva,
-    /// Invio apre le schede, ↑ torna alla riga; senza la chiave il pulsante non c'è.
-    #[test]
-    fn dettagli_da_tastiera_e_da_narrator() {
-        use slint::platform::Key;
-        let (p, eventi) = pannello_claude(true, tre_righe_claude());
-        assert!(ElementHandle::find_by_accessible_label(&p, "Dettagli delle API").next().is_none(), "senza la chiave non c'è");
-        let e = eventi.clone();
-        p.on_apri_dettagli_claude(move || e.borrow_mut().push("dettagli".into()));
-        p.set_claude_dettagli(true);
-        let pulsante = elemento(&p, "Dettagli delle API");
-        assert_eq!(pulsante.accessible_role(), Some(AccessibleRole::Button));
-        // ↓ fino all'ultima riga e poi su «Dettagli»; Invio apre le schede.
-        for _ in 0..3 {
-            tasto(&p, Key::DownArrow);
-        }
-        tasto(&p, Key::Return);
-        assert_eq!(*eventi.borrow(), ["dettagli"]);
-        // ↑ torna alla riga, Invio apre la sessione; ancora ↑ sale di una riga.
-        tasto(&p, Key::UpArrow);
-        tasto(&p, Key::Return);
-        assert_eq!(eventi.borrow().last().map(String::as_str), Some("apri cccc"));
-        // Il clic o Narrator sul pulsante fanno la stessa cosa.
-        pulsante.invoke_accessible_default_action();
-        assert_eq!(eventi.borrow().last().map(String::as_str), Some("dettagli"));
+    /// Righe di sessioni che lavorano, «s0», «s1»…
+    fn righe_agenti_al_lavoro(n: usize) -> Vec<crate::RigaModuloUi> {
+        (0..n).map(|i| riga_agenti(&format!("id{i}"), &format!("s{i}"), crate::TonoModuloUi::Attivo)).collect()
     }
 
-    /// Scollegato ma con la chiave: ↓ da «Impostazioni» porta su «Dettagli», ↑ torna.
-    #[test]
-    fn dettagli_anche_da_scollegato() {
-        use slint::platform::Key;
-        let (p, eventi) = pannello_claude(false, ModelRc::new(VecModel::from(Vec::<crate::RigaSessioneUi>::new())));
-        let e = eventi.clone();
-        p.on_apri_dettagli_claude(move || e.borrow_mut().push("dettagli".into()));
-        p.set_claude_dettagli(true);
-        tasto(&p, Key::Return);
-        assert_eq!(*eventi.borrow(), ["gestisci"]);
-        tasto(&p, Key::DownArrow);
-        tasto(&p, Key::Return);
-        assert_eq!(eventi.borrow().last().map(String::as_str), Some("dettagli"));
-        tasto(&p, Key::UpArrow);
-        tasto(&p, Key::Return);
-        assert_eq!(eventi.borrow().last().map(String::as_str), Some("gestisci"));
-    }
-
-    /// Il caso più pieno (tre righe con tutto, due anelli, spesa con la nota più lunga): nulla esce
-    /// dalla vista e la vista sta nel pannello.
-    #[test]
-    fn vista_claude_entra_nel_pannello() {
-        let mut righe = Vec::new();
-        for (i, stato) in ["Tocca a te", "Fatto", "Lavora"].iter().enumerate() {
-            righe.push(crate::RigaSessioneUi {
-                // Anche col titolo più lungo (60 caratteri) e la cartella: nulla esce dalla vista.
-                titolo: "Un titolo di sessione davvero lungo, da sessanta caratteri…".into(),
-                strumento: "Modifica".into(),
-                durata: "1:02:05".into(),
-                contesto: "100%".into(),
-                contesto_caldo: true,
-                terminale: "ultimo terminale usato".into(),
-                ..riga_claude(&format!("id{i}"), "una-cartella-dal-nome-davvero-molto-lungo", stato, crate::LivelloUi::Attenzione)
-            });
-        }
-        let (p, _) = pannello_claude(true, ModelRc::new(VecModel::from(righe)));
-        p.set_claude_cinque_ore(limite_claude("100%", 1.0, "si azzera domani alle 14:30"));
-        p.set_claude_sette_giorni(limite_claude("100%", 1.0, "si azzera mercoledì alle 14:30"));
-        p.set_claude_spesa_nota("Aggiungi una chiave da amministratore nelle Impostazioni".into());
-        let vista = ElementHandle::find_by_element_type_name(&p, "VistaClaude").next().expect("vista Claude");
-        let (cp, cs) = (vista.absolute_position(), vista.size());
-        for e in vista.query_descendants().find_all() {
-            let (pos, lato) = (e.absolute_position(), e.size());
-            if lato.width <= 0.0 || lato.height <= 0.0 {
-                continue;
-            }
-            assert!(
-                pos.x >= cp.x - 0.5
-                    && pos.y >= cp.y - 0.5
-                    && pos.x + lato.width <= cp.x + cs.width + 0.5
-                    && pos.y + lato.height <= cp.y + cs.height + 0.5,
-                "{:?} «{}» esce dalla vista: {pos:?} {lato:?} fuori da {cp:?} {cs:?}",
-                e.type_name(),
-                e.accessible_label().unwrap_or_default()
-            );
-        }
-        // Dentro il corpo della cornice: 752 × 224 a (34, 44).
-        assert!(cp.x >= 34.0 && cp.y >= 44.0 && cp.x + cs.width <= 34.0 + 752.0 && cp.y + cs.height <= 44.0 + 224.0, "{cp:?} {cs:?}");
-    }
-
-    /// Le righe di una vista con `n` sessioni che lavorano («s0», «s1»…).
-    fn righe_che_lavorano(n: usize) -> ModelRc<crate::RigaSessioneUi> {
-        ModelRc::new(VecModel::from(
-            (0..n).map(|i| riga_claude(&format!("id{i}"), &format!("s{i}"), "Lavora", crate::LivelloUi::Nessuno)).collect::<Vec<_>>(),
-        ))
-    }
-
-    /// Il rettangolo (alto, basso) di un elemento e quello della vista, in coordinate della finestra.
-    fn y_di(e: &ElementHandle) -> (f32, f32) {
-        (e.absolute_position().y, e.absolute_position().y + e.size().height)
+    /// La riga col nome per Narrator `nome` sta tutta nella colonna visibile (y da 44 + 48 a
+    /// 44 + 224); una riga fuori vista non è nemmeno esposta.
+    fn riga_in_vista(p: &Pannello, nome: &str) -> bool {
+        ElementHandle::find_by_accessible_label(p, nome).next().is_some_and(|e| {
+            let (_, a, _, b) = rettangolo(&e);
+            a >= 44.0 + 48.0 - 0.5 && b <= 44.0 + 224.0 + 0.5
+        })
     }
 
     /// RC-52: con dieci sessioni la colonna scorre: tutte raggiungibili con le frecce, la riga col
-    /// fuoco resta sempre dentro la vista (in basso e, tornando su, in alto).
+    /// fuoco resta sempre dentro la colonna (in basso e, tornando su, in alto).
     #[test]
-    fn la_colonna_delle_sessioni_scorre_e_tiene_in_vista_il_fuoco() {
+    fn agenti_la_colonna_scorre_e_tiene_in_vista_il_fuoco() {
         use slint::platform::Key;
-        let (p, eventi) = pannello_claude(true, righe_che_lavorano(10));
-        let vista = ElementHandle::find_by_element_type_name(&p, "VistaClaude").next().expect("vista Claude");
-        let (alto, basso) = y_di(&vista);
-        // Una riga fuori dalla vista non è nemmeno esposta: «dentro» è falso.
-        let dentro = |nome: &str| {
-            ElementHandle::find_by_accessible_label(&p, nome).next().is_some_and(|e| {
-                let (a, b) = y_di(&e);
-                a >= alto - 0.5 && b <= basso + 0.5
-            })
-        };
-        assert!(dentro("s0, Lavora") && !dentro("s9, Lavora"), "all'inizio l'ultima è fuori vista");
+        let (p, eventi) = pannello_agenti(pagina_piena(), righe_agenti_al_lavoro(10));
+        assert!(riga_in_vista(&p, "s0, Claude") && !riga_in_vista(&p, "s9, Claude"), "all'inizio l'ultima è fuori vista");
         for _ in 0..9 {
             tasto(&p, Key::DownArrow);
         }
-        assert_eq!(p.get_claude_fuoco(), 9);
-        assert!(dentro("s9, Lavora"), "il fuoco ha fatto scorrere la colonna");
-        assert!(!dentro("s0, Lavora"));
+        assert_eq!(p.get_elenco_fuoco(), 9);
+        assert!(riga_in_vista(&p, "s9, Claude"), "il fuoco ha fatto scorrere la colonna");
+        assert!(!riga_in_vista(&p, "s0, Claude"));
         tasto(&p, Key::Return);
-        assert_eq!(eventi.borrow().last().map(String::as_str), Some("apri id9"));
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("agenti agenti.terminale id9"));
         for _ in 0..9 {
             tasto(&p, Key::UpArrow);
         }
-        assert!(dentro("s0, Lavora"), "tornando su la colonna risale");
-        assert!(!dentro("s9, Lavora"));
-        // «+N altre» non c'è più: nessun testo del genere.
-        assert!(ElementHandle::find_by_accessible_label(&p, "e altre 7 sessioni").next().is_none());
+        assert!(riga_in_vista(&p, "s0, Claude"), "tornando su la colonna risale");
+        assert!(!riga_in_vista(&p, "s9, Claude"));
     }
 
-    /// RC-52: due sessioni stanno ferme, senza bisogno di scorrere.
+    /// RC-52: tre sessioni stanno ferme, la prima in cima alla colonna (y 48 nel corpo).
     #[test]
-    fn con_poche_sessioni_niente_scorrimento() {
-        let (p, _) = pannello_claude(true, righe_che_lavorano(3));
-        let vista = ElementHandle::find_by_element_type_name(&p, "VistaClaude").next().expect("vista Claude");
-        let (alto, basso) = y_di(&vista);
+    fn agenti_con_poche_sessioni_niente_scorrimento() {
+        let (p, _) = pannello_agenti(pagina_piena(), righe_agenti_al_lavoro(3));
         for i in 0..3 {
-            let (a, b) = y_di(&elemento(&p, &format!("s{i}, Lavora")));
-            assert!(a >= alto - 0.5 && b <= basso + 0.5, "s{i}");
+            assert!(riga_in_vista(&p, &format!("s{i}, Claude")), "s{i}");
         }
-        assert!((y_di(&elemento(&p, "s0, Lavora")).0 - alto).abs() < 0.5, "la prima è in cima");
+        assert!((rettangolo(&elemento(&p, "s0, Claude")).1 - (44.0 + 48.0)).abs() < 0.5, "la prima è in cima");
     }
 
-    /// RC-57: «ultimo terminale usato» è un'icona col nome (per Narrator), non il testo su ogni
-    /// riga; senza ripiego non c'è.
+    /// Decisione di Paolo: la riga scelta mostra il suo dettaglio. ↓ porta il dettaglio sulla
+    /// seconda riga; il clic sulla terza la sceglie (dettaglio, nessun evento verso Rust).
     #[test]
-    fn l_ultimo_terminale_usato_e_un_icona_con_il_nome() {
-        let con = |id: &str, cartella: &str, terminale: &str| crate::RigaSessioneUi {
-            terminale: terminale.into(),
-            ..riga_claude(id, cartella, "Fatto", crate::LivelloUi::Informazione)
-        };
-        let righe = ModelRc::new(VecModel::from(vec![
-            con("a", "uno", "ultimo terminale usato"),
-            con("b", "due", ""),
-            con("c", "tre", "ultimo terminale usato"),
-        ]));
-        let (p, eventi) = pannello_claude(true, righe);
-        let icone: Vec<_> = ElementHandle::find_by_accessible_label(&p, "ultimo terminale usato").collect();
-        assert_eq!(icone.len(), 2, "una per riga col ripiego, nessuna per le altre");
-        assert!(icone.iter().all(|i| i.accessible_role() == Some(AccessibleRole::Image)));
-        // La riga non ripete la frase nella sua descrizione (la dice l'icona).
-        assert!(!elemento(&p, "uno, Fatto").accessible_description().unwrap_or_default().contains("terminale"));
-        // La riga resta il pulsante che apre la sessione.
-        elemento(&p, "uno, Fatto").invoke_accessible_default_action();
-        assert_eq!(*eventi.borrow(), ["apri a"]);
+    fn agenti_dettaglio_segue_il_fuoco() {
+        use slint::platform::{Key, PointerEventButton, WindowEvent};
+        let (p, eventi) = pannello_agenti(pagina_piena(), tre_righe_agenti());
+        assert!(nel_dettaglio(&p, "uno") && !nel_dettaglio(&p, "due"));
+        tasto(&p, Key::DownArrow);
+        assert!(nel_dettaglio(&p, "due") && !nel_dettaglio(&p, "uno"));
+        // Un clic vero sulla terza riga.
+        let (x0, y0, _, y1) = rettangolo(&elemento(&p, "tre, Claude"));
+        let posizione = slint::LogicalPosition::new(x0 + 60.0, (y0 + y1) / 2.0);
+        p.window().dispatch_event(WindowEvent::PointerMoved { position: posizione });
+        p.window().dispatch_event(WindowEvent::PointerPressed { position: posizione, button: PointerEventButton::Left });
+        p.window().dispatch_event(WindowEvent::PointerReleased { position: posizione, button: PointerEventButton::Left });
+        assert_eq!(p.get_elenco_fuoco(), 2);
+        assert!(nel_dettaglio(&p, "tre") && !nel_dettaglio(&p, "due"));
+        assert!(eventi.borrow().is_empty(), "scegliere non manda nulla a Rust");
     }
 
-    /// Due sessioni nella stessa cartella («bin») si distinguono dal titolo: la riga si chiama
-    /// «titolo, cartella, stato» per Narrator; senza titolo resta «cartella, stato». Il titolo dà il
-    /// nome visibile della riga e la cartella sta sotto, attenuata (vedi `RigaClaude`).
+    /// Decisione di Paolo: il terminale si apre dal pulsante del dettaglio o con Invio sulla riga;
+    /// il clic sulla riga sceglie soltanto.
     #[test]
-    fn la_riga_col_titolo_porta_titolo_e_cartella() {
-        let con_titolo = |id: &str, titolo: &str| crate::RigaSessioneUi {
-            titolo: titolo.into(),
-            ..riga_claude(id, "bin", "Fatto", crate::LivelloUi::Informazione)
+    fn agenti_terminale_dalla_riga_e_dal_dettaglio() {
+        use slint::platform::Key;
+        let (p, eventi) = pannello_agenti(pagina_piena(), tre_righe_agenti());
+        tasto(&p, Key::Return);
+        assert_eq!(*eventi.borrow(), ["agenti agenti.terminale aaaa"]);
+        let pulsante = elemento(&p, "Apri il terminale");
+        assert_eq!(pulsante.accessible_role(), Some(AccessibleRole::Button));
+        pulsante.invoke_accessible_default_action();
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("agenti agenti.terminale aaaa"));
+        // La seconda riga scelta col mouse (o con Narrator): nessun terminale; il pulsante è suo.
+        elemento(&p, "due, Claude").invoke_accessible_default_action();
+        assert_eq!(eventi.borrow().len(), 2, "il clic sulla riga non apre il terminale");
+        elemento(&p, "Apri il terminale").invoke_accessible_default_action();
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("agenti agenti.terminale bbbb"));
+        // → porta al pulsante del dettaglio, Invio lì apre; ← torna alla riga.
+        tasto(&p, Key::RightArrow);
+        assert_eq!(p.get_elenco_lato(), 1);
+        assert_eq!(etichetta_col_fuoco(&p), "Apri il terminale");
+        tasto(&p, Key::Return);
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("agenti agenti.terminale bbbb"));
+        tasto(&p, Key::LeftArrow);
+        assert_eq!((p.get_elenco_lato(), etichetta_col_fuoco(&p).as_str()), (0, "due, Claude"));
+        // Backspace dal dettaglio torna all'elenco, dall'elenco alla Panoramica.
+        tasto(&p, Key::RightArrow);
+        tasto(&p, Key::Backspace);
+        assert_eq!((p.get_elenco_lato(), p.get_vista().as_str()), (0, "agenti"));
+        tasto(&p, Key::Backspace);
+        assert_eq!(p.get_vista().as_str(), "panoramica");
+    }
+
+    /// La riga col permesso (fino al Task 7): Invio non decide nulla, porta il fuoco sul pulsante
+    /// del dettaglio, «Apri il permesso», che apre il permesso nella Coda (le regole M3 sono là).
+    /// Ctrl+Invio nella pagina non fa nulla.
+    #[test]
+    fn agenti_riga_col_permesso_porta_alla_coda() {
+        use slint::platform::Key;
+        let permesso = crate::RigaModuloUi {
+            azione_id: crate::moduli::pagina_agenti::PERMESSO.into(),
+            azione_testo: "Apri il permesso".into(),
+            voce: "claude.permesso.7".into(),
+            attesa: 0,
+            ..riga_agenti("pppp", "my-shop", crate::TonoModuloUi::Aspetta)
         };
-        let righe = ModelRc::new(VecModel::from(vec![
-            con_titolo("a", "Sistemare il restyle"),
-            con_titolo("b", "Aggiornare i test"),
-            con_titolo("c", ""),
-        ]));
-        let (p, eventi) = pannello_claude(true, righe);
-        elemento(&p, "Aggiornare i test, bin, Fatto").invoke_accessible_default_action();
-        elemento(&p, "Sistemare il restyle, bin, Fatto").invoke_accessible_default_action();
-        elemento(&p, "bin, Fatto").invoke_accessible_default_action();
-        assert_eq!(*eventi.borrow(), ["apri b", "apri a", "apri c"]);
-        // La riga col titolo non si chiama più solo «bin»: nessun elemento ambiguo a due righe.
-        assert_eq!(ElementHandle::find_by_accessible_label(&p, "bin, Fatto").count(), 1);
+        let (p, eventi) = pannello_agenti(pagina_piena(), vec![permesso, riga_agenti("aaaa", "uno", crate::TonoModuloUi::Attivo)]);
+        con_modificatori(&p, &[Key::Control], Key::Return);
+        tasto(&p, Key::Return);
+        assert!(eventi.borrow().is_empty(), "Invio sulla riga del permesso non decide e non apre");
+        assert_eq!((p.get_elenco_lato(), etichetta_col_fuoco(&p).as_str()), (1, "Apri il permesso"));
+        con_modificatori(&p, &[Key::Control], Key::Return);
+        assert!(eventi.borrow().is_empty(), "Ctrl+Invio nella pagina Agenti non fa nulla");
+        tasto(&p, Key::Return);
+        assert_eq!(*eventi.borrow(), ["agenti agenti.permesso pppp"]);
+    }
+
+    /// RC-57: «Apre l'ultimo terminale usato» lo dice il dettaglio della riga che ripiega; senza
+    /// ripiego non c'è.
+    #[test]
+    fn agenti_ultimo_terminale_usato_nel_dettaglio() {
+        let nota = "Apre l'ultimo terminale usato";
+        let ripiega = crate::RigaModuloUi { nota: nota.into(), ..riga_agenti("a", "uno", crate::TonoModuloUi::Fatto) };
+        let (p, _) = pannello_agenti(pagina_piena(), vec![ripiega, riga_agenti("b", "due", crate::TonoModuloUi::Fatto)]);
+        assert!(nel_dettaglio(&p, nota));
+        elemento(&p, "due, Claude").invoke_accessible_default_action();
+        assert!(!c_e(&p, nota), "la riga senza ripiego non lo dice");
+    }
+
+    /// Due sessioni nella stessa cartella («bin») si distinguono dal titolo della scheda: il
+    /// dettaglio porta il titolo come nome e la cartella sotto; le righe hanno ognuna il suo nome
+    /// per Narrator.
+    #[test]
+    fn agenti_titolo_e_cartella() {
+        let con_titolo = |id: &str, titolo: &str| crate::RigaModuloUi {
+            sotto: "bin".into(),
+            narratore: format!("{titolo}, Claude, Fatto").into(),
+            ..riga_agenti(id, titolo, crate::TonoModuloUi::Fatto)
+        };
+        let righe = vec![con_titolo("a", "Sistemare il restyle"), con_titolo("b", "Aggiornare i test"), riga_agenti("c", "bin", crate::TonoModuloUi::Fatto)];
+        let (p, _) = pannello_agenti(pagina_piena(), righe);
+        assert!(nel_dettaglio(&p, "Sistemare il restyle") && nel_dettaglio(&p, "bin"));
+        elemento(&p, "Aggiornare i test, Claude, Fatto").invoke_accessible_default_action();
+        assert!(nel_dettaglio(&p, "Aggiornare i test") && nel_dettaglio(&p, "bin"));
+        elemento(&p, "bin, Claude").invoke_accessible_default_action();
+        assert!(nel_dettaglio(&p, "bin"));
+        assert_eq!(ElementHandle::find_by_accessible_label(&p, "bin").count(), 1, "senza titolo la cartella non si ripete sotto");
+    }
+
+    /// Un limite a barra come lo scrive `pagina_agenti::sintesi`.
+    fn limite_agenti(fornitore: &str, nome: &str, percento: u32, caldo: bool, azzera: &str) -> crate::LimiteUi {
+        crate::LimiteUi {
+            presente: true,
+            fornitore: fornitore.into(),
+            nome: nome.into(),
+            frazione: percento as f32 / 100.0,
+            testo: format!("{percento} %").into(),
+            caldo,
+            vecchio: false,
+            narratore: format!("Claude, limite {nome}, {percento} %, {azzera}").into(),
+        }
+    }
+
+    fn sintesi_agenti(con_chiave: bool) -> crate::SintesiUi {
+        crate::SintesiUi {
+            tono: crate::TonoModuloUi::Attivo,
+            titolo: "1 al lavoro".into(),
+            sotto: "3 sessioni".into(),
+            l1: limite_agenti("Claude", "5 ore", 34, false, "si azzera alle 14:30"),
+            l2: limite_agenti("", "7 giorni", 61, true, "si azzera mercoledì alle 14:30"),
+            spesa: if con_chiave { "412,80 $" } else { "" }.into(),
+            spesa_nota: if con_chiave { "aggiornato alle 16:02" } else { crate::claude::SPESA_SENZA_CHIAVE }.into(),
+            azione_id: if con_chiave { crate::moduli::pagina_agenti::DETTAGLI } else { "" }.into(),
+            azione_testo: if con_chiave { "Dettagli" } else { "" }.into(),
+        }
+    }
+
+    /// Paolo: limiti e spesa nella sintesi, come barre col numero; spesa e «Dettagli» lì. Due
+    /// limiti col nome per Narrator; nessun limite = nessun elemento (mai «0 %» né barre vuote);
+    /// senza la chiave né spesa né «Dettagli».
+    #[test]
+    fn agenti_sintesi_limiti_e_spesa() {
+        let (p, _) = pannello_agenti(pagina_piena(), tre_righe_agenti());
+        p.set_elenco_sintesi(sintesi_agenti(true));
+        assert!(c_e(&p, "1 al lavoro") && c_e(&p, "3 sessioni"));
+        for nome in ["Claude, limite 5 ore, 34 %, si azzera alle 14:30", "Claude, limite 7 giorni, 61 %, si azzera mercoledì alle 14:30"] {
+            let l = elemento(&p, nome);
+            assert_eq!(l.accessible_role(), Some(AccessibleRole::Text), "{nome}");
+            let (_, a, _, b) = rettangolo(&l);
+            assert!(a >= 44.0 - 0.5 && b <= 44.0 + 40.0 + 0.5, "{nome} nella testata: {a} {b}");
+        }
+        let spesa = elemento(&p, "Spesa API del mese");
+        assert_eq!(spesa.accessible_value().as_deref(), Some("412,80 $"));
+        assert_eq!(spesa.accessible_description().as_deref(), Some("aggiornato alle 16:02"));
+        assert_eq!(elemento(&p, "Dettagli").accessible_role(), Some(AccessibleRole::Button));
+
+        // Nessun limite: nessun elemento di limite, nessuno «0 %».
+        p.set_elenco_sintesi(crate::SintesiUi { l1: Default::default(), l2: Default::default(), ..sintesi_agenti(true) });
+        let limiti = i_slint_backend_testing::ElementQuery::from_root(&p)
+            .match_descendants()
+            .match_predicate(|e| e.accessible_label().is_some_and(|l| l.contains("limite")) || e.accessible_label().is_some_and(|l| l.contains("0 %")))
+            .find_all();
+        assert!(limiti.is_empty(), "{:?}", limiti.iter().map(|e| e.accessible_label()).collect::<Vec<_>>());
+        assert!(ElementHandle::find_by_element_type_name(&p, "LimiteBarra").next().is_none());
+        // Senza la chiave: né spesa né «Dettagli».
+        p.set_elenco_sintesi(sintesi_agenti(false));
+        assert!(!c_e(&p, "Dettagli") && !c_e(&p, "Spesa API del mese"));
+    }
+
+    /// «Dettagli» sta nella testata: ↑ dalla prima riga ci arriva, Invio apre le schede delle API,
+    /// ↓ torna alla riga; con Narrator e col clic fa lo stesso. Senza la chiave non c'è e ↑ resta.
+    #[test]
+    fn dettagli_da_tastiera_e_da_narrator() {
+        use slint::platform::Key;
+        let (p, eventi) = pannello_agenti(pagina_piena(), tre_righe_agenti());
+        p.set_elenco_sintesi(sintesi_agenti(false));
+        tasto(&p, Key::UpArrow);
+        tasto(&p, Key::Return);
+        assert_eq!(*eventi.borrow(), ["agenti agenti.terminale aaaa"], "senza la chiave ↑ resta sulla riga");
+        p.set_elenco_sintesi(sintesi_agenti(true));
+        tasto(&p, Key::UpArrow);
+        assert_eq!((p.get_elenco_lato(), etichetta_col_fuoco(&p).as_str()), (-1, "Dettagli"));
+        tasto(&p, Key::Return);
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("agenti agenti.dettagli"));
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::Return);
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("agenti agenti.terminale aaaa"));
+        elemento(&p, "Dettagli").invoke_accessible_default_action();
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("agenti agenti.dettagli"));
+        // La chiave tolta col fuoco su «Dettagli»: il fuoco torna sulla riga, non si perde.
+        tasto(&p, Key::UpArrow);
+        p.set_elenco_sintesi(sintesi_agenti(false));
+        // I `changed` girano al giro seguente del ciclo d'eventi.
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&p), "uno, Claude");
+        tasto(&p, Key::DownArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "due, Claude", "il tasto seguente non si perde");
+    }
+
+    /// Scollegato ma con la chiave: «Collega» nel corpo e «Dettagli» nella testata; ↑ e ↓ passano
+    /// dall'uno all'altro.
+    #[test]
+    fn dettagli_anche_da_scollegato() {
+        use slint::platform::Key;
+        let (p, eventi) = pannello_agenti(crate::moduli::pagina_agenti::stato(false, 0), vec![]);
+        p.set_elenco_sintesi(sintesi_agenti(true));
+        tasto(&p, Key::Return);
+        assert_eq!(*eventi.borrow(), ["agenti agenti.collega"]);
+        tasto(&p, Key::UpArrow);
+        tasto(&p, Key::Return);
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("agenti agenti.dettagli"));
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::Return);
+        assert_eq!(eventi.borrow().last().map(String::as_str), Some("agenti agenti.collega"));
+    }
+
+    /// Il colore che domina (più punti) in un rettangolo della foto, fra quelli lontani dal nero
+    /// e dai grigi: il segno colorato.
+    fn ha_il_colore(foto: &slint::SharedPixelBuffer<slint::Rgba8Pixel>, scala: f32, r: (f32, f32, f32, f32), colore: (u8, u8, u8)) -> bool {
+        let (x0, y0, x1, y1) = ((r.0 * scala) as usize, (r.1 * scala) as usize, (r.2 * scala) as usize, (r.3 * scala) as usize);
+        (y0..y1).any(|y| {
+            (x0..x1).any(|x| {
+                let px = foto.as_slice()[y * foto.width() as usize + x];
+                px.r.abs_diff(colore.0) <= 12 && px.g.abs_diff(colore.1) <= 12 && px.b.abs_diff(colore.2) <= 12
+            })
+        })
+    }
+
+    fn rgb_del_token(nome: &str) -> (u8, u8, u8) {
+        let c = super::colore_del_token(&super::tema_slint(), nome);
+        (u8::from_str_radix(&c[1..3], 16).unwrap(), u8::from_str_radix(&c[3..5], 16).unwrap(), u8::from_str_radix(&c[5..7], 16).unwrap())
+    }
+
+    /// F1 Task 10: la riga in errore è rosa (`Tema.errore`), non blu (`guarda`): occhietti nella
+    /// riga e capsula nel dettaglio, nel disegno vero.
+    #[test]
+    fn agenti_riga_in_errore_e_rosa() {
+        super::piattaforma_che_disegna();
+        let errore = crate::RigaModuloUi { cosa: "Limite raggiunto".into(), ..riga_agenti("e", "in-errore", crate::TonoModuloUi::Errore) };
+        let (p, _) = pannello_agenti(pagina_piena(), vec![errore]);
+        let foto = p.window().take_snapshot().expect("il disegno del pannello");
+        let scala = foto.width() as f32 / p.window().size().to_logical(p.window().scale_factor()).width;
+        let (rosa, blu) = (rgb_del_token("caldo-3"), rgb_del_token("petalo-3"));
+        let (x0, y0, _, y1) = rettangolo(&elemento(&p, "in-errore, Claude"));
+        let occhi = (x0 + 8.0, y0 + 8.0, x0 + 32.0, y1 - 8.0);
+        assert!(ha_il_colore(&foto, scala, occhi, rosa), "occhietti della riga rosa");
+        assert!(!ha_il_colore(&foto, scala, occhi, blu), "non blu");
+        // La capsula in alto nel dettaglio (occhietti e parola).
+        let capsula = (34.0 + 346.0, 44.0 + 48.0, 34.0 + 346.0 + 120.0, 44.0 + 48.0 + 32.0);
+        assert!(ha_il_colore(&foto, scala, capsula, rosa), "capsula del dettaglio rosa");
+        assert!(!ha_il_colore(&foto, scala, capsula, blu));
+    }
+
+    /// Review Focus 2: 16 sessioni con nomi di 80 caratteri, sintesi lunga e spesa larga. Nessun
+    /// testo esce dalla sua colonna; nella testata il sotto si accorcia per primo, poi il titolo,
+    /// mai il gruppo di destra (nessuna sovrapposizione); il nome intero resta per Narrator.
+    #[test]
+    fn agenti_testi_lunghi_con_ellissi() {
+        let lungo = |i: usize| -> String { format!("{i:02} Riscrivere il modulo dei pagamenti con la nuova API e i test di ").chars().cycle().take(80).collect() };
+        let righe: Vec<_> = (0..16)
+            .map(|i| crate::RigaModuloUi {
+                cosa: "Chiede: un comando con un nome davvero molto lungo".into(),
+                valore: "12:34:56".into(),
+                sotto: "una-cartella-dal-nome-davvero-molto-lungo-che-non-finisce".into(),
+                nota: "Apre la finestra del terminale, non la scheda".into(),
+                ..riga_agenti(&format!("id{i}"), &lungo(i), crate::TonoModuloUi::Attivo)
+            })
+            .collect();
+        let (p, _) = pannello_agenti(pagina_piena(), righe);
+        p.set_elenco_sintesi(crate::SintesiUi {
+            titolo: "16 al lavoro, e un titolo che non ci sta mai per intero nella testata".into(),
+            sotto: "16 sessioni e un sotto-testo lungo che deve accorciarsi per primo".into(),
+            spesa: "12.345.678,90 $".into(),
+            ..sintesi_agenti(true)
+        });
+        let dentro = |e: &ElementHandle, r: (f32, f32, f32, f32)| {
+            let q = rettangolo(e);
+            q.0 >= r.0 - 0.5 && q.2 <= r.2 + 0.5 && q.1 >= r.1 - 0.5 && q.3 <= r.3 + 0.5
+        };
+        let pieni = |radice: &ElementHandle| -> Vec<ElementHandle> {
+            radice.query_descendants().find_all().into_iter().filter(|e| e.size().width > 0.0 && e.size().height > 0.0).collect()
+        };
+        // Ogni riga: tutto dentro la riga, e la riga dentro la colonna (x 34..364).
+        for riga in ElementHandle::find_by_element_type_name(&p, "RigaModulo") {
+            let r = rettangolo(&riga);
+            assert!(r.0 >= 34.0 - 0.5 && r.2 <= 34.0 + 330.0 + 0.5, "riga fuori dalla colonna: {r:?}");
+            for e in pieni(&riga) {
+                assert!(dentro(&e, r), "«{:?}» esce dalla riga: {:?} {r:?}", e.type_name(), rettangolo(&e));
+            }
+        }
+        // Il dettaglio: tutto fra x 380 e 786, dentro il corpo.
+        let dettaglio = ElementHandle::find_by_element_type_name(&p, "DettaglioRiga").next().expect("dettaglio");
+        let colonna = (34.0 + 346.0, 44.0 + 48.0, 34.0 + 752.0, 44.0 + 224.0);
+        assert!(dentro(&dettaglio, colonna), "{:?}", rettangolo(&dettaglio));
+        for e in pieni(&dettaglio) {
+            if e.type_name().as_deref() == Some("Anello") {
+                continue;
+            }
+            assert!(dentro(&e, colonna), "«{:?}» {:?} esce dal dettaglio", e.accessible_label(), rettangolo(&e));
+        }
+        // Il nome intero per Narrator: nella riga (il suo nome) e nel dettaglio (il testo).
+        assert!(c_e(&p, &format!("{}, Claude", lungo(0))));
+        assert!(nel_dettaglio(&p, &lungo(0)));
+        // La testata: titolo e sotto finiscono prima del gruppo di destra (limiti, spesa,
+        // «Dettagli»), che resta tutto dentro il corpo e senza sovrapposizioni.
+        let destra: Vec<(f32, f32, f32, f32)> = [
+            "Claude, limite 5 ore, 34 %, si azzera alle 14:30",
+            "Claude, limite 7 giorni, 61 %, si azzera mercoledì alle 14:30",
+            "Spesa API del mese",
+            "Dettagli",
+        ]
+        .iter()
+        .map(|n| rettangolo(&elemento(&p, n)))
+        .collect();
+        for w in destra.windows(2) {
+            assert!(w[0].2 <= w[1].0 + 0.5, "gruppo di destra sovrapposto: {w:?}");
+        }
+        assert!(destra.last().unwrap().2 <= 34.0 + 752.0 + 0.5, "«Dettagli» dentro il corpo");
+        let titolo = rettangolo(&elemento(&p, "16 al lavoro, e un titolo che non ci sta mai per intero nella testata"));
+        assert!(titolo.2 <= destra[0].0 + 0.5 && titolo.2 > titolo.0 + 40.0, "titolo accorciato prima dei limiti: {titolo:?} {:?}", destra[0]);
+        let sotto = ElementHandle::find_by_accessible_label(&p, "16 sessioni e un sotto-testo lungo che deve accorciarsi per primo").next();
+        if let Some(sotto) = sotto {
+            let s = rettangolo(&sotto);
+            assert!(s.2 <= destra[0].0 + 0.5 && s.0 >= titolo.2 - 0.5, "sotto fra titolo e limiti: {s:?}");
+        }
+    }
+
+    /// Lo scheletro della pagina: testata y 0–40, elenco x 0–330 (da y 48), dettaglio x 346–752,
+    /// tutto nel corpo 752 × 224 a (34, 44).
+    #[test]
+    fn agenti_geometria() {
+        let (p, _) = pannello_agenti(pagina_piena(), tre_righe_agenti());
+        p.set_elenco_sintesi(sintesi_agenti(true));
+        let testata = ElementHandle::find_by_element_type_name(&p, "TestataPagina").next().expect("testata");
+        assert_eq!(rettangolo(&testata), (34.0, 44.0, 34.0 + 752.0, 44.0 + 40.0));
+        let elenco = ElementHandle::find_by_element_type_name(&p, "ImpiantoElencoDettaglio").next().expect("impianto");
+        assert_eq!(rettangolo(&elenco), (34.0, 44.0, 34.0 + 752.0, 44.0 + 224.0));
+        let lista = ElementHandle::find_by_accessible_label(&p, "Sessioni").next().expect("la lista");
+        assert_eq!(lista.accessible_role(), Some(AccessibleRole::List));
+        assert_eq!(rettangolo(&lista), (34.0, 44.0 + 48.0, 34.0 + 330.0, 44.0 + 224.0));
+        let dettaglio = ElementHandle::find_by_element_type_name(&p, "DettaglioRiga").next().expect("dettaglio");
+        assert_eq!(rettangolo(&dettaglio), (34.0 + 346.0, 44.0 + 48.0, 34.0 + 752.0, 44.0 + 224.0));
+        // Il pulsante del dettaglio in alto a destra, 32 di altezza.
+        let (x0, y0, x1, y1) = rettangolo(&elemento(&p, "Apri il terminale"));
+        assert!((x1 - (34.0 + 752.0)).abs() < 0.5 && (y0 - (44.0 + 48.0)).abs() < 0.5 && (y1 - y0 - 32.0).abs() < 0.5, "{x0} {y0} {x1} {y1}");
     }
 
     /// Impostazioni › Claude (M3, Task 7 e 7B): l'anteprima si apre col fuoco su «Annulla» (Invio per
@@ -6684,14 +6859,13 @@ mod accessibilita {
     #[test]
     fn pagine_dentro_il_corpo() {
         let (casa, _) = pannello_casa();
-        let (agenti, _) = pannello_claude(true, tre_righe_claude());
-        agenti.set_claude_cinque_ore(limite_claude("34%", 0.34, "si azzera alle 14:30"));
-        agenti.set_claude_sette_giorni(limite_claude("61%", 0.61, "si azzera mercoledì alle 14:30"));
-        agenti.set_claude_spesa("12,40 $".into());
+        // Agenti (ridisegno F2, Task 6): l'impianto Elenco + dettaglio, con sintesi piena.
+        let (agenti, _) = pannello_agenti(pagina_piena(), tre_righe_agenti());
+        agenti.set_elenco_sintesi(sintesi_agenti(true));
         let pc = pannello_connessioni();
         let (collegamenti, _) = pannello_collegamenti(quattro_collegamenti());
         collegamenti.set_vista("collegamenti".into());
-        for (p, tipo) in [(&casa, "VistaCasa"), (&agenti, "VistaClaude"), (&pc, "VistaPc"), (&collegamenti, "VistaCollegamenti")] {
+        for (p, tipo) in [(&casa, "VistaCasa"), (&agenti, "ImpiantoElencoDettaglio"), (&pc, "VistaPc"), (&collegamenti, "VistaCollegamenti")] {
             // Lo scorrimento del cambio di vista finito.
             fine_scorrimento();
             fine_scorrimento();
@@ -6709,6 +6883,15 @@ mod accessibilita {
                     e.accessible_label().unwrap_or_default()
                 );
             }
+        }
+        // La testata della pagina Agenti, sorella dell'impianto: anche lei nel corpo.
+        let testata = ElementHandle::find_by_element_type_name(&agenti, "TestataPagina").next().expect("testata");
+        for e in testata.query_descendants().find_all() {
+            let (a, l) = (e.absolute_position(), e.size());
+            if e.accessible_role().is_none_or(|r| r == AccessibleRole::None) || l.width <= 0.0 || l.height <= 0.0 {
+                continue;
+            }
+            assert!(a.x >= 34.0 - 0.5 && a.y >= 44.0 - 0.5 && a.x + l.width <= 34.0 + 752.0 + 0.5 && a.y + l.height <= 44.0 + 40.0 + 0.5, "testata: «{}» {a:?} {l:?}", e.accessible_label().unwrap_or_default());
         }
     }
 

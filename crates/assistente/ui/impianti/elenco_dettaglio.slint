@@ -1,0 +1,330 @@
+// L'impianto Elenco + dettaglio (ridisegno F2, Task 6; spec §5.7, bozza `tc-isola`, pagina
+// Agenti): a sinistra una colonna di righe uniformi (330, da y 48 sotto la testata della pagina),
+// a destra il dettaglio della riga scelta (da x 346 al bordo). Lo usa la pagina Agenti.
+//
+// Decisioni di Paolo (23/11): il clic su una riga la sceglie e mostra il suo dettaglio (nessun
+// evento verso Rust); l'azione della riga (il terminale) sta nel pulsante del dettaglio, in alto a
+// destra, o è Invio sulla riga. La tastiera la governa il pannello (`tasti`): qui arrivano la riga
+// scelta (indice già valido) e il lato col fuoco (-1 la testata, 0 l'elenco, 1 il dettaglio), e il
+// fuoco vero si sposta da sé (`Fuoco`, `Pulsante.chiede-fuoco`) perché Narrator legga ruolo e nome.
+//
+// Nessun permesso si decide qui: la riga col permesso porta (fino al Task 7) al permesso aperto
+// della Coda, con le sue regole M3.
+import { Tema } from "../tema.slint";
+import { RigaModuloUi, VoceAttesaUi } from "../voci.slint";
+import { Anello, Fuoco, Pulsante, TipoPulsante } from "../componenti.slint";
+import { Occhietti } from "../guscio/occhietti.slint";
+import { Capsula } from "../guscio/carta.slint";
+
+// Una riga dell'elenco, alta 40 r12: occhietti del tono · nome (Inter 700 13) · chi (12 tenue) ·
+// cosa (13 secondario) · valore (mono 12, a destra). Nome e cosa si accorciano (ellissi); il nome
+// intero lo ha Narrator. La riga scelta ha il fondo `g2` e il filo.
+export component RigaModulo inherits Rectangle {
+    in property <RigaModuloUi> riga;
+    in property <int> indice;
+    in property <int> totale;
+    // È la riga scelta (il dettaglio è il suo).
+    in property <bool> scelta;
+    // Il fuoco da tastiera è su di lei.
+    in property <bool> fuoco;
+    callback scegli();
+
+    height: 40px;
+    border-radius: 12px;
+    border-width: root.scelta ? 1px : 0px;
+    border-color: Tema.g4;
+    background: root.scelta ? Tema.g2 : area.has-hover ? Tema.g1 : transparent;
+    accessible-role: list-item;
+    accessible-label: root.riga.narratore;
+    accessible-item-index: root.indice;
+    accessible-item-count: root.totale;
+    accessible-item-selected: root.scelta;
+    accessible-action-default => { root.scegli(); }
+
+    Fuoco { chiede: root.fuoco; }
+
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.scegli(); }
+    }
+
+    // Margini 12, occhietti 15, spazi 10 (8 fra nome, chi e cosa).
+    property <length> x-nome: 12px + 15px + 10px;
+    property <length> fine: valore-testo.x - (root.riga.valore != "" ? 10px : 0px);
+    property <length> spazio: max(0px, fine - x-nome);
+    property <length> largo-chi: root.riga.chi != "" ? chi-testo.preferred-width + 8px : 0px;
+    // Il nome prende ciò che resta dopo «chi» e la cosa, se ci stanno; altrimenti almeno metà.
+    property <length> largo-nome: min(nome-testo.preferred-width,
+        max(spazio * 0.5, spazio - largo-chi - cosa-testo.preferred-width - 8px));
+
+    Occhietti {
+        x: 12px;
+        y: (parent.height - self.height) / 2;
+        tono: root.riga.tono;
+    }
+
+    nome-testo := Text {
+        x: root.x-nome;
+        width: max(0px, min(root.largo-nome, root.spazio));
+        height: parent.height;
+        text: root.riga.nome;
+        vertical-alignment: center;
+        overflow: elide;
+        font-weight: 700;
+        font-size: Tema.testo-corpo;
+        color: Tema.testo;
+        accessible-role: none;
+    }
+
+    chi-testo := Text {
+        x: nome-testo.x + nome-testo.width + 8px;
+        width: max(0px, min(self.preferred-width, root.fine - self.x));
+        height: parent.height;
+        text: root.riga.chi;
+        vertical-alignment: center;
+        overflow: elide;
+        font-size: Tema.testo-piccolo;
+        color: Tema.testo-tenue;
+        accessible-role: none;
+    }
+
+    cosa-testo := Text {
+        x: chi-testo.x + chi-testo.width + (root.riga.chi != "" ? 8px : 0px);
+        width: max(0px, root.fine - self.x);
+        height: parent.height;
+        text: root.riga.cosa;
+        vertical-alignment: center;
+        overflow: elide;
+        font-size: Tema.testo-corpo;
+        color: Tema.testo-2;
+        accessible-role: none;
+    }
+
+    valore-testo := Text {
+        x: parent.width - 12px - self.width;
+        width: root.riga.valore != "" ? self.preferred-width : 0px;
+        height: parent.height;
+        text: root.riga.valore;
+        vertical-alignment: center;
+        font-family: Tema.carattere-mono;
+        font-weight: 500;
+        font-size: Tema.testo-piccolo;
+        color: Tema.testo-2;
+        accessible-role: none;
+    }
+
+    // L'anello sul bordo della riga (dentro: la colonna scorre e ritaglia ai suoi lati).
+    if root.fuoco: Anello {
+        raggio: parent.border-radius;
+        distanza: -2px;
+    }
+}
+
+// Un campo del dettaglio: etichetta 12 tenue e, sotto, il valore 13 (caldo nel colore del lavoro).
+component Campo inherits Rectangle {
+    in property <string> etichetta;
+    in property <string> valore;
+    in property <bool> caldo;
+
+    width: max(etichetta-testo.preferred-width, valore-testo.preferred-width);
+    height: 36px;
+
+    etichetta-testo := Text {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: 16px;
+        text: root.etichetta;
+        overflow: elide;
+        font-size: Tema.testo-piccolo;
+        color: Tema.testo-tenue;
+    }
+
+    valore-testo := Text {
+        x: 0;
+        y: 18px;
+        width: parent.width;
+        height: 18px;
+        text: root.valore;
+        overflow: elide;
+        font-size: Tema.testo-corpo;
+        color: root.caldo ? Tema.attivo : Tema.testo;
+    }
+}
+
+// Il dettaglio della riga scelta: in alto la capsula del tono e, a destra, il pulsante dell'azione
+// (32 r9, primario bianco: è il terminale, non un consenso); sotto il nome (Inter 700 18,
+// ellissi), la cartella in mono, i tre campi e la nota.
+export component DettaglioRiga inherits Rectangle {
+    in property <RigaModuloUi> riga;
+    // Il fuoco da tastiera è sul pulsante dell'azione.
+    in property <bool> fuoco-azione;
+    callback azione();
+
+    if root.riga.parola != "": Capsula {
+        x: 0;
+        y: (32px - self.height) / 2;
+        tono: root.riga.tono;
+        parola: root.riga.parola;
+        mono: true;
+    }
+
+    if root.riga.azione-testo != "": Pulsante {
+        x: parent.width - self.width;
+        y: 0;
+        testo: root.riga.azione-testo;
+        tipo: TipoPulsante.azione;
+        altezza: 32px;
+        raggio: 9px;
+        largo-max: parent.width / 2;
+        anello: root.fuoco-azione;
+        chiede-fuoco: root.fuoco-azione;
+        tasti-propri: false;
+        premuto => { root.azione(); }
+    }
+
+    Text {
+        x: 0;
+        y: 40px;
+        width: parent.width;
+        height: 24px;
+        text: root.riga.nome;
+        vertical-alignment: center;
+        overflow: elide;
+        font-weight: 700;
+        font-size: 18px;
+        color: Tema.testo;
+    }
+
+    if root.riga.sotto != "": Text {
+        x: 0;
+        y: 64px;
+        width: parent.width;
+        height: 16px;
+        text: root.riga.sotto;
+        vertical-alignment: center;
+        overflow: elide;
+        font-family: Tema.carattere-mono;
+        font-weight: 500;
+        font-size: Tema.testo-piccolo;
+        color: Tema.testo-tenue;
+    }
+
+    // I campi: solo quelli che ci sono, da sinistra.
+    HorizontalLayout {
+        x: 0;
+        y: 92px;
+        width: parent.width;
+        height: 36px;
+        spacing: 24px;
+        alignment: start;
+
+        if root.riga.d1.etichetta != "": Campo {
+            etichetta: root.riga.d1.etichetta;
+            valore: root.riga.d1.valore;
+            caldo: root.riga.d1.caldo;
+        }
+        if root.riga.d2.etichetta != "": Campo {
+            etichetta: root.riga.d2.etichetta;
+            valore: root.riga.d2.valore;
+            caldo: root.riga.d2.caldo;
+        }
+        if root.riga.d3.etichetta != "": Campo {
+            etichetta: root.riga.d3.etichetta;
+            valore: root.riga.d3.valore;
+            caldo: root.riga.d3.caldo;
+        }
+    }
+
+    if root.riga.nota != "": Text {
+        x: 0;
+        y: 140px;
+        width: parent.width;
+        height: 16px;
+        text: root.riga.nota;
+        vertical-alignment: center;
+        overflow: elide;
+        font-size: Tema.testo-piccolo;
+        color: Tema.testo-tenue;
+    }
+}
+
+export component ImpiantoElencoDettaglio inherits Rectangle {
+    in property <[RigaModuloUi]> righe;
+    // Le voci in attesa: il dettaglio della riga col permesso le leggerà nel Task 7 (`attesa`).
+    in property <[VoceAttesaUi]> attese;
+    // La riga scelta (indice valido, deciso dal pannello) e il lato col fuoco.
+    in property <int> fuoco;
+    in property <int> lato;
+    // Il fuoco da tastiera è nella pagina (altrimenti nessun anello e nessun fuoco vero).
+    in property <bool> con-fuoco;
+    // Il nome dell'elenco per Narrator.
+    in property <string> nome-elenco: "Sessioni";
+    // Una riga scelta col clic (o con Narrator).
+    callback scelta(int);
+    // Il pulsante del dettaglio: (id dell'azione, id della riga).
+    callback azione(string, string);
+
+    property <length> cima: 48px;
+    property <length> largo-elenco: 330px;
+    property <length> x-dettaglio: 346px;
+    property <length> alto-riga: 40px;
+    property <length> passo: 42px;
+    property <length> alto-elenco: righe.length * passo - 2px;
+    property <int> n-righe: righe.length;
+
+    // La riga col fuoco fuori vista (sopra o sotto) torna dentro, di quanto basta.
+    function porta-in-vista() {
+        let cima-riga = fuoco * passo;
+        if (cima-riga + lista.content-y < 0) {
+            lista.content-y = -cima-riga;
+        } else if (cima-riga + alto-riga + lista.content-y > lista.height) {
+            lista.content-y = lista.height - cima-riga - alto-riga;
+        }
+    }
+    changed fuoco => { porta-in-vista(); }
+    changed n-righe => { porta-in-vista(); }
+
+    lista := Flickable {
+        x: 0;
+        y: root.cima;
+        width: root.largo-elenco;
+        height: root.height - root.cima;
+        content-width: self.width;
+        content-height: max(self.height, root.alto-elenco);
+        accessible-role: list;
+        accessible-label: root.nome-elenco;
+
+        for r[i] in root.righe: RigaModulo {
+            x: 0;
+            y: i * root.passo;
+            width: lista.width;
+            riga: r;
+            indice: i;
+            totale: root.righe.length;
+            scelta: i == root.fuoco;
+            fuoco: root.con-fuoco && root.lato == 0 && i == root.fuoco;
+            scegli => { root.scelta(i); }
+        }
+    }
+
+    // Quante ce ne sono oltre la colonna: un filo nello spazio fra le colonne, solo se scorre.
+    if root.alto-elenco > lista.height: Rectangle {
+        x: root.largo-elenco + 6px;
+        y: lista.y + 4px + (lista.height - 8px - self.height) * (-lista.content-y / (root.alto-elenco - lista.height));
+        width: 3px;
+        height: max(16px, (lista.height - 8px) * lista.height / root.alto-elenco);
+        border-radius: 1.5px;
+        background: Tema.testo-tenue.with-alpha(0.5);
+    }
+
+    if root.righe.length > 0: DettaglioRiga {
+        x: root.x-dettaglio;
+        y: root.cima;
+        width: root.width - root.x-dettaglio;
+        height: root.height - root.cima;
+        riga: root.righe[root.fuoco];
+        fuoco-azione: root.con-fuoco && root.lato == 1;
+        azione => { root.azione(root.righe[root.fuoco].azione-id, root.righe[root.fuoco].id); }
+    }
+}

@@ -27,7 +27,7 @@ use crate::collegamenti;
 use crate::moduli::registro::Registro;
 use crate::{
     AmbienteUi, CollegamentoUi, FinestraImpostazioni, GenereUi, ModuloUi, Pannello, PermessoUi, Pillola, PreferitoUi, RigaDispositivoUi,
-    RigaSessioneUi, SchedaBarraUi, StanzaUi, TipoRigaUi, TonoUi, VoceAttesaUi,
+    RigaModuloUi, SchedaBarraUi, StanzaUi, TipoRigaUi, TonoUi, VoceAttesaUi,
 };
 use casa_core::config::Config;
 use casa_core::diagnosi::Contatore;
@@ -793,12 +793,13 @@ pub struct Ponte {
     claude_ripiego: RefCell<std::collections::HashSet<String>>,
     /// Toglie da sola la voce «Non trovo il terminale».
     sveglia_terminale: slint::Timer,
-    /// La vista Claude del pannello (Task 9): si vede (pannello aperto su di lei) e il modello delle
-    /// sue righe. Chiusa, niente si calcola né si scrive.
+    /// La pagina Agenti del pannello (ridisegno F2, Task 6): si vede (pannello aperto su di lei) e
+    /// il modello delle sue righe (`moduli::pagina_agenti::riga`). Chiusa, niente si calcola né si
+    /// scrive.
     vista_claude: Cell<bool>,
     /// La Coda si vede (pannello aperto su di lei): entrarci riarma «Consenti».
     vista_coda: Cell<bool>,
-    claude_righe: Rc<VecModel<RigaSessioneUi>>,
+    elenco_righe: Rc<VecModel<RigaModuloUi>>,
     /// L'ordine fermo delle righe (RC-53), per `session_id`: si decide all'apertura della vista e
     /// poi chi c'è tiene il suo posto, chi arriva va in fondo. Vuoto a vista chiusa.
     claude_ordine: RefCell<Vec<String>>,
@@ -951,7 +952,7 @@ pub fn collega(
         sveglia_terminale: slint::Timer::default(),
         vista_claude: Cell::new(false),
         vista_coda: Cell::new(false),
-        claude_righe: Rc::new(VecModel::default()),
+        elenco_righe: Rc::new(VecModel::default()),
         claude_ordine: RefCell::new(Vec::new()),
         claude_permessi: RefCell::new(HashMap::new()),
         claude_armamento: RefCell::new(con_claude::Armamento::nuovo()),
@@ -1073,6 +1074,13 @@ fn voce_ui(p: &Preferito, connesso: bool) -> PreferitoUi {
     }
 }
 
+// Nei test, le scritture vere fatte da `aggiorna_modello` in questo thread (pre-flight C18: un
+// controllo che confronta solo i valori non potrebbe fallire).
+#[cfg(test)]
+thread_local! {
+    pub(crate) static RIGHE_SCRITTE: Cell<u64> = const { Cell::new(0) };
+}
+
 /// Riscrive solo le righe cambiate (una riga uguale non ridisegna nulla). Restituisce quante
 /// righe ha riscritto (per il registro diagnostico).
 fn aggiorna_modello<T: Clone + PartialEq + 'static>(modello: &VecModel<T>, voci: Vec<T>) -> u64 {
@@ -1080,12 +1088,16 @@ fn aggiorna_modello<T: Clone + PartialEq + 'static>(modello: &VecModel<T>, voci:
         // Un modello svuotato conta come una riga riscritta (c'è stato un cambio).
         let n = voci.len().max(1) as u64;
         modello.set_vec(voci);
+        #[cfg(test)]
+        RIGHE_SCRITTE.with(|c| c.set(c.get() + n));
         return n;
     }
     let mut riscritte = 0;
     for (i, v) in voci.into_iter().enumerate() {
         if modello.row_data(i).as_ref() != Some(&v) {
             modello.set_row_data(i, v);
+            #[cfg(test)]
+            RIGHE_SCRITTE.with(|c| c.set(c.get() + 1));
             riscritte += 1;
         }
     }
@@ -1996,7 +2008,6 @@ impl Ponte {
         if p.get_casa_da_configurare() != da_configurare {
             p.set_casa_da_configurare(da_configurare);
         }
-        self.aggiorna_soglia_claude(p);
         let dati = self.dati_delle.borrow().clone().unwrap_or_default();
         if p.get_dati_delle() != dati.as_str() {
             p.set_dati_delle(dati.into());
@@ -2027,7 +2038,7 @@ impl Ponte {
             }
         });
         p.set_collegamenti(ModelRc::from(self.collegamenti.clone()));
-        p.set_claude_righe(ModelRc::from(self.claude_righe.clone()));
+        p.set_elenco_righe(ModelRc::from(self.elenco_righe.clone()));
         p.on_apri_stanza(|area| {
             if let Some(ponte) = ponte() {
                 ponte.stanza(Some(area.to_string()));
@@ -2075,17 +2086,12 @@ impl Ponte {
                 ponte.azione(&voce, &pulsante);
             }
         });
-        // Clic o Invio su una riga della vista Claude (Task 10): porta davanti il terminale. Va
-        // chiamato solo da qui, cioè subito dopo il gesto dell'utente.
-        p.on_apri_sessione(|impronta| {
+        // Un'azione di una pagina (ridisegno F2, Task 6): il terminale di una sessione (pulsante del
+        // dettaglio o Invio sulla riga), «Collega», «Dettagli», il permesso di una riga. Va
+        // chiamata solo da qui, cioè subito dopo il gesto dell'utente.
+        p.on_azione_pagina(|modulo, azione, riga| {
             if let Some(ponte) = ponte() {
-                ponte.claude_apri_terminale(&impronta);
-            }
-        });
-        // «Dettagli» nella vista Claude (Task 11): le schede delle API nella finestra di gestione.
-        p.on_apri_dettagli_claude(|| {
-            if let Some(ponte) = ponte() {
-                ponte.claude_apri_dettagli();
+                ponte.azione_pagina(&modulo, &azione, &riga);
             }
         });
         p.on_riprova_casa(|| {
@@ -2415,6 +2421,9 @@ impl Ponte {
         if let Some(p) = self.pannello.borrow().upgrade() {
             self.scrivi_moduli_in_attesa(&p);
         }
+        // Passa anche da `aggiorna_claude_pillola`, che riscrive la pagina Agenti aperta: la riga
+        // col permesso tiene giusto l'indice della sua voce (`attesa`) anche quando le voci cambiano
+        // posto senza che le sessioni cambino (`la_riga_col_permesso_segue_il_posto_della_voce`).
         self.aggiorna_umore();
     }
 

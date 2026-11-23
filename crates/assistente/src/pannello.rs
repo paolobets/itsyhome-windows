@@ -551,15 +551,6 @@ impl Apertura {
                 dopo(&a, Apertura::chiudi);
             }
         });
-        // «Impostazioni» della vista Claude scollegata: le Impostazioni sulla scheda Claude.
-        let a = self.io.clone();
-        pannello.on_gestisci_claude(move || {
-            let a = a.clone();
-            finestra_impostazioni::apri_alla_sezione(finestra_impostazioni::SEZIONE_CLAUDE, move || {
-                dopo(&a, Apertura::apri_impostazioni);
-                true
-            });
-        });
         // «Modifica» e «Aggiungi un collegamento»: le Impostazioni sulla scheda Collegamenti.
         let a = self.io.clone();
         pannello.on_gestisci_collegamenti(move || {

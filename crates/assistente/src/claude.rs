@@ -769,12 +769,6 @@ pub fn voce_insolita(ieri: &Importo, giorno: NaiveDate) -> Voce {
     }
 }
 
-/// La soglia d'avviso come frazione 0..1 (50..100 % come l'avviso: fuori si ferma ai bordi); il
-/// colore caldo dell'arco parte sopra di lei.
-pub fn frazione_soglia(percento: u8) -> f32 {
-    f32::from(percento.clamp(50, 100)) / 100.0
-}
-
 /// «Avvisa al … % del limite» come scritto nelle Impostazioni: un intero da 50 a 100.
 pub fn leggi_soglia_limite(testo: &str) -> Result<u8, &'static str> {
     match testo.trim().parse::<u8>() {

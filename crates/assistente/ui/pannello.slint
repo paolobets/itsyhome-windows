@@ -28,8 +28,11 @@
 // card: ↑/↓ fra «Preferiti» e le stanze e → alle card, le frecce fra le card, ← dalla prima colonna all'elenco
 // e ↑ dalla prima riga a «Riprova» quando c'è; Casa vuota e non connessa: «Apri Impostazioni»);
 // In Collegamenti le frecce fra le card, ↑ dalla prima riga a «Modifica»; Invio apre la pagina.
-// Nella vista Claude ↑/↓ fra le righe delle sessioni, Invio le apre (`apri-sessione`); scollegato Invio
-// apre le Impostazioni sulla scheda Claude.
+// Nella pagina Agenti (impianto Elenco + dettaglio, ridisegno F2) ↑/↓ fra le righe delle sessioni
+// (↑ dalla prima porta a «Dettagli» della testata, se c'è; ↓ torna), → al pulsante del dettaglio e
+// ← di nuovo alla riga; Invio sulla riga di una sessione apre il terminale, sulla riga col permesso
+// porta al pulsante del dettaglio (mai una decisione), sul pulsante lo preme; scollegato Invio
+// preme «Collega»; Backspace un livello (dettaglio → elenco → Panoramica).
 // Nella vista PC il contenuto sono il cursore del volume e, su Windows, i riquadri Wi-Fi e
 // Bluetooth e le righe «Reti Wi-Fi ›» e «Dispositivi Bluetooth ›» (M2, Task 8): Tab e Maiusc+Tab
 // passano dall'uno all'altro prima di lasciare la vista; sul cursore ←/→ ±2 punti, Home/Fine
@@ -45,17 +48,18 @@ import { Tema, Movimento } from "tema.slint";
 import { Occhi } from "faccia.slint";
 import { Anello, Fuoco, Fuochi } from "componenti.slint";
 import { ContornoIsola, RigaAlta, Barra } from "guscio/cornice.slint";
-import { SchedaBarraUi, StatPcUi, PreferitoUi, PulsanteUi, VoceAttesaUi, UmoreUi, StanzaUi, CollegamentoUi, TipoReteUi, TintaBatteriaUi, RigaSessioneUi, LimiteClaudeUi, VoceMenuUi, SchermoMenuUi, ModuloUi, TonoModuloUi, LivelloUi } from "voci.slint";
+import { SchedaBarraUi, StatPcUi, PreferitoUi, PulsanteUi, VoceAttesaUi, UmoreUi, StanzaUi, CollegamentoUi, TipoReteUi, TintaBatteriaUi, VoceMenuUi, SchermoMenuUi, ModuloUi, TonoModuloUi, LivelloUi, RigaModuloUi, SintesiUi, StatoPaginaUi, TipoStatoPaginaUi } from "voci.slint";
 import { ImpiantoElenco } from "impianti/elenco.slint";
+import { ImpiantoElencoDettaglio } from "impianti/elenco_dettaglio.slint";
+import { TestataPagina, StatoPagina } from "guscio/pagina.slint";
 import { Permesso, Permessi } from "guscio/permesso.slint";
 import { MenuScuro } from "menu.slint";
 import { VistaPc } from "viste/pc.slint";
-import { VistaClaude } from "viste/claude.slint";
 import { VistaCasa } from "viste/casa.slint";
 import { VistaCollegamenti } from "viste/collegamenti.slint";
 import { Panoramica, Bersagli } from "guscio/panoramica.slint";
 
-export { SchedaBarraUi, StatPcUi, PreferitoUi, PulsanteUi, VoceAttesaUi, StanzaUi, RigaSessioneUi, LimiteClaudeUi }
+export { SchedaBarraUi, StatPcUi, PreferitoUi, PulsanteUi, VoceAttesaUi, StanzaUi }
 
 // Zona del pannello col fuoco da tastiera (`dock`: le schede della barra).
 enum Zona { attesa, stanze, contenuto, dock, ricerca, volume, menu }
@@ -110,24 +114,19 @@ export component Pannello inherits Window {
     in property <TonoModuloUi> tono-isola;
     // Statistiche del PC, aggiornate ogni 2 s solo a pannello aperto.
     in property <StatPcUi> pc;
-    // La vista Claude (M3, Task 9): i dati li scrive Rust, e solo mentre la vista è aperta.
-    // `claude-collegato`: Claude Code è collegato; le righe sono tutte le sessioni (la colonna
-    // scorre), nell'ordine fermo che decide Rust; i due limiti (`presente` falso = senza anello) e
-    // la spesa API del mese.
-    in property <bool> claude-collegato;
-    in property <[RigaSessioneUi]> claude-righe;
-    // La riga col fuoco da tastiera (indice). Rust la tiene sulla stessa sessione, o sulla più
-    // vicina se la sua sparisce, quando le righe cambiano; ↑/↓ la muovono.
-    in-out property <int> claude-fuoco: 0;
-    in property <LimiteClaudeUi> claude-cinque-ore;
-    in property <LimiteClaudeUi> claude-sette-giorni;
-    // La soglia d'avviso dell'utente come frazione (80 % di serie): sopra, l'arco dei limiti e
-    // della spesa è caldo, nella vista Claude (RC-44). La scrive Rust.
-    in property <float> claude-soglia: 0.8;
-    in property <string> claude-spesa;
-    in property <string> claude-spesa-nota;
-    // La chiave da amministratore c'è: la vista mostra «Dettagli» (schede delle API).
-    in property <bool> claude-dettagli;
+    // La pagina Agenti sull'impianto Elenco + dettaglio (ridisegno F2, Task 6): tutto già pronto da
+    // `moduli::pagina_agenti`, scritto da Rust solo a pagina aperta e solo se cambia. La sintesi
+    // della testata (titolo, limiti, spesa, «Dettagli»), lo stato della pagina (l'elenco o una
+    // frase con al più un'azione) e le righe, tutte, nell'ordine fermo deciso da Rust.
+    in property <SintesiUi> elenco-sintesi;
+    in property <StatoPaginaUi> elenco-stato;
+    in property <[RigaModuloUi]> elenco-righe;
+    // La riga scelta (indice): il dettaglio è il suo. Rust la tiene sulla stessa sessione, o sulla
+    // più vicina se la sua sparisce; ↑/↓ e il clic la muovono.
+    in-out property <int> elenco-fuoco: 0;
+    // Dove sta il fuoco da tastiera nella pagina: -1 l'azione della testata, 0 l'elenco (o il
+    // pulsante dello stato), 1 il pulsante del dettaglio. Si legge sempre in `elenco-lato-valido`.
+    in-out property <int> elenco-lato: 0;
     // Il volume del PC nella vista PC (M2, Task 7) e nella barra (ridisegno F1):
     // `volume-disponibile` solo su Windows con un'uscita audio (altrimenti la riga e il pulsante
     // non ci sono); `volume` 0..1 lo scrive Rust (stato letto) e il cursore o la rotella (subito,
@@ -232,12 +231,10 @@ export component Pannello inherits Window {
     // Una stanza della vista Casa aperta (area) o chiusa.
     callback apri-stanza(string);
     callback chiudi-stanza();
-    // Una sessione di Claude Code scelta (l'impronta): la porta davanti (Task 10).
-    callback apri-sessione(string);
-    // «Impostazioni» nello stato scollegato della vista Claude: le Impostazioni sulla scheda Claude.
-    callback gestisci-claude();
-    // «Dettagli» della vista Claude: le schede delle API nella finestra di gestione.
-    callback apri-dettagli-claude();
+    // Un'azione di una pagina (id del modulo, id dell'azione, id della riga o ""): il terminale di
+    // una sessione, «Collega», «Dettagli», il permesso di una riga. Va chiamata solo subito dopo
+    // il gesto dell'utente; la traduce Rust (`Ponte::azione_pagina`).
+    callback azione-pagina(string, string, string);
     // Un collegamento scelto (id): Rust lo apre nel browser e chiude il pannello.
     callback apri-collegamento(string);
     // «Modifica» o «Aggiungi un collegamento»: le Impostazioni sulla scheda Collegamenti.
@@ -420,7 +417,6 @@ export component Pannello inherits Window {
     }
 
     changed vista => {
-        fuoco-dettagli = false;
         root.vista-cambiata();
         let nuova = posizione(vista);
         if (nuova != posizione-prec) {
@@ -460,15 +456,18 @@ export component Pannello inherits Window {
     // Voce dell'elenco della vista Casa col fuoco: -1 = «Preferiti», poi l'indice della stanza.
     property <int> fuoco-stanza: -1;
     property <int> fuoco-stanza-valido: max(-1, min(fuoco-stanza, stanze.length - 1));
-    // Vista Claude: riga col fuoco (↑/↓), sempre dentro le righe che ci sono.
-    // Il fuoco è un indice (`claude-fuoco`): l'ordine delle righe è fermo a pannello aperto e
-    // quando ne cambia il numero Rust lo rimette sulla stessa sessione o sulla più vicina. Sempre
-    // dentro le righe che ci sono.
-    // Il fuoco da tastiera è su «Dettagli» (sotto l'ultima riga, o da solo se non c'è altro).
-    property <bool> fuoco-dettagli;
-    property <bool> claude-primo: !claude-collegato || claude-righe.length > 0;
-    property <bool> fuoco-dettagli-valido: claude-dettagli && (fuoco-dettagli || !claude-primo);
-    property <int> fuoco-sessione-valido: max(0, min(claude-fuoco, claude-righe.length - 1));
+    // Pagina Agenti: la riga scelta è un indice (`elenco-fuoco`), sempre dentro le righe che ci
+    // sono (l'ordine è fermo a pannello aperto e quando ne cambia il numero Rust lo rimette sulla
+    // stessa sessione o sulla più vicina). Il lato col fuoco vale solo se il suo elemento c'è:
+    // «Dettagli» sparito (la chiave tolta) o un dettaglio senza pulsante riportano all'elenco;
+    // senza elenco il fuoco sta sul pulsante dello stato, o su quello della testata.
+    property <bool> elenco-pieno: elenco-stato.tipo == TipoStatoPaginaUi.pieno && elenco-righe.length > 0;
+    property <bool> elenco-testata: elenco-sintesi.azione-testo != "";
+    property <bool> elenco-stato-azione: !elenco-pieno && elenco-stato.azione-testo != "";
+    property <int> elenco-riga: max(0, min(elenco-fuoco, elenco-righe.length - 1));
+    property <int> elenco-lato-valido: elenco-lato < 0 && elenco-testata ? -1
+        : elenco-pieno ? (elenco-lato > 0 && elenco-righe[elenco-riga].azione-testo != "" ? 1 : 0)
+        : elenco-stato-azione ? 0 : elenco-testata ? -1 : 0;
     // Collegamenti: card col fuoco (-1 = «Modifica» nella testata), 3 colonne.
     property <int> fuoco-collegamento: 0;
     property <int> fuoco-collegamento-valido: min(fuoco-collegamento, collegamenti.length - 1);
@@ -550,10 +549,10 @@ export component Pannello inherits Window {
             // Casa vuota e non connessa: il fuoco va su «Apri Impostazioni». Collegamenti: le card,
             // o «Aggiungi un collegamento» se non ce ne sono.
             // PC: il cursore del volume, i riquadri e le righe delle connessioni, se ci sono.
-            // Claude: «Impostazioni» se non è collegato, altrimenti le righe (se ce ne sono).
+            // Agenti: le righe, il pulsante dello stato («Collega») o quello della testata.
             // Coda: le righe, o «Torna alla Panoramica» se è vuota.
             return vista == "panoramica" || vista == "collegamenti" || vista == "coda" || (vista == "casa" && (griglia.length > 0 || filtro-luci || !casa-pronta))
-                || (vista == "agenti" && (!claude-collegato || claude-righe.length > 0 || claude-dettagli))
+                || (vista == "agenti" && (elenco-pieno || elenco-stato-azione || elenco-testata))
                 || (vista == "pc" && pc-successivo(-1) >= 0);
         }
         if (z == Zona.volume) {
@@ -940,6 +939,7 @@ export component Pannello inherits Window {
         fuoco-collegamento = 0;
         fuoco-coda-riga = 0;
         fuoco-coda-pulsante = -1;
+        elenco-lato = 0;
         chiudi-permesso();
         if (!ha-zona(zona)) {
             zona = ha-zona(Zona.contenuto) ? Zona.contenuto : Zona.dock;
@@ -950,6 +950,9 @@ export component Pannello inherits Window {
     function indietro() {
         if (vista == "coda" && coda-aperta-valida) {
             chiudi-permesso();
+        } else if (vista == "agenti" && elenco-lato-valido == 1) {
+            // Dal dettaglio all'elenco, sulla sua riga.
+            elenco-lato = 0;
         } else if (filtro-luci) {
             esci-filtro();
         } else if (stanza-aperta >= 0) {
@@ -995,6 +998,53 @@ export component Pannello inherits Window {
     // ←/→ nella vista PC: ±`punti` dal punto intero di adesso.
     function passo-volume(punti: int) {
         cambia-volume((round(volume * 100) + punti) / 100);
+    }
+
+    // Le frecce nella pagina Agenti. ↑/↓ fra le righe (ai bordi si resta; ↑ dalla prima porta
+    // all'azione della testata se c'è, ↓ da lì torna); dal dettaglio ↑/↓ riportano all'elenco sulla
+    // riga accanto. → dalla riga al pulsante del dettaglio, ← di nuovo alla riga. Senza elenco
+    // ↑/↓ passano fra il pulsante dello stato e quello della testata.
+    function freccia-agenti(k: string) {
+        if (k == Key.UpArrow) {
+            if (elenco-lato-valido >= 0 && elenco-pieno && elenco-riga > 0) {
+                elenco-fuoco = elenco-riga - 1;
+                elenco-lato = 0;
+            } else if (elenco-lato-valido >= 0 && elenco-testata) {
+                elenco-lato = -1;
+            }
+        } else if (k == Key.DownArrow) {
+            if (elenco-lato-valido < 0) {
+                elenco-lato = 0;
+            } else if (elenco-pieno) {
+                elenco-fuoco = min(elenco-righe.length - 1, elenco-riga + 1);
+                elenco-lato = 0;
+            }
+        } else if (k == Key.RightArrow && elenco-lato-valido == 0 && elenco-pieno
+            && elenco-righe[elenco-riga].azione-testo != "") {
+            elenco-lato = 1;
+        } else if (k == Key.LeftArrow && elenco-lato-valido == 1) {
+            elenco-lato = 0;
+        }
+    }
+
+    // Invio nella pagina Agenti: sulla testata o sullo stato il loro pulsante; sul pulsante del
+    // dettaglio la sua azione; sulla riga di una sessione il terminale (decisione di Paolo), sulla
+    // riga col permesso (`voce` non vuota) solo il fuoco sul pulsante del dettaglio: mai una
+    // decisione (pre-flight C6, C7).
+    function attiva-agenti() {
+        if (elenco-lato-valido < 0) {
+            if (elenco-testata) {
+                root.azione-pagina("agenti", elenco-sintesi.azione-id, "");
+            }
+        } else if (!elenco-pieno) {
+            if (elenco-stato-azione) {
+                root.azione-pagina("agenti", elenco-stato.azione-id, "");
+            }
+        } else if (elenco-lato-valido == 1 || elenco-righe[elenco-riga].voce == "") {
+            root.azione-pagina("agenti", elenco-righe[elenco-riga].azione-id, elenco-righe[elenco-riga].id);
+        } else if (elenco-righe[elenco-riga].azione-testo != "") {
+            elenco-lato = 1;
+        }
     }
 
     function freccia(k: string) {
@@ -1062,21 +1112,8 @@ export component Pannello inherits Window {
             } else if (k == Key.UpArrow && fuoco-pc-valido >= 3) {
                 fuoco-pc = pc-ha(fuoco-pc-valido - 2) ? fuoco-pc-valido - 2 : pc-precedente(fuoco-pc-valido);
             }
-        } else if (zona == Zona.contenuto && vista == "agenti" && ((claude-collegato && claude-righe.length > 0) || claude-dettagli)) {
-            // ↑/↓ fra le righe, ai bordi si resta; dall'ultima riga ↓ porta su «Dettagli», ↑ torna.
-            if (k == Key.UpArrow) {
-                if (fuoco-dettagli-valido) {
-                    fuoco-dettagli = false;
-                } else if (claude-collegato && claude-righe.length > 0) {
-                    claude-fuoco = max(0, fuoco-sessione-valido - 1);
-                }
-            } else if (k == Key.DownArrow && !fuoco-dettagli-valido) {
-                if (claude-dettagli && (!claude-collegato || fuoco-sessione-valido == claude-righe.length - 1)) {
-                    fuoco-dettagli = true;
-                } else if (claude-collegato && claude-righe.length > 0) {
-                    claude-fuoco = min(claude-righe.length - 1, fuoco-sessione-valido + 1);
-                }
-            }
+        } else if (zona == Zona.contenuto && vista == "agenti") {
+            freccia-agenti(k);
         } else if (zona == Zona.contenuto && vista == "collegamenti" && collegamenti.length > 0) {
             // -1 = «Modifica» nella testata: ↑ dalla prima riga, ↓ torna alle card.
             if (fuoco-collegamento < 0) {
@@ -1155,13 +1192,7 @@ export component Pannello inherits Window {
         } else if (vista == "panoramica") {
             attiva-panoramica(false);
         } else if (vista == "agenti") {
-            if (fuoco-dettagli-valido) {
-                root.apri-dettagli-claude();
-            } else if (!claude-collegato) {
-                root.gestisci-claude();
-            } else if (claude-righe.length > 0) {
-                root.apri-sessione(claude-righe[fuoco-sessione-valido].id);
-            }
+            attiva-agenti();
         } else if (vista == "coda") {
             // Vuota: «Torna alla Panoramica». Sulla riga Invio entra nei pulsanti (su «Nega»), su un
             // pulsante lo preme, mai se è un consenso.
@@ -1481,33 +1512,67 @@ export component Pannello inherits Window {
                     }
                 }
 
-                if vista == "agenti": VistaClaude {
+                // La pagina Agenti (ridisegno F2, Task 6): la testata comune con la sintesi, poi
+                // l'impianto Elenco + dettaglio o, senza elenco, lo stato della pagina. Come nelle
+                // altre viste, ogni fuoco chiede anche la vista (lasciandola non si accende su un
+                // elemento che sta sparendo).
+                if vista == "agenti": Rectangle {
                     width: parent.width;
                     height: parent.height;
-                    collegato: root.claude-collegato;
-                    righe: root.claude-righe;
-                    cinque-ore: root.claude-cinque-ore;
-                    sette-giorni: root.claude-sette-giorni;
-                    soglia: root.claude-soglia;
-                    spesa: root.claude-spesa;
-                    spesa-nota: root.claude-spesa-nota;
-                    dettagli-visibili: root.claude-dettagli;
-                    fuoco-dettagli: da-tastiera && zona == Zona.contenuto && vista == "agenti" && fuoco-dettagli-valido;
-                    // Come nelle altre viste, il fuoco chiede anche la vista (lasciandola non si
-                    // accende su un elemento che sta sparendo).
-                    fuoco: da-tastiera && zona == Zona.contenuto && vista == "agenti" && claude-collegato && !fuoco-dettagli-valido ? fuoco-sessione-valido : -1;
-                    fuoco-impostazioni: da-tastiera && zona == Zona.contenuto && vista == "agenti" && !claude-collegato && !fuoco-dettagli-valido;
-                    apri-sessione(id) => {
-                        da-tastiera = false;
-                        root.apri-sessione(id);
+
+                    TestataPagina {
+                        x: 0;
+                        y: 0;
+                        width: parent.width;
+                        titolo: root.elenco-sintesi.titolo;
+                        sotto: root.elenco-sintesi.sotto;
+                        tono: root.elenco-sintesi.tono;
+                        l1: root.elenco-sintesi.l1;
+                        l2: root.elenco-sintesi.l2;
+                        spesa: root.elenco-sintesi.spesa;
+                        spesa-nota: root.elenco-sintesi.spesa-nota;
+                        azione-testo: root.elenco-sintesi.azione-testo;
+                        fuoco-azione: da-tastiera && zona == Zona.contenuto && vista == "agenti" && root.elenco-lato-valido < 0;
+                        azione => {
+                            da-tastiera = false;
+                            root.azione-pagina("agenti", root.elenco-sintesi.azione-id, "");
+                        }
                     }
-                    gestisci => {
-                        da-tastiera = false;
-                        root.gestisci-claude();
+
+                    if root.elenco-pieno: ImpiantoElencoDettaglio {
+                        x: 0;
+                        y: 0;
+                        width: parent.width;
+                        height: parent.height;
+                        righe: root.elenco-righe;
+                        attese: root.attese;
+                        fuoco: root.elenco-riga;
+                        lato: root.elenco-lato-valido;
+                        con-fuoco: da-tastiera && zona == Zona.contenuto && vista == "agenti";
+                        // Il clic su una riga la sceglie: il dettaglio è il suo, nessun evento a Rust.
+                        scelta(i) => {
+                            da-tastiera = false;
+                            zona = Zona.contenuto;
+                            root.elenco-fuoco = i;
+                            root.elenco-lato = 0;
+                        }
+                        azione(azione, riga) => {
+                            da-tastiera = false;
+                            root.azione-pagina("agenti", azione, riga);
+                        }
                     }
-                    dettagli => {
-                        da-tastiera = false;
-                        root.apri-dettagli-claude();
+
+                    if !root.elenco-pieno: StatoPagina {
+                        x: 0;
+                        y: 48px;
+                        width: parent.width;
+                        height: parent.height - self.y;
+                        stato: root.elenco-stato;
+                        con-fuoco: da-tastiera && zona == Zona.contenuto && vista == "agenti" && root.elenco-lato-valido >= 0;
+                        azione => {
+                            da-tastiera = false;
+                            root.azione-pagina("agenti", root.elenco-stato.azione-id, "");
+                        }
                     }
                 }
 
