@@ -50,6 +50,12 @@ fn id_stanza(r: &Room) -> &str {
     if r.area_id.is_empty() { FILTRO_ALTRO } else { r.area_id.as_str() }
 }
 
+/// C'è almeno un preferito che non è una scena (le scene preferite stanno nella fila SCENE): solo
+/// allora «Preferiti» è un filtro e la pagina si apre lì.
+fn ci_sono_preferiti(menu: &MenuData) -> bool {
+    menu.favorites.iter().any(|e| !matches!(e, AppEntity::Scene(_)))
+}
+
 /// La stanza di un filtro (`None` per i filtri della casa e per una stanza sparita).
 fn stanza_di<'a>(menu: &'a MenuData, filtro: &str) -> Option<&'a Room> {
     menu.rooms.iter().find(|r| id_stanza(r) == filtro)
@@ -69,7 +75,7 @@ pub fn filtri(menu: &MenuData, accese: usize, icone: &HashMap<String, String>) -
         narratore: nome.into(),
     };
     let mut v = Vec::with_capacity(menu.rooms.len() + 3);
-    if !menu.favorites.is_empty() {
+    if ci_sono_preferiti(menu) {
         v.push(semplice(FILTRO_PREFERITI, "Preferiti", ICONA_PREFERITI));
     }
     v.push(FiltroUi {
@@ -100,7 +106,7 @@ pub fn filtri(menu: &MenuData, accese: usize, icone: &HashMap<String, String>) -
 /// Il filtro con cui si apre la pagina: «Preferiti» se l'utente ne ha scelti, altrimenti «Tutta la
 /// casa» (decisione di Paolo).
 pub fn filtro_iniziale(menu: &MenuData) -> &'static str {
-    if menu.favorites.is_empty() { FILTRO_TUTTA } else { FILTRO_PREFERITI }
+    if ci_sono_preferiti(menu) { FILTRO_PREFERITI } else { FILTRO_TUTTA }
 }
 
 /// Il filtro scelto se esiste ancora (una stanza nascosta in Home Assistant sparisce, i preferiti
@@ -108,7 +114,7 @@ pub fn filtro_iniziale(menu: &MenuData) -> &'static str {
 pub fn filtro_valido(menu: &MenuData, scelto: &str) -> String {
     let c_e = match scelto {
         FILTRO_LUCI | FILTRO_TUTTA => true,
-        FILTRO_PREFERITI => !menu.favorites.is_empty(),
+        FILTRO_PREFERITI => ci_sono_preferiti(menu),
         altro => stanza_di(menu, altro).is_some(),
     };
     if c_e { scelto.to_owned() } else { filtro_iniziale(menu).to_owned() }
@@ -164,8 +170,13 @@ fn lettura_numerica(p: &Preferito) -> Option<String> {
     Some(match unita {
         u if u.starts_with('°') => gradi(valore),
         "" => numero.to_owned(),
-        "%" => format!("{numero} %"),
-        u => format!("{numero} {u}"),
+        "%" => format!("{} %", valore.round() as i64),
+        u => {
+            // Al più un decimale, con la virgola, come i gradi.
+            let decimi = (valore * 10.0).round() / 10.0;
+            let testo = if decimi.fract() == 0.0 { format!("{}", decimi as i64) } else { format!("{decimi:.1}") };
+            format!("{} {u}", testo.replace('.', ","))
+        }
     })
 }
 
@@ -251,7 +262,8 @@ type Azione = (&'static str, &'static str, bool, bool);
 pub fn sintesi(stato: &StatoConnessione, r1: &R1, filtro: &str, menu: Option<&MenuData>, accese: usize, dati_delle: Option<&str>) -> SintesiUi {
     let (tono, titolo, sotto, azione): (Tono, String, String, Option<Azione>) = match (stato, menu) {
         (StatoConnessione::NonConfigurato, _) => (Tono::Vuoto, r1.fatto.clone(), String::new(), None),
-        (StatoConnessione::InConnessione, _) | (StatoConnessione::Connesso, None) => (Tono::Calmo, r1.fatto.clone(), String::new(), None),
+        // In connessione con dati vecchi (a ogni tentativo): come scollegata con dati, più sotto.
+        (StatoConnessione::InConnessione, None) | (StatoConnessione::Connesso, None) => (Tono::Calmo, r1.fatto.clone(), String::new(), None),
         (StatoConnessione::Connesso, Some(m)) => match stanza_di(m, filtro) {
             Some(r) => {
                 let n = r.entities.len();
@@ -301,7 +313,9 @@ pub fn stato(stato: &StatoConnessione, menu: Option<&MenuData>) -> StatoPaginaUi
         (StatoConnessione::NonConfigurato, _) => {
             frase(TipoStatoPaginaUi::Vuoto, "Collega la casa", "Qui accendi luci e scene di Home Assistant.", (COLLEGA, "Collega"))
         }
-        (StatoConnessione::InConnessione, _) | (StatoConnessione::Connesso, None) => {
+        // Con dati vecchi la pagina resta piena anche mentre ci si riconnette (nessuna griglia che
+        // sparisce e torna a ogni tentativo): vale il ramo «scollegata con dati» qui sotto.
+        (StatoConnessione::InConnessione, None) | (StatoConnessione::Connesso, None) => {
             frase(TipoStatoPaginaUi::PrimoAvvio, "Mi collego alla casa", "", ("", ""))
         }
         (StatoConnessione::Connesso, Some(m)) => {
@@ -398,6 +412,19 @@ mod test {
         assert_eq!(id, [FILTRO_LUCI, FILTRO_TUTTA, "a0", "a1"], "nessun «Preferiti» se l'utente non ne ha scelti");
         assert_eq!(filtro_iniziale(&senza), FILTRO_TUTTA);
         assert_eq!((f[0].numero.as_str(), f[0].narratore.as_str()), ("0", "Luci accese, nessuna"));
+
+        // Con sole scene fra i preferiti: nessun «Preferiti», si parte da «Tutta la casa»; le scene
+        // restano nella fila SCENE.
+        let mut solo_scene = casa(false);
+        solo_scene.favorites = vec![scena("scene.sera")];
+        let id: Vec<String> = filtri(&solo_scene, 0, &HashMap::new()).iter().map(|f| f.id.to_string()).collect();
+        assert_eq!(id, [FILTRO_LUCI, FILTRO_TUTTA, "a0", "a1"]);
+        assert_eq!(filtro_iniziale(&solo_scene), FILTRO_TUTTA);
+        assert_eq!(filtro_valido(&solo_scene, FILTRO_PREFERITI), FILTRO_TUTTA);
+        assert_eq!(ids(&scene(&solo_scene, FILTRO_TUTTA)), ["scene.sera"]);
+        // Una scena e una luce fra i preferiti: «Preferiti» c'è (per la luce).
+        solo_scene.favorites.push(luce("light.a", true));
+        assert_eq!(filtro_iniziale(&solo_scene), FILTRO_PREFERITI);
     }
 
     /// C7: l'icona di un filtro è un indice (le stanze, quella scelta dall'utente o quella
@@ -477,8 +504,11 @@ mod test {
         assert_eq!(c(&pref(sensore("sensor.t", "-3", Some("°C")))).valore, "-3°");
         let um = c(&pref(sensore("sensor.u", "48", Some("%"))));
         assert_eq!((um.valore.as_str(), um.stato.as_str(), um.genere), ("48 %", "Nome sensor.u", GenereUi::Goccia));
-        assert_eq!(c(&pref(sensore("sensor.u", "48.5", Some("%")))).valore, "48,5 %");
+        assert_eq!(c(&pref(sensore("sensor.u", "48.5", Some("%")))).valore, "49 %", "la percentuale è un intero");
+        assert_eq!(c(&pref(sensore("sensor.u", "48.37", Some("%")))).valore, "48 %");
         assert_eq!(c(&pref(sensore("sensor.e", "0.5", Some("kWh")))).valore, "0,5 kWh");
+        assert_eq!(c(&pref(sensore("sensor.e", "1234.56", Some("kWh")))).valore, "1234,6 kWh", "al più un decimale");
+        assert_eq!(c(&pref(sensore("sensor.e", "12.0", Some("W")))).valore, "12 W");
         assert_eq!(c(&pref(sensore("sensor.n", "7", None))).valore, "7");
         // Un sensore con una parola (non un numero) è una lettura senza valore.
         let parola = c(&pref(sensore("sensor.m", "Piove", None)));
@@ -680,9 +710,19 @@ mod test {
             (TipoStatoPaginaUi::Vuoto, "Collega la casa".into(), "Qui accendi luci e scene di Home Assistant.".into(), COLLEGA.into(), "Collega".into())
         );
         // In connessione (o connessa ma senza ancora i dati): primo avvio, nessuna azione.
-        for s in [stato(&S::InConnessione, None), stato(&S::Connesso, None), stato(&S::InConnessione, Some(&m))] {
+        for s in [stato(&S::InConnessione, None), stato(&S::Connesso, None)] {
             assert_eq!(v(&s), (TipoStatoPaginaUi::PrimoAvvio, "Mi collego alla casa".into(), "".into(), "".into(), "".into()));
         }
+        // Riconnessione con dati vecchi (casa-core dice «in connessione» a ogni tentativo): la pagina
+        // resta piena, la griglia non sparisce e non torna.
+        assert_eq!(stato(&S::InConnessione, Some(&m)).tipo, TipoStatoPaginaUi::Pieno);
+        assert_eq!(stato(&S::InConnessione, Some(&m)), stato(&S::Errore("x".into()), Some(&m)));
+        // E la sintesi è quella dello scollegato con dati: «dati delle», «Riprova».
+        let r1 = R1 { fatto: "Scollegata".into(), valore: String::new() };
+        let con = |s: &S| sintesi(s, &r1, FILTRO_TUTTA, Some(&m), 2, Some("10:42"));
+        let s = con(&S::InConnessione);
+        assert_eq!((s.sotto.as_str(), s.azione_id.as_str(), s.azione_primaria), ("dati delle 10:42", RIPROVA, false));
+        assert_eq!(s, con(&S::Errore("x".into())));
         // Scollegata senza dati: fuori servizio con la frase dell'errore, «Riprova» o «Collega».
         assert_eq!(
             v(&stato(&S::Errore("timeout".into()), None)),
