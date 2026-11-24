@@ -124,6 +124,22 @@ Stato dei punti di F1 e rimandati nuovi della fetta F2 (registro di lavoro `.sup
 - Task 8: O1, la regola «una volta sola» di `permesso-chiesto` dipende da `vista_claude` falso a ogni apertura: commento o `debug_assert!` in `pannello_aperto`.
 - Task 9: misura a riposo del pannello (con la finestra visibile) più alta di 0,02 punti di CPU di F1 a parità di sessione; da riguardare se cresce.
 
+### Esito della revisione finale (24/11/2026)
+
+La revisione è conforme alla spec. Ha trovato un solo Important, I1: nessun test vedeva «Consenti» spostarsi dentro la vista. È chiuso in 590a0b1 con `consenti_a_posto_fisso_col_testo_che_cambia`, ricontrollato su Opus. Nella stessa ondata sono chiusi:
+- **m1:** nella riga col permesso si accorcia prima il nome;
+- **m5:** il commento della difesa in più.
+
+Le mutazioni P e O e lo slittamento di 26 px sono tutti uccisi.
+
+Rimandati:
+- **m2 (preesistente, F1):** la carta Agenti dice «Tocca a te» con la capsula «Aspetta», mentre la pagina dice «1 ti aspetta / Chiede: …». Da allineare in F3, `moduli/agenti.rs:77`.
+- **m3:** CPU del pannello fermo +0,02 punti. L'ipotesi è l'albero più grande, cioè i due `Permesso` sempre vivi. Va misurata prima di F3 con una build usa e getta senza i due `Permesso`. Nella stessa occasione va fatta la misura mancante della pillola a riposo, a schermo sbloccato (`f9-frames.ps1 -Scenario riposo`).
+- **Test di m1:**
+  - nessun test protegge le righe senza permesso dalla regola nuova (mutazione R2b sopravvissuta);
+  - la stima di `misura.rs` (13 px meno 3 px di margine, Inter Medium contro il peso di base) non vede un taglio sotto i 3,6 px.
+- **Fuori da F2:** la build dei test stampa l'avviso `unused dependency notify-rust` (cargo 1.100), preesistente da `a8d917f`.
+
 ### Per la revisione finale
 
 - Task 3: mutazioni non eseguite D2, E, F, G, H, K, L, N, O, P, R (patch in `scratchpad\mut3p\`, `rerev3b.sh`): provare per prime P (posto invisibile di «Consenti» cliccabile) e O (posto di «Nega» che si sposta). Posizioni durante lo scivolamento di 26 px in 280 ms dalla Panoramica non verificate.
