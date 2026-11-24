@@ -1,17 +1,30 @@
-//! Le pagine sugli impianti di F3 nel ponte (ridisegno F3, Task 4b e 5): le pagine Casa e
-//! Collegamenti sull'impianto Comandi, sugli stessi modelli (una sola pagina alla volta).
+//! Le pagine sugli impianti di F3 nel ponte (ridisegno F3, Task 4b, 5 e 7): le pagine Casa e
+//! Collegamenti sull'impianto Comandi, sugli stessi modelli (una sola pagina alla volta), e la
+//! pagina PC sull'impianto Misure.
 //!
-//! Leggerezza (spec §3): i modelli della pagina (`comandi_*`) si riempiono solo a pagina aperta
-//! (`pagina_comandi`), si riscrivono solo le righe cambiate (`aggiorna_modello`) e le proprietà
-//! solo se cambiano (`scrivi_se_cambia`); lasciata la pagina si svuotano. Ogni dato della casa che
-//! cambia passa da `casa_cambiata` (pre-flight C10): la pagina, se aperta, e la carta.
+//! Leggerezza (spec §3): i modelli della pagina (`comandi_*`, `misure_*`) si riempiono solo a
+//! pagina aperta (`pagina_aperta`), si riscrivono solo le righe cambiate (`aggiorna_modello`) e le
+//! proprietà solo se cambiano (`scrivi_se_cambia`); lasciata la pagina si svuotano. Ogni dato della
+//! casa che cambia passa da `casa_cambiata` (pre-flight C10): la pagina, se aperta, e la carta. Ogni
+//! campione del PC passa da `campione_pc`: la carta del PC e, se aperta, la pagina.
 
 use super::{aggiorna_modello, luci_accese_ora, ponte, scrivi_se_cambia, Ponte};
 use crate::moduli::pagina_casa::{self, FILTRO_ALTRO};
-use crate::moduli::{casa, collegamenti, pagina_collegamenti};
+use crate::moduli::pagina_pc::{self, Quarto, RighePc};
+use crate::moduli::{casa, collegamenti, pagina_collegamenti, pc};
+use crate::pc_stats::StatPc;
 use crate::{CardUi, FiltroUi, Pannello, SintesiUi, StatoPaginaUi};
 use casa_core::diagnosi::Contatore;
 use slint::{Model, ModelRc, SharedString};
+
+/// Un campione del PC come lo consegna il thread del pannello: i numeri, la CPU pronta (è una
+/// differenza fra due letture) e le fonti lente lette (dischi, reti e GPU, solo a pagina PC aperta;
+/// la GPU appena accesa dà il valore al campione dopo: fino ad allora non sono «lette»).
+pub(crate) struct CampionePc {
+    stat: StatPc,
+    cpu_pronta: bool,
+    lente_lette: bool,
+}
 
 /// Ciò che la pagina Casa scrive, calcolato coi dati di adesso (vedi `Ponte::pagina_casa`).
 struct PaginaCasa {
@@ -46,18 +59,25 @@ impl Ponte {
     }
 
     /// Il pannello mostra la vista `vista` (cambio di vista, apertura su una vista chiesta,
-    /// chiusura con ""): la pagina dei Comandi che si apre si scrive da capo, col filtro chiesto
-    /// prima dell'apertura o con quello iniziale; quella lasciata svuota i suoi modelli.
-    pub fn vista_comandi(&self, vista: &str) {
+    /// chiusura con ""): la pagina che si apre si scrive da capo (Casa col filtro chiesto prima
+    /// dell'apertura o con quello iniziale; il PC con l'ultimo campione); quella lasciata svuota i
+    /// suoi modelli.
+    pub fn vista_pagina(&self, vista: &str) {
         let nuova = match vista {
             "casa" => Some("casa"),
             "collegamenti" => Some("collegamenti"),
+            "pc" => Some("pc"),
             _ => None,
         };
-        if self.pagina_comandi.get() == nuova {
+        if self.pagina_aperta.get() == nuova {
             return;
         }
-        self.pagina_comandi.set(nuova);
+        self.pagina_aperta.set(nuova);
+        if self.misure_valori.row_count() + self.misure_righe.row_count() > 0 {
+            self.misure_valori.set_vec(Vec::new());
+            self.misure_righe.set_vec(Vec::new());
+        }
+        self.scrivi_pagina_pc();
         if self.comandi_filtri.row_count() + self.comandi_card.row_count() + self.comandi_scene.row_count() > 0 {
             self.comandi_filtri.set_vec(Vec::new());
             self.comandi_card.set_vec(Vec::new());
@@ -65,8 +85,9 @@ impl Ponte {
         }
         *self.filtro_casa.borrow_mut() = None;
         self.filtro_mostrato.borrow_mut().clear();
-        if nuova.is_none() {
-            // I dati di nessuna pagina: l'impianto non mostra nulla finché una pagina non riscrive.
+        if !matches!(nuova, Some("casa" | "collegamenti")) {
+            // I dati di nessuna pagina dei Comandi: l'impianto non mostra nulla finché una sua
+            // pagina non riscrive.
             if let Some(p) = self.pannello.borrow().upgrade() {
                 scrivi_se_cambia(p.get_comandi_modulo(), SharedString::new(), |v| p.set_comandi_modulo(v));
             }
@@ -91,7 +112,7 @@ impl Ponte {
             eprintln!("filtro di una pagina sconosciuta: {modulo} {filtro}");
             return;
         }
-        if self.pagina_comandi.get() == Some("casa") {
+        if self.pagina_aperta.get() == Some("casa") {
             *self.filtro_casa.borrow_mut() = Some(filtro.to_owned());
             self.scrivi_pagina_casa();
         } else {
@@ -187,13 +208,13 @@ impl Ponte {
         }
     }
 
-    /// Scrive la pagina Casa, solo se è aperta (`pagina_comandi`) e solo ciò che è cambiato: i
+    /// Scrive la pagina Casa, solo se è aperta (`pagina_aperta`) e solo ciò che è cambiato: i
     /// modelli riga per riga, le proprietà se diverse. La card col fuoco resta la stessa per id (o
     /// la più vicina se la sua sparisce); un filtro nuovo riparte dalla prima. Un filtro scelto
     /// che non c'è più (una stanza nascosta in Home Assistant) torna a quello iniziale col fuoco sui
     /// filtri (Review Focus 1). Il filtro chiesto prima dell'apertura vale una volta sola.
     pub fn scrivi_pagina_casa(&self) {
-        if self.pagina_comandi.get() != Some("casa") {
+        if self.pagina_aperta.get() != Some("casa") {
             return;
         }
         let richiesto = self.filtro_richiesto.borrow_mut().take();
@@ -236,13 +257,13 @@ impl Ponte {
         }
     }
 
-    /// Scrive la pagina Collegamenti, solo se è aperta (`pagina_comandi`) e solo ciò che è cambiato:
+    /// Scrive la pagina Collegamenti, solo se è aperta (`pagina_aperta`) e solo ciò che è cambiato:
     /// le card riga per riga, le proprietà se diverse. Niente filtri né scene (l'impianto dà
     /// quattro colonne). La card col fuoco resta la stessa per id, o passa alla più vicina se la
     /// sua sparisce (un collegamento tolto dalle Impostazioni, Review Focus 1). Il titolo della
     /// sintesi è `r1.fatto` della carta; il sotto è il più usato o l'errore dell'ultimo lancio.
     pub fn scrivi_pagina_collegamenti(&self) {
-        if self.pagina_comandi.get() != Some("collegamenti") {
+        if self.pagina_aperta.get() != Some("collegamenti") {
             return;
         }
         let elenco = self.casa.con_config(|c| c.collegamenti.clone());
@@ -271,6 +292,108 @@ impl Ponte {
         scrivi_se_cambia(p.get_comandi_sintesi(), sintesi, |v| p.set_comandi_sintesi(v));
         scrivi_se_cambia(p.get_comandi_stato(), stato, |v| p.set_comandi_stato(v));
         scrivi_se_cambia(p.get_comandi_nota(), SharedString::new(), |v| p.set_comandi_nota(v));
+    }
+}
+
+impl Ponte {
+    /// Il pannello appena creato: i modelli dell'impianto Misure (la pagina PC).
+    pub(super) fn misure_nel_pannello(&self, p: &Pannello) {
+        p.set_misure_valori(ModelRc::from(self.misure_valori.clone()));
+        p.set_misure_righe(ModelRc::from(self.misure_righe.clone()));
+    }
+
+    /// Un campione del PC dal thread del pannello (uno ogni 2 s, solo a pannello aperto): il ponte
+    /// tiene l'ultimo, decide il quarto posto al primo campione con le fonti lente lette (poi resta
+    /// fermo fino alla chiusura del pannello: `gpu_pct: None` vuol dire anche «non ancora letta»),
+    /// aggiorna la carta del PC come prima e, a pagina aperta, scrive solo ciò che cambia.
+    pub fn campione_pc(&self, stat: StatPc, cpu_pronta: bool, lente_lette: bool) {
+        if lente_lette && self.pc_quarto.get() == Quarto::DaDecidere {
+            self.pc_quarto.set(pagina_pc::decidi_quarto(&stat, true));
+        }
+        // La carta PC dallo stesso campione (prima che la CPU sia pronta: «—»).
+        self.moduli_aggiorna_con("pc", pc::riassunto(cpu_pronta.then_some(&stat)));
+        *self.pc_campione.borrow_mut() = Some(CampionePc { stat, cpu_pronta, lente_lette });
+        self.scrivi_pagina_pc();
+    }
+
+    /// Il pannello si chiude: l'ultimo campione e la scelta del quarto posto si dimenticano
+    /// (pre-flight C13). La pagina riaperta aspetta un campione fresco.
+    pub(super) fn dimentica_campione_pc(&self) {
+        self.pc_campione.borrow_mut().take();
+        self.pc_quarto.set(Quarto::DaDecidere);
+    }
+
+    /// Il volume del PC come lo leggono le righe e la sintesi: livello 0..1 e muto; `None` senza
+    /// uscita audio (e fuori da Windows, dove il volume non c'è).
+    fn volume_pc(&self) -> Option<(f32, bool)> {
+        #[cfg(windows)]
+        {
+            self.volume.get().map(|s| (s.livello, s.muto))
+        }
+        #[cfg(not(windows))]
+        None
+    }
+
+    /// Le righe della pagina PC con lo stato che il ponte tiene (pre-flight C6): radio (col valore
+    /// voluto da un tocco), nome della rete, cuffie, volume, rifiuto. Fuori da Windows solo la rete.
+    fn righe_pc(&self, velocita: Option<(u64, u64)>) -> Vec<crate::RigaMisuraUi> {
+        #[cfg(windows)]
+        {
+            use crate::sistema::radio::TipoRadio;
+            let nome = self.nome_rete.borrow();
+            let cuffie = self.cuffie.borrow();
+            pagina_pc::righe(&RighePc {
+                windows: true,
+                velocita,
+                nome_rete: nome.as_deref(),
+                wifi: self.radio_mostrata(TipoRadio::WiFi),
+                bluetooth: self.radio_mostrata(TipoRadio::Bluetooth),
+                cuffie: cuffie.as_ref().map(|c| (c.nome.as_str(), c.percentuale)),
+                volume: self.volume_pc(),
+                errore_radio: self.errore_radio.get(),
+            })
+        }
+        #[cfg(not(windows))]
+        pagina_pc::righe(&RighePc {
+            windows: false,
+            velocita,
+            nome_rete: None,
+            wifi: None,
+            bluetooth: None,
+            cuffie: None,
+            volume: None,
+            errore_radio: None,
+        })
+    }
+
+    /// Scrive la pagina PC, solo se è aperta e solo ciò che è cambiato: le misure e le righe riga
+    /// per riga, sintesi e stato se diversi. Finché il quarto posto non è deciso (nessun campione
+    /// con le fonti lente) la pagina resta «Lettura in corso», senza misure né righe: un posto che
+    /// compare e poi sparisce sotto gli occhi non si mostra mai. Il traffico della rete solo da un
+    /// campione con le fonti lente.
+    pub fn scrivi_pagina_pc(&self) {
+        if self.pagina_aperta.get() != Some("pc") {
+            return;
+        }
+        let scelta = self.pc_quarto.get();
+        let campione = self.pc_campione.borrow();
+        let pronto = campione.as_ref().filter(|c| c.cpu_pronta).map(|c| &c.stat);
+        let sintesi = pagina_pc::sintesi(&pc::riassunto(pronto).r1, self.volume_pc());
+        let (misure, righe, stato) = match campione.as_ref().filter(|_| scelta != Quarto::DaDecidere) {
+            Some(c) => (
+                pagina_pc::misure(Some(&c.stat), c.cpu_pronta, c.lente_lette, scelta).to_vec(),
+                self.righe_pc(c.lente_lette.then_some((c.stat.rete_giu_bps, c.stat.rete_su_bps))),
+                pagina_pc::stato(Some(&c.stat), c.cpu_pronta),
+            ),
+            None => (Vec::new(), Vec::new(), pagina_pc::stato(None, false)),
+        };
+        drop(campione);
+
+        let righe = aggiorna_modello(&self.misure_valori, misure) + aggiorna_modello(&self.misure_righe, righe);
+        self.casa.diagnosi().conta_n(Contatore::ui_righe, righe);
+        let Some(p) = self.pannello.borrow().upgrade() else { return };
+        scrivi_se_cambia(p.get_misure_sintesi(), sintesi, |v| p.set_misure_sintesi(v));
+        scrivi_se_cambia(p.get_misure_stato(), stato, |v| p.set_misure_stato(v));
     }
 }
 
@@ -310,7 +433,7 @@ mod test {
         ponte.pannello_aperto(&p);
         ponte.ricevi(CasaEvento::Dati(Arc::new(m)));
         p.set_vista("casa".into());
-        ponte.vista_comandi("casa");
+        ponte.vista_pagina("casa");
         (spegni, ponte, p, (pillola, cartella))
     }
 
@@ -352,7 +475,7 @@ mod test {
 
         // A pagina chiusa: modelli vuoti, e un evento di HA che cambierebbe la pagina (la presa,
         // non la carta) non scrive nulla.
-        ponte.vista_comandi("panoramica");
+        ponte.vista_pagina("panoramica");
         assert_eq!((p.get_comandi_card().row_count(), p.get_comandi_filtri().row_count()), (0, 0), "nessuna riga in memoria");
         azzera();
         ponte.ricevi(CasaEvento::Dati(Arc::new(casa_di_prova(false, true))));
@@ -360,7 +483,7 @@ mod test {
         assert_eq!(p.get_comandi_card().row_count(), 0);
 
         // Riaperta: i dati di adesso; un filtro sparito (o mai esistito) torna all'iniziale.
-        ponte.vista_comandi("casa");
+        ponte.vista_pagina("casa");
         assert_eq!(p.get_comandi_card().row_data(2).map(|c| c.acceso), Some(true), "la presa accesa intanto");
         ponte.filtro_pagina("casa", "a1");
         assert_eq!(id_filtro(&p), "a1");
@@ -425,26 +548,26 @@ mod test {
     #[test]
     fn il_filtro_chiesto_dalla_carta_vale_una_volta() {
         let (_s, ponte, p, _t) = casa_aperta(casa_di_prova(true, false));
-        ponte.vista_comandi("panoramica");
+        ponte.vista_pagina("panoramica");
         p.invoke_filtro_pagina("casa".into(), FILTRO_LUCI.into());
         assert_eq!(p.get_comandi_card().row_count(), 0, "a pagina chiusa nulla si scrive");
-        ponte.vista_comandi("casa");
+        ponte.vista_pagina("casa");
         assert_eq!(id_filtro(&p), FILTRO_LUCI);
         assert_eq!(id_card(&p), ["light.a", "light.b", "light.c"]);
-        ponte.vista_comandi("panoramica");
-        ponte.vista_comandi("casa");
+        ponte.vista_pagina("panoramica");
+        ponte.vista_pagina("casa");
         assert_eq!(id_filtro(&p), FILTRO_PREFERITI, "di nuovo dal dock: l'iniziale");
         // La richiesta arrivata dopo l'apertura vale subito.
         p.invoke_filtro_pagina("casa".into(), FILTRO_LUCI.into());
         assert_eq!(id_filtro(&p), FILTRO_LUCI);
         // Un pannello chiuso dimentica la richiesta.
-        ponte.vista_comandi("panoramica");
+        ponte.vista_pagina("panoramica");
         ponte.filtro_pagina("casa", FILTRO_LUCI);
         ponte.pannello_chiuso();
         let p = Pannello::new().expect("pannello");
         ponte.riempi(&p);
         ponte.pannello_aperto(&p);
-        ponte.vista_comandi("casa");
+        ponte.vista_pagina("casa");
         assert_eq!(id_filtro(&p), FILTRO_PREFERITI);
     }
 
@@ -520,7 +643,7 @@ mod test {
         ponte.riempi(&p);
         ponte.pannello_aperto(&p);
         p.set_vista("collegamenti".into());
-        ponte.vista_comandi("collegamenti");
+        ponte.vista_pagina("collegamenti");
         (spegni, ponte, p, (pillola, cartella))
     }
 
@@ -583,8 +706,8 @@ mod test {
         ponte.tocca_card("collegamenti", "router");
         assert!(sotto(&p).starts_with("«Router» non si è aperto"), "{}", sotto(&p));
         // Lasciare la pagina e tornarci a pannello aperto non la toglie (è ancora vero).
-        ponte.vista_comandi("panoramica");
-        ponte.vista_comandi("collegamenti");
+        ponte.vista_pagina("panoramica");
+        ponte.vista_pagina("collegamenti");
         assert!(sotto(&p).starts_with("«Router» non si è aperto"), "{}", sotto(&p));
         ponte.pannello_chiuso();
         assert!(ponte.errore_lancio.borrow().is_none());
@@ -592,7 +715,7 @@ mod test {
         ponte.riempi(&p);
         ponte.pannello_aperto(&p);
         p.set_vista("collegamenti".into());
-        ponte.vista_comandi("collegamenti");
+        ponte.vista_pagina("collegamenti");
         assert_eq!(sotto(&p), "Più usato: NAS");
     }
 
@@ -616,14 +739,14 @@ mod test {
         let (righe, proprieta) = scritte();
         assert!(righe > 0, "le righe che cambiano si scrivono: {righe} righe, {proprieta} proprietà");
         // A pagina chiusa: modelli vuoti e nulla scritto.
-        ponte.vista_comandi("panoramica");
+        ponte.vista_pagina("panoramica");
         assert_eq!(p.get_comandi_card().row_count(), 0, "nessuna riga in memoria");
         azzera();
         ponte.elimina_collegamento("nas");
         assert_eq!(scritte().1, 0, "pagina chiusa: nessuna proprietà scritta");
         assert_eq!(p.get_comandi_card().row_count(), 0);
         // Riaperta: i dati di adesso.
-        ponte.vista_comandi("collegamenti");
+        ponte.vista_pagina("collegamenti");
         assert_eq!(id_card(&p), ["router", "pve"]);
     }
 
@@ -664,7 +787,7 @@ mod test {
         assert_eq!((p.get_comandi_filtri().row_count(), p.get_comandi_scene().row_count()), (0, 0));
         // Casa: le sue card, i suoi filtri, le sue scene; nessun collegamento.
         p.set_vista("casa".into());
-        ponte.vista_comandi("casa");
+        ponte.vista_pagina("casa");
         assert_eq!(p.get_comandi_modulo(), "casa");
         assert_eq!(id_card(&p), ["light.a", "light.b", "switch.p", "light.c"]);
         assert!(p.get_comandi_filtri().row_count() > 0 && p.get_comandi_scene().row_count() == 1);
@@ -673,7 +796,7 @@ mod test {
         assert_eq!(id_card(&p), ["light.a", "light.b", "switch.p", "light.c"]);
         // Di nuovo Collegamenti: i suoi dati, senza filtri né scene.
         p.set_vista("collegamenti".into());
-        ponte.vista_comandi("collegamenti");
+        ponte.vista_pagina("collegamenti");
         assert_eq!(p.get_comandi_modulo(), "collegamenti");
         assert_eq!(id_card(&p), ["nas", "pve", "router", "switch"]);
         assert_eq!((p.get_comandi_filtri().row_count(), p.get_comandi_scene().row_count()), (0, 0));
@@ -682,6 +805,189 @@ mod test {
         ponte.ricevi(CasaEvento::Dati(Arc::new(casa_di_prova(false, true))));
         assert_eq!(id_card(&p), ["nas", "pve", "router", "switch"]);
         assert_eq!((p.get_comandi_filtri().row_count(), p.get_comandi_scene().row_count()), (0, 0));
+    }
+
+    // ─── La pagina PC (ridisegno F3, Task 7) ───
+
+    const GB: u64 = 1 << 30;
+
+    /// Un campione del PC di prova: CPU, RAM a metà, disco, senza batteria; la GPU se data.
+    fn campione(cpu: f32, gpu: Option<f32>) -> crate::pc_stats::StatPc {
+        crate::pc_stats::StatPc {
+            cpu_pct: Some(cpu),
+            ram_usata: 8 * GB,
+            ram_totale: 16 * GB,
+            disco_usato: 294 * GB,
+            disco_totale: 476 * GB,
+            rete_giu_bps: 1_258_291,
+            rete_su_bps: 314_573,
+            batteria: None,
+            gpu_pct: gpu,
+        }
+    }
+
+    /// Il ponte di prova col pannello aperto sulla pagina PC (la vista e la pagina), senza campioni.
+    fn pc_aperta() -> (Spegni, Rc<Ponte>, Pannello, impl Sized) {
+        let (spegni, ponte, pillola, cartella) = ponte_di_prova();
+        let p = Pannello::new().expect("pannello");
+        ponte.riempi(&p);
+        ponte.pannello_aperto(&p);
+        p.set_vista("pc".into());
+        ponte.vista_pagina("pc");
+        (spegni, ponte, p, (pillola, cartella))
+    }
+
+    fn id_misure(p: &Pannello) -> Vec<String> {
+        p.get_misure_valori().iter().map(|m| if m.presente { m.id.to_string() } else { String::new() }).collect()
+    }
+
+    fn valore(p: &Pannello, id: &str) -> String {
+        p.get_misure_valori().iter().find(|m| m.id == id).map(|m| m.valore.to_string()).unwrap_or_default()
+    }
+
+    /// Review Focus 5 (pre-flight C11, C13; requisito a del controllore): due campioni uguali non
+    /// riscrivono nessuna riga né proprietà, un cambio vero sì. Finché il quarto posto non è deciso
+    /// (nessun campione con le fonti lente: anche il primo dopo l'accensione della GPU) la pagina
+    /// resta «Lettura in corso» senza misure: il quarto posto non compare per poi sparire. A pagina
+    /// chiusa un campione aggiorna solo la carta; riaprendo l'ultimo campione è già scritto; un
+    /// pannello nuovo non riusa il campione né la scelta del quarto posto.
+    #[test]
+    fn pagina_pc_scritta_solo_se_cambia() {
+        use crate::TipoStatoPaginaUi::{Pieno, PrimoAvvio};
+        let (_s, ponte, p, _t) = pc_aperta();
+        assert_eq!((p.get_misure_stato().tipo, p.get_misure_valori().row_count()), (PrimoAvvio, 0), "nessun campione");
+        assert_eq!(p.get_misure_stato().frase, "Lettura in corso");
+        // Fonti lente non ancora lette (la GPU appena accesa): la pagina aspetta, la carta no.
+        ponte.campione_pc(campione(12.0, None), true, false);
+        assert_eq!((p.get_misure_stato().tipo, p.get_misure_valori().row_count(), p.get_misure_righe().row_count()), (PrimoAvvio, 0, 0));
+        assert_eq!(ponte.registro().r1("pc").map(|r| r.fatto.clone()).as_deref(), Some("Tutto regolare"), "la carta segue il campione");
+        // Il primo campione con le fonti lente: la GPU c'è, il quarto posto è suo.
+        ponte.campione_pc(campione(12.0, Some(37.0)), true, true);
+        assert_eq!(p.get_misure_stato().tipo, Pieno);
+        assert_eq!(id_misure(&p), ["cpu", "memoria", "disco", "gpu"]);
+        assert!(p.get_misure_righe().row_count() > 0);
+        assert_eq!(p.get_misure_sintesi().titolo, "Tutto regolare");
+
+        azzera();
+        ponte.campione_pc(campione(12.0, Some(37.0)), true, true);
+        ponte.campione_pc(campione(12.0, Some(37.0)), true, true);
+        assert_eq!(scritte(), (0, 0), "nulla di cambiato, nulla di scritto");
+        // Un cambio vero: la CPU sale oltre la soglia (misura e titolo della sintesi).
+        ponte.campione_pc(campione(91.0, Some(37.0)), true, true);
+        let (righe, proprieta) = scritte();
+        assert!(righe > 0 && proprieta > 0, "un cambio si scrive: {righe} righe, {proprieta} proprietà");
+        assert_eq!((valore(&p, "cpu").as_str(), p.get_misure_sintesi().titolo.as_str()), ("91", "CPU 91 %"));
+        // Il quarto posto resta della GPU anche quando il campione non la porta.
+        ponte.campione_pc(campione(91.0, None), true, true);
+        assert_eq!((id_misure(&p)[3].as_str(), valore(&p, "gpu").as_str()), ("gpu", "—"));
+
+        // A pagina chiusa: modelli vuoti, un campione aggiorna solo la carta.
+        ponte.vista_pagina("panoramica");
+        assert_eq!((p.get_misure_valori().row_count(), p.get_misure_righe().row_count()), (0, 0), "nessuna riga in memoria");
+        // Un campione che lascia la carta com'era: nulla di scritto (nemmeno le carte).
+        azzera();
+        ponte.campione_pc(campione(91.0, Some(20.0)), true, false);
+        assert_eq!(scritte(), (0, 0), "pagina chiusa: nulla di scritto");
+        // Uno che cambia la carta: la carta sì, la pagina no.
+        ponte.campione_pc(campione(40.0, Some(20.0)), true, false);
+        assert_eq!(ponte.registro().r1("pc").map(|r| r.fatto.clone()).as_deref(), Some("Tutto regolare"), "la carta sì");
+        assert_eq!((p.get_misure_valori().row_count(), p.get_misure_righe().row_count(), scritte().1), (0, 0, 0), "la pagina no");
+        // Riaperta: l'ultimo campione è già scritto (senza fonti lente: il disco «Lettura in corso»).
+        ponte.vista_pagina("pc");
+        assert_eq!((p.get_misure_stato().tipo, valore(&p, "cpu").as_str(), valore(&p, "gpu").as_str()), (Pieno, "40", "20"));
+        assert_eq!(valore(&p, "disco"), "—");
+
+        // Un pannello nuovo: niente campione vecchio mostrato come attuale, quarto posto da decidere.
+        ponte.pannello_chiuso();
+        let p = Pannello::new().expect("pannello");
+        ponte.riempi(&p);
+        ponte.pannello_aperto(&p);
+        p.set_vista("pc".into());
+        ponte.vista_pagina("pc");
+        assert_eq!((p.get_misure_stato().tipo, p.get_misure_valori().row_count()), (PrimoAvvio, 0), "C13: un campione fresco");
+        ponte.campione_pc(campione(12.0, None), true, true);
+        assert_eq!(id_misure(&p), ["cpu", "memoria", "disco", ""], "né batteria né GPU: il posto vuoto");
+    }
+
+    /// Da `esito_a_vista_pc_lasciata_ignorato` (pre-flight C5): un rifiuto che arriva quando le
+    /// radio non sono più seguite (pagina PC lasciata, pannello chiuso) si ignora: nessuna pagina di
+    /// Windows, nessun rifiuto da mostrare al rientro. La scelta della pagina è pura e si prova su
+    /// ogni piattaforma; su Windows anche il ponte.
+    #[test]
+    fn esito_a_pagina_pc_lasciata_ignorato() {
+        use crate::connessioni::esito;
+        use crate::sistema::browser::PaginaWindows;
+        use crate::sistema::radio::{EsitoRadio, TipoRadio};
+        for e in [EsitoRadio::Negato, EsitoRadio::Errore, EsitoRadio::Fatto] {
+            assert_eq!(esito(false, TipoRadio::WiFi, e), None, "{e:?}: radio non seguite");
+        }
+        assert_eq!(esito(true, TipoRadio::WiFi, EsitoRadio::Negato), Some(PaginaWindows::ImpostazioniWifi));
+        assert_eq!(esito(true, TipoRadio::Bluetooth, EsitoRadio::Errore), Some(PaginaWindows::Bluetooth));
+        assert_eq!(esito(true, TipoRadio::Bluetooth, EsitoRadio::Fatto), None);
+        #[cfg(windows)]
+        {
+            use crate::sistema::radio::StatoRadio;
+            let (_s, ponte, p, _t) = pc_aperta();
+            ponte.campione_pc(campione(12.0, None), true, true);
+            *ponte.stati_radio.borrow_mut() = Some(vec![StatoRadio { tipo: TipoRadio::WiFi, acceso: true }]);
+            ponte.dimentica_radio();
+            for e in [EsitoRadio::Negato, EsitoRadio::Errore] {
+                assert_eq!(ponte.esito_radio_senza_aprire(TipoRadio::WiFi, e), None, "{e:?}: nessuna pagina");
+            }
+            assert_eq!(ponte.errore_radio.get(), None, "nessun rifiuto da mostrare al rientro");
+            let righe: Vec<_> = p.get_misure_righe().iter().collect();
+            assert!(righe.iter().all(|r| r.errore.is_empty()));
+            assert_eq!(righe[0].valore, "Lettura in corso", "il Wi-Fi non passa a «Non presente»");
+        }
+    }
+
+    /// Da `rifiuto_mostra_errore_e_stato_reale` (Review Focus 4 di M2, pre-flight C2 e C6; solo
+    /// Windows): il tocco sposta subito la riga sul valore voluto; Windows rifiuta → la riga torna
+    /// allo stato vero (l'ultimo letto), il rifiuto sta solo sulla riga della radio che ha fallito e
+    /// la pagina di Windows giusta è da aprire (qui non si apre: `esito_radio_senza_aprire`); un
+    /// tocco nuovo toglie il rifiuto. Nessuna radio vera si tocca.
+    #[cfg(windows)]
+    #[test]
+    fn rifiuto_della_radio_torna_allo_stato_vero() {
+        use crate::moduli::pagina_pc::{BLUETOOTH, WIFI};
+        use crate::sistema::browser::PaginaWindows;
+        use crate::sistema::radio::{EsitoRadio, StatoRadio, TipoRadio};
+        let (_s, ponte, p, _t) = pc_aperta();
+        ponte.campione_pc(campione(12.0, None), true, true);
+        *ponte.stati_radio.borrow_mut() = Some(vec![
+            StatoRadio { tipo: TipoRadio::WiFi, acceso: true },
+            StatoRadio { tipo: TipoRadio::Bluetooth, acceso: false },
+        ]);
+        ponte.scrivi_pagina_pc();
+        let riga = |id: &str| p.get_misure_righe().iter().find(|r| r.id == id).expect("riga");
+        assert!(riga(WIFI).acceso && !riga(BLUETOOTH).acceso);
+        let rifiuto = "Non riuscito: apro le Impostazioni di Windows";
+
+        // Il tocco: subito spento.
+        ponte.radio_voluta(TipoRadio::WiFi, false);
+        assert!(!riga(WIFI).acceso, "la riga si sposta subito");
+        assert!(riga(WIFI).errore.is_empty());
+        // Windows rifiuta: di nuovo acceso, il rifiuto solo sul Wi-Fi, la pagina del Wi-Fi.
+        assert_eq!(ponte.esito_radio_senza_aprire(TipoRadio::WiFi, EsitoRadio::Negato), Some(PaginaWindows::ImpostazioniWifi));
+        assert!(riga(WIFI).acceso, "di nuovo lo stato vero");
+        assert_eq!((riga(WIFI).errore.as_str(), riga(BLUETOOTH).errore.as_str()), (rifiuto, ""));
+        assert_eq!(p.get_misure_righe().iter().filter(|r| r.narratore.contains(rifiuto)).count(), 1, "Narrator lo legge una volta");
+        // Un errore del Bluetooth: la sua pagina, il rifiuto passa a lui.
+        assert_eq!(ponte.esito_radio_senza_aprire(TipoRadio::Bluetooth, EsitoRadio::Errore), Some(PaginaWindows::Bluetooth));
+        assert_eq!((riga(WIFI).errore.as_str(), riga(BLUETOOTH).errore.as_str()), ("", rifiuto));
+        // Un tocco nuovo toglie il rifiuto; un esito riuscito non fa nulla (lo stato vero arriva da sé).
+        ponte.radio_voluta(TipoRadio::Bluetooth, true);
+        assert!(riga(BLUETOOTH).acceso && riga(BLUETOOTH).errore.is_empty());
+        assert_eq!(ponte.esito_radio_senza_aprire(TipoRadio::Bluetooth, EsitoRadio::Fatto), None);
+        assert!(p.get_misure_righe().iter().all(|r| r.errore.is_empty()));
+        // Lo stato vero che arriva prende il posto del valore voluto (qui: il Bluetooth resta spento).
+        *ponte.stati_radio.borrow_mut() = Some(vec![
+            StatoRadio { tipo: TipoRadio::WiFi, acceso: true },
+            StatoRadio { tipo: TipoRadio::Bluetooth, acceso: false },
+        ]);
+        ponte.radio_volute.set([None; 2]);
+        ponte.scrivi_pagina_pc();
+        assert!(!riga(BLUETOOTH).acceso);
     }
 
     /// La pagina non configurata è un invito («Collega la casa» con «Collega»); scollegata con i

@@ -768,7 +768,7 @@ mod accessibilita {
     //! FE13/FE16: ruoli, nomi e stati che Narrator legge (UI Automation li riceve da AccessKit).
     use super::{etichetta_col_fuoco, piattaforma_di_prova, tasto};
     use crate::{
-        AspettoPillolaUi, FinestraImpostazioni, LivelloUi, Pannello, Pillola, PulsanteUi, SchedaBarraUi, StatPcUi,
+        AspettoPillolaUi, FinestraImpostazioni, LivelloUi, Pannello, Pillola, PulsanteUi, SchedaBarraUi,
         VoceAttesaUi,
     };
     use i_slint_backend_testing::{AccessibleRole, ElementHandle};
@@ -3184,52 +3184,6 @@ mod accessibilita {
                 })
                 .collect::<Vec<_>>(),
         ))
-    }
-
-    #[test]
-    fn la_vista_pc_dice_nome_e_valore() {
-        piattaforma_di_prova();
-        let p = pannello();
-        p.set_pc(StatPcUi { pronta: true, cpu: 0.12, cpu_testo: "12%".into(), ..Default::default() });
-        // Nella vista PC la rete è una velocità (testo).
-        p.set_vista("pc".into());
-        assert_eq!(elemento(&p, "RETE").accessible_role(), Some(AccessibleRole::Text));
-    }
-
-    /// M2 Task 1: la riga BATTERIA col glifo dice ancora nome, valore e stato per Narrator; il
-    /// glifo non è un elemento accessibile (il testo accanto dice tutto).
-    #[test]
-    fn riga_batteria_col_glifo() {
-        piattaforma_di_prova();
-        let p = pannello();
-        p.set_vista("pc".into());
-        p.set_pc(StatPcUi {
-            pronta: true,
-            ha_batteria: true,
-            batteria_testo: "18%".into(),
-            batteria_frazione: 0.18,
-            tinta_batteria: crate::TintaBatteriaUi::Informazione,
-            ..Default::default()
-        });
-        let riga = elemento(&p, "BATTERIA");
-        assert_eq!(riga.accessible_role(), Some(AccessibleRole::ProgressIndicator));
-        assert_eq!(riga.accessible_value().as_deref(), Some("18%"));
-        assert_eq!(riga.accessible_description().as_deref(), Some("A batteria"));
-        // Il glifo c'è (19 × 8 px), sta nella riga a sinistra del valore e non è accessibile: il
-        // test fallisce se la riga torna senza glifo.
-        let glifi: Vec<_> = ElementHandle::find_by_element_type_name(&p, "GlifoBatteria").collect();
-        assert_eq!(glifi.len(), 1, "un solo glifo nella riga BATTERIA");
-        assert_eq!((glifi[0].size().width, glifi[0].size().height), (19.0, 8.0));
-        assert_ne!(glifi[0].accessible_role(), Some(AccessibleRole::ProgressIndicator));
-        assert!(glifi[0].accessible_label().is_none(), "il glifo non ha un nome per Narrator");
-        let (riga_pos, glifo_pos) = (riga.absolute_position(), glifi[0].absolute_position());
-        assert!(
-            glifo_pos.x > riga_pos.x + riga.size().width / 2.0,
-            "il glifo sta nella colonna del valore, a destra"
-        );
-        // Senza batteria niente riga e niente glifo.
-        p.set_pc(StatPcUi { pronta: true, ..Default::default() });
-        assert_eq!(ElementHandle::find_by_element_type_name(&p, "GlifoBatteria").count(), 0);
     }
 
     #[test]
@@ -7426,83 +7380,6 @@ mod accessibilita {
             .count()
     }
 
-    /// Vista PC (D3 di Paolo): senza volume disponibile la riga non c'è (nessun elemento
-    /// «Volume», non una riga spenta); con il volume ci sono l'altoparlante (pulsante, muto sì/no
-    /// anche con Narrator) e il cursore (slider col valore).
-    #[test]
-    fn altoparlante_assente_senza_volume() {
-        piattaforma_di_prova();
-        let p = pannello();
-        p.set_vista("pc".into());
-        assert!(ElementHandle::find_by_accessible_label(&p, "RETE").next().is_some(), "vista PC caricata");
-        assert_eq!(elementi_volume(&p), 0, "senza volume nessun elemento «Volume»");
-
-        p.set_volume_disponibile(true);
-        p.set_volume(0.4);
-        // Lo stesso nome del pulsante della barra («Volume 40 %»): quello della vista ha anche la
-        // descrizione.
-        let altoparlante = ElementHandle::find_by_accessible_label(&p, "Volume 40 %")
-            .find(|e| e.accessible_description().as_deref() == Some("Disattiva l'audio"))
-            .expect("altoparlante della vista PC");
-        assert_eq!(altoparlante.accessible_role(), Some(AccessibleRole::Button));
-        assert_eq!(ElementHandle::find_by_accessible_label(&p, "Volume 40 %").count(), 2, "barra e vista, un solo formato");
-        let cursore = elemento(&p, "Volume");
-        assert_eq!(cursore.accessible_role(), Some(AccessibleRole::Slider));
-        assert_eq!(cursore.accessible_value().as_deref(), Some("40%"));
-        assert_eq!((cursore.accessible_value_minimum(), cursore.accessible_value_maximum()), (Some(0.0), Some(100.0)));
-        assert_eq!(cursore.size().width, 104.0, "largo quanto le barre delle altre righe");
-        let muti = std::rc::Rc::new(std::cell::RefCell::new(Vec::<bool>::new()));
-        let m = muti.clone();
-        p.on_muto_volume(move |si| m.borrow_mut().push(si));
-        altoparlante.invoke_accessible_default_action();
-        assert_eq!(*muti.borrow(), [true]);
-        p.set_volume_muto(true);
-        assert!(ElementHandle::find_by_accessible_label(&p, "Volume 40 %, muto").next().is_some());
-
-        p.set_volume_disponibile(false);
-        assert_eq!(elementi_volume(&p), 0, "dispositivo sparito: la riga sparisce");
-    }
-
-    /// Il cursore della vista PC da tastiera: il fuoco del contenuto è sul cursore, → due volte
-    /// danno +4 punti, Home e Fine 0 e 100, Invio muto sì/no; Narrator lo sposta di 2 punti.
-    #[test]
-    fn cursore_da_tastiera() {
-        use slint::platform::Key;
-        piattaforma_di_prova();
-        let p = pannello();
-        p.set_schede(schede());
-        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
-        p.global::<crate::Fuochi>().set_pronti(true);
-        p.set_volume_disponibile(true);
-        p.set_volume(0.40);
-        p.set_vista("pc".into());
-        let livelli = std::rc::Rc::new(std::cell::RefCell::new(Vec::<i32>::new()));
-        let l = livelli.clone();
-        p.on_imposta_volume(move |v| l.borrow_mut().push((v * 100.0).round() as i32));
-        let muti = std::rc::Rc::new(std::cell::RefCell::new(Vec::<bool>::new()));
-        let m = muti.clone();
-        p.on_muto_volume(move |si| m.borrow_mut().push(si));
-
-        tasto(&p, Key::RightArrow);
-        assert!(col_fuoco_pannello(&p).ends_with("::fuoco-volume"), "fuoco sul cursore: «{}»", col_fuoco_pannello(&p));
-        tasto(&p, Key::RightArrow);
-        assert_eq!(*livelli.borrow(), [42, 44], "+4 punti");
-        assert_eq!(elemento(&p, "Volume").accessible_value().as_deref(), Some("44%"), "il cursore segue subito");
-        tasto(&p, Key::LeftArrow);
-        tasto(&p, Key::Home);
-        tasto(&p, Key::End);
-        assert_eq!(*livelli.borrow(), [42, 44, 42, 0, 100]);
-        tasto(&p, Key::Return);
-        assert_eq!(*muti.borrow(), [true], "Invio: muto");
-        elemento(&p, "Volume").invoke_accessible_decrement_action();
-        assert_eq!(livelli.borrow().last(), Some(&98), "Narrator: 2 punti in meno");
-        assert_eq!(p.get_vista(), "pc", "le frecce non cambiano vista");
-        assert_eq!(
-            elemento(&p, "Volume").accessible_description().as_deref(),
-            Some("Invio: silenzia o riattiva"),
-            "Narrator sa che Invio sul cursore comanda il muto"
-        );
-    }
 
     /// Impostazioni › Isola: «Volume con la rotella sulla pillola» solo dove c'è il volume
     /// (Windows), acceso di serie; il commutatore lo dice a Rust.
@@ -7552,396 +7429,405 @@ mod accessibilita {
         crate::sistema::batterie_bt::LetturaBt { impronta: imp.into(), nome: nome.into(), percentuale, connesso: true }
     }
 
-    /// La riga «CUFFIE» sta in «Energia e audio»: valore e glifo con la tinta informazione a 20%
-    /// o meno; con più dispositivi «+N» e per Narrator l'elenco; senza dispositivi non c'è.
-    #[test]
-    fn riga_cuffie_nella_vista_pc() {
-        use crate::sistema::batterie_bt::{riga_cuffie, scrivi_cuffie};
-        piattaforma_di_prova();
-        let p = pannello_connessioni();
-        let cuffie = |p: &Pannello| ElementHandle::find_by_accessible_label(p, "CUFFIE").next();
-        assert!(cuffie(&p).is_none(), "senza lettura la riga non c'è");
-        scrivi_cuffie(&p, riga_cuffie(&[lettura_bt("a", "Cuffie finte", 18)]).as_ref());
-        let c = cuffie(&p).expect("riga");
-        assert_eq!(c.accessible_value().as_deref(), Some("18%"));
-        assert_eq!(c.accessible_description().as_deref(), Some("Cuffie finte al 18%"));
-        assert_eq!(p.get_cuffie_tinta(), crate::TintaBatteriaUi::Informazione);
-        assert_eq!(p.get_cuffie_dettaglio(), "Cuffie finte");
-        // Più dispositivi: il più scarico, «+1» e l'elenco per Narrator.
-        scrivi_cuffie(
-            &p,
-            riga_cuffie(&[lettura_bt("a", "Cuffie finte", 60), lettura_bt("b", "Mouse finto", 30)]).as_ref(),
-        );
-        let c = cuffie(&p).expect("riga");
-        assert_eq!(p.get_cuffie_dettaglio(), "Mouse finto +1");
-        assert_eq!(p.get_cuffie_tinta(), crate::TintaBatteriaUi::Normale);
-        assert_eq!(c.accessible_description().as_deref(), Some("Mouse finto al 30%, Cuffie finte al 60%"));
-        // Nessun dispositivo connesso con la batteria leggibile: la riga sparisce.
-        scrivi_cuffie(&p, None);
-        assert!(cuffie(&p).is_none());
+    // ─── Ridisegno F3, Task 7: la pagina PC sull'impianto Misure ───
+    //
+    // I test della vista PC di M2 rinascono qui (pre-flight C2): `la_vista_pc_dice_nome_e_valore`,
+    // `riga_batteria_col_glifo`, `riga_gpu_solo_se_c_e` → `misure_dicono_nome_e_valore` (e
+    // `pagina_pc::test::misure_per_posto`); `vista_pc_entra_nel_pannello`,
+    // `vista_pc_un_solo_stile_e_ritmo_4_8` → `misure_geometria`; `dettaglio_ram_e_disco_non_tagliato`
+    // → `misure_testi_lunghi_nei_posti`; `riquadri_wifi_e_bluetooth` → `righe_wifi_e_bluetooth`;
+    // `cursore_da_tastiera`, `altoparlante_assente_senza_volume` → `riga_volume_da_tastiera`;
+    // `riga_cuffie_nella_vista_pc` → `riga_cuffie`; `connessioni_da_tastiera` →
+    // `righe_wifi_e_bluetooth`, `rimandi_a_windows` e `misure_senza_radio_ne_volume`;
+    // `rifiuto_mostra_errore_e_stato_reale` e `esito_a_vista_pc_lasciata_ignorato` →
+    // `ponte::con_pagine::test`.
+
+    use crate::moduli::pagina_pc::{self, RighePc};
+    use crate::pc_stats::{LetturaBatteria, StatPc, StatoBatteria};
+
+    const GIB: u64 = 1 << 30;
+
+    /// Il campione pieno: CPU 12 %, RAM 7,7 di 16 GB, disco 182 GB liberi su 476, batteria in
+    /// carica all'84 %, GPU 37 %.
+    fn stat_pieno() -> StatPc {
+        StatPc {
+            cpu_pct: Some(12.0),
+            ram_usata: GIB * 77 / 10,
+            ram_totale: 16 * GIB,
+            disco_usato: 294 * GIB,
+            disco_totale: 476 * GIB,
+            rete_giu_bps: 1_258_291,
+            rete_su_bps: 314_573,
+            batteria: Some(LetturaBatteria { percentuale: 84.0, stato: StatoBatteria::InCarica }),
+            gpu_pct: Some(37.0),
+        }
     }
 
-    // ─── M2, Task 8: Wi-Fi, Bluetooth e icona della rete ───
+    /// Le righe di Windows con tutto: Wi-Fi acceso su «Casa» col traffico, Bluetooth spento,
+    /// volume al 40 %.
+    fn righe_piene() -> RighePc<'static> {
+        RighePc {
+            windows: true,
+            velocita: Some((1_258_291, 314_573)),
+            nome_rete: Some("Casa"),
+            wifi: Some((true, true)),
+            bluetooth: Some((true, false)),
+            cuffie: None,
+            volume: Some((0.4, false)),
+            errore_radio: None,
+        }
+    }
 
-    use crate::sistema::radio::{EsitoRadio, StatoRadio, TipoRadio};
+    /// Scrive la pagina PC come la scrive Rust (`pagina_pc`): misure, righe, stato e sintesi, e il
+    /// volume del pannello (che il cursore segue). Il quarto posto deciso dal campione stesso.
+    fn scrivi_pc(p: &Pannello, stat: &StatPc, righe: &RighePc) {
+        let scelta = pagina_pc::decidi_quarto(stat, true);
+        p.set_misure_valori(ModelRc::new(VecModel::from(pagina_pc::misure(Some(stat), true, true, scelta).to_vec())));
+        p.set_misure_righe(ModelRc::new(VecModel::from(pagina_pc::righe(righe))));
+        p.set_misure_stato(pagina_pc::stato(Some(stat), true));
+        let r1 = crate::moduli::R1 { fatto: "Tutto regolare".into(), valore: String::new() };
+        p.set_misure_sintesi(pagina_pc::sintesi(&r1, righe.volume));
+        p.set_volume_disponibile(righe.volume.is_some());
+        if let Some((livello, muto)) = righe.volume {
+            p.set_volume(livello);
+            p.set_volume_muto(muto);
+        }
+    }
 
-    /// Un pannello sulla vista PC con tutto: batteria, volume muto, connessioni con nome lungo,
-    /// rete veloce, Wi-Fi acceso e Bluetooth spento.
-    fn pannello_connessioni() -> Pannello {
+    /// Un pannello sulla pagina PC, la tastiera pronta, con queste misure e queste righe. Gli
+    /// eventi verso Rust: «radio {t} {acceso}», «pagina {i}», «volume {pct}», «muto {si}»,
+    /// «azione {modulo} {azione}», «chiudi».
+    fn pannello_pc(stat: &StatPc, righe: &RighePc) -> (Pannello, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
+        piattaforma_di_prova();
         let p = pannello();
         p.set_schede(schede());
         p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
         p.global::<crate::Fuochi>().set_pronti(true);
-        p.set_pc(StatPcUi {
-            pronta: true,
-            cpu: 0.5,
-            cpu_testo: "100%".into(),
-            ram: 0.6,
-            ram_testo: "100%".into(),
-            ram_dettaglio: "15,9 / 15,9 GB".into(),
-            disco: 0.7,
-            disco_testo: "100%".into(),
-            disco_dettaglio: "1023,9 / 1023,9 GB".into(),
-            rete_giu: "999,9 MB/s".into(),
-            rete_su: "999,9 MB/s".into(),
-            ha_batteria: true,
-            batteria_testo: "100%".into(),
-            batteria_frazione: 1.0,
-            in_carica: true,
-            ha_gpu: true,
-            gpu: 1.0,
-            gpu_testo: "100%".into(),
-            ..Default::default()
-        });
-        p.set_volume_disponibile(true);
-        p.set_volume(0.4);
-        p.set_volume_muto(true);
-        p.set_connessioni_disponibili(true);
-        p.set_rete_nota(true);
-        p.set_rete(crate::TipoReteUi::Wifi);
-        p.set_tacche(2);
-        p.set_nome_rete("Una rete di prova dal nome davvero lunghissimo".into());
-        crate::connessioni::scrivi_radio(
-            &p,
-            &[
-                StatoRadio { tipo: TipoRadio::WiFi, acceso: true },
-                StatoRadio { tipo: TipoRadio::Bluetooth, acceso: false },
-            ],
-        );
+        scrivi_pc(&p, stat, righe);
         p.set_vista("pc".into());
-        p
+        let eventi = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let (e1, e2, e3, e4, e5, e6) = (eventi.clone(), eventi.clone(), eventi.clone(), eventi.clone(), eventi.clone(), eventi.clone());
+        p.on_commuta_radio(move |t, a| e1.borrow_mut().push(format!("radio {t} {a}")));
+        p.on_apri_pagina(move |i| e2.borrow_mut().push(format!("pagina {i}")));
+        p.on_imposta_volume(move |v| e3.borrow_mut().push(format!("volume {}", (v * 100.0).round() as i32)));
+        p.on_muto_volume(move |si| e4.borrow_mut().push(format!("muto {si}")));
+        p.on_azione_pagina(move |m, a, _| e5.borrow_mut().push(format!("azione {m} {a}")));
+        p.on_chiudi(move || e6.borrow_mut().push("chiudi".into()));
+        (p, eventi)
     }
 
-    /// Il pannello è 820 × 340 fisso (corpo 752 × 224): nella vista PC, col caso più pieno (batteria, volume muto,
-    /// rete veloce, nome della rete lungo, riga del rifiuto, GPU al 100%), nulla esce dalla card né
-    /// dalla sua colonna.
+    fn impianto_misure(p: &Pannello) -> ElementHandle {
+        ElementHandle::find_by_element_type_name(p, "ImpiantoMisure").next().expect("impianto Misure")
+    }
+
+    /// Gli elementi di `radice` con questo ruolo.
+    fn con_ruolo(radice: &ElementHandle, ruolo: AccessibleRole) -> Vec<ElementHandle> {
+        radice.query_descendants().find_all().into_iter().filter(|e| e.accessible_role() == Some(ruolo)).collect()
+    }
+
+    /// L'interruttore di una riga per il nome che comincia così («Wi-Fi», «Bluetooth»).
+    fn interruttore(p: &Pannello, nome: &str) -> ElementHandle {
+        con_ruolo(&impianto_misure(p), AccessibleRole::Switch)
+            .into_iter()
+            .find(|e| e.accessible_label().is_some_and(|l| l.starts_with(&format!("{nome}, "))))
+            .unwrap_or_else(|| panic!("nessun interruttore «{nome}»"))
+    }
+
+    fn eventi_pc(e: &std::rc::Rc<std::cell::RefCell<Vec<String>>>) -> Vec<String> {
+        e.borrow().clone()
+    }
+
+    /// Da `la_vista_pc_dice_nome_e_valore`, `riga_batteria_col_glifo` e `riga_gpu_solo_se_c_e` (e F1
+    /// Task 10): ogni carta è un gruppo col nome intero; la GPU sta nel dettaglio della CPU con la
+    /// batteria, al quarto posto senza; né l'una né l'altra: tre carte. Nessun nome per Narrator è
+    /// tutto maiuscolo (C12: tranne le sigle, che cominciano il nome) e nessun testo della pagina si
+    /// legge una seconda volta («MEMORIA» si vede, non si legge).
     #[test]
-    fn vista_pc_entra_nel_pannello() {
-        piattaforma_di_prova();
-        let p = pannello_connessioni();
-        p.set_errore_radio(true);
-        // Il caso più pieno anche per le cuffie: nome lungo e due dispositivi in più.
-        crate::sistema::batterie_bt::scrivi_cuffie(
-            &p,
-            crate::sistema::batterie_bt::riga_cuffie(&[
-                lettura_bt("a", "Cuffie finte con un nome lunghissimo", 18),
-                lettura_bt("b", "Mouse finto", 50),
-                lettura_bt("c", "Tastiera finta", 90),
-            ])
-            .as_ref(),
-        );
-        let vista = ElementHandle::find_by_element_type_name(&p, "VistaPc").next().expect("vista PC");
+    fn misure_dicono_nome_e_valore() {
+        let (p, _) = pannello_pc(&stat_pieno(), &righe_piene());
+        let carte: Vec<ElementHandle> = ElementHandle::find_by_element_type_name(&p, "CartaMisura").collect();
+        let nomi: Vec<String> = carte.iter().map(|c| c.accessible_label().unwrap_or_default().to_string()).collect();
+        assert_eq!(nomi, ["CPU, 12 %, GPU 37 %", "Memoria, 48 %, 7,7 di 16 GB", "Disco, 182 GB liberi su 476 GB", "Batteria, 84 %, In carica"]);
+        assert!(carte.iter().all(|c| c.accessible_role() == Some(AccessibleRole::Groupbox)));
+        for e in impianto_misure(&p).query_descendants().find_all() {
+            let nome = e.accessible_label().unwrap_or_default().to_string();
+            if e.accessible_role().is_none_or(|r| r == AccessibleRole::None) || nome.is_empty() {
+                continue;
+            }
+            let sigla = nome.starts_with("CPU, ") || nome.starts_with("GPU, ");
+            assert!(sigla || nome.chars().any(char::is_lowercase), "nome tutto maiuscolo per Narrator: «{nome}»");
+            assert!(!["CPU", "MEMORIA", "DISCO", "BATTERIA", "GPU"].contains(&nome.as_str()), "un'etichetta letta da sola: «{nome}»");
+        }
+
+        // Senza batteria: la GPU al quarto posto, la CPU senza dettaglio.
+        scrivi_pc(&p, &StatPc { batteria: None, ..stat_pieno() }, &righe_piene());
+        let nomi: Vec<String> = ElementHandle::find_by_element_type_name(&p, "CartaMisura").map(|c| c.accessible_label().unwrap_or_default().to_string()).collect();
+        assert_eq!(nomi, ["CPU, 12 %", "Memoria, 48 %, 7,7 di 16 GB", "Disco, 182 GB liberi su 476 GB", "GPU, 37 %"]);
+        // Né batteria né GPU: il quarto posto vuoto, nessuna carta e nessun nome per lui.
+        scrivi_pc(&p, &StatPc { batteria: None, gpu_pct: None, ..stat_pieno() }, &righe_piene());
+        assert_eq!(ElementHandle::find_by_element_type_name(&p, "CartaMisura").count(), 3);
+        assert!(ElementHandle::find_by_accessible_label(&p, "GPU, 37 %").next().is_none());
+    }
+
+    /// Da `vista_pc_entra_nel_pannello` e `vista_pc_un_solo_stile_e_ritmo_4_8` (decisioni di
+    /// Paolo): quattro carte 182 × 84 a y 48 del corpo, con 8 fra l'una e l'altra; due file di righe
+    /// alte 36 in due colonne da 372 da y 140 (Wi-Fi · Bluetooth, poi Volume · rimandi), tutto
+    /// dentro il corpo 752 × 224. Senza volume il suo posto resta vuoto e i rimandi non si spostano.
+    #[test]
+    fn misure_geometria() {
+        let (p, _) = pannello_pc(&stat_pieno(), &righe_piene());
+        let impianto = impianto_misure(&p);
+        let (o, lato) = (impianto.absolute_position(), impianto.size());
+        assert_eq!((o.x, o.y, lato.width, lato.height), (34.0, 44.0, 752.0, 224.0), "il corpo intero");
+        let carte: Vec<ElementHandle> = ElementHandle::find_by_element_type_name(&p, "CartaMisura").collect();
+        assert_eq!(carte.len(), 4);
+        for (i, c) in carte.iter().enumerate() {
+            let (a, l) = (c.absolute_position(), c.size());
+            assert_eq!((a.x - o.x, a.y - o.y, l.width, l.height), (i as f32 * 190.0, 48.0, 182.0, 84.0), "carta {i}");
+        }
+        let posti = |p: &Pannello| -> Vec<(f32, f32, f32, f32)> {
+            ElementHandle::find_by_element_type_name(p, "RigaMisura")
+                .map(|r| (r.absolute_position().x - o.x, r.absolute_position().y - o.y, r.size().width, r.size().height))
+                .collect()
+        };
+        assert_eq!(posti(&p), [(0.0, 140.0, 372.0, 36.0), (380.0, 140.0, 372.0, 36.0), (0.0, 184.0, 372.0, 36.0), (380.0, 184.0, 372.0, 36.0)]);
+        // Nulla fuori dal corpo, nulla fuori dalla sua carta o dalla sua riga.
         let dentro = |contenitore: &ElementHandle, nome: &str| {
             let (cp, cs) = (contenitore.absolute_position(), contenitore.size());
             for e in contenitore.query_descendants().find_all() {
-                let (pos, lato) = (e.absolute_position(), e.size());
-                if lato.width <= 0.0 || lato.height <= 0.0 {
+                let (pos, l) = (e.absolute_position(), e.size());
+                if l.width <= 0.0 || l.height <= 0.0 || e.type_name().as_deref() == Some("Anello") {
                     continue;
                 }
-                let fuori = pos.x < cp.x - 0.5
-                    || pos.y < cp.y - 0.5
-                    || pos.x + lato.width > cp.x + cs.width + 0.5
-                    || pos.y + lato.height > cp.y + cs.height + 0.5;
-                assert!(
-                    !fuori,
-                    "{:?} «{}» esce da {nome}: {pos:?} {lato:?} fuori da {cp:?} {cs:?}",
-                    e.type_name(),
-                    e.accessible_label().unwrap_or_default()
-                );
+                let fuori = pos.x < cp.x - 0.5 || pos.y < cp.y - 0.5 || pos.x + l.width > cp.x + cs.width + 0.5 || pos.y + l.height > cp.y + cs.height + 0.5;
+                assert!(!fuori, "{:?} «{}» esce da {nome}: {pos:?} {l:?} fuori da {cp:?} {cs:?}", e.type_name(), e.accessible_label().unwrap_or_default());
             }
         };
-        dentro(&vista, "la vista PC");
-        let (pos, lato) = (vista.absolute_position(), vista.size());
-        // Dentro il corpo della cornice: 752 × 224 a (34, 44).
-        assert!(pos.x >= 34.0 && pos.y >= 44.0 && pos.x + lato.width <= 34.0 + 752.0 && pos.y + lato.height <= 44.0 + 224.0, "{pos:?} {lato:?}");
-        for colonna in ["Sistema", "Energia e audio", "Connessioni"] {
-            dentro(&elemento(&p, colonna), colonna);
+        dentro(&impianto, "il corpo");
+        for c in &carte {
+            dentro(c, "la sua carta");
         }
-        // La riga GPU (Task 10) c'è, è l'ultima della colonna «Sistema» e sta nella card.
-        let gpu = elemento(&p, "GPU");
-        let (gp, gs) = (gpu.absolute_position(), gpu.size());
-        let disco = elemento(&p, "DISCO");
-        assert!(gp.y >= disco.absolute_position().y + disco.size().height - 0.5, "GPU sotto il disco");
-        assert!(gp.y + gs.height <= pos.y + lato.height + 0.5, "GPU dentro la card");
-        // La riga del rifiuto c'è e il nome della rete si vede (accorciato).
-        assert!(ElementHandle::find_by_accessible_label(&p, "Non riuscito: apro le Impostazioni di Windows").next().is_some());
-        assert_eq!(
-            elemento(&p, "Wi-Fi").accessible_description().as_deref(),
-            Some("Una rete di prova dal nome davvero lunghissimo")
-        );
-        assert_eq!(
-            elemento(&p, "RETE").accessible_value().as_deref(),
-            Some("↓ 999,9 MB/s · ↑ 999,9 MB/s, Wi-Fi, 2 tacche su 3")
-        );
-    }
-
-    /// 18/11, R1-15 e R1-16: la vista PC ha un solo stile di etichetta (quelle delle righe, senza
-    /// l'intestazione in tondo sopra) e il ritmo a 4/8: righe alte 40, la rete 28.
-    #[test]
-    fn vista_pc_un_solo_stile_e_ritmo_4_8() {
-        piattaforma_di_prova();
-        let p = pannello_connessioni();
-        // Nessun testo di intestazione: i nomi dei gruppi li dice solo Narrator (groupbox).
-        let vista = ElementHandle::find_by_element_type_name(&p, "VistaPc").next().expect("vista PC");
-        for e in vista.query_descendants().find_all() {
-            let t = e.accessible_label().unwrap_or_default();
-            if ["Sistema", "Energia e audio", "Connessioni"].contains(&t.as_str()) {
-                assert_eq!(e.accessible_role(), Some(AccessibleRole::Groupbox), "«{t}» solo come gruppo, mai come testo");
-            }
+        for r in ElementHandle::find_by_element_type_name(&p, "RigaMisura") {
+            dentro(&r, "la sua riga");
         }
-        let (cpu, ram, disco, gpu) = (elemento(&p, "CPU"), elemento(&p, "RAM"), elemento(&p, "DISCO"), elemento(&p, "GPU"));
-        for (nome, riga) in [("CPU", &cpu), ("RAM", &ram), ("DISCO", &disco), ("GPU", &gpu)] {
-            assert_eq!(riga.size().height, 40.0, "la riga {nome} è alta 40");
-        }
-        assert_eq!(ram.absolute_position().y - cpu.absolute_position().y, 40.0, "passo di 40");
-        assert_eq!(elemento(&p, "RETE").size().height, 28.0);
-        // Il margine laterale è 16: l'etichetta parte 16 px dentro la colonna.
-        let colonna = elemento(&p, "Sistema");
-        let etichetta = cpu
-            .query_descendants()
-            .find_all()
-            .into_iter()
-            .map(|e| e.absolute_position().x - colonna.absolute_position().x)
-            .fold(f32::MAX, f32::min);
-        assert_eq!(etichetta, 16.0, "margine di 16");
+        // Senza volume: Wi-Fi, Bluetooth e i rimandi ai loro posti, il terzo vuoto.
+        scrivi_pc(&p, &stat_pieno(), &RighePc { volume: None, ..righe_piene() });
+        assert_eq!(posti(&p), [(0.0, 140.0, 372.0, 36.0), (380.0, 140.0, 372.0, 36.0), (380.0, 184.0, 372.0, 36.0)]);
     }
 
-    /// R1-4 (fix round 1): il dettaglio di RAM e disco entra intero, anche coi valori più larghi
-    /// («1023,9 / 1023,9 GB», «63,9 / 127,9 GB»), nello spazio fra margine e colonna del valore.
+    /// Da `riquadri_wifi_e_bluetooth` e `connessioni_da_tastiera`: Wi-Fi e Bluetooth sono
+    /// interruttori per Narrator col nome intero e lo stato; Narrator, il clic e Invio chiedono a
+    /// Rust il valore opposto (`commuta-radio`). Una radio «Non presente» non si comanda e da
+    /// tastiera non si raggiunge: Tab la salta.
     #[test]
-    fn dettaglio_ram_e_disco_non_tagliato() {
-        piattaforma_di_prova();
-        for (ram, disco) in [("63,9 / 127,9 GB", "1023,9 / 1023,9 GB"), ("15,9 / 15,9 GB", "1863,0 / 1863,0 GB")] {
-            let p = pannello_connessioni();
-            p.set_pc(StatPcUi {
-                pronta: true,
-                ram: 0.5,
-                ram_testo: "56%".into(),
-                ram_dettaglio: ram.into(),
-                disco: 0.5,
-                disco_testo: "65%".into(),
-                disco_dettaglio: disco.into(),
-                ..Default::default()
-            });
-            for (nome, dettaglio) in [("RAM", ram), ("DISCO", disco)] {
-                // Il Text vero del dettaglio e la sua misura sono nella stessa riga: stessa posizione.
-                // La riga per y e anche per x: un'altra colonna alla stessa altezza (CUFFIE accanto a
-                // DISCO) ha gli stessi id.
-                let riga = elemento(&p, nome);
-                let (y, x, larga) = (riga.absolute_position().y + 22.0, riga.absolute_position().x, riga.size().width);
-                let della_riga = |id: &str| {
-                    ElementHandle::find_by_element_id(&p, id)
-                        .find(|e| {
-                            let pos = e.absolute_position();
-                            (pos.y - y).abs() < 0.5 && pos.x >= x - 0.5 && pos.x < x + larga
-                        })
-                        .unwrap_or_else(|| panic!("nessun {id} nella riga {nome}"))
-                };
-                let (misura, vero) = (della_riga("Riga::misura"), della_riga("Riga::dettaglio-testo"));
-                assert!(
-                    misura.size().width <= vero.size().width + 0.01,
-                    "«{dettaglio}» largo {} in {} px: verrebbe accorciato",
-                    misura.size().width,
-                    vero.size().width
-                );
-            }
-        }
-    }
-
-    /// M2, Task 10: nella vista PC la riga «GPU» (indicatore col valore, barra come la CPU) c'è
-    /// solo se c'è il dato; senza (fuori da Windows, lettura fallita) nessuna riga, mai «0%».
-    #[test]
-    fn riga_gpu_solo_se_c_e() {
-        piattaforma_di_prova();
-        let p = pannello();
-        p.set_vista("pc".into());
-        p.set_pc(StatPcUi { pronta: true, ha_gpu: false, gpu: 0.37, gpu_testo: "37%".into(), ..Default::default() });
-        assert!(ElementHandle::find_by_accessible_label(&p, "GPU").next().is_none(), "senza dato niente riga");
-        p.set_pc(StatPcUi { pronta: true, ha_gpu: true, gpu: 0.37, gpu_testo: "37%".into(), ..Default::default() });
-        let gpu = elemento(&p, "GPU");
-        assert_eq!(gpu.accessible_role(), Some(AccessibleRole::ProgressIndicator));
-        assert_eq!(gpu.accessible_value().as_deref(), Some("37%"));
-        // Il testo «37%» si vede nella riga.
-        let testo = gpu
-            .query_descendants()
-            .find_all()
-            .into_iter()
-            .any(|e| e.accessible_label().as_deref() == Some("37%"));
-        assert!(testo, "il valore della GPU si vede");
-    }
-
-    /// Riquadri: interruttori per Narrator con lo stato; Bluetooth spento; senza radio
-    /// «Non presente» e non cliccabile. Fuori da Windows solo la rete.
-    #[test]
-    fn riquadri_wifi_e_bluetooth() {
-        piattaforma_di_prova();
-        let p = pannello_connessioni();
-        let wifi = elemento(&p, "Wi-Fi");
-        assert_eq!(wifi.accessible_role(), Some(AccessibleRole::Switch));
-        assert_eq!(wifi.accessible_checked(), Some(true));
-        let bt = elemento(&p, "Bluetooth");
-        assert_eq!(bt.accessible_role(), Some(AccessibleRole::Switch));
-        assert_eq!(bt.accessible_checked(), Some(false));
-        assert_eq!(bt.accessible_description().as_deref(), Some("Spento"));
-        let comandi = std::rc::Rc::new(std::cell::RefCell::new(Vec::<(i32, bool)>::new()));
-        let c = comandi.clone();
-        p.on_commuta_radio(move |t, a| c.borrow_mut().push((t, a)));
-        bt.invoke_accessible_default_action();
-        assert_eq!(*comandi.borrow(), [(1, true)]);
-        assert_eq!(bt.accessible_checked(), Some(true), "l'interruttore si sposta subito");
-
-        // Senza Bluetooth: «Non presente», non cliccabile.
-        crate::connessioni::scrivi_radio(&p, &[StatoRadio { tipo: TipoRadio::WiFi, acceso: false }]);
-        let bt = elemento(&p, "Bluetooth");
-        assert_eq!(bt.accessible_description().as_deref(), Some("Non presente"));
-        assert_eq!(bt.accessible_enabled(), Some(false));
-        assert_eq!(bt.accessible_checked(), Some(false));
-        bt.invoke_accessible_default_action();
-        assert_eq!(comandi.borrow().len(), 1, "una radio che manca non si comanda");
-        assert_eq!(elemento(&p, "Wi-Fi").accessible_description().as_deref(), Some("Spento"));
-
-        // Fuori da Windows (connessioni non disponibili): solo la rete, niente riquadri né righe.
-        p.set_connessioni_disponibili(false);
-        assert!(ElementHandle::find_by_accessible_label(&p, "Wi-Fi").next().is_none());
-        assert!(ElementHandle::find_by_accessible_label(&p, "Reti Wi-Fi ›").next().is_none());
-        assert_eq!(elemento(&p, "RETE").accessible_value().as_deref(), Some("↓ 999,9 MB/s · ↑ 999,9 MB/s"));
-    }
-
-    /// Review focus 4: Windows rifiuta lo spegnimento del Wi-Fi. Il riquadro si sposta subito su
-    /// spento; all'esito `Negato` compare la riga in ambra, il riquadro torna allo stato vero
-    /// (acceso, l'ultimo `StateChanged`) e si apre la pagina del Wi-Fi delle Impostazioni.
-    #[test]
-    fn rifiuto_mostra_errore_e_stato_reale() {
-        use crate::sistema::browser::PaginaWindows;
-        piattaforma_di_prova();
-        let p = pannello_connessioni();
-        let reali = [
-            StatoRadio { tipo: TipoRadio::WiFi, acceso: true },
-            StatoRadio { tipo: TipoRadio::Bluetooth, acceso: false },
-        ];
-        let comandi = std::rc::Rc::new(std::cell::RefCell::new(Vec::<(i32, bool)>::new()));
-        let c = comandi.clone();
-        p.on_commuta_radio(move |t, a| c.borrow_mut().push((t, a)));
-        let riga = |p: &Pannello| {
-            ElementHandle::find_by_accessible_label(p, "Non riuscito: apro le Impostazioni di Windows").next().is_some()
-        };
-
-        elemento(&p, "Wi-Fi").invoke_accessible_default_action();
-        assert_eq!(*comandi.borrow(), [(0, false)], "il comando: Wi-Fi spento");
-        assert_eq!(elemento(&p, "Wi-Fi").accessible_checked(), Some(false));
-        assert!(!riga(&p));
-
-        let pagina = crate::connessioni::esito(&p, Some(&reali), TipoRadio::WiFi, EsitoRadio::Negato);
-        assert_eq!(pagina, Some(PaginaWindows::ImpostazioniWifi), "si apre la pagina del Wi-Fi");
-        assert!(riga(&p), "la riga in ambra c'è");
-        assert_eq!(elemento(&p, "Wi-Fi").accessible_checked(), Some(true), "di nuovo acceso, lo stato vero");
-
-        // Un errore del Bluetooth apre la pagina del Bluetooth; un nuovo tocco toglie la riga.
-        assert_eq!(
-            crate::connessioni::esito(&p, Some(&reali), TipoRadio::Bluetooth, EsitoRadio::Errore),
-            Some(PaginaWindows::Bluetooth)
-        );
-        elemento(&p, "Bluetooth").invoke_accessible_default_action();
-        assert!(!riga(&p), "il tocco nuovo toglie la riga del rifiuto");
-        assert_eq!(crate::connessioni::esito(&p, Some(&reali), TipoRadio::Bluetooth, EsitoRadio::Fatto), None);
-        assert!(!riga(&p), "riuscito: nessuna riga");
-    }
-
-    /// Un rifiuto che arriva dopo aver lasciato la vista PC (radio non più seguite) si ignora:
-    /// nessuna riga in ambra al rientro, nessuna pagina aperta, i riquadri non diventano
-    /// «Non presente».
-    #[test]
-    fn esito_a_vista_pc_lasciata_ignorato() {
-        piattaforma_di_prova();
-        let p = pannello_connessioni();
-        let riga = |p: &Pannello| {
-            ElementHandle::find_by_accessible_label(p, "Non riuscito: apro le Impostazioni di Windows").next().is_some()
-        };
-        // Lasciata la vista: le radio sono dimenticate.
-        crate::connessioni::dimentica_radio(&p);
-        assert!(!p.get_radio_lette());
-        for esito in [EsitoRadio::Negato, EsitoRadio::Errore] {
-            assert_eq!(crate::connessioni::esito(&p, None, TipoRadio::WiFi, esito), None, "{esito:?}: nessuna pagina");
-        }
-        assert!(!p.get_errore_radio(), "nessuna riga in ambra da mostrare al rientro");
-        assert!(!p.get_radio_lette(), "i riquadri non passano a «Non presente»");
-        assert!(p.get_wifi_presente() && p.get_bt_presente(), "le radio non risultano sparite");
-        assert!(!riga(&p));
-    }
-
-    /// Vista PC da tastiera: dal volume Tab passa ai riquadri e alle righe (Wi-Fi, Bluetooth,
-    /// «Reti Wi-Fi ›», «Dispositivi Bluetooth ›») e poi al dock; Maiusc+Tab torna indietro. Le
-    /// frecce girano nella colonna; Invio commuta un riquadro o apre la pagina; Esc chiude il
-    /// pannello come prima.
-    #[test]
-    fn connessioni_da_tastiera() {
+    fn righe_wifi_e_bluetooth() {
         use slint::platform::Key;
-        piattaforma_di_prova();
-        let p = pannello_connessioni();
-        let eventi = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
-        let (e1, e2, e3) = (eventi.clone(), eventi.clone(), eventi.clone());
-        p.on_commuta_radio(move |t, a| e1.borrow_mut().push(format!("radio {t} {a}")));
-        p.on_apri_pagina(move |i| e2.borrow_mut().push(format!("pagina {i}")));
-        p.on_chiudi(move || e3.borrow_mut().push("chiudi".into()));
-        let ultimo = |e: &std::rc::Rc<std::cell::RefCell<Vec<String>>>| e.borrow().last().cloned().unwrap_or_default();
-
-        // Il contenuto parte dal volume; Tab: Wi-Fi (il fuoco vero sul riquadro), poi Bluetooth.
-        tasto(&p, Key::Tab);
-        assert!(col_fuoco_pannello(&p).ends_with("::fuoco-riquadro"), "fuoco sul riquadro: «{}»", col_fuoco_pannello(&p));
-        tasto(&p, Key::Tab);
+        let (p, eventi) = pannello_pc(&stat_pieno(), &righe_piene());
+        let wifi = interruttore(&p, "Wi-Fi");
+        assert_eq!(wifi.accessible_label().as_deref(), Some("Wi-Fi, acceso, Casa, 1,2 MB/s giù, 307,2 KB/s su"));
+        assert_eq!((wifi.accessible_checked(), wifi.accessible_enabled()), (Some(true), Some(true)));
+        let bt = interruttore(&p, "Bluetooth");
+        assert_eq!((bt.accessible_label().as_deref(), bt.accessible_checked()), (Some("Bluetooth, spento"), Some(false)));
+        // Narrator.
+        bt.invoke_accessible_default_action();
+        assert_eq!(eventi_pc(&eventi), ["radio 1 true"]);
+        // Il clic sulla riga del Wi-Fi.
+        let riga = ElementHandle::find_by_element_type_name(&p, "RigaMisura").next().expect("riga del Wi-Fi");
+        let centro = riga.absolute_position().x + riga.size().width / 2.0;
+        p.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: slint::LogicalPosition::new(centro, riga.absolute_position().y + 18.0), button: slint::platform::PointerEventButton::Left });
+        p.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: slint::LogicalPosition::new(centro, riga.absolute_position().y + 18.0), button: slint::platform::PointerEventButton::Left });
+        assert_eq!(eventi_pc(&eventi).last().map(String::as_str), Some("radio 0 false"), "il clic sulla riga");
+        // Invio: il fuoco del contenuto parte dalla prima riga, il Wi-Fi.
+        eventi.borrow_mut().clear();
         tasto(&p, Key::Return);
-        assert_eq!(*eventi.borrow(), ["radio 1 true"], "Invio sul Bluetooth (spento) lo accende");
-        // ↓ dal Bluetooth: «Dispositivi Bluetooth ›»; Invio apre la pagina del Bluetooth.
-        tasto(&p, Key::DownArrow);
-        assert!(col_fuoco_pannello(&p).ends_with("::fuoco-collegamento"), "fuoco sulla riga: «{}»", col_fuoco_pannello(&p));
-        tasto(&p, Key::Return);
-        assert_eq!(ultimo(&eventi), "pagina 1");
-        // ←: «Reti Wi-Fi ›»; Spazio apre la pagina Wi-Fi delle Impostazioni.
-        tasto(&p, Key::LeftArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Wi-Fi, acceso, Casa, 1,2 MB/s giù, 307,2 KB/s su");
+        assert_eq!(eventi_pc(&eventi), ["radio 0 false"]);
+        // → al Bluetooth, Invio lo accende; Tab lo stesso ordine.
+        tasto(&p, Key::RightArrow);
         tasto(&p, Key::Space);
-        assert_eq!(ultimo(&eventi), "pagina 0");
-        // ↑: di nuovo il Wi-Fi (Invio lo spegne).
-        tasto(&p, Key::UpArrow);
+        assert_eq!(eventi_pc(&eventi).last().map(String::as_str), Some("radio 1 true"));
+
+        // Senza Wi-Fi: «Non presente», non attivabile, Tab la salta.
+        scrivi_pc(&p, &stat_pieno(), &RighePc { wifi: Some((false, false)), ..righe_piene() });
+        let wifi = interruttore(&p, "Wi-Fi");
+        assert_eq!((wifi.accessible_label().as_deref(), wifi.accessible_enabled(), wifi.accessible_checked()), (Some("Wi-Fi, non presente"), Some(false), Some(false)));
+        eventi.borrow_mut().clear();
+        wifi.invoke_accessible_default_action();
+        assert!(eventi_pc(&eventi).is_empty(), "una radio che manca non si comanda");
+        p.set_misure_fuoco(0);
         tasto(&p, Key::Return);
-        assert_eq!(ultimo(&eventi), "radio 0 false");
-        // Maiusc+Tab dal Wi-Fi torna al volume.
+        assert_eq!(etichetta_col_fuoco(&p), "Bluetooth, spento", "il fuoco salta la radio che manca");
         con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
-        assert!(col_fuoco_pannello(&p).ends_with("::fuoco-volume"), "fuoco sul cursore: «{}»", col_fuoco_pannello(&p));
-        // Quattro Tab: Wi-Fi, Bluetooth, reti, dispositivi.
-        for _ in 0..4 {
-            tasto(&p, Key::Tab);
-        }
+        assert_eq!(etichetta_col_fuoco(&p), "Muto", "Maiusc+Tab dalla prima riga: l'azione della testata, non il Wi-Fi");
+    }
+
+    /// Da `cursore_da_tastiera` e `altoparlante_assente_senza_volume` (D3 di Paolo): sul cursore
+    /// ←/→ ±2 punti, Home e Fine 0 e 100, Invio muto sì/no; il cursore segue `volume` subito, senza
+    /// aspettare il modello; Narrator lo sposta di 2 punti; l'altoparlante fa muto sì/no. Senza
+    /// uscita audio nessun elemento «Volume» (né la riga né il pulsante della barra) e niente «Muto».
+    #[test]
+    fn riga_volume_da_tastiera() {
+        use slint::platform::Key;
+        let (p, eventi) = pannello_pc(&stat_pieno(), &righe_piene());
+        let cursore = elemento(&p, "Volume");
+        assert_eq!(cursore.accessible_role(), Some(AccessibleRole::Slider));
+        assert_eq!(cursore.accessible_value().as_deref(), Some("40 %"));
+        assert_eq!((cursore.accessible_value_minimum(), cursore.accessible_value_maximum()), (Some(0.0), Some(100.0)));
+        assert_eq!(cursore.accessible_description().as_deref(), Some("Invio: silenzia o riattiva"));
+        // Il fuoco sul cursore (terza riga, comando 0).
+        p.set_misure_fuoco(4);
+        tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Volume", "fuoco sul cursore");
+        tasto(&p, Key::RightArrow);
+        assert_eq!(elemento(&p, "Volume").accessible_value().as_deref(), Some("44 %"), "il cursore segue subito, senza il modello");
+        tasto(&p, Key::LeftArrow);
+        tasto(&p, Key::Home);
+        tasto(&p, Key::End);
         tasto(&p, Key::Return);
-        assert_eq!(ultimo(&eventi), "pagina 1", "l'ultima riga");
-        // Ancora Tab: il dock (le frecce lì muovono il fuoco, non la vista).
+        assert_eq!(eventi_pc(&eventi), ["volume 42", "volume 44", "volume 42", "volume 0", "volume 100", "muto true"]);
+        elemento(&p, "Volume").invoke_accessible_decrement_action();
+        assert_eq!(eventi_pc(&eventi).last().map(String::as_str), Some("volume 98"), "Narrator: 2 punti in meno");
+        elemento(&p, "Volume").invoke_accessible_increment_action();
+        assert_eq!(eventi_pc(&eventi).last().map(String::as_str), Some("volume 100"));
+        // L'altoparlante.
+        elemento(&p, "Disattiva l'audio").invoke_accessible_default_action();
+        assert_eq!(eventi_pc(&eventi).last().map(String::as_str), Some("muto true"));
+        assert_eq!(p.get_vista(), "pc", "le frecce non cambiano vista");
+
+        // Senza uscita audio: nessun elemento «Volume», nessun «Muto».
+        scrivi_pc(&p, &stat_pieno(), &RighePc { volume: None, ..righe_piene() });
+        assert_eq!(elementi_volume(&p), 0, "senza volume nessun elemento «Volume»");
+        assert!(ElementHandle::find_by_accessible_label(&p, "Muto").next().is_none());
+        assert!(ElementHandle::find_by_accessible_label(&p, "Disattiva l'audio").next().is_none());
+    }
+
+    /// Da `riga_cuffie_nella_vista_pc`: le cuffie lette entrando nella pagina stanno nella riga del
+    /// Bluetooth acceso («Cuffie 18 %» a vista, il loro nome per Narrator); a Bluetooth spento o
+    /// senza cuffie non si dicono.
+    #[test]
+    fn riga_cuffie() {
+        use crate::sistema::batterie_bt::riga_cuffie;
+        let c = riga_cuffie(&[lettura_bt("a", "Cuffie finte", 18), lettura_bt("b", "Mouse finto", 60)]).expect("cuffie");
+        let righe = RighePc { bluetooth: Some((true, true)), cuffie: Some((c.nome.as_str(), c.percentuale)), ..righe_piene() };
+        let (p, _) = pannello_pc(&stat_pieno(), &righe);
+        assert_eq!(interruttore(&p, "Bluetooth").accessible_label().as_deref(), Some("Bluetooth, acceso, Cuffie finte 18 %"));
+        assert_eq!(p.get_misure_righe().row_data(1).map(|r| r.valore.to_string()).as_deref(), Some("Cuffie 18 %"));
+        scrivi_pc(&p, &stat_pieno(), &RighePc { bluetooth: Some((true, false)), ..righe });
+        assert_eq!(interruttore(&p, "Bluetooth").accessible_label().as_deref(), Some("Bluetooth, spento"));
+        scrivi_pc(&p, &stat_pieno(), &RighePc { bluetooth: Some((true, true)), cuffie: None, ..righe_piene() });
+        assert_eq!(interruttore(&p, "Bluetooth").accessible_label().as_deref(), Some("Bluetooth, acceso"));
+    }
+
+    /// Da `connessioni_da_tastiera`: i rimandi sono due pulsanti («Reti Wi-Fi», «Dispositivi
+    /// Bluetooth») che aprono le Impostazioni; Invio sul primo apre la pagina 0, → e Invio sul
+    /// secondo la pagina 1, Narrator lo stesso; ↑ torna alla prima fila; Esc chiude il pannello.
+    #[test]
+    fn rimandi_a_windows() {
+        use slint::platform::Key;
+        let (p, eventi) = pannello_pc(&stat_pieno(), &righe_piene());
+        let reti = elemento(&p, "Reti Wi-Fi");
+        let bt = elemento(&p, "Dispositivi Bluetooth");
+        for r in [&reti, &bt] {
+            assert_eq!(r.accessible_role(), Some(AccessibleRole::Button));
+            assert_eq!(r.accessible_description().as_deref(), Some("Apre le Impostazioni di Windows"));
+        }
+        p.set_misure_fuoco(6);
+        tasto(&p, Key::Return);
+        assert_eq!(etichetta_col_fuoco(&p), "Reti Wi-Fi");
+        tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Dispositivi Bluetooth");
+        tasto(&p, Key::Return);
+        assert_eq!(eventi_pc(&eventi), ["pagina 0", "pagina 1"]);
+        bt.invoke_accessible_default_action();
+        assert_eq!(eventi_pc(&eventi).last().map(String::as_str), Some("pagina 1"));
+        // ↑ dai rimandi (seconda fila, a destra): il Bluetooth sopra; ↑ ancora: la testata.
+        tasto(&p, Key::UpArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Bluetooth, spento");
+        tasto(&p, Key::UpArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Muto");
+        tasto(&p, Key::Return);
+        assert_eq!(eventi_pc(&eventi).last().map(String::as_str), Some("azione pc pc.muto"));
+        // Tab dai rimandi: il dock (le frecce lì non comandano nulla della pagina).
+        p.set_misure_fuoco(7);
         tasto(&p, Key::Tab);
         tasto(&p, Key::RightArrow);
         assert_eq!(p.get_vista(), "pc");
-        assert_eq!(ultimo(&eventi), "pagina 1", "dal dock nessun comando delle connessioni");
-        // Esc fa quello che fa già nel pannello: lo chiude.
+        assert_eq!(eventi_pc(&eventi).last().map(String::as_str), Some("azione pc pc.muto"));
         tasto(&p, Key::Escape);
-        assert_eq!(ultimo(&eventi), "chiudi");
+        assert_eq!(eventi_pc(&eventi).last().map(String::as_str), Some("chiudi"));
     }
+
+    /// Review Focus 4: fuori da Windows e senza audio la pagina ha solo la riga della rete (un
+    /// testo), nessun comando: nessun interruttore, cursore o pulsante, e Tab passa dalla testata
+    /// alle schede senza fermarsi su nulla. Su Windows con le radio non ancora lette restano solo
+    /// i rimandi.
+    #[test]
+    fn misure_senza_radio_ne_volume() {
+        use slint::platform::Key;
+        let fuori = RighePc { windows: false, nome_rete: None, wifi: None, bluetooth: None, cuffie: None, volume: None, ..righe_piene() };
+        let (p, eventi) = pannello_pc(&stat_pieno(), &fuori);
+        let impianto = impianto_misure(&p);
+        for ruolo in [AccessibleRole::Switch, AccessibleRole::Slider, AccessibleRole::Button] {
+            assert!(con_ruolo(&impianto, ruolo).is_empty(), "{ruolo:?} senza nulla da comandare");
+        }
+        let rete = elemento(&p, "Rete, 1,2 MB/s giù, 307,2 KB/s su");
+        assert_eq!(rete.accessible_role(), Some(AccessibleRole::Text));
+        assert!(ElementHandle::find_by_element_type_name(&p, "TestataPagina").next().is_some(), "la testata c'è");
+        tasto(&p, Key::Tab);
+        assert!(etichetta_col_fuoco(&p).contains("scheda"), "Tab dritto alle schede: «{}»", etichetta_col_fuoco(&p));
+        con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
+        assert!(!etichetta_col_fuoco(&p).starts_with("Rete"), "all'indietro non si ferma sulla pagina: «{}»", etichetta_col_fuoco(&p));
+        tasto(&p, Key::Return);
+        assert!(eventi_pc(&eventi).iter().all(|e| !e.starts_with("radio") && !e.starts_with("pagina")));
+
+        // Windows, radio non ancora lette, nessuna uscita audio: Tab entra sui rimandi.
+        scrivi_pc(&p, &stat_pieno(), &RighePc { wifi: None, bluetooth: None, volume: None, ..righe_piene() });
+        assert_eq!(interruttore(&p, "Wi-Fi").accessible_enabled(), Some(false));
+        // Dal menu «⋯» Tab torna in giro alla pagina: il primo bersaglio sono i rimandi.
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Reti Wi-Fi");
+    }
+
+    /// Review Focus 2 (da `dettaglio_ram_e_disco_non_tagliato`): coi testi più lunghi nulla esce dal
+    /// suo posto. Il nome della rete di 32 caratteri si accorcia accanto al traffico, che non si
+    /// accorcia mai e non tocca l'interruttore; il nome intero lo dice Narrator. «1023,9 di 1023,9
+    /// GB» resta dentro la sua carta, intero per Narrator.
+    #[test]
+    fn misure_testi_lunghi_nei_posti() {
+        let rete = "Vodafone-Casa-Piano-Terra-5GHz-X";
+        assert_eq!(rete.chars().count(), 32);
+        let stat = StatPc { ram_usata: GIB * 10239 / 10, ram_totale: GIB * 10239 / 10, disco_usato: 0, disco_totale: GIB * 10239 / 10, ..stat_pieno() };
+        let righe = RighePc { nome_rete: Some(rete), velocita: Some((1_048_471_142, 1_048_471_142)), ..righe_piene() };
+        let (p, _) = pannello_pc(&stat, &righe);
+        let wifi = interruttore(&p, "Wi-Fi");
+        assert_eq!(wifi.accessible_label().as_deref(), Some(format!("Wi-Fi, acceso, {rete}, 999,9 MB/s giù, 999,9 MB/s su").as_str()));
+        let memoria = elemento(&p, "Memoria, 100 %, 1023,9 di 1023,9 GB");
+        assert_eq!(memoria.accessible_role(), Some(AccessibleRole::Groupbox));
+        elemento(&p, "Disco, 1024 GB liberi su 1023,9 GB");
+
+        // Le righe: ogni pezzo nella sua riga; il traffico intero fra il nome della rete e
+        // l'interruttore.
+        let riga = ElementHandle::find_by_element_type_name(&p, "RigaMisura").next().expect("riga del Wi-Fi");
+        let (rx, rl) = (riga.absolute_position().x, riga.size().width);
+        let traffico = riga.query_descendants().match_type_name("Traffico").find_first().expect("traffico");
+        let interruttore_el = riga.query_descendants().match_type_name("Interruttore").find_first().expect("interruttore");
+        let (tx, tl) = (traffico.absolute_position().x, traffico.size().width);
+        assert!(tx + tl <= interruttore_el.absolute_position().x - 8.0 + 0.5, "il traffico tocca l'interruttore");
+        // Largo quanto i suoi pezzi (due frecce, due valori, gli spazi): non si accorcia.
+        let pezzi: f32 = traffico.query_descendants().find_all().iter().filter(|e| matches!(e.type_name().as_deref(), Some("Text"))).map(|e| e.size().width).sum();
+        assert!(pezzi >= 120.0 && tl >= pezzi + 2.0 * 12.0, "traffico {tl} per testi {pezzi}");
+        for e in traffico.query_descendants().find_all() {
+            assert!(e.absolute_position().x >= tx - 0.5 && e.absolute_position().x + e.size().width <= tx + tl + 0.5, "un pezzo del traffico fuori dal suo posto");
+        }
+        // Il nome e il nome della rete si fermano prima del traffico.
+        let testi: Vec<ElementHandle> = riga.query_descendants().match_type_name("Text").find_all().into_iter().filter(|e| e.absolute_position().x < tx - 0.5).collect();
+        assert_eq!(testi.len(), 2, "il nome della riga e quello della rete");
+        for t in &testi {
+            assert!(t.absolute_position().x + t.size().width <= tx - 8.0 + 0.5, "un testo sotto il traffico: {:?} {:?}", t.absolute_position(), t.size());
+            assert!(t.absolute_position().x >= rx - 0.5 && t.absolute_position().x + t.size().width <= rx + rl + 0.5);
+        }
+    }
+
 
     /// La pillola col lato «Rete»: solo l'icona (16 px, posto riservato anche prima della
     /// lettura), e Narrator dice il tipo e le tacche, mai il nome della rete.
@@ -8426,10 +8312,11 @@ mod accessibilita {
         // Agenti (ridisegno F2, Task 6): l'impianto Elenco + dettaglio, con sintesi piena.
         let (agenti, _) = pannello_agenti(pagina_piena(), tre_righe_agenti());
         agenti.set_elenco_sintesi(sintesi_agenti(true));
-        let pc = pannello_connessioni();
+        // PC (ridisegno F3, Task 7): l'impianto Misure, col caso più pieno.
+        let (pc, _) = pannello_pc(&stat_pieno(), &righe_piene());
         // Collegamenti (ridisegno F3, Task 5): lo stesso impianto Comandi della Casa, senza filtri.
         let (collegamenti, _) = pannello_collegamenti(&sei_collegamenti());
-        for (p, tipo) in [(&casa, "ImpiantoComandi"), (&agenti, "ImpiantoElencoDettaglio"), (&pc, "VistaPc"), (&collegamenti, "ImpiantoComandi")] {
+        for (p, tipo) in [(&casa, "ImpiantoComandi"), (&agenti, "ImpiantoElencoDettaglio"), (&pc, "ImpiantoMisure"), (&collegamenti, "ImpiantoComandi")] {
             // Lo scorrimento del cambio di vista finito.
             fine_scorrimento();
             fine_scorrimento();
@@ -8448,8 +8335,8 @@ mod accessibilita {
                 );
             }
         }
-        // Le testate delle pagine Agenti e Casa, sorelle dell'impianto: anche loro nel corpo.
-        for p in [&agenti, &casa] {
+        // Le testate delle pagine Agenti, Casa e PC, sorelle dell'impianto: anche loro nel corpo.
+        for p in [&agenti, &casa, &pc] {
             let testata = ElementHandle::find_by_element_type_name(p, "TestataPagina").next().expect("testata");
             for e in testata.query_descendants().find_all() {
                 let (a, l) = (e.absolute_position(), e.size());

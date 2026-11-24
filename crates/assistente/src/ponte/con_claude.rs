@@ -899,8 +899,8 @@ impl Ponte {
         self.vista_claude(vista == "agenti");
         // La Coda (ridisegno F1, Task 7): entrandoci «Consenti» si riarma.
         self.vista_coda(vista == "coda");
-        // Le pagine sull'impianto Comandi (ridisegno F3, Task 4b) si scrivono solo aperte.
-        self.vista_comandi(vista.as_str());
+        // Le pagine sugli impianti di F3 (Comandi, Misure) si scrivono solo aperte.
+        self.vista_pagina(vista.as_str());
         // La scheda della vista nuova si allarga col nome (la capsula scivola).
         self.scrivi_schede(p);
     }

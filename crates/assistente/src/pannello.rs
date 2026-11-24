@@ -10,15 +10,13 @@
 use crate::moduli::panoramica::{fascia, in_attesa_non_mostrate, ordine_tab, prossimo, Composizione};
 use crate::moduli::registro::Registro;
 use crate::moduli::{panoramica, Tono};
-use crate::pc_stats::{formatta_usato_totale, formatta_velocita, tinta_batteria, Campionatore, Fonti, StatPc, TintaBatteria};
-#[cfg(test)]
-use crate::pc_stats::{LetturaBatteria, StatoBatteria};
+use crate::pc_stats::{Campionatore, Fonti, TintaBatteria};
 use crate::ponte::{DallaPillola, Ponte};
 use crate::sistema::menu::{self, Voce};
 use crate::sistema::servizi;
 use crate::{
-    finestra_impostazioni, finestre, orologio, Movimento, Pannello, Pillola, SchedaBarraUi, SchermoMenuUi,
-    StatPcUi, TintaBatteriaUi, VoceMenuUi,
+    finestra_impostazioni, finestre, orologio, Movimento, Pannello, Pillola, SchedaBarraUi, SchermoMenuUi, TintaBatteriaUi,
+    VoceMenuUi,
 };
 use slint::winit_030::{winit, EventResult, WinitWindowAccessor};
 use slint::{ComponentHandle, Image, Model, ModelRc, VecModel};
@@ -73,7 +71,7 @@ thread_local! {
 }
 
 /// Le icone che Rust passa all'interfaccia: un solo elenco, nome e SVG insieme.
-const ICONE_SVG: [(&str, &[u8]); 11] = [
+const ICONE_SVG: [(&str, &[u8]); 20] = [
     ("panoramica", include_bytes!("../assets/icone/panoramica.svg")),
     // Il modulo Agenti (ridisegno F1): il terminale di Lucide (ISC).
     ("agenti", include_bytes!("../assets/icone/lucide/terminal.svg")),
@@ -91,6 +89,18 @@ const ICONE_SVG: [(&str, &[u8]); 11] = [
     // preferiti e il tasto di accensione di «Spegni» (Lucide «star» e «power», ISC).
     ("stella", include_bytes!("../assets/icone/lucide/star.svg")),
     ("spegni", include_bytes!("../assets/icone/lucide/power.svg")),
+    // Le misure e le righe della pagina PC (ridisegno F3, Task 7; Lucide, ISC): «cpu»,
+    // «memory-stick», «hard-drive», «battery», «monitor» (la GPU, come in M2), «wifi»,
+    // «bluetooth», «volume-2» e «settings» (i rimandi alle Impostazioni di Windows).
+    ("cpu", include_bytes!("../assets/icone/lucide/cpu.svg")),
+    ("memoria", include_bytes!("../assets/icone/lucide/memory-stick.svg")),
+    ("disco", include_bytes!("../assets/icone/lucide/hard-drive.svg")),
+    ("batteria", include_bytes!("../assets/icone/lucide/battery.svg")),
+    ("gpu", include_bytes!("../assets/icone/lucide/monitor.svg")),
+    ("wifi", include_bytes!("../assets/icone/wifi-3.svg")),
+    ("bluetooth", include_bytes!("../assets/icone/bluetooth.svg")),
+    ("volume", include_bytes!("../assets/icone/altoparlante.svg")),
+    ("impostazioni", include_bytes!("../assets/icone/lucide/settings.svg")),
     // Un'icona che non disegna nulla, per i posti dove un'azione non ne ha una. Non si lascia
     // l'`Image` vuota: in Slint un'immagine vuota non è uguale a se stessa, e una riga che la
     // contiene risulterebbe sempre cambiata (e sempre riscritta).
@@ -207,52 +217,14 @@ fn aggiorna_ora(ponte: &Ponte, pannello: &Pannello) {
     ponte.aggiorna_riga_sinistra(pannello);
 }
 
-fn percentuale(frazione: f32) -> String {
-    format!("{}%", frazione.round() as i32)
+/// Il campione ha letto le fonti lente (dischi, reti e GPU): erano chieste tutte (solo a pagina PC
+/// aperta) e la GPU non aspetta il suo primo valore (appena accesa dà `None` per un campione: non
+/// è «nessuna GPU»). È da qui che la pagina PC decide il quarto posto (ridisegno F3, Task 7).
+fn lente_lette(chieste: Fonti, gpu_in_attesa: bool) -> bool {
+    chieste == Fonti::TUTTE && !gpu_in_attesa
 }
 
-fn frazione(usato: u64, totale: u64) -> f32 {
-    if totale == 0 {
-        0.0
-    } else {
-        (usato as f64 / totale as f64).clamp(0.0, 1.0) as f32
-    }
-}
-
-/// Le statistiche come le vede l'interfaccia. Prima del secondo campione, o se la CPU non si è
-/// potuta leggere, la CPU è "—".
-fn stat_ui(s: &StatPc, cpu_pronta: bool) -> StatPcUi {
-    let cpu = s.cpu_pct.filter(|_| cpu_pronta);
-    let ram = frazione(s.ram_usata, s.ram_totale);
-    let disco = frazione(s.disco_usato, s.disco_totale);
-    let batteria = s.batteria.map(|b| b.percentuale);
-    let gpu = s.gpu_pct.map(|g| g.clamp(0.0, 100.0));
-    StatPcUi {
-        pronta: cpu.is_some(),
-        cpu: cpu.unwrap_or(0.0) / 100.0,
-        ram,
-        disco,
-        cpu_testo: cpu.map(percentuale).unwrap_or_else(|| "—".into()).into(),
-        ram_testo: percentuale(ram * 100.0).into(),
-        ram_dettaglio: formatta_usato_totale(s.ram_usata, s.ram_totale).into(),
-        disco_testo: if s.disco_totale == 0 { "—".to_owned() } else { percentuale(disco * 100.0) }.into(),
-        disco_dettaglio: formatta_usato_totale(s.disco_usato, s.disco_totale).into(),
-        rete_giu: formatta_velocita(s.rete_giu_bps).into(),
-        rete_su: formatta_velocita(s.rete_su_bps).into(),
-        // Senza batteria la riga resta nascosta (mai "0%").
-        ha_batteria: batteria.is_some(),
-        batteria_testo: batteria.map(percentuale).unwrap_or_default().into(),
-        batteria_frazione: batteria.map(|b| b / 100.0).unwrap_or(0.0),
-        in_carica: s.batteria.is_some_and(|b| b.collegata()),
-        tinta_batteria: tinta_ui(s.batteria.map_or(TintaBatteria::Normale, |b| tinta_batteria(&b))),
-        // Senza dato la riga GPU non c'è (mai "0%").
-        ha_gpu: gpu.is_some(),
-        gpu: gpu.map_or(0.0, |g| g / 100.0),
-        gpu_testo: gpu.map(percentuale).unwrap_or_default().into(),
-    }
-}
-
-/// La tinta del glifo della batteria come la conosce l'interfaccia (pannello e pillola).
+/// La tinta del glifo della batteria come la conosce l'interfaccia (la pillola).
 pub fn tinta_ui(t: TintaBatteria) -> TintaBatteriaUi {
     match t {
         TintaBatteria::Carica => TintaBatteriaUi::Carica,
@@ -428,19 +400,16 @@ impl Apertura {
             let mut campionatore = Campionatore::new(fonti_lette(&fonti));
             let mut attesa = SECONDO_CAMPIONE;
             while !stop.load(Ordering::Relaxed) {
-                let stat = campionatore.campiona(fonti_lette(&fonti));
+                let chieste = fonti_lette(&fonti);
+                let stat = campionatore.campiona(chieste);
                 let pronta = campionatore.cpu_pronta();
+                let lente = lente_lette(chieste, campionatore.gpu_in_attesa());
                 let debole = debole.clone();
                 let consegnato = slint::invoke_from_event_loop(move || {
-                    if let Some(p) = debole.upgrade() {
-                        // Solo se cambia: `pc` invalida archi, righe e quadranti che lo leggono.
-                        let nuovo = stat_ui(&stat, pronta);
-                        if p.get_pc() != nuovo {
-                            p.set_pc(nuovo);
-                        }
-                        // La carta PC dallo stesso campione (prima che la CPU sia pronta: «—»).
+                    // Solo a pannello vivo: la carta del PC e, a pagina aperta, la pagina PC.
+                    if debole.upgrade().is_some() {
                         if let Some(ponte) = crate::ponte::ponte() {
-                            ponte.moduli_aggiorna_con("pc", crate::moduli::pc::riassunto(pronta.then_some(&stat)));
+                            ponte.campione_pc(stat, pronta, lente);
                         }
                     }
                 });
@@ -757,50 +726,6 @@ mod test {
         assert_eq!(fonti_lette(&fonti), Fonti::default(), "GPU, dischi e reti spenti");
     }
 
-    fn stat(cpu: Option<f32>) -> StatPc {
-        StatPc {
-            cpu_pct: cpu,
-            ram_usata: 1,
-            ram_totale: 2,
-            disco_usato: 1,
-            disco_totale: 4,
-            rete_giu_bps: 0,
-            rete_su_bps: 0,
-            batteria: None,
-            gpu_pct: None,
-        }
-    }
-
-    #[test]
-    fn tinta_della_batteria_nell_interfaccia() {
-        let mut s = stat(Some(10.0));
-        // Senza batteria: normale, riga nascosta.
-        let ui = stat_ui(&s, true);
-        assert!(!ui.ha_batteria);
-        assert_eq!(ui.tinta_batteria, TintaBatteriaUi::Normale);
-        s.batteria = Some(LetturaBatteria { percentuale: 18.0, stato: StatoBatteria::Scarica });
-        let ui = stat_ui(&s, true);
-        assert!(ui.ha_batteria && !ui.in_carica);
-        assert_eq!(ui.tinta_batteria, TintaBatteriaUi::Informazione);
-        s.batteria = Some(LetturaBatteria { percentuale: 18.0, stato: StatoBatteria::InCarica });
-        let ui = stat_ui(&s, true);
-        assert!(ui.in_carica);
-        assert_eq!(ui.tinta_batteria, TintaBatteriaUi::Carica);
-    }
-
-    #[test]
-    fn cpu_illeggibile_e_un_trattino_non_zero() {
-        // GetSystemTimes fallito: «—», non «0%» spacciato per un dato.
-        let ui = stat_ui(&stat(None), true);
-        assert_eq!(ui.cpu_testo, "—");
-        assert!(!ui.pronta);
-        let ui = stat_ui(&stat(Some(12.4)), true);
-        assert_eq!(ui.cpu_testo, "12%");
-        assert!(ui.pronta);
-        // Prima del secondo campione resta «—» anche con un numero.
-        assert_eq!(stat_ui(&stat(Some(12.4)), false).cpu_testo, "—");
-    }
-
     /// Ridisegno F1, Task 8: dischi, reti e GPU si leggono solo nella vista PC; la Panoramica a
     /// carte, la Casa, gli Agenti, i Collegamenti e la Coda non li mostrano.
     #[test]
@@ -812,17 +737,14 @@ mod test {
         }
     }
 
+    /// Ridisegno F3, Task 7: un campione ha le fonti lente lette solo se erano chieste tutte e la
+    /// GPU non aspetta il primo valore (il primo campione dopo l'accensione della GPU non conta).
     #[test]
-    fn gpu_nell_interfaccia() {
-        let mut s = stat(Some(10.0));
-        let ui = stat_ui(&s, true);
-        assert!(!ui.ha_gpu, "senza dato niente riga");
-        assert_eq!(ui.gpu_testo, "");
-        s.gpu_pct = Some(36.6);
-        let ui = stat_ui(&s, true);
-        assert!(ui.ha_gpu);
-        assert_eq!(ui.gpu_testo, "37%");
-        assert!((ui.gpu - 0.366).abs() < 1e-6);
+    fn fonti_lente_lette_solo_col_valore_della_gpu() {
+        assert!(lente_lette(Fonti::TUTTE, false));
+        assert!(!lente_lette(Fonti::TUTTE, true), "la GPU appena accesa: non ancora letta");
+        assert!(!lente_lette(Fonti::default(), false), "fuori dalla pagina PC");
+        assert!(!lente_lette(Fonti { gpu: false, ..Fonti::TUTTE }, false));
     }
 
     #[test]

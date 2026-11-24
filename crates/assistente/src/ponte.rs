@@ -26,8 +26,8 @@ use crate::dispositivi::{self, Riga, TipoRiga};
 use crate::collegamenti;
 use crate::moduli::registro::Registro;
 use crate::{
-    AmbienteUi, CardUi, CollegamentoUi, FiltroUi, FinestraImpostazioni, GenereUi, ModuloUi, Pannello, PermessoUi, Pillola,
-    RigaDispositivoUi, RigaModuloUi, SchedaBarraUi, TipoRigaUi, TonoUi, VoceAttesaUi,
+    AmbienteUi, CardUi, CollegamentoUi, FiltroUi, FinestraImpostazioni, GenereUi, ModuloUi, MisuraUi, Pannello, PermessoUi, Pillola,
+    RigaDispositivoUi, RigaMisuraUi, RigaModuloUi, SchedaBarraUi, TipoRigaUi, TonoUi, VoceAttesaUi,
 };
 use casa_core::config::Config;
 use casa_core::diagnosi::Contatore;
@@ -46,6 +46,7 @@ use std::time::{Duration, Instant};
 pub(crate) mod con_claude;
 mod con_moduli;
 mod con_pagine;
+use con_pagine::CampionePc;
 
 /// Dove si apre il pannello da un clic sulla pillola (ridisegno F1, Task 7: la destinazione di ciò
 /// che la pillola mostra).
@@ -600,14 +601,23 @@ pub struct Ponte {
     menu: RefCell<Option<Arc<MenuData>>>,
     /// Comandi falliti, per entità: l'errore resta sulla voce fino al prossimo tocco o a un esito ok.
     errori: RefCell<HashMap<String, String>>,
-    /// La pagina sull'impianto Comandi (ridisegno F3, Task 4b): quale pagina possiede i modelli
-    /// (`Some("casa")` a pagina Casa aperta, `None` altrimenti: niente si calcola né si scrive) e i
-    /// modelli, uno per impianto (filtri, card, scene), che sopravvivono al pannello ma da chiusi
-    /// sono vuoti. Vedi `con_pagine`.
-    pagina_comandi: Cell<Option<&'static str>>,
+    /// La pagina di F3 aperta (ridisegno F3, Task 4b e 7; pre-flight C5, su tutte le piattaforme):
+    /// `Some("casa")`, `Some("collegamenti")` o `Some("pc")` a pagina aperta, `None` altrimenti
+    /// (niente si calcola né si scrive). I modelli, uno per impianto (Comandi: filtri, card, scene;
+    /// Misure: misure e righe), sopravvivono al pannello ma da chiusi sono vuoti. Vedi `con_pagine`.
+    pagina_aperta: Cell<Option<&'static str>>,
     comandi_filtri: Rc<VecModel<FiltroUi>>,
     comandi_card: Rc<VecModel<CardUi>>,
     comandi_scene: Rc<VecModel<CardUi>>,
+    /// La pagina PC sull'impianto Misure (ridisegno F3, Task 7): l'ultimo campione del PC (con la
+    /// CPU pronta e le fonti lente lette), dimenticato alla chiusura del pannello (pre-flight C13:
+    /// la pagina riaperta non mostra un dato vecchio come attuale); chi occupa il quarto posto,
+    /// deciso una volta al primo campione con le fonti lente e fermo fino alla chiusura del pannello;
+    /// i modelli delle misure e delle righe.
+    pc_campione: RefCell<Option<CampionePc>>,
+    pc_quarto: Cell<crate::moduli::pagina_pc::Quarto>,
+    misure_valori: Rc<VecModel<MisuraUi>>,
+    misure_righe: Rc<VecModel<RigaMisuraUi>>,
     /// Il filtro scelto della pagina Casa (`None`: quello iniziale), quello dei modelli scritti
     /// (un filtro diverso riporta il fuoco sulla prima card) e quello chiesto prima che la pagina si
     /// apra (la carta Casa con le luci accese: «Luci accese»), consumato dalla prima scrittura e
@@ -770,19 +780,27 @@ pub struct Ponte {
     rotella: Cell<volume::Rotella>,
     #[cfg(windows)]
     sveglia_barra: slint::Timer,
-    /// Wi-Fi, Bluetooth e rete (M2, Task 8, solo Windows). `radio`: il thread delle radio, vivo
-    /// solo a vista PC aperta; `stati_radio`: l'ultimo elenco letto (lo stato vero a cui torna un
-    /// riquadro dopo un rifiuto). `osserva_rete`: acceso solo se serve (`aggiorna_rete`);
-    /// `stato_rete`: l'ultima lettura; `nome_rete`: il nome della rete Wi-Fi, solo a vista PC
-    /// aperta e mai nei log. `vista_pc`: la vista PC si vede (pannello aperto su di lei).
+    /// Wi-Fi, Bluetooth e rete (M2, Task 8, solo Windows; dal ridisegno F3, Task 7, lo stato delle
+    /// righe della pagina PC vive qui, pre-flight C6). `radio`: il thread delle radio, vivo solo a
+    /// vista PC aperta; `stati_radio`: l'ultimo elenco letto (`None`: non ancora letto o radio non
+    /// più seguite; è lo stato vero a cui torna una riga dopo un rifiuto). `radio_volute`: il valore
+    /// chiesto da un tocco (Wi-Fi, Bluetooth) finché non arriva lo stato vero. `errore_radio`: la
+    /// riga (`pagina_pc::WIFI` o `BLUETOOTH`) il cui cambio Windows ha rifiutato. `cuffie`: la
+    /// lettura delle batterie Bluetooth fatta entrando nella vista. `osserva_rete`: acceso solo se
+    /// serve (`aggiorna_rete`); `nome_rete`: il nome della rete Wi-Fi, solo a vista PC aperta e mai
+    /// nei log. `vista_pc`: la vista PC si vede (pannello aperto su di lei).
     #[cfg(windows)]
     radio: RefCell<Option<radio::Radio>>,
     #[cfg(windows)]
-    stati_radio: RefCell<Vec<radio::StatoRadio>>,
+    stati_radio: RefCell<Option<Vec<radio::StatoRadio>>>,
+    #[cfg(windows)]
+    radio_volute: Cell<[Option<bool>; 2]>,
+    #[cfg(windows)]
+    errore_radio: Cell<Option<&'static str>>,
+    #[cfg(windows)]
+    cuffie: RefCell<Option<batterie_bt::RigaCuffie>>,
     #[cfg(windows)]
     osserva_rete: RefCell<Option<radio::OsservaRete>>,
-    #[cfg(windows)]
-    stato_rete: Cell<Option<radio::StatoRete>>,
     #[cfg(windows)]
     nome_rete: RefCell<Option<String>>,
     #[cfg(windows)]
@@ -824,10 +842,14 @@ pub fn collega(
         menu: RefCell::new(None),
         dati_delle: RefCell::new(None),
         errori: RefCell::new(HashMap::new()),
-        pagina_comandi: Cell::new(None),
+        pagina_aperta: Cell::new(None),
         comandi_filtri: Rc::new(VecModel::default()),
         comandi_card: Rc::new(VecModel::default()),
         comandi_scene: Rc::new(VecModel::default()),
+        pc_campione: RefCell::new(None),
+        pc_quarto: Cell::new(crate::moduli::pagina_pc::Quarto::DaDecidere),
+        misure_valori: Rc::new(VecModel::default()),
+        misure_righe: Rc::new(VecModel::default()),
         filtro_casa: RefCell::new(None),
         filtro_mostrato: RefCell::new(String::new()),
         filtro_richiesto: RefCell::new(None),
@@ -906,11 +928,15 @@ pub fn collega(
         #[cfg(windows)]
         radio: RefCell::new(None),
         #[cfg(windows)]
-        stati_radio: RefCell::new(Vec::new()),
+        stati_radio: RefCell::new(None),
+        #[cfg(windows)]
+        radio_volute: Cell::new([None; 2]),
+        #[cfg(windows)]
+        errore_radio: Cell::new(None),
+        #[cfg(windows)]
+        cuffie: RefCell::new(None),
         #[cfg(windows)]
         osserva_rete: RefCell::new(None),
-        #[cfg(windows)]
-        stato_rete: Cell::new(None),
         #[cfg(windows)]
         nome_rete: RefCell::new(None),
         #[cfg(windows)]
@@ -1855,7 +1881,7 @@ impl Ponte {
     }
 
     /// I riassunti dei moduli tornano a seguire i dati (pannello aperto). I modelli delle pagine no:
-    /// si scrivono solo a pagina aperta (`vista_comandi`).
+    /// si scrivono solo a pagina aperta (`vista_pagina`).
     pub fn apri_modelli(&self) {
         self.modelli_vivi.set(true);
     }
@@ -1865,6 +1891,7 @@ impl Ponte {
     pub fn riempi(&self, p: &Pannello) {
         self.apri_modelli();
         self.comandi_nel_pannello(p);
+        self.misure_nel_pannello(p);
         p.set_elenco_righe(ModelRc::from(self.elenco_righe.clone()));
         p.set_attese(ModelRc::from(self.modello_attese.clone()));
         // La modalità della Panoramica (Impostazioni › Isola › Panoramica), prima delle voci.
@@ -1928,12 +1955,10 @@ impl Ponte {
                 }
             });
         }
-        // Wi-Fi, Bluetooth e rete nella vista PC (M2, Task 8, solo Windows): le radio nascono
-        // entrando nella vista PC (`vista_pc`); qui l'ultima rete letta e i comandi.
+        // Wi-Fi e Bluetooth nella pagina PC (M2, Task 8, solo Windows): le radio nascono entrando
+        // nella vista PC (`vista_pc`); qui i comandi delle righe.
         #[cfg(windows)]
         {
-            p.set_connessioni_disponibili(true);
-            connessioni::scrivi_rete(p, self.stato_rete.get());
             p.on_commuta_radio(|tipo, acceso| {
                 if let Some(ponte) = ponte() {
                     ponte.commuta_radio(connessioni::tipo_da(tipo), acceso);
@@ -2012,7 +2037,7 @@ impl Ponte {
             p.set_vista(vista.into());
             self.vista_claude(vista == "agenti");
             self.vista_coda(vista == "coda");
-            self.vista_comandi(vista);
+            self.vista_pagina(vista);
         }
         self.attese.borrow_mut().segna_viste();
         // Il pannello compare: un permesso in attesa non si consente al primo istante, e una guardia
@@ -2033,8 +2058,11 @@ impl Ponte {
         self.filtro_richiesto.borrow_mut().take();
         // Né l'errore dell'ultimo lancio: come il testo di prima, muore col pannello.
         self.errore_lancio.borrow_mut().take();
-        // La pagina dei Comandi si chiude: i suoi modelli si svuotano (niente righe in memoria).
-        self.vista_comandi("");
+        // La pagina aperta si chiude: i suoi modelli si svuotano (niente righe in memoria).
+        self.vista_pagina("");
+        // Il campione del PC e la scelta del quarto posto muoiono col pannello (pre-flight C13): il
+        // prossimo pannello aspetta un campione fresco.
+        self.dimentica_campione_pc();
         // Le radio si liberano e la rete torna a seguire solo la pillola.
         self.vista_pc(false);
         // La vista Claude non c'è più: il timer torna a seguire solo la pillola.
@@ -2465,13 +2493,7 @@ impl Ponte {
             } else {
                 // `Drop` ferma il thread `radio`: toglie i gestori e libera le radio.
                 self.radio.borrow_mut().take();
-                self.stati_radio.borrow_mut().clear();
-                *self.nome_rete.borrow_mut() = None;
-                if let Some(p) = self.pannello.borrow().upgrade() {
-                    connessioni::dimentica_radio(&p);
-                    connessioni::scrivi_nome(&p, None);
-                    batterie_bt::scrivi_cuffie(&p, None);
-                }
+                self.dimentica_radio();
             }
             self.aggiorna_lati();
         }
@@ -2502,55 +2524,109 @@ impl Ponte {
         }
     }
 
+    /// La rete letta: il lato «Rete» della pillola (la pagina PC mostra il nome e il traffico).
     fn rete_ricevuta(&self, stato: radio::StatoRete) {
         if self.osserva_rete.borrow().is_none() {
             return;
         }
-        self.stato_rete.set(Some(stato));
         sorgenti_lati::rete(stato);
-        if let Some(p) = self.pannello.borrow().upgrade() {
-            connessioni::scrivi_rete(&p, Some(stato));
-        }
     }
 
+    /// Il nome della rete Wi-Fi, solo a vista PC aperta (mai nella pillola né nei log): la riga
+    /// del Wi-Fi.
     fn nome_rete_ricevuto(&self, nome: Option<String>) {
         if !self.vista_pc.get() {
             return;
         }
-        if let Some(p) = self.pannello.borrow().upgrade() {
-            connessioni::scrivi_nome(&p, nome.as_deref());
-        }
         *self.nome_rete.borrow_mut() = nome;
+        self.scrivi_pagina_pc();
     }
 
+    /// Lo stato vero delle radio: il valore voluto da un tocco lascia il posto a lui.
     fn radio_ricevute(&self, stati: Vec<radio::StatoRadio>) {
         // Arrivate dopo che la vista PC è stata lasciata: nessuno le guarda.
         if self.radio.borrow().is_none() {
             return;
         }
-        if let Some(p) = self.pannello.borrow().upgrade() {
-            connessioni::scrivi_radio(&p, &stati);
-        }
-        *self.stati_radio.borrow_mut() = stati;
+        *self.stati_radio.borrow_mut() = Some(stati);
+        self.radio_volute.set([None; 2]);
+        self.scrivi_pagina_pc();
     }
 
+    /// Le radio non più seguite (vista PC lasciata, pannello chiuso): stato, valori voluti, rifiuto,
+    /// cuffie e nome della rete si dimenticano; la pagina, se aperta, torna a «Lettura in corso».
+    pub(super) fn dimentica_radio(&self) {
+        *self.stati_radio.borrow_mut() = None;
+        self.radio_volute.set([None; 2]);
+        self.errore_radio.set(None);
+        *self.cuffie.borrow_mut() = None;
+        *self.nome_rete.borrow_mut() = None;
+        self.scrivi_pagina_pc();
+    }
+
+    /// Un tocco su Wi-Fi o Bluetooth (clic, Invio, Narrator): la riga mostra subito il valore
+    /// voluto e il rifiuto di prima sparisce; poi il comando al thread delle radio.
     fn commuta_radio(&self, tipo: radio::TipoRadio, acceso: bool) {
+        self.radio_voluta(tipo, acceso);
         match self.radio.borrow().as_ref() {
             Some(r) => r.commuta(tipo, acceso, consegna_esito),
             None => self.esito_radio(tipo, radio::EsitoRadio::Errore),
         }
     }
 
-    /// Un rifiuto: riga in ambra, riquadro di nuovo allo stato vero, pagina di Windows aperta.
-    /// Un esito arrivato dopo aver lasciato la vista PC (radio non più seguite) si ignora.
+    /// Il valore voluto di una radio, mostrato subito finché non arriva lo stato vero.
+    pub(super) fn radio_voluta(&self, tipo: radio::TipoRadio, acceso: bool) {
+        let mut volute = self.radio_volute.get();
+        volute[indice_radio(tipo)] = Some(acceso);
+        self.radio_volute.set(volute);
+        self.errore_radio.set(None);
+        self.scrivi_pagina_pc();
+    }
+
+    /// Un rifiuto: la pagina di Windows giusta si apre (vedi `esito_radio_senza_aprire`).
     fn esito_radio(&self, tipo: radio::TipoRadio, esito: radio::EsitoRadio) {
-        let Some(p) = self.pannello.borrow().upgrade() else { return };
-        let seguite = self.radio.borrow().is_some();
-        let stati = self.stati_radio.borrow();
-        let pagina = connessioni::esito(&p, seguite.then_some(stati.as_slice()), tipo, esito);
-        if let Some(pagina) = pagina {
+        if let Some(pagina) = self.esito_radio_senza_aprire(tipo, esito) {
             apri_pagina(pagina);
         }
+    }
+
+    /// L'esito di un cambio senza aprire nulla (i test lo chiamano così: nessuna pagina di Windows
+    /// vera). Un rifiuto mette il testo sulla riga della radio che ha fallito e la riporta allo
+    /// stato vero (l'ultimo letto); restituisce la pagina di Windows da aprire. Un esito arrivato
+    /// dopo aver lasciato la vista PC (radio non più seguite) si ignora.
+    pub(super) fn esito_radio_senza_aprire(&self, tipo: radio::TipoRadio, esito: radio::EsitoRadio) -> Option<crate::sistema::browser::PaginaWindows> {
+        let seguite = self.stati_radio.borrow().is_some();
+        let pagina = connessioni::esito(seguite, tipo, esito)?;
+        let mut volute = self.radio_volute.get();
+        volute[indice_radio(tipo)] = None;
+        self.radio_volute.set(volute);
+        self.errore_radio.set(Some(match tipo {
+            radio::TipoRadio::WiFi => crate::moduli::pagina_pc::WIFI,
+            radio::TipoRadio::Bluetooth => crate::moduli::pagina_pc::BLUETOOTH,
+        }));
+        self.scrivi_pagina_pc();
+        Some(pagina)
+    }
+
+    /// Presente e acceso di una radio come li mostra la riga: `None` se non ancora lette; acceso è
+    /// il valore voluto da un tocco, se c'è, finché non arriva lo stato vero.
+    pub(super) fn radio_mostrata(&self, tipo: radio::TipoRadio) -> Option<(bool, bool)> {
+        let stati = self.stati_radio.borrow();
+        let stato = stati.as_ref()?.iter().find(|s| s.tipo == tipo);
+        let voluto = self.radio_volute.get()[indice_radio(tipo)];
+        Some(match stato {
+            Some(s) => (true, voluto.unwrap_or(s.acceso)),
+            None => (false, false),
+        })
+    }
+}
+
+/// Il posto di una radio in `radio_volute`.
+#[cfg(windows)]
+fn indice_radio(tipo: radio::TipoRadio) -> usize {
+    match tipo {
+        radio::TipoRadio::WiFi => 0,
+        radio::TipoRadio::Bluetooth => 1,
     }
 }
 
@@ -2637,15 +2713,14 @@ impl Ponte {
         });
     }
 
-    /// La lettura fatta entrando nella vista PC: la riga «CUFFIE». Arrivata dopo aver lasciato la
-    /// vista, nessuno la guarda.
+    /// La lettura fatta entrando nella vista PC: le cuffie nella riga del Bluetooth. Arrivata dopo
+    /// aver lasciato la vista, nessuno la guarda.
     fn cuffie_lette(&self, letture: &[batterie_bt::LetturaBt]) {
         if !self.vista_pc.get() {
             return;
         }
-        if let Some(p) = self.pannello.borrow().upgrade() {
-            batterie_bt::scrivi_cuffie(&p, batterie_bt::riga_cuffie(letture).as_ref());
-        }
+        *self.cuffie.borrow_mut() = batterie_bt::riga_cuffie(letture);
+        self.scrivi_pagina_pc();
     }
 }
 
@@ -2727,20 +2802,23 @@ impl Ponte {
         }
     }
 
-    /// La riga del volume della vista PC: c'è solo con un'uscita audio; ogni proprietà si
-    /// riscrive solo se cambia (il livello al punto intero).
+    /// Il volume del pannello (pulsante della barra, cursore della pagina PC): c'è solo con
+    /// un'uscita audio; ogni proprietà si riscrive solo se cambia (il livello al punto intero). La
+    /// pagina PC, se aperta, riscrive la riga del volume e l'azione «Muto» della testata.
     fn scrivi_volume(&self, p: &Pannello) {
         let s = self.volume.get();
         if p.get_volume_disponibile() != s.is_some() {
             p.set_volume_disponibile(s.is_some());
         }
-        let Some(s) = s else { return };
-        if volume::percento(p.get_volume()) != volume::percento(s.livello) {
-            p.set_volume(volume::percento(s.livello) as f32 / 100.0);
+        if let Some(s) = s {
+            if volume::percento(p.get_volume()) != volume::percento(s.livello) {
+                p.set_volume(volume::percento(s.livello) as f32 / 100.0);
+            }
+            if p.get_volume_muto() != s.muto {
+                p.set_volume_muto(s.muto);
+            }
         }
-        if p.get_volume_muto() != s.muto {
-            p.set_volume_muto(s.muto);
-        }
+        self.scrivi_pagina_pc();
     }
 
     /// Un livello scelto col cursore o con la tastiera (il pannello lo mostra già).
@@ -3016,7 +3094,7 @@ pub(crate) mod test {
         let _spegni = Spegni;
         p.apri_modelli();
         // La pagina Casa aperta: i suoi modelli seguono i dati.
-        p.vista_comandi("casa");
+        p.vista_pagina("casa");
         p.ricevi(CasaEvento::Stato(StatoConnessione::Connesso));
         let dati = |accesa| CasaEvento::Dati(Arc::new(menu(vec![luce("light.a", accesa)], vec![])));
         p.ricevi(dati(false));
@@ -3094,7 +3172,7 @@ pub(crate) mod test {
         p.ricevi(dati(true));
         assert_eq!(conta(Contatore::ui_ricostruzioni), 0, "pannello aperto sulla Panoramica: nulla");
         // La pagina si apre: i modelli si fanno una volta, coi dati di adesso (l'ultimo: accesa).
-        p.vista_comandi("casa");
+        p.vista_pagina("casa");
         assert_eq!(conta(Contatore::ui_ricostruzioni), 1);
         assert_eq!(p.comandi_card.row_data(0).unwrap().stato, "Accesa");
         p.ricevi(dati(false));
@@ -3124,7 +3202,7 @@ pub(crate) mod test {
         let pannello = crate::Pannello::new().unwrap();
         p.pannello_aperto(&pannello);
         p.riempi(&pannello);
-        p.vista_comandi("casa");
+        p.vista_pagina("casa");
         let invito = |pannello: &crate::Pannello| pannello.get_comandi_stato().frase == "Collega la casa";
         p.ricevi(CasaEvento::Stato(StatoConnessione::NonConfigurato));
         assert!(invito(&pannello));
@@ -3143,7 +3221,7 @@ pub(crate) mod test {
     /// preferita è la prima card.
     fn ponte_con_la_casa() -> (Spegni, Rc<Ponte>, crate::Pillola, tempfile::TempDir) {
         let (spegni, p, pillola, cartella) = ponte_di_prova();
-        p.vista_comandi("casa");
+        p.vista_pagina("casa");
         (spegni, p, pillola, cartella)
     }
 
@@ -3357,7 +3435,7 @@ pub(crate) mod test {
         p.pannello_chiuso();
         assert!(id_luci(&p).is_empty());
         assert_eq!((p.comandi_filtri.row_count(), p.comandi_scene.row_count()), (0, 0));
-        p.vista_comandi("casa");
+        p.vista_pagina("casa");
         p.filtro_pagina("casa", crate::moduli::pagina_casa::FILTRO_LUCI);
         assert_eq!(id_luci(&p), ["light.a"], "alla riapertura l'elenco si rifà");
     }

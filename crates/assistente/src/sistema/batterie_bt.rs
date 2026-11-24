@@ -46,8 +46,6 @@
 #![cfg_attr(not(windows), allow(dead_code))]
 
 use crate::attenzione::{Fonte, Livello, Pulsante, Voce, PREFISSO_BT, PULSANTE_HO_CAPITO};
-use crate::pc_stats::TintaBatteria;
-use crate::Pannello;
 use std::collections::HashMap;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -175,17 +173,14 @@ pub fn unifica(letture: Vec<LetturaBt>) -> Vec<LetturaBt> {
     fuori
 }
 
-/// La riga «CUFFIE» della vista PC: il dispositivo connesso con la batteria più bassa.
+/// Le cuffie nella riga del Bluetooth della pagina PC («Cuffie 18 %»; ridisegno F3, Task 7): il
+/// dispositivo connesso con la batteria più bassa. La riga «CUFFIE» della vista di M2, col glifo
+/// tinto, «+N» e l'elenco per Narrator, non c'è più.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RigaCuffie {
     /// Il nome, accorciato se serve.
     pub nome: String,
     pub percentuale: u8,
-    /// Gli altri dispositivi connessi con la batteria leggibile («+1»).
-    pub altri: usize,
-    pub tinta: TintaBatteria,
-    /// Per Narrator: tutti i dispositivi, per nome intero e percentuale.
-    pub descrizione: String,
 }
 
 /// Accorcia a `massimo` caratteri con «…» (mai a metà di un carattere).
@@ -202,42 +197,7 @@ pub fn riga_cuffie(letture: &[LetturaBt]) -> Option<RigaCuffie> {
     let mut connessi: Vec<&LetturaBt> = letture.iter().filter(|l| l.connesso).collect();
     connessi.sort_by_key(|l| l.percentuale);
     let primo = connessi.first()?;
-    let descrizione = connessi.iter().map(|l| format!("{} al {}%", l.nome, l.percentuale)).collect::<Vec<_>>().join(", ");
-    Some(RigaCuffie {
-        nome: accorcia(&primo.nome, NOME_MASSIMO),
-        percentuale: primo.percentuale,
-        altri: connessi.len() - 1,
-        tinta: if primo.percentuale <= SOGLIA_BT { TintaBatteria::Informazione } else { TintaBatteria::Normale },
-        descrizione,
-    })
-}
-
-/// Scrive la riga nel pannello (`None`: la riga non c'è). Ogni proprietà si riscrive solo se
-/// cambia.
-pub fn scrivi_cuffie(p: &Pannello, riga: Option<&RigaCuffie>) {
-    if p.get_cuffie_presenti() != riga.is_some() {
-        p.set_cuffie_presenti(riga.is_some());
-    }
-    let Some(r) = riga else { return };
-    let dettaglio = if r.altri > 0 { format!("{} +{}", r.nome, r.altri) } else { r.nome.clone() };
-    if p.get_cuffie_dettaglio() != dettaglio.as_str() {
-        p.set_cuffie_dettaglio(dettaglio.into());
-    }
-    let testo = format!("{}%", r.percentuale);
-    if p.get_cuffie_testo() != testo.as_str() {
-        p.set_cuffie_testo(testo.into());
-    }
-    let frazione = f32::from(r.percentuale) / 100.0;
-    if p.get_cuffie_frazione() != frazione {
-        p.set_cuffie_frazione(frazione);
-    }
-    let tinta = crate::pannello::tinta_ui(r.tinta);
-    if p.get_cuffie_tinta() != tinta {
-        p.set_cuffie_tinta(tinta);
-    }
-    if p.get_cuffie_descrizione() != r.descrizione.as_str() {
-        p.set_cuffie_descrizione(r.descrizione.clone().into());
-    }
+    Some(RigaCuffie { nome: accorcia(&primo.nome, NOME_MASSIMO), percentuale: primo.percentuale })
 }
 
 /// Il thread `batterie-bt`: aspetta (`recv_timeout`, nessun sondaggio), legge alla prima
@@ -488,7 +448,7 @@ mod tests {
     fn due_dispositivi_con_lo_stesso_nome_restano_due() {
         let u = unifica(vec![lettura("a", "Cuffie finte", 50, true), lettura("b", "Cuffie finte", 15, true)]);
         assert_eq!(u.len(), 2, "contenitori diversi: due dispositivi");
-        assert_eq!(riga_cuffie(&u).unwrap().altri, 1);
+        assert_eq!(riga_cuffie(&u).unwrap().percentuale, 15, "il più scarico dei due");
     }
 
     /// Due nodi dello stesso dispositivo fisico (HFP e GATT): stesso contenitore, id diversi.
@@ -549,16 +509,9 @@ mod tests {
         ];
         let r = riga_cuffie(&l).unwrap();
         assert_eq!(r.percentuale, 18);
-        assert_eq!(r.altri, 2);
-        assert_eq!(r.tinta, TintaBatteria::Informazione);
         assert!(r.nome.chars().count() <= NOME_MASSIMO && r.nome.ends_with('…'), "nome accorciato: {}", r.nome);
-        assert_eq!(
-            r.descrizione,
-            "Cuffie finte con un nome molto lungo al 18%, Mouse finto due al 50%, Tastiera finta al 80%"
-        );
         let sola = riga_cuffie(&[lettura("a", "Cuffie finte", 60, true)]).unwrap();
-        assert_eq!((sola.altri, sola.tinta), (0, TintaBatteria::Normale));
-        assert_eq!(sola.nome, "Cuffie finte", "nome corto intero");
+        assert_eq!((sola.nome.as_str(), sola.percentuale), ("Cuffie finte", 60), "nome corto intero");
     }
 
     #[test]

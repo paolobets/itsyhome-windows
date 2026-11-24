@@ -1,7 +1,6 @@
 //! La pagina PC sull'impianto Misure (ridisegno F3, Task 6): le misure, le righe, la sintesi e lo
 //! stato come funzioni pure. Il ponte le chiama col campione del PC e lo stato delle radio e
 //! scrive i modelli solo a pagina aperta, solo se cambiano (Task 7).
-#![allow(dead_code)]
 
 use super::registro::tono_ui;
 use super::{Tono, R1};
@@ -47,7 +46,7 @@ fn assente(id: &str, etichetta: &str, motivo: &str) -> MisuraUi {
     MisuraUi {
         presente: true,
         id: id.into(),
-        icona: icona("nessuna"),
+        icona: icona(id),
         etichetta: etichetta.into(),
         valore: "—".into(),
         unita: "".into(),
@@ -70,7 +69,7 @@ fn in_percento(id: &str, etichetta: &str, pct: f32, dettaglio: String, tono: Ton
     MisuraUi {
         presente: true,
         id: id.into(),
-        icona: icona("nessuna"),
+        icona: icona(id),
         etichetta: etichetta.into(),
         valore: p.to_string().into(),
         unita: "%".into(),
@@ -91,7 +90,8 @@ fn tono_carico(pct: f32) -> Tono {
 }
 
 /// «7,7 di 16 GB»: l'unità si scrive una volta sola se è la stessa («512 MB di 1,5 GB» altrimenti).
-/// Non è `formatta_usato_totale` («7,7 / 16 GB»), che resta per chi la usa.
+/// (Prende il posto di `formatta_usato_totale`, «7,7 / 16 GB», che col Task 7 non usava più
+/// nessuno.)
 pub fn usato_di_totale(usato: u64, totale: u64) -> String {
     let (u, t) = (formatta_byte(usato), formatta_byte(totale));
     match (u.rsplit_once(' '), t.rsplit_once(' ')) {
@@ -140,12 +140,13 @@ fn disco(stat: Option<&StatPc>, lente_lette: bool) -> MisuraUi {
     MisuraUi {
         presente: true,
         id: "disco".into(),
-        icona: icona("nessuna"),
+        icona: icona("disco"),
         etichetta: ETICHETTA.into(),
         valore: liberi.to_string().into(),
         unita: "GB".into(),
         frazione: (s.disco_usato as f64 / s.disco_totale as f64).clamp(0.0, 1.0) as f32,
-        dettaglio: format!("liberi su {totale}").into(),
+        // Lo spazio fra numero e unità non si spezza: andando a capo nella carta «476 GB» resta intero.
+        dettaglio: format!("liberi su {}", totale.replace(' ', "\u{a0}")).into(),
         tono: tono_ui(Tono::Calmo),
         narratore: format!("{ETICHETTA}, {liberi} GB liberi su {totale}").into(),
     }
@@ -230,11 +231,23 @@ pub struct RighePc<'a> {
     pub errore_radio: Option<&'a str>,
 }
 
+/// L'icona di una riga (Lucide, ISC): il Wi-Fi anche per la rete fuori da Windows, l'ingranaggio
+/// per i rimandi alle Impostazioni di Windows.
+fn icona_riga(id: &str) -> &'static str {
+    match id {
+        WIFI | RETE => "wifi",
+        BLUETOOTH => "bluetooth",
+        VOLUME => "volume",
+        RIMANDI => "impostazioni",
+        _ => "nessuna",
+    }
+}
+
 fn riga(id: &str, tipo: TipoRigaMisuraUi, nome: &str, valore: &str, narratore: String) -> RigaMisuraUi {
     RigaMisuraUi {
         id: id.into(),
         tipo,
-        icona: icona("nessuna"),
+        icona: icona(icona_riga(id)),
         nome: nome.into(),
         valore: valore.into(),
         giu: "".into(),
@@ -312,7 +325,7 @@ pub fn righe(r: &RighePc) -> Vec<RigaMisuraUi> {
     }
     v.push(RigaMisuraUi {
         attiva: true,
-        ..riga(RIMANDI, TipoRigaMisuraUi::Rimandi, "Windows", "", "Windows, apre le impostazioni di rete, Bluetooth e suono".into())
+        ..riga(RIMANDI, TipoRigaMisuraUi::Rimandi, "Windows", "", "Windows, apre le impostazioni del Wi-Fi e del Bluetooth".into())
     });
     v
 }
@@ -408,7 +421,7 @@ mod test {
             [
                 ("cpu", "CPU", "12", "%", "GPU 37 %"),
                 ("memoria", "Memoria", "48", "%", "7,7 di 16 GB"),
-                ("disco", "Disco", "182", "GB", "liberi su 476 GB"),
+                ("disco", "Disco", "182", "GB", "liberi su 476\u{a0}GB"),
                 ("batteria", "Batteria", "84", "%", "In carica"),
             ]
         );
@@ -674,6 +687,50 @@ mod test {
             assert!(k.narratore.chars().any(char::is_lowercase), "{}", k.narratore);
             assert_ne!(k.narratore, k.narratore.to_uppercase());
         }
+    }
+
+    /// Da `pc_stats::test::formatta_usato_totale_casi` (Task 7): l'unità una volta sola se è la
+    /// stessa, due se cambia.
+    #[test]
+    fn usato_di_totale_casi() {
+        assert_eq!(usato_di_totale(GB * 101 / 10, GB * 157 / 10), "10,1 di 15,7 GB");
+        assert_eq!(usato_di_totale(512 * 1024 * 1024, GB * 3 / 2), "512 MB di 1,5 GB");
+        assert_eq!(usato_di_totale(0, 0), "0 di 0 B");
+    }
+
+    /// Task 7, requisito del controllore: ogni misura e ogni riga ha la sua icona (Lucide), mai
+    /// quella che non disegna; il posto vuoto resta senza.
+    #[test]
+    fn icone_per_posto() {
+        let vuota = icona("nessuna");
+        let s = StatPc { gpu_pct: Some(37.0), ..con_batteria(84.0, StatoBatteria::InCarica) };
+        let senza_batteria = StatPc { gpu_pct: Some(37.0), ..stat() };
+        let mut misure_viste: Vec<MisuraUi> = misure(Some(&s), true, true).into();
+        misure_viste.extend(misure(Some(&senza_batteria), true, true));
+        misure_viste.extend(misure(None, false, false));
+        for k in &misure_viste {
+            assert!(k.icona != vuota && k.icona.size().width > 0, "{}: senza icona", k.id);
+            assert!(k.icona == icona(k.id.as_str()), "{}: l'icona del suo id", k.id);
+        }
+        let ids: Vec<&str> = misure_viste.iter().map(|k| k.id.as_str()).collect();
+        for id in ["cpu", "memoria", "disco", "batteria", "gpu"] {
+            assert!(ids.contains(&id), "{id}");
+        }
+        assert!(misure(Some(&stat()), true, true)[3].icona == vuota, "il posto vuoto non ha icona");
+        let mut righe_viste = righe(&tutto());
+        righe_viste.extend(righe(&RighePc { windows: false, ..tutto() }));
+        for k in &righe_viste {
+            assert!(k.icona != vuota && k.icona.size().width > 0, "{}: senza icona", k.id);
+        }
+        // Ognuna la sua: cinque misure e quattro icone di righe diverse fra loro.
+        let tutte: Vec<&slint::Image> = misure_viste.iter().map(|k| &k.icona).chain(righe_viste.iter().map(|k| &k.icona)).collect();
+        let mut diverse: Vec<&slint::Image> = vec![];
+        for i in tutte {
+            if !diverse.contains(&i) {
+                diverse.push(i);
+            }
+        }
+        assert_eq!(diverse.len(), 9, "cpu, memoria, disco, batteria, gpu, wifi, bluetooth, volume, impostazioni");
     }
 
     /// Simboli sempre SVG: nessun glifo decorativo (frecce, chevron, stelle) nei testi della pagina

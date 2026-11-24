@@ -200,7 +200,8 @@ impl Ponte {
     /// (ridisegno F3, Task 4b) «Spegni tutte», «Riprova» e «Collega» sono quelle della carta,
     /// «Spegni la stanza» spegne la stanza del filtro scelto. Va chiamata solo subito dopo il gesto
     /// dell'utente. In Collegamenti (Task 5) «Modifica» e «Aggiungi un collegamento» aprono le
-    /// Impostazioni sulla scheda Collegamenti, come «Aggiungi» della carta.
+    /// Impostazioni sulla scheda Collegamenti, come «Aggiungi» della carta. Nella pagina PC (Task 7)
+    /// «Muto» mette o toglie il muto.
     pub fn azione_pagina(&self, modulo: &str, azione: &str, riga: &str) {
         match (modulo, azione) {
             ("agenti", agenti::TERMINALE) => self.claude_apri_terminale(riga),
@@ -210,6 +211,13 @@ impl Ponte {
             ("casa", pagina_casa::SPEGNI_STANZA) => self.spegni_la_stanza_scelta(),
             ("collegamenti", pagina_collegamenti::MODIFICA | collegamenti::AGGIUNGI) => {
                 apri_alla_sezione(SEZIONE_COLLEGAMENTI, || self.chiedi_impostazioni());
+            }
+            // La pagina PC (Task 7): «Muto» / «Riattiva l'audio» della testata, come l'altoparlante
+            // (c'è solo con un'uscita audio, quindi solo su Windows).
+            #[cfg(windows)]
+            ("pc", crate::moduli::pagina_pc::MUTO) => {
+                let muto = self.volume.get().is_some_and(|s| s.muto);
+                self.muto_volume(!muto);
             }
             _ => eprintln!("azione di pagina sconosciuta: {modulo} {azione}"),
         }

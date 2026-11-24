@@ -1,0 +1,561 @@
+// L'impianto Misure (ridisegno F3, Task 7; spec §5.6, bozza `tc-isola`, `tc-pc.png`, proposta C
+// delle misure più basse): sotto la testata della pagina (da y 48) quattro carte di misura da
+// 182 × 84 in fila (CPU, Memoria, Disco coi GB liberi e il quarto posto: batteria, GPU o vuoto) e,
+// da y 140, due file di righe alte 36 in due colonne da 372: Wi-Fi e Bluetooth con gli
+// interruttori, poi il volume e i rimandi alle pagine di Windows. Ogni riga ha il suo posto fermo
+// (`GeometriaMisure.posto`): senza volume il suo posto resta vuoto, fuori da Windows c'è solo la
+// riga della rete. Lo usa la pagina PC.
+//
+// Tutto già pronto da Rust (`moduli::pagina_pc`): misure e righe, coi nomi interi per Narrator. La
+// tastiera la governa il pannello (`tasti`): qui arriva il bersaglio col fuoco (riga × 2 + comando:
+// 0 il comando della riga, 1 il secondo rimando) e il fuoco vero si sposta da sé (`Fuoco`) perché
+// Narrator legga ruolo e nome. Il cursore del volume segue `volume` (lo scrivono il pannello e
+// Rust), non il modello: si muove subito.
+import { Tema } from "../tema.slint";
+import { Icone, Icona } from "../icone.slint";
+import { MisuraUi, RigaMisuraUi, TipoRigaMisuraUi, TonoModuloUi } from "../voci.slint";
+import { Anello, Fuoco, EtichettaMono } from "../componenti.slint";
+
+// Le misure dell'impianto, condivise col pannello e coi test.
+export global GeometriaMisure {
+    out property <length> cima: 48px;
+    out property <length> largo-misura: 182px;
+    out property <length> alto-misura: 84px;
+    out property <length> spazio: 8px;
+    out property <length> cima-righe: 140px;
+    out property <length> alto-riga: 36px;
+    out property <length> largo-riga: 372px;
+    // Il posto fermo di una riga (0 e 1 la prima fila, 2 e 3 la seconda; pari a sinistra): il
+    // Wi-Fi (o la rete) al primo, il Bluetooth al secondo, il volume al terzo, i rimandi al quarto.
+    public pure function posto(r: RigaMisuraUi) -> int {
+        return r.tipo == TipoRigaMisuraUi.cursore ? 2 : r.tipo == TipoRigaMisuraUi.rimandi ? 3 : r.id == "pc.bluetooth" ? 1 : 0;
+    }
+}
+
+// Una carta di misura, 182 × 84 r16 (proposta C): in alto l'etichetta mono con l'icona 15, poi il
+// valore mono 28 con l'unità 14 e, a destra, il dettaglio 12 (al più due righe, poi l'ellissi), in
+// fondo la barra 4 r2 sulla traccia. Per Narrator un gruppo col nome intero («Memoria, 48 %, 7,7
+// di 16 GB»): i testi dentro non si leggono una seconda volta.
+export component CartaMisura inherits Rectangle {
+    in property <MisuraUi> misura;
+
+    property <length> margine: 14px;
+    width: GeometriaMisure.largo-misura;
+    height: GeometriaMisure.alto-misura;
+    border-radius: Tema.raggio-xl;
+    border-width: 1px;
+    border-color: Tema.filo;
+    background: Tema.g1;
+    accessible-role: groupbox;
+    accessible-label: root.misura.narratore;
+
+    Icona {
+        x: root.margine;
+        y: 12px + 0.5px;
+        width: 15px;
+        height: 15px;
+        source: root.misura.icona;
+    }
+
+    EtichettaMono {
+        x: root.margine + 15px + 7px;
+        y: 12px;
+        width: max(0px, parent.width - self.x - root.margine);
+        height: 16px;
+        text: root.misura.etichetta.to-uppercase();
+        vertical-alignment: center;
+        overflow: elide;
+        color: Tema.testo-2;
+    }
+
+    valore-testo := Text {
+        x: root.margine;
+        y: 32px;
+        width: self.preferred-width;
+        height: 32px;
+        text: root.misura.valore;
+        vertical-alignment: center;
+        font-family: Tema.carattere-mono;
+        font-weight: 500;
+        font-size: 28px;
+        color: Tema.testo;
+        accessible-role: none;
+    }
+
+    unita-testo := Text {
+        x: valore-testo.x + valore-testo.width + 2px;
+        y: 42px;
+        width: root.misura.unita != "" ? self.preferred-width : 0px;
+        height: 18px;
+        text: root.misura.unita;
+        vertical-alignment: bottom;
+        font-family: Tema.carattere-mono;
+        font-weight: 500;
+        font-size: 14px;
+        color: Tema.testo-2;
+        accessible-role: none;
+    }
+
+    // Il dettaglio accanto al valore: due righe al più, ritagliate nel loro posto (mai oltre la
+    // carta); il testo intero lo dice Narrator.
+    posto-dettaglio := Rectangle {
+        x: unita-testo.x + unita-testo.width + 8px;
+        y: 32px;
+        width: max(0px, root.width - self.x - root.margine);
+        height: 32px;
+        clip: true;
+
+        dettaglio-testo := Text {
+            width: parent.width;
+            height: parent.height;
+            text: root.misura.dettaglio;
+            vertical-alignment: center;
+            wrap: word-wrap;
+            overflow: elide;
+            font-size: Tema.testo-piccolo;
+            color: Tema.testo-2;
+            accessible-role: none;
+        }
+    }
+
+    // La barra: l'occupato (il carico, la carica); il colore dice il tono (al lavoro oltre la
+    // soglia, in carica), la parola la dice il dettaglio. Senza dato la traccia vuota.
+    Rectangle {
+        x: root.margine;
+        y: 72px;
+        width: parent.width - 2 * root.margine;
+        height: 4px;
+        border-radius: 2px;
+        background: Tema.traccia;
+
+        if root.misura.tono != TonoModuloUi.vuoto: Rectangle {
+            x: 0;
+            width: parent.width * min(max(root.misura.frazione, 0), 1);
+            border-radius: 2px;
+            background: root.misura.tono == TonoModuloUi.attivo ? Tema.attivo
+                : root.misura.tono == TonoModuloUi.fatto ? Tema.fatto : Tema.testo;
+        }
+    }
+}
+
+// L'interruttore di una riga (WinUI, 40 × 20): acceso bianco col pomello nero; spento col filo;
+// non attivabile (radio assente o non letta) tenue.
+component Interruttore inherits Rectangle {
+    in property <bool> acceso;
+    in property <bool> attivo;
+    width: 40px;
+    height: 20px;
+    border-radius: 10px;
+    border-width: root.acceso && root.attivo ? 0px : 1px;
+    border-color: root.attivo ? Tema.bordo-ctl : Tema.icona-spenta;
+    background: root.acceso && root.attivo ? Tema.interruttore-acceso : transparent;
+
+    Rectangle {
+        x: root.acceso && root.attivo ? parent.width - self.width - 4px : 4px;
+        y: 4px;
+        width: 12px;
+        height: 12px;
+        border-radius: 6px;
+        background: !root.attivo ? Tema.icona-spenta : root.acceso ? Tema.pomello-acceso : Tema.testo-2;
+    }
+}
+
+// Il traffico del Wi-Fi acceso (o della rete): giù e su con le frecce SVG, in mono 12. Largo quanto
+// serve: non si accorcia mai (lo spazio lo cede il nome della rete).
+component Traffico inherits Rectangle {
+    in property <string> giu;
+    in property <string> su;
+    preferred-width: fila.preferred-width;
+
+    fila := HorizontalLayout {
+        spacing: 4px;
+        alignment: end;
+
+        VerticalLayout {
+            alignment: center;
+            Icona { width: 12px; height: 12px; source: Icone.giu; }
+        }
+
+        Text {
+            text: root.giu;
+            vertical-alignment: center;
+            font-family: Tema.carattere-mono;
+            font-weight: 500;
+            font-size: Tema.testo-piccolo;
+            color: Tema.testo-2;
+            accessible-role: none;
+        }
+
+        Rectangle { width: 4px; }
+
+        VerticalLayout {
+            alignment: center;
+            Icona { width: 12px; height: 12px; source: Icone.su; }
+        }
+
+        Text {
+            text: root.su;
+            vertical-alignment: center;
+            font-family: Tema.carattere-mono;
+            font-weight: 500;
+            font-size: Tema.testo-piccolo;
+            color: Tema.testo-2;
+            accessible-role: none;
+        }
+    }
+}
+
+// Un rimando a una pagina di Windows: testo 12 e la freccia (Lucide «chevron-right»), un pulsante
+// per Narrator, alto 24.
+component Rimando inherits Rectangle {
+    in property <string> testo;
+    in property <bool> anello;
+    callback apri();
+    width: scritta.preferred-width + 6px + 12px + 2px + 6px;
+    height: 24px;
+    border-radius: Tema.raggio-s;
+    background: tocco.has-hover ? Tema.scheda-sopra : transparent;
+    accessible-role: button;
+    accessible-label: root.testo;
+    accessible-description: "Apre le Impostazioni di Windows";
+    accessible-action-default => { root.apri(); }
+
+    Fuoco { chiede: root.anello; }
+
+    scritta := Text {
+        x: 6px;
+        width: self.preferred-width;
+        height: parent.height;
+        text: root.testo;
+        vertical-alignment: center;
+        font-size: Tema.testo-piccolo;
+        font-weight: 500;
+        color: Tema.testo-2;
+        accessible-role: none;
+    }
+
+    Icona {
+        x: scritta.x + scritta.width + 2px;
+        y: (parent.height - self.height) / 2;
+        width: 12px;
+        height: 12px;
+        source: Icone.destra;
+    }
+
+    tocco := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.apri(); }
+    }
+
+    if root.anello: Anello { raggio: Tema.raggio-s; distanza: 0px; }
+}
+
+// Una riga della pagina PC, 372 × 36: icona 16, nome 13 e, a destra, quello che la riga fa.
+// - interruttore (Wi-Fi, Bluetooth): il valore («Casa», «Cuffie 70 %», «Spento», «Non presente»),
+//   il traffico del Wi-Fi acceso e l'interruttore; per Narrator un `switch` col nome intero, acceso
+//   = `checked`, non attivabile se la radio manca o non è letta. Un rifiuto di Windows prende il
+//   posto del valore, in `Tema.errore`.
+// - cursore (volume): l'altoparlante (muto sì/no), il cursore (slider, ±2 punti) e la percentuale.
+// - rimandi: «Reti Wi-Fi» e «Dispositivi Bluetooth», due pulsanti che aprono le Impostazioni.
+// - stato (la rete fuori da Windows): solo testo.
+export component RigaMisura inherits Rectangle {
+    in property <RigaMisuraUi> riga;
+    // Il volume 0..1 e il muto di adesso (dal pannello: il cursore non aspetta il modello).
+    in property <float> volume;
+    in property <bool> muto;
+    // -1 nessuno, 0 il comando della riga, 1 il secondo rimando.
+    in property <int> fuoco: -1;
+    callback commuta();
+    callback apri(int);
+    callback imposta(float);
+    callback cambia-muto(bool);
+
+    property <bool> interruttore: root.riga.tipo == TipoRigaMisuraUi.interruttore;
+    property <bool> cursore: root.riga.tipo == TipoRigaMisuraUi.cursore;
+    property <bool> rimandi: root.riga.tipo == TipoRigaMisuraUi.rimandi;
+    property <bool> con-traffico: root.riga.giu != "" && root.riga.errore == "";
+    property <length> margine: 12px;
+    property <length> x-nome: 36px;
+    // Dove finisce lo spazio del valore: prima dell'interruttore e del traffico.
+    property <length> fine-valore: (root.interruttore ? interruttore-el.x - 12px : root.width - root.margine)
+        - (root.con-traffico ? traffico.preferred-width + 12px : 0px);
+    width: GeometriaMisure.largo-riga;
+    height: GeometriaMisure.alto-riga;
+    border-radius: Tema.raggio-m;
+    background: root.interruttore && root.riga.attiva && tocco-riga.has-hover ? Tema.scheda-sopra : transparent;
+
+    // Il ruolo accessibile è una costante in Slint: la riga di stato ha il suo elemento di testo.
+    if root.riga.tipo == TipoRigaMisuraUi.stato: Rectangle {
+        accessible-role: text;
+        accessible-label: root.riga.narratore;
+    }
+
+    // L'interruttore è la riga intera per il mouse (bersaglio largo), per Narrator e per il fuoco.
+    if root.interruttore: Rectangle {
+        accessible-role: switch;
+        accessible-label: root.riga.narratore;
+        accessible-checked: root.riga.acceso;
+        accessible-enabled: root.riga.attiva;
+        accessible-action-default => {
+            if (root.riga.attiva) {
+                root.commuta();
+            }
+        }
+        Fuoco { chiede: root.fuoco == 0; }
+    }
+
+    tocco-riga := TouchArea {
+        enabled: root.interruttore && root.riga.attiva;
+        mouse-cursor: self.enabled ? pointer : default;
+        clicked => { root.commuta(); }
+    }
+
+    if !root.cursore: Icona {
+        x: root.margine;
+        y: (parent.height - self.height) / 2;
+        width: 16px;
+        height: 16px;
+        source: root.riga.icona;
+        colorize: root.interruttore && !root.riga.attiva ? Tema.icona-spenta : Tema.icona;
+    }
+
+    // Il volume: l'altoparlante al posto dell'icona, bersaglio 28 × 28 (muto sì/no).
+    if root.cursore: Rectangle {
+        x: root.margine - 6px;
+        y: 4px;
+        width: 28px;
+        height: 28px;
+        border-radius: Tema.raggio-s;
+        background: tocco-altoparlante.has-hover ? Tema.scheda-sopra : transparent;
+        accessible-role: button;
+        accessible-label: root.muto ? "Riattiva l'audio" : "Disattiva l'audio";
+        accessible-action-default => { root.cambia-muto(!root.muto); }
+
+        Icona {
+            x: 6px;
+            y: 6px;
+            width: 16px;
+            height: 16px;
+            source: root.muto ? Icone.altoparlante-muto : Icone.altoparlante;
+        }
+
+        tocco-altoparlante := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.cambia-muto(!root.muto); }
+        }
+    }
+
+    nome-testo := Text {
+        x: root.x-nome;
+        width: self.preferred-width;
+        height: parent.height;
+        text: root.riga.nome;
+        vertical-alignment: center;
+        font-weight: 500;
+        font-size: Tema.testo-corpo;
+        color: root.interruttore && !root.riga.attiva ? Tema.testo-tenue : Tema.testo;
+        accessible-role: none;
+    }
+
+    // Il valore (o il rifiuto di Windows), accorciato se non c'è spazio.
+    if !root.cursore && !root.rimandi: valore-testo := Text {
+        x: nome-testo.x + nome-testo.width + 8px;
+        width: max(0px, root.fine-valore - self.x);
+        height: parent.height;
+        text: root.riga.errore != "" ? root.riga.errore : root.riga.valore;
+        vertical-alignment: center;
+        overflow: elide;
+        font-size: Tema.testo-piccolo;
+        color: root.riga.errore != "" ? Tema.errore : Tema.testo-2;
+        accessible-role: none;
+    }
+
+    traffico := Traffico {
+        visible: root.con-traffico;
+        x: root.fine-valore + 12px;
+        width: root.con-traffico ? self.preferred-width : 0px;
+        height: parent.height;
+        giu: root.riga.giu;
+        su: root.riga.su;
+    }
+
+    interruttore-el := Interruttore {
+        visible: root.interruttore;
+        x: root.width - root.margine - self.width;
+        y: (parent.height - self.height) / 2;
+        acceso: root.riga.acceso;
+        attivo: root.riga.attiva;
+    }
+
+    // ─── Il volume ───
+    // Durante il trascinamento il cursore segue il mouse, non gli stati che tornano da Windows.
+    property <bool> trascina: false;
+    property <float> posizione;
+    property <float> mostrato: root.trascina ? root.posizione : min(max(root.volume, 0), 1);
+    property <int> pct: round(root.mostrato * 100);
+    property <length> x-cursore: 104px;
+    property <length> largo-cursore: root.width - root.x-cursore - root.margine - 48px;
+
+    function al-punto(x: length) {
+        root.posizione = round(min(max(x / root.largo-cursore, 0), 1) * 100) / 100;
+        root.imposta(root.posizione);
+    }
+
+    function passo(punti: int) {
+        root.imposta(min(max((round(root.volume * 100) + punti) / 100, 0), 1));
+    }
+
+    if root.cursore: cursore-el := Rectangle {
+        x: root.x-cursore;
+        y: 9px;
+        width: root.largo-cursore;
+        height: 18px;
+        accessible-role: slider;
+        accessible-label: "Volume";
+        accessible-description: "Invio: silenzia o riattiva";
+        accessible-value: root.pct + " %";
+        accessible-value-minimum: 0;
+        accessible-value-maximum: 100;
+        accessible-value-step: 2;
+        accessible-action-increment => { root.passo(2); }
+        accessible-action-decrement => { root.passo(-2); }
+        accessible-action-set-value(v) => { root.imposta(min(max(v.to-float() / 100, 0), 1)); }
+
+        Fuoco { chiede: root.fuoco == 0; }
+
+        Rectangle {
+            y: 7px;
+            height: 4px;
+            border-radius: 2px;
+            background: Tema.traccia;
+
+            if !root.muto: Rectangle {
+                x: 0;
+                width: parent.width * root.mostrato;
+                border-radius: 2px;
+                background: Tema.testo;
+            }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) * root.mostrato;
+            y: (parent.height - self.height) / 2;
+            width: 12px;
+            height: 12px;
+            border-radius: 6px;
+            background: root.muto ? Tema.testo-tenue : Tema.testo;
+        }
+
+        // Più larga della traccia di mezzo pomello per lato: gli estremi si prendono bene.
+        TouchArea {
+            x: -6px;
+            width: parent.width + 12px;
+            mouse-cursor: pointer;
+            pointer-event(evento) => {
+                if (evento.button == PointerEventButton.left && evento.kind == PointerEventKind.down) {
+                    root.trascina = true;
+                    root.al-punto(self.mouse-x - 6px);
+                } else if (evento.button == PointerEventButton.left && evento.kind == PointerEventKind.up) {
+                    root.trascina = false;
+                } else if (evento.kind == PointerEventKind.cancel) {
+                    // Il sistema ha tolto il puntatore: senza questo il cursore resterebbe «in
+                    // trascinamento» e non seguirebbe più Windows.
+                    root.trascina = false;
+                }
+            }
+            moved => {
+                if (self.pressed) {
+                    root.al-punto(self.mouse-x - 6px);
+                }
+            }
+        }
+
+        if root.fuoco == 0: Anello { raggio: Tema.raggio-s; }
+    }
+
+    if root.cursore: Text {
+        x: root.width - root.margine - self.width;
+        width: 44px;
+        height: parent.height;
+        text: root.pct + " %";
+        horizontal-alignment: right;
+        vertical-alignment: center;
+        font-family: Tema.carattere-mono;
+        font-weight: 500;
+        font-size: Tema.testo-piccolo;
+        color: root.muto ? Tema.testo-tenue : Tema.testo-2;
+        accessible-role: none;
+    }
+
+    // ─── I rimandi ───
+    if root.rimandi: HorizontalLayout {
+        x: nome-testo.x + nome-testo.width + 8px;
+        width: root.width - self.x - root.margine + 6px;
+        height: parent.height;
+        alignment: end;
+        spacing: 4px;
+
+        VerticalLayout {
+            alignment: center;
+            Rimando {
+                testo: "Reti Wi-Fi";
+                anello: root.fuoco == 0;
+                apri => { root.apri(0); }
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            Rimando {
+                testo: "Dispositivi Bluetooth";
+                anello: root.fuoco == 1;
+                apri => { root.apri(1); }
+            }
+        }
+    }
+
+    if root.interruttore && root.fuoco == 0: Anello { raggio: root.border-radius; distanza: 0px; }
+}
+
+export component ImpiantoMisure inherits Rectangle {
+    in property <[MisuraUi]> misure;
+    in property <[RigaMisuraUi]> righe;
+    // Il bersaglio col fuoco (riga × 2 + comando), già valido: lo decide il pannello.
+    in property <int> fuoco;
+    // Il fuoco da tastiera è nella pagina (altrimenti nessun anello e nessun fuoco vero).
+    in property <bool> con-fuoco;
+    in property <float> volume;
+    in property <bool> volume-muto;
+    // (indice della riga), (riga, 0 o 1 il rimando), il volume voluto, muto sì/no.
+    callback commuta(int);
+    callback apri(int, int);
+    callback imposta(float);
+    callback cambia-muto(bool);
+
+    // Il posto vuoto (né batteria né GPU) non si disegna e non si legge.
+    for m[i] in root.misure: Rectangle {
+        x: i * (GeometriaMisure.largo-misura + GeometriaMisure.spazio);
+        y: GeometriaMisure.cima;
+        width: GeometriaMisure.largo-misura;
+        height: GeometriaMisure.alto-misura;
+
+        if m.presente: CartaMisura {
+            x: 0;
+            y: 0;
+            misura: m;
+        }
+    }
+
+    for r[i] in root.righe: RigaMisura {
+        x: mod(GeometriaMisure.posto(r), 2) * (GeometriaMisure.largo-riga + GeometriaMisure.spazio);
+        y: GeometriaMisure.cima-righe + floor(GeometriaMisure.posto(r) / 2) * (GeometriaMisure.alto-riga + GeometriaMisure.spazio);
+        riga: r;
+        volume: root.volume;
+        muto: root.volume-muto;
+        fuoco: root.con-fuoco && floor(root.fuoco / 2) == i ? mod(root.fuoco, 2) : -1;
+        commuta => { root.commuta(i); }
+        apri(quale) => { root.apri(i, quale); }
+        imposta(v) => { root.imposta(v); }
+        cambia-muto(si) => { root.cambia-muto(si); }
+    }
+}

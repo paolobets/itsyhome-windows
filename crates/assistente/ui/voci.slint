@@ -77,35 +77,6 @@ export struct SchermoMenuUi {
 // Tinta del glifo della batteria; `normale` per prima: è il valore predefinito di uno struct nuovo.
 export enum TintaBatteriaUi { normale, carica, informazione, attenzione }
 
-// Le statistiche del PC già formattate (italiano) per quadranti e vista PC; `cpu`, `ram` e
-// `disco` sono frazioni 0..1 per gli archi. `pronta`: dal secondo campione la CPU ha un valore.
-export struct StatPcUi {
-    pronta: bool,
-    cpu: float,
-    ram: float,
-    disco: float,
-    cpu-testo: string,
-    ram-testo: string,
-    ram-dettaglio: string,
-    disco-testo: string,
-    disco-dettaglio: string,
-    rete-giu: string,
-    rete-su: string,
-    ha-batteria: bool,
-    batteria-testo: string,
-    batteria-frazione: float,
-    in-carica: bool,
-    // Tinta del glifo della batteria (vedi `pc_stats::TintaBatteria`); il valore predefinito è
-    // il neutro.
-    tinta-batteria: TintaBatteriaUi,
-    // GPU (M2, Task 10, solo Windows): `ha-gpu` falso = nessun dato (fuori da Windows, GPU non
-    // mostrata, lettura fallita o primo campione), e allora riga e arco non ci sono; `gpu` è la
-    // frazione 0..1, `gpu-testo` «37%».
-    ha-gpu: bool,
-    gpu: float,
-    gpu-testo: string,
-}
-
 // Un pulsante di una voce «In attesa» (al massimo 2 per voce, anche nella pillola).
 // `delicato`: concede un permesso; nel pannello mai con Invio da solo, solo Ctrl+Invio o clic.
 export struct PulsanteUi {
