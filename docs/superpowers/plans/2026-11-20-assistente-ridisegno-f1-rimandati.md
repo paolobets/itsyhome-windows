@@ -147,6 +147,8 @@ Rimandati:
 
 ### Da provare dal vivo con Paolo (Task 9 Step 5)
 
+Il 24/11/2026 Paolo ha installato la build 2cb8de4, ha provato il permesso dalla pagina Agenti e ha dato l'OK per passare a F3. Le altre prove di questo elenco passano alla prova dal vivo di F3, insieme alla foto della Coda col permesso aperto.
+
 - Claude Code vero con un permesso **negato e uno consentito** dalla pagina Agenti (anche arrivandoci col clic sulla pillola), dalla Coda e dalla voce della Panoramica; nella Coda «Consenti» entro 600 ms ignorato (aspetto inerte visibile) e permesso lungo consentito solo dopo il fondo.
 - **Doppio clic reale su «Nega» con due permessi** (Panoramica e Agenti); la voce con un solo pulsante delicato (`--prova-avviso`); nomi delle sessioni = titoli delle schede di Claude Code.
 - Tastiera e **Narrator con UI Automation vera** su righe, dettaglio, permesso e carte; anello del fuoco nella colonna che scorre e nel testo del permesso a 125/150 %; pagina Agenti a 100 % e 175 %.
