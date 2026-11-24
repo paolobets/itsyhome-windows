@@ -592,6 +592,31 @@ mod test {
         assert_eq!(righe(), prima, "con un'azione e le altre senza: nessuna riga riscritta");
     }
 
+    /// Giro di correzione 1 del Task 4b: a pannello aperto, passando da scollegata a in connessione
+    /// (casa-core riprova a ogni tentativo) coi dati di prima, la carta di Casa tiene «Scollegata»
+    /// e «Riprova»: il pulsante non compare e sparisce sotto il puntatore.
+    #[test]
+    fn la_carta_casa_tiene_riprova_durante_la_riconnessione() {
+        let (_spegni, ponte, _pillola, _cartella) = ponte_di_prova();
+        let p = Pannello::new().expect("pannello");
+        ponte.riempi(&p);
+        ponte.pannello_aperto(&p);
+        let carta = || {
+            let c = p.get_moduli().iter().find(|m| m.id == "casa").expect("la carta Casa");
+            (c.titolo.to_string(), c.con_azione, c.azione_id.to_string())
+        };
+        let attesa = ("Scollegata".to_owned(), true, casa::RIPROVA.to_owned());
+        for stato in [
+            StatoConnessione::Errore("timeout".into()),
+            StatoConnessione::InConnessione,
+            StatoConnessione::Errore("timeout".into()),
+            StatoConnessione::InConnessione,
+        ] {
+            ponte.ricevi(CasaEvento::Stato(stato.clone()));
+            assert_eq!(carta(), attesa, "{stato:?}");
+        }
+    }
+
     /// A pannello chiuso un evento della casa non tocca il registro né scrive `modello_moduli`;
     /// all'apertura il riassunto si rifà coi dati di adesso, una volta.
     #[test]

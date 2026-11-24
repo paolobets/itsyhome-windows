@@ -104,6 +104,13 @@ pub fn riassunto(stato: &StatoConnessione, menu: Option<&MenuData>, accese: usiz
 
 /// La carta senza il titolo della testata (`riassunto` lo aggiunge).
 fn carta_di(stato: &StatoConnessione, menu: Option<&MenuData>, accese: usize, dati_delle: Option<&str>) -> Riassunto {
+    // In connessione coi dati di prima (casa-core lo dice a ogni tentativo di riconnessione: dopo
+    // 1, 2, 4, 8, 16 s e poi ogni 30) la carta resta quella della casa che non risponde, con
+    // «Riprova»: altrimenti il pulsante comparirebbe e sparirebbe sotto il puntatore a ogni
+    // tentativo (giro di correzione 1 del Task 4b). Come il titolo della testata (`r1`).
+    if *stato == StatoConnessione::InConnessione && menu.is_some() {
+        return carta_di(&StatoConnessione::Errore(String::new()), menu, accese, dati_delle);
+    }
     let collega = || azione(COLLEGA, "Collega", "collegamenti");
     match (stato, menu) {
         (StatoConnessione::NonConfigurato, _) => fisso(Tono::Vuoto, "Da collegare", "Collega la casa", collega()),
@@ -273,6 +280,21 @@ mod test {
         assert_eq!(fatto(&S::Connesso, Some(&casa(1, None, None))).fatto, "1 luce accesa");
         assert_eq!(fatto(&S::Connesso, Some(&casa(4, Some("21"), Some(9.0)))).fatto, "4 luci accese");
         assert_eq!(fatto(&S::Connesso, Some(&casa(4, None, None))).valore, "");
+    }
+
+    /// Giro di correzione 1 del Task 4b: coi dati presenti, il riassunto in connessione (a ogni
+    /// tentativo di riconnessione) è uguale a quello della casa che non risponde: tono, titolo,
+    /// riga, azione «Riprova» e `r1`. Senza dati resta «Mi collego» senza azione.
+    #[test]
+    fn in_connessione_coi_dati_come_scollegata() {
+        use StatoConnessione as S;
+        for m in [casa(2, Some("21"), Some(9.0)), casa(0, None, None)] {
+            let r = riassunto(&S::InConnessione, Some(&m), Some("10:42"));
+            assert_eq!(r, riassunto(&S::Errore("timeout".into()), Some(&m), Some("10:42")));
+            assert_eq!(vista(&r), (Tono::Fermo, "Scollegata", "Non raggiungibile", Some("Riprova")));
+            assert_eq!(r.azione.map(|a| a.id), Some(RIPROVA));
+        }
+        assert_eq!(vista(&riassunto(&S::InConnessione, None, None)), (Tono::Calmo, "Mi collego", "—", None));
     }
 
     /// Coi dati peggiori (cento luci, temperature negative coi decimali, la frase d'errore più
