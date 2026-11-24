@@ -9,6 +9,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 > **Nota sul trasporto di M3.** Le sezioni «Task 1», «Task 2», «Task 4», «Task 6» e «Task 7» qui sotto raccontano il primo giro, con hook HTTP su `127.0.0.1`, porta, codice segreto, variabile `ISOLA_HOOK_TOKEN`, `assistente --barra-stato` e «Rigenera il codice». **Nulla di tutto ciò è mai stato rilasciato**: i Task 7A/7B (18/11) lo hanno sostituito con l'aiutante `isola-hook.exe` e un tubo con nome riservato all'utente (spec M3 §10). Le sezioni restano come storia.
 
+### Changed (Ridisegno F3, Task 1: misura di partenza)
+- **Solo misure, nessun sorgente di prodotto toccato.** Partenza di F3 (cd97bd6, exe release su istanza di prova: cartella finta con Casa finta collegata e 6 preferiti, 6 collegamenti finti, `finto_ha` acceso, `tools\misura.ps1 -Secondi 60`, medie dal secondo 10, RAM = memoria privata, tasti con `PostMessage` al solo PID di prova). **Tutte le misure sono state prese a PC bloccato** (schermata di blocco in primo piano, la pillola si vede solo come finestra 24×24, non si disegna): la riga «a riposo» è quindi senza pillola disegnata e va rifatta a schermo sbloccato (sotto).
+
+  | Scenario (due prove) | RAM privata | CPU media |
+  |---|---|---|
+  | A riposo | 8,42 e 8,42 MB | 0,004 e 0,002 % (picco 0,11) |
+  | `--apri`, Panoramica ferma | 15,14 e 15,46 MB | 0,077 e 0,118 % (picchi 0,44 e 0,78) |
+  | Pagina Casa aperta e ferma | 15,47 e 15,43 MB | 0,075 e 0,079 % |
+  | Pagina PC aperta e ferma | 17,30 e 17,12 MB | 0,112 e 0,116 % |
+  | Pagina Collegamenti aperta e ferma | 15,00 e 15,01 MB | 0,091 e 0,083 % |
+
+  Con le due uscite di controllo di `--apri` (stessa exe, più tardi): 15,13 e 15,13 MB, 0,098 e 0,081 %. Le quattro prove di `--apri` sulla stessa exe vanno da 0,077 a 0,118: il rumore fra una prova e l'altra è più grande di 0,015.
+- **m3 (i due `Permesso` sempre vivi): NON confermata.** Con `permesso.slint` svuotato (stessa interfaccia, nessun elemento) `--apri` fa 0,082 e 0,071 % di CPU e 15,31 e 15,09 MB, contro 0,098 e 0,081 % e 15,13 e 15,13 MB della stessa exe di partenza misurata subito dopo (e 0,094 % di media sulle quattro prove): scarto di 0,016 e 0,010 punti, o 0,012 e 0,023 sulla media. Non scende di 0,015 in entrambe le prove con nessun confronto. Niente da rimediare nel Permesso; regola per F3 comunque: gli impianti nuovi stanno dentro `if vista == …` (nessuna istanza fissa viva fuori dalla sua pagina). Anche questa misura è a PC bloccato.
+- **Pillola a riposo a schermo sbloccato: NON misurata**, il PC è rimasto bloccato per tutta la prova (controllato fino alle 08:45, con attesa di una decina di minuti). Con la build usa e getta del contatore (mai committata) si sono contati 29 fotogrammi in tutto, tutti nei primi 5 secondi dall'avvio e poi nessuno in 60 s (due prove): è il caso «pillola non disegnata», non il battito degli occhi. Da rifare appena lo schermo è sbloccato.
+
 ### Fixed (Ridisegno F2, correzioni della revisione finale)
 - **«Consenti» a posto fisso, sorvegliato (I1)**: nuovo test `consenti_a_posto_fisso_col_testo_che_cambia`, per le due istanze del permesso (Coda e dettaglio di Agenti). Il rettangolo intero di «Nega» e «Consenti» è lo stesso con un testo corto, con uno più alto del riquadro e con la stessa voce aggiornata sul posto con un testo più lungo. Prima una modifica che spostasse «Consenti» di 26 px non faceva fallire nessun test. Solo test, nessun codice di prodotto.
 - **«Chiede: Comando» non si taglia più nella riga (m1)**: nelle righe con un permesso della pagina Agenti si accorcia prima il nome della sessione (non sotto 48 px) e la cosa resta intera finché c'è spazio; le righe senza permesso sono com'erano. Test `riga_col_permesso_non_taglia_la_cosa`.
