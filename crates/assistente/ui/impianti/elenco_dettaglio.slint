@@ -64,8 +64,12 @@ export component RigaModulo inherits Rectangle {
     property <length> spazio: max(0px, fine - x-nome);
     property <length> largo-chi: root.riga.chi != "" ? chi-testo.preferred-width + 8px : 0px;
     // Il nome prende ciò che resta dopo «chi» e la cosa, se ci stanno; altrimenti almeno metà.
+    // Nella riga con un permesso la cosa («Chiede: Comando») conta più del nome: resta intera
+    // finché c'è spazio e si accorcia prima il nome (che però non scende sotto 48).
     property <length> largo-nome: min(nome-testo.preferred-width,
-        max(spazio * 0.5, spazio - largo-chi - cosa-testo.preferred-width - 8px));
+        root.riga.voce != ""
+            ? max(48px, spazio - largo-chi - cosa-testo.preferred-width - 8px)
+            : max(spazio * 0.5, spazio - largo-chi - cosa-testo.preferred-width - 8px));
 
     Occhietti {
         x: 12px;

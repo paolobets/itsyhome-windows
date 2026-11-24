@@ -5188,6 +5188,109 @@ mod accessibilita {
         assert_eq!(*eventi.borrow(), [format!("{VOCE_P} nega")]);
     }
 
+    /// I rettangoli interi (finestra) di «Nega» e «Consenti».
+    fn rettangoli_dei_pulsanti(p: &Pannello) -> [(f32, f32, f32, f32); 2] {
+        [rettangolo(&elemento(p, "Nega")), rettangolo(&elemento(p, "Consenti"))]
+    }
+
+    /// Scorre il testo del permesso col fuoco sul testo (↓) finché «Consenti» compare.
+    fn scorri_fino_a_consenti(p: &Pannello) {
+        use slint::platform::Key;
+        for _ in 0..200 {
+            if c_e(p, "Consenti") {
+                break;
+            }
+            tasto(p, Key::DownArrow);
+            lascia_girare(p);
+        }
+        assert!(c_e(p, "Consenti"), "il fondo del testo non si è raggiunto");
+    }
+
+    /// Il comando più alto del riquadro che lo contiene (il testo scorre).
+    fn comando_piu_alto_del_riquadro(p: &Pannello) -> bool {
+        parte(p, "comando").size().height > parte(p, "testo").size().height
+    }
+
+    /// Revisione finale F2, I1 (mutazione S26): «Consenti» non cambia posto dentro la vista, qualunque
+    /// sia il testo. Il riarmo scatta solo quando «Consenti» compare (`visto-fondo`), non quando si
+    /// sposta: l'unica difesa è che non si sposti mai, e lo sorveglia questo test, per tutte e due le
+    /// istanze del permesso (`coda-permesso`, pulsanti in alto; `agenti-permesso`, in basso a destra).
+    /// Il rettangolo intero (x, y, larghezza, altezza) di «Nega» e «Consenti» è lo stesso con un
+    /// testo corto, con uno più alto del riquadro e con la stessa voce (stesso id) aggiornata sul
+    /// posto con un testo più lungo.
+    #[test]
+    fn consenti_a_posto_fisso_col_testo_che_cambia() {
+        use slint::platform::Key;
+        let lungo = "alfa ".repeat(400);
+
+        // La Coda.
+        let coda = |comando: &str| {
+            let (p, _) = pannello_in_coda(ModelRc::new(VecModel::from(vec![permesso_con_dati(VOCE_P, comando)])));
+            tasto(&p, Key::Return);
+            lascia_girare(&p);
+            fine_arrivo();
+            assert!(permesso_aperto(&p), "il permesso è aperto");
+            p
+        };
+        let p = coda("npm test");
+        assert!(!comando_piu_alto_del_riquadro(&p));
+        let corto = rettangoli_dei_pulsanti(&p);
+        let q = coda(&lungo);
+        assert!(comando_piu_alto_del_riquadro(&q), "il testo lungo è più alto del riquadro");
+        tasto(&q, Key::UpArrow);
+        scorri_fino_a_consenti(&q);
+        assert_eq!(rettangoli_dei_pulsanti(&q), corto, "Coda: testo lungo, «Consenti» e «Nega» al posto di prima");
+        // La stessa voce, aggiornata sul posto con un testo più lungo.
+        p.get_attese().set_row_data(0, permesso_con_dati(VOCE_P, &lungo));
+        lascia_girare(&p);
+        assert!(c_e(&p, "Consenti"), "stessa voce: «Consenti» resta (il fondo era già visto)");
+        assert!(comando_piu_alto_del_riquadro(&p), "la voce aggiornata ha il testo più alto del riquadro");
+        assert_eq!(rettangoli_dei_pulsanti(&p), corto, "Coda: stessa voce, testo più lungo");
+
+        // Il dettaglio di Agenti.
+        let agenti = |comando: &str| {
+            agenti_col_permesso(
+                vec![riga_col_permesso("pppp", "my-shop", VOCE_P, 0)],
+                vec![permesso_con_dati(VOCE_P, comando)],
+            )
+            .0
+        };
+        let p = agenti("npm test");
+        assert!(!comando_piu_alto_del_riquadro(&p));
+        let corto = rettangoli_dei_pulsanti(&p);
+        let q = agenti(&lungo);
+        assert!(comando_piu_alto_del_riquadro(&q), "il testo lungo è più alto del riquadro");
+        tasto(&q, Key::RightArrow);
+        tasto(&q, Key::UpArrow);
+        scorri_fino_a_consenti(&q);
+        assert_eq!(rettangoli_dei_pulsanti(&q), corto, "Agenti: testo lungo, «Consenti» e «Nega» al posto di prima");
+        p.get_attese().set_row_data(0, permesso_con_dati(VOCE_P, &lungo));
+        lascia_girare(&p);
+        assert!(c_e(&p, "Consenti"), "stessa voce: «Consenti» resta (il fondo era già visto)");
+        assert!(comando_piu_alto_del_riquadro(&p), "la voce aggiornata ha il testo più alto del riquadro");
+        assert_eq!(rettangoli_dei_pulsanti(&p), corto, "Agenti: stessa voce, testo più lungo");
+    }
+
+    /// Revisione finale F2, m1: in una riga col permesso la cosa («Chiede: Comando») conta più del
+    /// nome: con un nome lungo si accorcia il nome e la cosa resta intera (prima il nome prendeva
+    /// almeno metà dello spazio e la cosa diventava «Chiede: Coma…»). La misura è quella di
+    /// `misura.rs` (Inter 500 a 12 px) portata al corpo 13 della cosa, con lo stesso margine.
+    #[test]
+    fn riga_col_permesso_non_taglia_la_cosa() {
+        use crate::moduli::misura::{larghezza, Stile, MARGINE};
+        let nome = "un-progetto-con-un-nome-davvero-lunghissimo";
+        let (p, _, _) = agenti_col_permesso(
+            vec![riga_col_permesso("pppp", nome, VOCE_P, 0)],
+            vec![permesso_con_dati(VOCE_P, "npm test")],
+        );
+        let cosa = ElementHandle::find_by_element_id(&p, "RigaModulo::cosa-testo").next().expect("la cosa della riga");
+        let serve = larghezza("Chiede: Comando", Stile::Riga) * 13.0 / 12.0 - MARGINE;
+        assert!(cosa.size().width >= serve, "la cosa è tagliata: larga {} su {serve}", cosa.size().width);
+        // Il nome si è accorciato: non sta intero.
+        let nome_el = ElementHandle::find_by_element_id(&p, "RigaModulo::nome-testo").next().expect("il nome della riga");
+        assert!(nome_el.size().width < larghezza(nome, Stile::Riga) * 13.0 / 12.0, "il nome doveva accorciarsi");
+    }
+
     /// Revisione del Task 7, I1 (ruling: il clic vale solo col puntatore mosso). La carta Agenti al
     /// 4° posto della Panoramica: il clic sulla carta apre la pagina, e «Nega» o «Consenti» del
     /// permesso scelto nascono sotto lo stesso punto. Ripetuto lì dopo i 600 ms (fermo, o con un
