@@ -7,6 +7,7 @@ use super::{Tono, R1};
 use crate::pannello::icona;
 use super::pc::SOGLIA_CARICO;
 use crate::pc_stats::{formatta_byte, StatPc, StatoBatteria};
+use crate::sistema::batterie_bt::{accorcia, NOME_MASSIMO};
 use crate::{MisuraUi, RigaMisuraUi, SintesiUi, StatoPaginaUi, TipoRigaMisuraUi, TipoStatoPaginaUi};
 
 /// «Muto» / «Riattiva l'audio»: l'azione della testata (l'audio del PC).
@@ -24,6 +25,8 @@ const NON_LETTA: &str = "Non letta";
 /// Il rifiuto di Windows a un cambio di Wi-Fi o Bluetooth (la pagina giusta di Windows è già aperta).
 const RIFIUTO: &str = "Non riuscito: apro le Impostazioni di Windows";
 const GIB: f64 = (1u64 << 30) as f64;
+/// Sotto questa percentuale la batteria del dispositivo Bluetooth è in tinta d'avviso.
+const SOGLIA_AVVISO_BT: u8 = 20;
 
 /// Un percento intero 0..100 (il valore è finito: chi chiama lo ha già controllato).
 fn percento(v: f32) -> u32 {
@@ -135,8 +138,14 @@ fn disco(stat: Option<&StatPc>, lente_lette: bool) -> MisuraUi {
     if s.disco_totale == 0 {
         return assente("disco", ETICHETTA, NON_LETTA);
     }
-    let liberi = (s.disco_totale.saturating_sub(s.disco_usato) as f64 / GIB).round() as u64;
-    let totale = formatta_byte(s.disco_totale);
+    // Da 1000 GB in su (e sotto i 1024, dove si passa ai TB) il totale senza decimale: «1024 GB»
+    // entra nella carta accanto al valore, «1023,9 GB» no (Task 7, giro 1). I liberi non superano
+    // il totale mostrato, anche arrotondando.
+    let gib_totale = s.disco_totale as f64 / GIB;
+    let intero = (1000.0..1024.0).contains(&gib_totale);
+    let totale = if intero { format!("{} GB", gib_totale.round()) } else { formatta_byte(s.disco_totale) };
+    let tetto = if intero { gib_totale.round() } else { gib_totale.floor() };
+    let liberi = (s.disco_totale.saturating_sub(s.disco_usato) as f64 / GIB).round().min(tetto) as u64;
     MisuraUi {
         presente: true,
         id: "disco".into(),
@@ -255,6 +264,7 @@ fn riga(id: &str, tipo: TipoRigaMisuraUi, nome: &str, valore: &str, narratore: S
         acceso: false,
         attiva: false,
         errore: "".into(),
+        avviso: false,
         narratore: narratore.into(),
     }
 }
@@ -309,14 +319,17 @@ pub fn righe(r: &RighePc) -> Vec<RigaMisuraUi> {
     }
     // Il nome della rete a vista accanto all'interruttore, il traffico nei suoi due campi.
     let wifi = r.nome_rete.filter(|n| !n.is_empty()).map(|n| (n.to_owned(), n.to_owned()));
-    // Le cuffie: «Cuffie 70 %» a vista, il loro nome per Narrator.
+    // Il dispositivo Bluetooth più scarico (cuffie, mouse, tastiera: giro di correzione 1, I2): a
+    // vista il suo nome accorciato e la percentuale sempre intera, per Narrator il nome intero.
     let cuffie = r.cuffie.map(|(nome, pct)| {
         let pct = pct.min(100);
-        (format!("Cuffie {pct} %"), format!("{nome} {pct} %"))
+        (format!("{} {pct} %", accorcia(nome, NOME_MASSIMO)), format!("{nome} {pct} %"))
     });
+    // La tinta d'avviso sotto il 20 % (come la riga «CUFFIE» di M2): solo se la riga mostra la batteria.
+    let scarica = r.cuffie.is_some_and(|(_, pct)| pct < SOGLIA_AVVISO_BT) && r.bluetooth.is_some_and(|(presente, acceso)| presente && acceso);
     let mut v = vec![
         radio(WIFI, "Wi-Fi", r.wifi, wifi, traffico(r.velocita), r.errore_radio == Some(WIFI)),
-        radio(BLUETOOTH, "Bluetooth", r.bluetooth, cuffie, None, r.errore_radio == Some(BLUETOOTH)),
+        RigaMisuraUi { avviso: scarica, ..radio(BLUETOOTH, "Bluetooth", r.bluetooth, cuffie, None, r.errore_radio == Some(BLUETOOTH)) },
     ];
     if let Some((livello, muto)) = r.volume.filter(|(l, _)| l.is_finite()) {
         let p = percento(livello * 100.0);
@@ -572,7 +585,7 @@ mod test {
         // Il traffico di una radio spenta non si mostra.
         let s = righe(&RighePc { wifi: Some((true, false)), ..tutto() });
         assert_eq!((s[0].giu.as_str(), s[0].su.as_str(), s[0].narratore.as_str()), ("", "", "Wi-Fi, spento"));
-        assert_eq!((r[1].nome.as_str(), r[1].valore.as_str(), r[1].acceso, r[1].attiva), ("Bluetooth", "Cuffie 70 %", true, true));
+        assert_eq!((r[1].nome.as_str(), r[1].valore.as_str(), r[1].acceso, r[1].attiva), ("Bluetooth", "Cuffie di Paolo 70 %", true, true));
         assert_eq!(r[1].narratore.as_str(), "Bluetooth, acceso, Cuffie di Paolo 70 %");
         assert_eq!((r[2].nome.as_str(), r[2].valore.as_str(), r[2].acceso, r[2].attiva), ("Volume", "40 %", true, true));
         assert_eq!(r[2].narratore.as_str(), "Volume 40 %");
@@ -687,6 +700,48 @@ mod test {
             assert!(k.narratore.chars().any(char::is_lowercase), "{}", k.narratore);
             assert_ne!(k.narratore, k.narratore.to_uppercase());
         }
+    }
+
+    /// Giro di correzione 1 del Task 7 (I2 e tinta, decisioni del controllore): la riga del
+    /// Bluetooth dice il nome del dispositivo più scarico, non «Cuffie»: un mouse al 5 % e le cuffie
+    /// al 60 % danno il mouse. Il nome lungo si accorcia, la percentuale resta intera; Narrator
+    /// legge il nome intero. Sotto il 20 % il valore è in tinta d'avviso (19 sì, 20 no).
+    #[test]
+    fn bluetooth_col_dispositivo_piu_scarico() {
+        use crate::sistema::batterie_bt::{riga_cuffie, LetturaBt};
+        let bt = |nome: &str, percentuale: u8| LetturaBt { impronta: nome.into(), nome: nome.into(), percentuale, connesso: true };
+        let c = riga_cuffie(&[bt("Mouse finto", 5), bt("Cuffie finte", 60)]).expect("un connesso");
+        let r = righe(&RighePc { cuffie: Some((c.nome.as_str(), c.percentuale)), ..tutto() });
+        assert_eq!(r[1].valore.as_str(), "Mouse finto 5 %");
+        assert!(!r[1].valore.contains("Cuffie"));
+        assert_eq!(r[1].narratore.as_str(), "Bluetooth, acceso, Mouse finto 5 %");
+        // Un nome lungo: accorciato con «…», la percentuale intera in fondo; intero per Narrator.
+        let lungo = "Cuffie finte con un nome molto lungo";
+        let r = righe(&RighePc { cuffie: Some((lungo, 70)), ..tutto() });
+        assert!(r[1].valore.ends_with("… 70 %") && r[1].valore.chars().count() <= 16 + " 70 %".len(), "{}", r[1].valore);
+        assert_eq!(r[1].narratore.as_str(), format!("Bluetooth, acceso, {lungo} 70 %"));
+        // La tinta d'avviso sotto il 20 %.
+        let avviso = |pct: u8| righe(&RighePc { cuffie: Some(("Cuffie finte", pct)), ..tutto() })[1].avviso;
+        assert!(avviso(19) && avviso(5));
+        assert!(!avviso(20) && !avviso(70));
+        // Solo sul Bluetooth acceso con le cuffie: mai sulle altre righe né a radio spenta.
+        let r = righe(&RighePc { cuffie: Some(("Cuffie finte", 5)), ..tutto() });
+        assert!(r.iter().filter(|k| k.avviso).count() == 1 && r[1].avviso);
+        assert!(!righe(&RighePc { cuffie: Some(("Cuffie finte", 5)), bluetooth: Some((true, false)), ..tutto() })[1].avviso);
+    }
+
+    /// Giro di correzione 1 del Task 7: un disco da 1 TB (1023,9 GB) dice «1024 GB», senza
+    /// decimale, e i liberi non superano mai il totale mostrato; sotto i 1000 GB resta il decimale.
+    #[test]
+    fn disco_da_un_tera() {
+        let quasi_vuoto = StatPc { disco_totale: GB * 10239 / 10, disco_usato: 0, ..stat() };
+        let d = &misure(Some(&quasi_vuoto), true, true)[2];
+        assert_eq!((d.valore.as_str(), d.dettaglio.as_str()), ("1024", "liberi su 1024\u{a0}GB"));
+        assert_eq!(d.narratore.as_str(), "Disco, 1024 GB liberi su 1024 GB");
+        let mezzo = StatPc { disco_totale: GB * 10239 / 10, disco_usato: GB * 500, ..stat() };
+        assert_eq!(misure(Some(&mezzo), true, true)[2].valore.as_str(), "524");
+        let piccolo = StatPc { disco_totale: GB * 9995 / 10, disco_usato: 0, ..stat() };
+        assert_eq!(misure(Some(&piccolo), true, true)[2].narratore.as_str(), "Disco, 999 GB liberi su 999,5 GB");
     }
 
     /// Da `pc_stats::test::formatta_usato_totale_casi` (Task 7): l'unità una volta sola se è la

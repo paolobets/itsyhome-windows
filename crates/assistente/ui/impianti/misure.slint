@@ -13,7 +13,7 @@
 // Rust), non il modello: si muove subito.
 import { Tema } from "../tema.slint";
 import { Icone, Icona } from "../icone.slint";
-import { MisuraUi, RigaMisuraUi, TipoRigaMisuraUi, TonoModuloUi } from "../voci.slint";
+import { MisuraUi, RigaMisuraUi, TipoRigaMisuraUi, TonoModuloUi, LivelloUi } from "../voci.slint";
 import { Anello, Fuoco, EtichettaMono } from "../componenti.slint";
 
 // Le misure dell'impianto, condivise col pannello e coi test.
@@ -104,6 +104,20 @@ export component CartaMisura inherits Rectangle {
         width: max(0px, root.width - self.x - root.margine);
         height: 32px;
         clip: true;
+
+        // La misura del dettaglio (trasparente, mai letta): andando a capo in 2 px meno del posto,
+        // quanto sarebbe alto. Serve al test che il dettaglio entri intero, con 2 px di margine
+        // (`misure_testi_lunghi_nei_posti`, regola «dettaglio non tagliato» di M2): una parola
+        // troppo larga va a capo dove capita e la fa più alta del posto.
+        misura-dettaglio := Text {
+            width: max(0px, parent.width - 2px);
+            height: self.preferred-height;
+            text: root.misura.dettaglio;
+            wrap: word-wrap;
+            font-size: Tema.testo-piccolo;
+            opacity: 0;
+            accessible-role: none;
+        }
 
         dettaglio-testo := Text {
             width: parent.width;
@@ -251,7 +265,8 @@ component Rimando inherits Rectangle {
 }
 
 // Una riga della pagina PC, 372 × 36: icona 16, nome 13 e, a destra, quello che la riga fa.
-// - interruttore (Wi-Fi, Bluetooth): il valore («Casa», «Cuffie 70 %», «Spento», «Non presente»),
+// - interruttore (Wi-Fi, Bluetooth): il valore («Casa», «Mouse finto 5 %», «Spento», «Non presente»;
+//   la batteria Bluetooth sotto il 20 % in tinta d'avviso),
 //   il traffico del Wi-Fi acceso e l'interruttore; per Narrator un `switch` col nome intero, acceso
 //   = `checked`, non attivabile se la radio manca o non è letta. Un rifiuto di Windows prende il
 //   posto del valore, in `Tema.errore`.
@@ -366,7 +381,8 @@ export component RigaMisura inherits Rectangle {
         vertical-alignment: center;
         overflow: elide;
         font-size: Tema.testo-piccolo;
-        color: root.riga.errore != "" ? Tema.errore : Tema.testo-2;
+        // La batteria Bluetooth sotto il 20 %: la tinta d'avviso della riga «CUFFIE» di M2.
+        color: root.riga.errore != "" ? Tema.errore : root.riga.avviso ? Tema.colore-livello(LivelloUi.informazione) : Tema.testo-2;
         accessible-role: none;
     }
 

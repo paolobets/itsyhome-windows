@@ -39,8 +39,8 @@
 //!
 //! Leggerezza: il thread `batterie-bt` aspetta con `recv_timeout` (nessun sondaggio, nessuna CPU):
 //! prima lettura 60 s dopo l'avvio, poi ogni 15 minuti; si ferma quando l'interruttore si spegne
-//! (cade il `Sender`). La riga «CUFFIE» della vista PC fa una sola lettura per ingresso nella
-//! vista, su un thread di lavoro. Nomi e indirizzi non vanno mai nei log né nei test.
+//! (cade il `Sender`). La riga del Bluetooth della pagina PC fa una sola lettura per ingresso nella
+//! pagina, su un thread di lavoro. Nomi e indirizzi non vanno mai nei log né nei test.
 
 // Fuori da Windows il modulo c'è solo per i test, che ne usano una parte.
 #![cfg_attr(not(windows), allow(dead_code))]
@@ -173,12 +173,13 @@ pub fn unifica(letture: Vec<LetturaBt>) -> Vec<LetturaBt> {
     fuori
 }
 
-/// Le cuffie nella riga del Bluetooth della pagina PC («Cuffie 18 %»; ridisegno F3, Task 7): il
-/// dispositivo connesso con la batteria più bassa. La riga «CUFFIE» della vista di M2, col glifo
-/// tinto, «+N» e l'elenco per Narrator, non c'è più.
+/// Il dispositivo nella riga del Bluetooth della pagina PC («Mouse finto 5 %»; ridisegno F3, Task 7):
+/// il connesso con la batteria più bassa, qualunque sia. La pagina accorcia il nome a vista
+/// (`NOME_MASSIMO`) e lo dà intero a Narrator; sotto il 20 % la tinta d'avviso. «+N» e l'elenco
+/// della riga «CUFFIE» di M2 non ci sono più.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RigaCuffie {
-    /// Il nome, accorciato se serve.
+    /// Il nome intero.
     pub nome: String,
     pub percentuale: u8,
 }
@@ -197,7 +198,7 @@ pub fn riga_cuffie(letture: &[LetturaBt]) -> Option<RigaCuffie> {
     let mut connessi: Vec<&LetturaBt> = letture.iter().filter(|l| l.connesso).collect();
     connessi.sort_by_key(|l| l.percentuale);
     let primo = connessi.first()?;
-    Some(RigaCuffie { nome: accorcia(&primo.nome, NOME_MASSIMO), percentuale: primo.percentuale })
+    Some(RigaCuffie { nome: primo.nome.clone(), percentuale: primo.percentuale })
 }
 
 /// Il thread `batterie-bt`: aspetta (`recv_timeout`, nessun sondaggio), legge alla prima
@@ -509,7 +510,7 @@ mod tests {
         ];
         let r = riga_cuffie(&l).unwrap();
         assert_eq!(r.percentuale, 18);
-        assert!(r.nome.chars().count() <= NOME_MASSIMO && r.nome.ends_with('…'), "nome accorciato: {}", r.nome);
+        assert_eq!(r.nome, "Cuffie finte con un nome molto lungo", "il nome intero: lo accorcia la pagina, a vista");
         let sola = riga_cuffie(&[lettura("a", "Cuffie finte", 60, true)]).unwrap();
         assert_eq!((sola.nome.as_str(), sola.percentuale), ("Cuffie finte", 60), "nome corto intero");
     }

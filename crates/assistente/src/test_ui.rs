@@ -7702,8 +7702,9 @@ mod accessibilita {
     }
 
     /// Da `riga_cuffie_nella_vista_pc`: le cuffie lette entrando nella pagina stanno nella riga del
-    /// Bluetooth acceso («Cuffie 18 %» a vista, il loro nome per Narrator); a Bluetooth spento o
-    /// senza cuffie non si dicono.
+    /// Bluetooth acceso: a vista il nome del più scarico con la percentuale («Cuffie finte 18 %», in
+    /// tinta d'avviso sotto il 20 %), intero per Narrator; a Bluetooth spento o senza dispositivi
+    /// non si dicono.
     #[test]
     fn riga_cuffie() {
         use crate::sistema::batterie_bt::riga_cuffie;
@@ -7711,7 +7712,7 @@ mod accessibilita {
         let righe = RighePc { bluetooth: Some((true, true)), cuffie: Some((c.nome.as_str(), c.percentuale)), ..righe_piene() };
         let (p, _) = pannello_pc(&stat_pieno(), &righe);
         assert_eq!(interruttore(&p, "Bluetooth").accessible_label().as_deref(), Some("Bluetooth, acceso, Cuffie finte 18 %"));
-        assert_eq!(p.get_misure_righe().row_data(1).map(|r| r.valore.to_string()).as_deref(), Some("Cuffie 18 %"));
+        assert_eq!(p.get_misure_righe().row_data(1).map(|r| (r.valore.to_string(), r.avviso)), Some(("Cuffie finte 18 %".into(), true)), "il nome, e la tinta sotto il 20 %");
         scrivi_pc(&p, &stat_pieno(), &RighePc { bluetooth: Some((true, false)), ..righe });
         assert_eq!(interruttore(&p, "Bluetooth").accessible_label().as_deref(), Some("Bluetooth, spento"));
         scrivi_pc(&p, &stat_pieno(), &RighePc { bluetooth: Some((true, true)), cuffie: None, ..righe_piene() });
@@ -7803,7 +7804,29 @@ mod accessibilita {
         assert_eq!(wifi.accessible_label().as_deref(), Some(format!("Wi-Fi, acceso, {rete}, 999,9 MB/s giù, 999,9 MB/s su").as_str()));
         let memoria = elemento(&p, "Memoria, 100 %, 1023,9 di 1023,9 GB");
         assert_eq!(memoria.accessible_role(), Some(AccessibleRole::Groupbox));
-        elemento(&p, "Disco, 1024 GB liberi su 1023,9 GB");
+        elemento(&p, "Disco, 1024 GB liberi su 1024 GB");
+
+        // Giro di correzione 1 (regola «dettaglio non tagliato» di M2, in pixel): nei casi peggiori
+        // ogni dettaglio entra intero nel suo posto, con 2 px di margine. La misura va a capo in 2 px
+        // meno del posto: se una parola non ci sta, si spezza e la misura supera le due righe.
+        let peggiori = [
+            StatPc { cpu_pct: Some(100.0), gpu_pct: Some(100.0), batteria: Some(LetturaBatteria { percentuale: 100.0, stato: StatoBatteria::InCarica }), ..stat },
+            StatPc { cpu_pct: Some(100.0), gpu_pct: Some(100.0), batteria: None, ..stat },
+            StatPc { batteria: Some(LetturaBatteria { percentuale: 100.0, stato: StatoBatteria::Scarica }), ..stat },
+        ];
+        for s in &peggiori {
+            scrivi_pc(&p, s, &righe);
+            for carta in ElementHandle::find_by_element_type_name(&p, "CartaMisura") {
+                let nome = carta.accessible_label().unwrap_or_default();
+                let posto = carta.query_descendants().match_id("CartaMisura::posto-dettaglio").find_first().expect("posto del dettaglio");
+                let misura = carta.query_descendants().match_id("CartaMisura::misura-dettaglio").find_first().expect("misura del dettaglio");
+                let (pl, ml) = (posto.size(), misura.size());
+                assert!(ml.width <= pl.width - 2.0 + 0.01, "«{nome}»: misura larga {} in {}", ml.width, pl.width);
+                assert!(ml.height <= pl.height + 0.01, "«{nome}»: il dettaglio non entra intero (alto {} in {}, largo {})", ml.height, pl.height, pl.width);
+                let (cp, cl) = (carta.absolute_position(), carta.size());
+                assert!(posto.absolute_position().x + pl.width <= cp.x + cl.width - 12.0 + 0.5, "«{nome}»: il posto del dettaglio esce dalla carta");
+            }
+        }
 
         // Le righe: ogni pezzo nella sua riga; il traffico intero fra il nome della rete e
         // l'interruttore.

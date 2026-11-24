@@ -339,7 +339,8 @@ export enum TipoRigaMisuraUi { stato, interruttore, cursore, rimandi }
 // è acceso (per il cursore: non è muto); `attiva`: si può azionare (falso se la radio non c'è o non
 // è ancora stata letta); `errore`: il testo di un cambio rifiutato da Windows, vuoto altrimenti.
 // `giu` e `su`: il traffico del Wi-Fi acceso («1,2 MB/s», «0,3 MB/s»), vuoti altrimenti; le frecce
-// le disegna Slint, le parole «giù» e «su» stanno solo nel `narratore`.
+// le disegna Slint, le parole «giù» e «su» stanno solo nel `narratore`. `avviso`: il valore va nella
+// tinta d'avviso (la batteria di un dispositivo Bluetooth sotto il 20 %, Task 7, giro 1).
 export struct RigaMisuraUi {
     id: string,
     tipo: TipoRigaMisuraUi,
@@ -351,5 +352,6 @@ export struct RigaMisuraUi {
     acceso: bool,
     attiva: bool,
     errore: string,
+    avviso: bool,
     narratore: string,
 }
