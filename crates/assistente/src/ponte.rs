@@ -26,8 +26,8 @@ use crate::dispositivi::{self, Riga, TipoRiga};
 use crate::collegamenti;
 use crate::moduli::registro::Registro;
 use crate::{
-    AmbienteUi, CollegamentoUi, FinestraImpostazioni, GenereUi, ModuloUi, Pannello, PermessoUi, Pillola, PreferitoUi, RigaDispositivoUi,
-    RigaModuloUi, SchedaBarraUi, StanzaUi, TipoRigaUi, TonoUi, VoceAttesaUi,
+    AmbienteUi, CardUi, CollegamentoUi, FiltroUi, FinestraImpostazioni, GenereUi, ModuloUi, Pannello, PermessoUi, Pillola,
+    RigaDispositivoUi, RigaModuloUi, SchedaBarraUi, TipoRigaUi, TonoUi, VoceAttesaUi,
 };
 use casa_core::config::Config;
 use casa_core::diagnosi::Contatore;
@@ -35,7 +35,7 @@ use claude_hook::sessioni::Sessioni;
 use casa_core::eventi::{Ascoltatore, CasaEvento, StatoConnessione};
 use casa_core::segreti::Segreti;
 use casa_core::servizio::CasaService;
-use casa_core::types::{AppEntity, BaseEntity, MenuData, Meteo, TestConnectionResult, GRUPPO_SCENE};
+use casa_core::types::{AppEntity, BaseEntity, MenuData, Meteo, TestConnectionResult};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -45,6 +45,7 @@ use std::time::{Duration, Instant};
 
 pub(crate) mod con_claude;
 mod con_moduli;
+mod con_pagine;
 
 /// Dove si apre il pannello da un clic sulla pillola (ridisegno F1, Task 7: la destinazione di ciò
 /// che la pillola mostra).
@@ -65,9 +66,6 @@ pub enum DallaPillola {
 
 /// La sveglia dell'umore suona appena dopo la scadenza, mai un attimo prima.
 const MARGINE_SVEGLIA: Duration = Duration::from_millis(20);
-
-/// Quanti preferiti mostra il pannello.
-pub const MASSIMO_PREFERITI: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tipo {
@@ -215,45 +213,6 @@ pub fn stato_in_lettura(e: &AppEntity) -> String {
     testo.unwrap_or_else(|| numero_italiano(&b.state))
 }
 
-/// Le stanze della vista Casa: quelle con qualcosa da mostrare, nell'ordine salvato (ci pensa il
-/// mapper), con l'icona scelta o quella predefinita dal nome; «Altro» (entità senza stanza) con
-/// l'icona della casa; in fondo le scene, se ci sono (il mapper le tiene fuori dalle stanze,
-/// come la v2, che le mostrava in una sezione loro dopo le stanze).
-pub fn stanze_ui(menu: &MenuData, icone: &HashMap<String, String>) -> Vec<StanzaUi> {
-    let mut stanze: Vec<StanzaUi> = menu
-        .rooms
-        .iter()
-        .map(|r| StanzaUi {
-            area_id: r.area_id.as_str().into(),
-            nome: r.name.as_str().into(),
-            icona: if r.area_id.is_empty() {
-                -1
-            } else {
-                crate::stanze::icona(icone.get(&r.area_id).map(String::as_str), &r.name) as i32
-            },
-            quanti: r.entities.len() as i32,
-        })
-        .collect();
-    if !menu.scenes.is_empty() {
-        stanze.push(StanzaUi {
-            area_id: GRUPPO_SCENE.into(),
-            nome: "Scene".into(),
-            icona: -2,
-            quanti: menu.scenes.len() as i32,
-        });
-    }
-    stanze
-}
-
-/// I dispositivi di una stanza della vista Casa, nell'ordine salvato (senza le nascoste: il mapper
-/// non le mette); le scene per il gruppo delle scene.
-pub fn dispositivi_stanza(menu: &MenuData, area_id: &str) -> Vec<AppEntity> {
-    if area_id == GRUPPO_SCENE {
-        return menu.scenes.iter().map(|s| AppEntity::Scene(s.clone())).collect();
-    }
-    menu.rooms.iter().find(|r| r.area_id == area_id).map(|r| r.entities.clone()).unwrap_or_default()
-}
-
 /// Le luci accese e disponibili delle stanze **come si vedono adesso**, nell'ordine delle stanze:
 /// con lo stato ottimistico dei tocchi (una luce appena spenta esce subito, una appena accesa
 /// entra, prima di ogni conferma di Home Assistant). È la sola vista ottimistica: la carta di
@@ -273,28 +232,6 @@ pub fn luci_accese_in(menu: &MenuData, area: Option<&str>, ottimismo: &Ottimismo
         .map(|p| con_ottimismo(p, ottimismo))
         .filter(|p| p.acceso && p.disponibile)
         .collect()
-}
-
-/// I preferiti da mostrare: quelli scelti dall'utente nell'ordine salvato; se non ce ne sono,
-/// le prime entità delle stanze nell'ordine delle stanze, poi le scene. Al massimo `max`.
-pub fn preferiti_ui(menu: &MenuData, max: usize) -> Vec<Preferito> {
-    entita_mostrate(menu).take(max).map(|e| preferito(&e)).collect()
-}
-
-/// Le entità da cui nascono i preferiti: quelle scelte, altrimenti le stanze nell'ordine e poi
-/// le scene (il mapper le tiene a parte, mai nelle stanze né nei preferiti). Copie pigre: chi
-/// prende i primi `max` copia solo quelli.
-fn entita_mostrate(menu: &MenuData) -> Box<dyn Iterator<Item = AppEntity> + '_> {
-    if menu.favorites.is_empty() {
-        Box::new(
-            menu.rooms
-                .iter()
-                .flat_map(|r| r.entities.iter().cloned())
-                .chain(menu.scenes.iter().map(|s| AppEntity::Scene(s.clone()))),
-        )
-    } else {
-        Box::new(menu.favorites.iter().cloned())
-    }
 }
 
 /// Il servizio di Home Assistant che un tocco invoca: accende/spegne luci e interruttori,
@@ -333,21 +270,6 @@ pub fn numero_italiano(v: &str) -> String {
         None => false,
     };
     if numero { v.replacen('.', ",", 1) } else { v.to_owned() }
-}
-
-/// Il testo sotto il nome di un preferito.
-pub fn testo_stato(p: &Preferito) -> String {
-    if p.errore.is_some() {
-        return "Non riuscito".into();
-    }
-    if !p.disponibile {
-        return "Non disponibile".into();
-    }
-    match p.tipo {
-        Tipo::Interruttore => if p.acceso { "Acceso" } else { "Spento" }.into(),
-        Tipo::Scena => "Scena".into(),
-        Tipo::Lettura => p.valore.clone(),
-    }
 }
 
 /// Che cosa è un preferito per l'interfaccia (icona e tinta): luce, presa, scena, termo, goccia,
@@ -437,49 +359,6 @@ pub fn riga_sinistra(data: &str, meteo: Option<&Meteo>) -> (String, String) {
     let minuscola = condizione.map(str::to_lowercase);
     let nome = [Some(esteso.as_str()), gradi.as_deref(), minuscola.as_deref()].into_iter().flatten().collect::<Vec<_>>().join(", ");
     (testo, nome)
-}
-
-/// La riga di stato della casa (testata della vista Casa).
-pub fn riga_stato(stato: &StatoConnessione, menu: Option<&MenuData>) -> String {
-    match (stato, menu) {
-        (StatoConnessione::Connesso, Some(m)) => {
-            let accese = m
-                .rooms
-                .iter()
-                .flat_map(|r| r.entities.iter())
-                .filter(|e| matches!(e, AppEntity::Light(l) if l.is_on && l.base.is_available))
-                .count();
-            let luci = match accese {
-                0 => "Luci spente".to_owned(),
-                1 => "1 luce accesa".to_owned(),
-                n => format!("{n} luci accese"),
-            };
-            // La prima temperatura disponibile: fra i preferiti, poi nelle stanze.
-            let temperatura = m
-                .favorites
-                .iter()
-                .chain(m.rooms.iter().flat_map(|r| r.entities.iter()))
-                .find_map(|e| match e {
-                    AppEntity::Sensor(s)
-                        if s.base.is_available && s.device_class.as_deref() == Some("temperature") =>
-                    {
-                        Some(preferito(e).valore)
-                    }
-                    _ => None,
-                });
-            match temperatura {
-                Some(t) => format!("{luci} · {t}"),
-                None => luci,
-            }
-        }
-        (StatoConnessione::Connesso, None) => "Casa connessa".into(),
-        (StatoConnessione::InConnessione, _) => "Connessione alla casa…".into(),
-        (StatoConnessione::Disconnesso, _) => "Casa non connessa".into(),
-        (StatoConnessione::NonConfigurato, _) => "Casa non configurata".into(),
-        (StatoConnessione::TokenNonValido, _) => "Token di Home Assistant non valido".into(),
-        (StatoConnessione::TokenMancante, _) => "Token di Home Assistant mancante".into(),
-        (StatoConnessione::Errore(e), _) => frase_errore(e).into(),
-    }
 }
 
 /// «Riprova» ha senso mentre la casa non risponde (errore o tentativo in corso): non dopo un
@@ -721,19 +600,24 @@ pub struct Ponte {
     menu: RefCell<Option<Arc<MenuData>>>,
     /// Comandi falliti, per entità: l'errore resta sulla voce fino al prossimo tocco o a un esito ok.
     errori: RefCell<HashMap<String, String>>,
-    /// Il modello dei preferiti: sopravvive al pannello, che lo riprende a ogni apertura.
-    preferiti: Rc<VecModel<PreferitoUi>>,
-    /// Le stanze della vista Casa e i dispositivi della stanza aperta (`stanza_aperta`, un'area).
-    stanze: Rc<VecModel<StanzaUi>>,
-    dispositivi: Rc<VecModel<PreferitoUi>>,
-    /// La vista Casa filtrata sulle luci accese (clic su «N luci accese»): una card per luce.
-    luci: Rc<VecModel<PreferitoUi>>,
-    stanza_aperta: RefCell<Option<String>>,
-    /// I modelli della vista Casa seguono i dati solo a pannello aperto (Task 14h): da chiuso
-    /// nessuno li guarda (la pillola mostra umore e voci in attesa). `modelli_vecchi`: da chiuso è
-    /// arrivato qualcosa che li cambierebbe, si rifanno all'apertura.
+    /// La pagina sull'impianto Comandi (ridisegno F3, Task 4b): quale pagina possiede i modelli
+    /// (`Some("casa")` a pagina Casa aperta, `None` altrimenti: niente si calcola né si scrive) e i
+    /// modelli, uno per impianto (filtri, card, scene), che sopravvivono al pannello ma da chiusi
+    /// sono vuoti. Vedi `con_pagine`.
+    pagina_comandi: Cell<Option<&'static str>>,
+    comandi_filtri: Rc<VecModel<FiltroUi>>,
+    comandi_card: Rc<VecModel<CardUi>>,
+    comandi_scene: Rc<VecModel<CardUi>>,
+    /// Il filtro scelto della pagina Casa (`None`: quello iniziale), quello dei modelli scritti
+    /// (un filtro diverso riporta il fuoco sulla prima card) e quello chiesto prima che la pagina si
+    /// apra (la carta Casa con le luci accese: «Luci accese»), consumato dalla prima scrittura e
+    /// dimenticato alla chiusura del pannello (pre-flight C9).
+    filtro_casa: RefCell<Option<String>>,
+    filtro_mostrato: RefCell<String>,
+    filtro_richiesto: RefCell<Option<String>>,
+    /// I riassunti dei moduli seguono i dati solo a pannello aperto (Task 14h): da chiuso nessuno li
+    /// guarda (la pillola mostra umore e voci in attesa).
     modelli_vivi: Cell<bool>,
-    modelli_vecchi: Cell<bool>,
     /// Da quando l'umore è «pensa» (per il registro diagnostico: si conta quando finisce).
     pensa_da: Cell<Option<Instant>>,
     /// Impostazioni › Dispositivi: le righe e le stanze compresse (solo finché l'app gira).
@@ -768,7 +652,6 @@ pub struct Ponte {
     modello_schede: Rc<VecModel<SchedaBarraUi>>,
     /// Da chiuso è cambiato un dato dei moduli (sessioni, casa, voci): riassunti e livelli si
     /// ricalcolano all'apertura, una volta. Vero all'avvio (nessun riassunto ancora calcolato).
-    /// Separato da `modelli_vecchi`: un evento di Claude non deve rifare i modelli della Casa.
     moduli_vecchi: Cell<bool>,
     /// I lavori in corso: la linea della ritirata si riempie con quello più urgente.
     avanzamenti: RefCell<Vec<Avanzamento>>,
@@ -937,13 +820,14 @@ pub fn collega(
         menu: RefCell::new(None),
         dati_delle: RefCell::new(None),
         errori: RefCell::new(HashMap::new()),
-        preferiti: Rc::new(VecModel::default()),
-        stanze: Rc::new(VecModel::default()),
-        dispositivi: Rc::new(VecModel::default()),
-        luci: Rc::new(VecModel::default()),
-        stanza_aperta: RefCell::new(None),
+        pagina_comandi: Cell::new(None),
+        comandi_filtri: Rc::new(VecModel::default()),
+        comandi_card: Rc::new(VecModel::default()),
+        comandi_scene: Rc::new(VecModel::default()),
+        filtro_casa: RefCell::new(None),
+        filtro_mostrato: RefCell::new(String::new()),
+        filtro_richiesto: RefCell::new(None),
         modelli_vivi: Cell::new(false),
-        modelli_vecchi: Cell::new(false),
         pensa_da: Cell::new(None),
         righe: Rc::new(VecModel::default()),
         collegamenti: Rc::new(VecModel::default()),
@@ -1096,20 +980,6 @@ fn dettaglio_stato(s: &StatoConnessione) -> Option<String> {
     Some(format!("{} · {testo}", adesso_hh_mm()))
 }
 
-fn voce_ui(p: &Preferito, connesso: bool) -> PreferitoUi {
-    PreferitoUi {
-        entity_id: p.entity_id.as_str().into(),
-        nome: p.nome.as_str().into(),
-        genere: genere(p),
-        acceso: p.acceso && p.disponibile,
-        stato: testo_stato(p).into(),
-        disponibile: p.disponibile,
-        errore: p.errore.as_deref().unwrap_or_default().into(),
-        toccabile: voce_toccabile(p, connesso),
-        tenue: !p.disponibile || !connesso,
-    }
-}
-
 // Nei test, le scritture vere fatte da `aggiorna_modello` in questo thread (pre-flight C18: un
 // controllo che confronta solo i valori non potrebbe fallire).
 #[cfg(test)]
@@ -1179,11 +1049,11 @@ impl Ponte {
                     self.sveglia_ottimismo.stop();
                 }
                 *self.stato.borrow_mut() = s;
-                // Con la connessione cambia anche se i preferiti si possono toccare.
-                self.ricostruisci_preferiti();
+                // Con la connessione cambiano la pagina (le card si possono toccare, la sintesi e lo
+                // stato) e la carta.
+                self.casa_cambiata();
                 self.aggiorna_ambienti();
                 self.aggiorna_pannello();
-                self.moduli_aggiorna("casa");
                 self.aggiorna_casa_offline();
             }
             CasaEvento::Dati(menu) => {
@@ -1204,9 +1074,8 @@ impl Ponte {
                 sorgenti_lati::casa(&menu);
                 *self.menu.borrow_mut() = Some(menu);
                 *self.dati_delle.borrow_mut() = Some(adesso_hh_mm());
-                self.ricostruisci_preferiti();
+                self.casa_cambiata();
                 self.aggiorna_pannello();
-                self.moduli_aggiorna("casa");
             }
             CasaEvento::NotificaAggiunta { id, titolo, messaggio } => {
                 let silenziosa = self.appena_connesso.get();
@@ -1232,9 +1101,8 @@ impl Ponte {
                     self.errori.borrow_mut().insert(entity_id, errore);
                     self.cervello.borrow_mut().ricevi(Segnale::ComandoFallito, ora);
                 }
-                self.ricostruisci_preferiti();
-                // Un comando fallito rimette le luci come erano: anche la carta lo dice.
-                self.moduli_aggiorna("casa");
+                // Un comando fallito rimette le luci come erano: la pagina e la carta lo dicono.
+                self.casa_cambiata();
             }
             CasaEvento::ConfigNonSalvata(e) => {
                 eprintln!("{e}");
@@ -1404,7 +1272,7 @@ impl Ponte {
         self.cervello.borrow_mut().ricevi(Segnale::AzioneUtente, Instant::now());
     }
 
-    /// «Riprova» (voce della casa irraggiungibile, testata della vista Casa).
+    /// «Riprova» (voce della casa irraggiungibile, testata della pagina Casa).
     pub fn riprova_casa(&self) {
         self.azione_utente();
         self.casa.connetti_attivo();
@@ -1414,74 +1282,11 @@ impl Ponte {
         *self.stato.borrow() == StatoConnessione::Connesso
     }
 
-    /// Preferiti, stanze e dispositivi della stanza aperta dai dati più recenti, con lo stato
-    /// ottimistico dei tocchi, gli errori ancora aperti e lo stato della connessione.
-    fn ricostruisci_preferiti(&self) {
-        if !self.modelli_vivi.get() {
-            self.modelli_vecchi.set(true);
-            return;
-        }
-        let connesso = self.connesso();
-        let icone = self.casa.con_config(|c| c.area_icons.clone());
-        let (voci, stanze, dispositivi, luci) = {
-            let menu = self.menu.borrow();
-            let Some(menu) = menu.as_ref() else { return };
-            let errori = self.errori.borrow();
-            let ottimismo = self.ottimismo.borrow();
-            let pronta = |p: Preferito| {
-                let mut p = con_ottimismo(p, &ottimismo);
-                p.errore = errori.get(&p.entity_id).cloned();
-                voce_ui(&p, connesso)
-            };
-            let voci: Vec<PreferitoUi> = preferiti_ui(menu, MASSIMO_PREFERITI).into_iter().map(pronta).collect();
-            let stanze = stanze_ui(menu, &icone);
-            let dispositivi: Vec<PreferitoUi> = match self.stanza_aperta.borrow().as_deref() {
-                Some(area) => dispositivi_stanza(menu, area).iter().map(|e| pronta(preferito(e))).collect(),
-                None => Vec::new(),
-            };
-            // Le luci accese adesso: con lo stato ottimistico, così una luce appena spenta esce
-            // dall'elenco subito; una che non risponde (errore) torna col suo messaggio.
-            let luci: Vec<PreferitoUi> = luci_accese_ora(menu, &ottimismo)
-                .into_iter()
-                .map(|mut p| {
-                    p.errore = errori.get(&p.entity_id).cloned();
-                    voce_ui(&p, connesso)
-                })
-                .collect();
-            (voci, stanze, dispositivi, luci)
-        };
-        let d = self.casa.diagnosi();
-        d.conta(Contatore::ui_ricostruzioni);
-        d.conta_n(Contatore::ui_righe, aggiorna_modello(&self.preferiti, voci));
-        // La stanza aperta può aver cambiato posto (ordine) o essere sparita (nascosta).
-        let aperta = self.stanza_aperta.borrow().clone();
-        if let Some(area) = aperta {
-            let indice = stanze.iter().position(|s| s.area_id == area.as_str());
-            if indice.is_none() {
-                *self.stanza_aperta.borrow_mut() = None;
-            }
-            if let Some(p) = self.pannello.borrow().upgrade() {
-                let i = indice.map_or(-1, |i| i as i32);
-                if p.get_stanza_aperta() != i {
-                    p.set_stanza_aperta(i);
-                }
-            }
-        }
-        d.conta_n(Contatore::ui_righe, aggiorna_modello(&self.stanze, stanze));
-        d.conta_n(Contatore::ui_righe, aggiorna_modello(&self.dispositivi, dispositivi));
-        d.conta_n(Contatore::ui_righe, aggiorna_modello(&self.luci, luci));
-    }
-
-    /// Una stanza della vista Casa aperta (`Some(area)`) o chiusa.
-    fn stanza(&self, area: Option<String>) {
-        *self.stanza_aperta.borrow_mut() = area;
-        self.ricostruisci_preferiti();
-    }
-
-    /// Riga di stato della casa sul pannello aperto e dettagli della finestra delle Impostazioni.
+    /// La riga alta del pannello aperto (data e meteo) e i dettagli della finestra delle
+    /// Impostazioni.
     fn aggiorna_pannello(&self) {
         if let Some(p) = self.pannello.borrow().upgrade() {
-            self.riempi_stato(&p);
+            self.aggiorna_riga_sinistra(&p);
         }
         if let Some(f) = self.finestra.borrow().upgrade() {
             self.riempi_impostazioni(&f);
@@ -1598,7 +1403,7 @@ impl Ponte {
             _ => return,
         }
         self.aggiorna_righe();
-        self.ricostruisci_preferiti();
+        self.casa_cambiata();
         // Il fuoco: sullo stesso pulsante della stessa riga; se la riga è arrivata in cima (o in
         // fondo) quel pulsante si spegne e il fuoco va sull'altra freccia. Togliendo la stella da
         // un preferito la sua riga sparisce: il fuoco va sulla stella dello stesso dispositivo
@@ -1628,9 +1433,9 @@ impl Ponte {
         self.casa.aggiorna_config(|c| {
             dispositivi::imposta_icona(c, area, emoji);
         });
-        // L'icona non cambia i dati della casa: elenco e pannello si rifanno da qui.
+        // L'icona non cambia i dati della casa: elenco e pagina (le icone dei filtri) si rifanno da qui.
         self.aggiorna_righe();
-        self.ricostruisci_preferiti();
+        self.casa_cambiata();
     }
 
     // ─── Collegamenti veloci (Task 14f) ──────────────────────────────────────
@@ -2049,60 +1854,19 @@ impl Ponte {
         }
     }
 
-    fn riempi_stato(&self, p: &Pannello) {
-        self.aggiorna_riga_sinistra(p);
-        let menu = self.menu.borrow();
-        let stato = self.stato.borrow();
-        let riga = riga_stato(&stato, menu.as_deref());
-        if p.get_stato_casa() != riga.as_str() {
-            p.set_stato_casa(riga.into());
-        }
-        p.set_casa_pronta(*stato == StatoConnessione::Connesso && menu.is_some());
-        let da_configurare = *stato == StatoConnessione::NonConfigurato;
-        if p.get_casa_da_configurare() != da_configurare {
-            p.set_casa_da_configurare(da_configurare);
-        }
-        let dati = self.dati_delle.borrow().clone().unwrap_or_default();
-        if p.get_dati_delle() != dati.as_str() {
-            p.set_dati_delle(dati.into());
-        }
-        p.set_casa_riprovabile(riprovabile(&stato));
-    }
-
-    /// I modelli della vista Casa tornano a seguire i dati (pannello aperto): se da chiuso è
-    /// cambiato qualcosa si rifanno ora, una volta.
+    /// I riassunti dei moduli tornano a seguire i dati (pannello aperto). I modelli delle pagine no:
+    /// si scrivono solo a pagina aperta (`vista_comandi`).
     pub fn apri_modelli(&self) {
         self.modelli_vivi.set(true);
-        if self.modelli_vecchi.replace(false) {
-            self.ricostruisci_preferiti();
-        }
     }
 
-    /// Il pannello appena creato: modelli dei preferiti e delle voci in attesa, stato della casa,
-    /// tocchi e pulsanti.
+    /// Il pannello appena creato: i modelli delle pagine e delle voci in attesa, la riga alta, i
+    /// tocchi e i pulsanti.
     pub fn riempi(&self, p: &Pannello) {
         self.apri_modelli();
-        p.set_preferiti(ModelRc::from(self.preferiti.clone()));
-        p.set_stanze(ModelRc::from(self.stanze.clone()));
-        p.set_dispositivi(ModelRc::from(self.dispositivi.clone()));
-        p.set_luci(ModelRc::from(self.luci.clone()));
-        p.on_spegni_tutte(|| {
-            if let Some(ponte) = ponte() {
-                ponte.spegni_tutte();
-            }
-        });
+        self.comandi_nel_pannello(p);
         p.set_collegamenti(ModelRc::from(self.collegamenti.clone()));
         p.set_elenco_righe(ModelRc::from(self.elenco_righe.clone()));
-        p.on_apri_stanza(|area| {
-            if let Some(ponte) = ponte() {
-                ponte.stanza(Some(area.to_string()));
-            }
-        });
-        p.on_chiudi_stanza(|| {
-            if let Some(ponte) = ponte() {
-                ponte.stanza(None);
-            }
-        });
         p.set_attese(ModelRc::from(self.modello_attese.clone()));
         // La modalità della Panoramica (Impostazioni › Isola › Panoramica), prima delle voci.
         self.scrivi_panoramica(p);
@@ -2129,28 +1893,19 @@ impl Ponte {
                 ponte.azione_modulo(&modulo, &azione);
             }
         });
-        self.riempi_stato(p);
-        p.on_tocca(|id| {
-            if let Some(ponte) = ponte() {
-                ponte.tocca(&id);
-            }
-        });
+        self.aggiorna_riga_sinistra(p);
         p.on_azione(|voce, pulsante| {
             if let Some(ponte) = ponte() {
                 ponte.azione(&voce, &pulsante);
             }
         });
         // Un'azione di una pagina (ridisegno F2, Task 6): il terminale di una sessione (pulsante del
-        // dettaglio o Invio sulla riga), «Collega», «Dettagli», il permesso di una riga. Va
-        // chiamata solo da qui, cioè subito dopo il gesto dell'utente.
+        // dettaglio o Invio sulla riga), «Collega», «Dettagli», il permesso di una riga; in Casa
+        // «Spegni tutte», «Spegni la stanza», «Riprova». Va chiamata solo da qui, cioè subito dopo
+        // il gesto dell'utente.
         p.on_azione_pagina(|modulo, azione, riga| {
             if let Some(ponte) = ponte() {
                 ponte.azione_pagina(&modulo, &azione, &riga);
-            }
-        });
-        p.on_riprova_casa(|| {
-            if let Some(ponte) = ponte() {
-                ponte.riprova_casa();
             }
         });
         // Il volume del PC nella vista PC (M2, Task 7, solo Windows): il thread `audio` parte alla
@@ -2258,6 +2013,7 @@ impl Ponte {
             p.set_vista(vista.into());
             self.vista_claude(vista == "agenti");
             self.vista_coda(vista == "coda");
+            self.vista_comandi(vista);
         }
         self.attese.borrow_mut().segna_viste();
         // Il pannello compare: un permesso in attesa non si consente al primo istante, e una guardia
@@ -2274,6 +2030,10 @@ impl Ponte {
         // prossimo.
         self.vista_richiesta.set(None);
         self.permesso_richiesto.borrow_mut().take();
+        // Né un filtro chiesto dalla carta: la prossima Casa riparte dal filtro iniziale.
+        self.filtro_richiesto.borrow_mut().take();
+        // La pagina dei Comandi si chiude: i suoi modelli si svuotano (niente righe in memoria).
+        self.vista_comandi("");
         // Le radio si liberano e la rete torna a seguire solo la pillola.
         self.vista_pc(false);
         // La vista Claude non c'è più: il timer torna a seguire solo la pillola.
@@ -2283,18 +2043,8 @@ impl Ponte {
         *self.pannello.borrow_mut() = slint::Weak::default();
         self.modelli_vivi.set(false);
         self.collegamento_aperto.set(false);
-        // La Casa filtrata è del pannello aperto: da chiuso non tiene righe in memoria.
-        if self.luci.row_count() > 0 {
-            self.luci.set_vec(Vec::new());
-            // Alla prossima apertura si rifà (l'elenco da riaprire non deve restare vuoto).
-            self.modelli_vecchi.set(true);
-        }
         // L'elenco è stato guardato: i «fatto» di Claude Code sono visti.
         self.claude_pannello_chiuso();
-        // Il pannello si riapre sui preferiti.
-        if self.stanza_aperta.borrow_mut().take().is_some() {
-            self.dispositivi.set_vec(Vec::new());
-        }
         self.ridisegna_pillola();
     }
 
@@ -2341,14 +2091,13 @@ impl Ponte {
         self.aggiorna_umore();
     }
 
-    /// Un tocco su un preferito: il comando se ce n'è uno (mai su entità non disponibili né con la
-    /// casa non connessa: l'interfaccia già non lo permette, qui lo si garantisce).
+    /// Un tocco su una card della Casa: il comando se ce n'è uno (mai su entità non disponibili né
+    /// con la casa non connessa: l'interfaccia già non lo permette, qui lo si garantisce).
     pub fn tocca(&self, entity_id: &str) {
         let ora = Instant::now();
         let Some((dominio, servizio, numero, acceso)) = self.avvia_tocco(entity_id, ora) else { return };
-        self.ricostruisci_preferiti();
-        // La carta di Casa dice subito le luci di adesso, non quelle di prima del tocco.
-        self.moduli_aggiorna("casa");
+        // La pagina e la carta di Casa dicono subito com'è adesso, non com'era prima del tocco.
+        self.casa_cambiata();
         if self.traccia_tocco && acceso {
             eprintln!("tocco {entity_id}: icona cambiata nel modello dopo {} µs", ora.elapsed().as_micros());
         }
@@ -2384,27 +2133,37 @@ impl Ponte {
         Some((dominio, servizio, numero, acceso.is_some()))
     }
 
-    /// «Spegni tutte» nella vista Casa filtrata: un tocco, cioè lo stesso comando e lo stesso
-    /// stato ottimistico degli interruttori, per ogni luce accesa che si vede (nessuna API nuova
-    /// verso Home Assistant, nessuna conferma: spegnere luci non è un'azione delicata).
+    /// «Spegni tutte» (la testata della pagina Casa, la carta): un tocco, cioè lo stesso comando e
+    /// lo stesso stato ottimistico degli interruttori, per ogni luce accesa che si vede (nessuna API
+    /// nuova verso Home Assistant, nessuna conferma: spegnere luci non è un'azione delicata).
     pub fn spegni_tutte(&self) {
+        self.spegni_luci(None);
+    }
+
+    /// «Spegni la stanza»: come `spegni_tutte`, sulle luci accese della stanza `area` («Altro» è
+    /// l'`area_id` vuoto).
+    pub fn spegni_stanza(&self, area: &str) {
+        self.spegni_luci(Some(area));
+    }
+
+    /// Spegne le luci accese di una stanza (`Some(area)`) o di tutta la casa.
+    fn spegni_luci(&self, area: Option<&str>) {
         let ora = Instant::now();
         // Le luci accese come si vedono adesso (C1): dal menu e dall'ottimismo, non da un modello
-        // dell'interfaccia (che a pannello chiuso è vuoto e può restare indietro).
+        // dell'interfaccia (che a pagina chiusa è vuoto e può restare indietro).
         let accese: Vec<String> = {
             let menu = self.menu.borrow();
             let ottimismo = self.ottimismo.borrow();
-            menu.as_ref().map(|m| luci_accese_ora(m, &ottimismo).into_iter().map(|p| p.entity_id).collect()).unwrap_or_default()
+            menu.as_ref().map(|m| luci_accese_in(m, area, &ottimismo).into_iter().map(|p| p.entity_id).collect()).unwrap_or_default()
         };
         let partiti: Vec<_> = accese
             .iter()
             .filter_map(|id| self.avvia_tocco(id, ora).map(|(dominio, servizio, numero, _)| (id, dominio, servizio, numero)))
             .collect();
-        // I modelli e la carta una volta sola (non una per luce), poi i comandi: il pulsante sparisce
-        // subito, senza aspettare la conferma di Home Assistant.
+        // La pagina e la carta una volta sola (non una per luce), poi i comandi: il pulsante
+        // sparisce subito, senza aspettare la conferma di Home Assistant.
         if !partiti.is_empty() {
-            self.ricostruisci_preferiti();
-            self.moduli_aggiorna("casa");
+            self.casa_cambiata();
         }
         for (id, dominio, servizio, numero) in partiti {
             self.casa.comando(id, dominio, servizio, numero);
@@ -2436,8 +2195,7 @@ impl Ponte {
             }
         }
         if !scadute.confermate.is_empty() {
-            self.ricostruisci_preferiti();
-            self.moduli_aggiorna("casa");
+            self.casa_cambiata();
         }
         if !scadute.fallite.is_empty() {
             for id in scadute.fallite {
@@ -2445,8 +2203,7 @@ impl Ponte {
                 self.errori.borrow_mut().insert(id, ERRORE_SENZA_CONFERMA.into());
             }
             self.cervello.borrow_mut().ricevi(Segnale::ComandoFallito, ora);
-            self.ricostruisci_preferiti();
-            self.moduli_aggiorna("casa");
+            self.casa_cambiata();
             self.aggiorna_umore();
         }
         self.arma_sveglia_ottimismo();
@@ -3145,59 +2902,22 @@ pub(crate) mod test {
         }
     }
 
-    fn ids(v: &[Preferito]) -> Vec<&str> {
-        v.iter().map(|p| p.entity_id.as_str()).collect()
-    }
-
+    /// Il mapper mette le scene in `menu.scenes`, mai nelle stanze: il comando di un tocco su una
+    /// scena (la fila «SCENE») le trova lì.
     #[test]
-    fn preferiti_nell_ordine_e_massimo_otto() {
-        let preferiti: Vec<AppEntity> = (0..10).map(|i| luce(&format!("light.l{i}"), i % 2 == 0)).collect();
-        let m = menu(preferiti, vec![vec![interruttore("switch.stanza", true)]]);
-        let p = preferiti_ui(&m, MASSIMO_PREFERITI);
-        assert_eq!(p.len(), 8);
-        let attesi: Vec<String> = (0..8).map(|i| format!("light.l{i}")).collect();
-        assert_eq!(ids(&p), attesi.iter().map(String::as_str).collect::<Vec<_>>());
-        assert_eq!(p[0].tipo, Tipo::Interruttore);
-        assert!(p[0].acceso);
-        assert!(!p[1].acceso);
-        assert_eq!(p[0].nome, "Nome light.l0");
-        assert!(p[0].disponibile);
-        assert_eq!(p[0].errore, None);
-    }
-
-    #[test]
-    fn senza_preferiti_usa_le_prime_entita_delle_stanze() {
-        let m = menu(
-            vec![],
-            vec![
-                vec![luce("light.a", true), scena("scene.b")],
-                vec![interruttore("switch.c", false), sensore("sensor.d", "20", Some("°C"))],
-            ],
-        );
-        let p = preferiti_ui(&m, 3);
-        assert_eq!(ids(&p), ["light.a", "scene.b", "switch.c"]);
-        assert_eq!(p[1].tipo, Tipo::Scena);
-        assert_eq!(p[2].tipo, Tipo::Interruttore);
-    }
-
-    #[test]
-    fn senza_preferiti_dopo_le_stanze_vengono_le_scene() {
-        // Il mapper mette le scene in `menu.scenes`, mai nelle stanze: senza preferiti
-        // arrivano dopo le entità delle stanze, così un tocco può attivarle.
+    fn il_comando_di_una_scena_si_trova_fra_le_scene() {
         let mut m = menu(vec![], vec![vec![luce("light.a", true)]]);
         let AppEntity::Scene(s) = scena("scene.cinema") else { unreachable!() };
         m.scenes = vec![s];
-        let p = preferiti_ui(&m, MASSIMO_PREFERITI);
-        assert_eq!(ids(&p), ["light.a", "scene.cinema"]);
-        assert_eq!(p[1].tipo, Tipo::Scena);
+        assert_eq!(preferito(&entita(&m, "scene.cinema").expect("la scena")).tipo, Tipo::Scena);
         assert_eq!(entita(&m, "scene.cinema").as_ref().and_then(comando_per), Some(("scene", "turn_on")));
         assert!(entita(&m, "light.zzz").is_none());
     }
 
     #[test]
     fn sensore_mostra_valore_con_unita() {
-        let m = menu(vec![sensore("sensor.t", "21.5", Some("°C")), sensore("sensor.n", "7", None), serratura("lock.porta")], vec![]);
-        let p = preferiti_ui(&m, MASSIMO_PREFERITI);
+        let p: Vec<Preferito> =
+            [sensore("sensor.t", "21.5", Some("°C")), sensore("sensor.n", "7", None), serratura("lock.porta")].iter().map(preferito).collect();
         assert_eq!(p[0].tipo, Tipo::Lettura);
         assert_eq!(p[0].valore, "21,5 °C");
         assert_eq!(p[1].valore, "7");
@@ -3216,8 +2936,7 @@ pub(crate) mod test {
     #[test]
     fn niente_comando_su_entita_non_disponibile() {
         assert_eq!(comando_per(&luce_non_disponibile("light.giardino")), None);
-        let m = menu(vec![luce_non_disponibile("light.giardino")], vec![]);
-        assert!(!preferiti_ui(&m, MASSIMO_PREFERITI)[0].disponibile);
+        assert!(!preferito(&luce_non_disponibile("light.giardino")).disponibile);
     }
 
     #[test]
@@ -3295,6 +3014,8 @@ pub(crate) mod test {
         let p = collega(casa, segreti, &pillola, cervello, None, None);
         let _spegni = Spegni;
         p.apri_modelli();
+        // La pagina Casa aperta: i suoi modelli seguono i dati.
+        p.vista_comandi("casa");
         p.ricevi(CasaEvento::Stato(StatoConnessione::Connesso));
         let dati = |accesa| CasaEvento::Dati(Arc::new(menu(vec![luce("light.a", accesa)], vec![])));
         p.ricevi(dati(false));
@@ -3341,11 +3062,11 @@ pub(crate) mod test {
         assert_eq!(valore("avvio_consegna_ms"), prima, "solo la prima");
     }
 
-    /// Task 14h: a pannello chiuso i dati della casa non ricostruiscono i modelli della vista Casa
-    /// (nessuno li guarda: la pillola mostra solo umore e voci in attesa); all'apertura si rifanno
-    /// una volta coi dati di adesso, e da lì seguono i dati finché il pannello resta aperto.
+    /// Task 14h, ridisegno F3: a pagina Casa chiusa (pannello chiuso o su un'altra pagina) i dati
+    /// della casa non ricostruiscono i modelli della pagina (nessuno li guarda); all'apertura si
+    /// fanno una volta coi dati di adesso, e da lì seguono i dati finché la pagina resta aperta.
     #[test]
-    fn a_pannello_chiuso_i_modelli_della_casa_aspettano_l_apertura() {
+    fn a_pagina_chiusa_i_modelli_della_casa_aspettano_l_apertura() {
         use casa_core::config::ConfigStore;
         use casa_core::diagnosi::Diagnosi;
         use casa_core::segreti::MemoriaSegreti;
@@ -3365,53 +3086,68 @@ pub(crate) mod test {
         for i in 0..5 {
             p.ricevi(dati(i % 2 == 0));
         }
-        assert_eq!((conta(Contatore::ui_dati), conta(Contatore::ui_ricostruzioni)), (5, 0), "pannello chiuso: nulla da ricostruire");
-        assert_eq!(p.preferiti.row_count(), 0);
-        // Apertura: i modelli si rifanno una volta, coi dati di adesso (l'ultimo: accesa).
+        assert_eq!((conta(Contatore::ui_dati), conta(Contatore::ui_ricostruzioni)), (5, 0), "pagina chiusa: nulla da ricostruire");
+        assert_eq!(p.comandi_card.row_count(), 0);
+        // Il pannello aperto su un'altra pagina: ancora nulla.
         p.apri_modelli();
+        p.ricevi(dati(true));
+        assert_eq!(conta(Contatore::ui_ricostruzioni), 0, "pannello aperto sulla Panoramica: nulla");
+        // La pagina si apre: i modelli si fanno una volta, coi dati di adesso (l'ultimo: accesa).
+        p.vista_comandi("casa");
         assert_eq!(conta(Contatore::ui_ricostruzioni), 1);
-        assert_eq!(p.preferiti.row_data(0).unwrap().stato, "Acceso");
+        assert_eq!(p.comandi_card.row_data(0).unwrap().stato, "Accesa");
         p.ricevi(dati(false));
-        assert_eq!(conta(Contatore::ui_ricostruzioni), 2, "aperto: seguono i dati");
-        assert_eq!(p.preferiti.row_data(0).unwrap().stato, "Spento");
-        // Chiuso di nuovo: i dati non ricostruiscono più nulla; una riapertura senza dati nuovi
-        // non rifà nulla.
+        assert_eq!(conta(Contatore::ui_ricostruzioni), 2, "aperta: seguono i dati");
+        assert_eq!(p.comandi_card.row_data(0).unwrap().stato, "Spenta");
+        // Chiusa di nuovo (il pannello): i modelli si svuotano e i dati non ricostruiscono nulla.
         p.pannello_chiuso();
-        p.apri_modelli();
-        assert_eq!(conta(Contatore::ui_ricostruzioni), 2, "dati uguali: niente da rifare");
-        p.pannello_chiuso();
+        assert_eq!(p.comandi_card.row_count(), 0, "nessuna riga in memoria");
         p.ricevi(dati(true));
         assert_eq!(conta(Contatore::ui_ricostruzioni), 2);
-        p.apri_modelli();
-        assert_eq!(conta(Contatore::ui_ricostruzioni), 3);
-        assert_eq!(p.preferiti.row_data(0).unwrap().stato, "Acceso");
-        // Il pannello vero, appena creato e riempito, ha i dati di adesso.
-        p.pannello_chiuso();
-        p.ricevi(dati(false));
+        // Il pannello vero, appena creato, riempito e aperto sulla Casa, ha i dati di adesso.
         let pannello = crate::Pannello::new().unwrap();
         p.riempi(&pannello);
-        assert_eq!(pannello.get_preferiti().row_data(0).unwrap().stato, "Spento", "il pannello nuovo ha i dati di adesso");
+        p.chiedi_vista("casa");
+        p.pannello_aperto(&pannello);
+        assert_eq!(conta(Contatore::ui_ricostruzioni), 3);
+        assert_eq!(pannello.get_comandi_card().row_data(0).unwrap().stato, "Accesa", "il pannello nuovo ha i dati di adesso");
     }
 
-    /// R1-13: a casa non configurata il pannello lo sa (la riga «Casa» diventa un invito alle
-    /// Impostazioni); appena la casa è configurata l'invito sparisce.
+    /// R1-13: a casa non configurata la pagina Casa è un invito («Collega la casa», «Collega»);
+    /// non connessa non vuol dire non configurata (coi dati la pagina resta); configurata e
+    /// connessa l'invito sparisce.
     #[test]
     fn casa_non_configurata_e_un_invito() {
+        use crate::TipoStatoPaginaUi;
         let (_spegni, p, _pillola, _c) = ponte_di_prova();
         let pannello = crate::Pannello::new().unwrap();
         p.pannello_aperto(&pannello);
         p.riempi(&pannello);
+        p.vista_comandi("casa");
+        let invito = |pannello: &crate::Pannello| pannello.get_comandi_stato().frase == "Collega la casa";
         p.ricevi(CasaEvento::Stato(StatoConnessione::NonConfigurato));
-        assert!(pannello.get_casa_da_configurare());
+        assert!(invito(&pannello));
+        assert_eq!(pannello.get_comandi_stato().azione_id, crate::moduli::casa::COLLEGA);
         p.ricevi(CasaEvento::Stato(StatoConnessione::Disconnesso));
-        assert!(!pannello.get_casa_da_configurare(), "non connessa non vuol dire non configurata");
+        assert!(!invito(&pannello), "non connessa non vuol dire non configurata");
         p.ricevi(CasaEvento::Stato(StatoConnessione::NonConfigurato));
         p.ricevi(CasaEvento::Stato(StatoConnessione::Connesso));
-        assert!(!pannello.get_casa_da_configurare());
+        assert!(!invito(&pannello));
+        // Connessa, con i dati (qui senza stanze: nessun dispositivo da mostrare).
+        assert_eq!(pannello.get_comandi_stato().tipo, TipoStatoPaginaUi::Vuoto);
+        assert_eq!(pannello.get_comandi_stato().frase, "Nessun dispositivo da mostrare");
+    }
+
+    /// Il ponte di prova con la pagina Casa aperta (i suoi modelli seguono i dati): la luce
+    /// preferita è la prima card.
+    fn ponte_con_la_casa() -> (Spegni, Rc<Ponte>, crate::Pillola, tempfile::TempDir) {
+        let (spegni, p, pillola, cartella) = ponte_di_prova();
+        p.vista_comandi("casa");
+        (spegni, p, pillola, cartella)
     }
 
     fn stato_mostrato(p: &Ponte) -> String {
-        p.preferiti.row_data(0).unwrap().stato.to_string()
+        p.comandi_card.row_data(0).unwrap().stato.to_string()
     }
 
     /// Giro di correzioni 1, rilievo 1: due tocchi rapidi con `toggle` riportano la luce com'era.
@@ -3419,14 +3155,14 @@ pub(crate) mod test {
     /// scadenza non deve comparire un falso «non ha confermato».
     #[test]
     fn doppio_tocco_senza_falso_errore() {
-        let (_spegni, p, _pillola, _c) = ponte_di_prova();
+        let (_spegni, p, _pillola, _c) = ponte_con_la_casa();
         let t = Instant::now();
         p.tocca("light.a");
-        assert_eq!(stato_mostrato(&p), "Acceso", "il primo tocco si vede subito");
+        assert_eq!(stato_mostrato(&p), "Accesa", "il primo tocco si vede subito");
         p.tocca("light.a");
-        assert_eq!(stato_mostrato(&p), "Spento");
+        assert_eq!(stato_mostrato(&p), "Spenta");
         p.ottimismo_scaduto(t + Duration::from_secs(6));
-        assert_eq!(stato_mostrato(&p), "Spento", "nessun errore: la luce è com'era chiesto");
+        assert_eq!(stato_mostrato(&p), "Spenta", "nessun errore: la luce è com'era chiesto");
         assert!(p.errori.borrow().is_empty());
     }
 
@@ -3434,20 +3170,20 @@ pub(crate) mod test {
     /// con l'errore; la conferma che arriva prima chiude l'attesa senza errore.
     #[test]
     fn tocco_senza_conferma_torna_vero_con_l_errore() {
-        let (_spegni, p, _pillola, _c) = ponte_di_prova();
+        let (_spegni, p, _pillola, _c) = ponte_con_la_casa();
         let t = Instant::now();
         p.tocca("light.a");
         p.ottimismo_scaduto(t + Duration::from_secs(4));
-        assert_eq!(stato_mostrato(&p), "Acceso", "prima dei 5 s resta l'attesa");
+        assert_eq!(stato_mostrato(&p), "Accesa", "prima dei 5 s resta l'attesa");
         p.ottimismo_scaduto(t + Duration::from_secs(6));
         assert_eq!(stato_mostrato(&p), "Non riuscito");
         assert_eq!(p.errori.borrow().get("light.a").map(String::as_str), Some(ERRORE_SENZA_CONFERMA));
         // Un tocco nuovo toglie l'errore; la conferma lo chiude.
         p.tocca("light.a");
-        assert_eq!(stato_mostrato(&p), "Acceso");
+        assert_eq!(stato_mostrato(&p), "Accesa");
         p.ricevi(CasaEvento::Dati(Arc::new(menu(vec![luce("light.a", true)], vec![]))));
         p.ottimismo_scaduto(Instant::now() + Duration::from_secs(60));
-        assert_eq!(stato_mostrato(&p), "Acceso");
+        assert_eq!(stato_mostrato(&p), "Accesa");
         assert!(p.errori.borrow().is_empty());
     }
 
@@ -3463,19 +3199,25 @@ pub(crate) mod test {
         );
         let ids: Vec<String> = luci_accese_ora(&m, &Ottimismo::default()).into_iter().map(|p| p.entity_id).collect();
         assert_eq!(ids, ["light.a", "light.d"], "né spente, né non disponibili, né interruttori");
-        // Quante dice la riga di stato (le stesse).
-        assert_eq!(riga_stato(&StatoConnessione::Connesso, Some(&m)), "2 luci accese");
     }
 
+    /// Le card della pagina Casa (aperta) sul filtro «Luci accese».
     fn id_luci(p: &Ponte) -> Vec<String> {
-        p.luci.iter().map(|l| l.entity_id.to_string()).collect()
+        p.comandi_card.iter().map(|l| l.id.to_string()).collect()
     }
 
-    /// La Casa filtrata segue i dati: una luce spenta (qui o altrove) esce dall'elenco, una accesa
-    /// entra, e a zero resta l'elenco vuoto (lo stato vuoto è dell'interfaccia).
+    /// La pagina Casa aperta sul filtro «Luci accese».
+    fn ponte_sulle_luci() -> (Spegni, Rc<Ponte>, crate::Pillola, tempfile::TempDir) {
+        let (spegni, p, pillola, cartella) = ponte_con_la_casa();
+        p.filtro_pagina("casa", crate::moduli::pagina_casa::FILTRO_LUCI);
+        (spegni, p, pillola, cartella)
+    }
+
+    /// «Luci accese» segue i dati: una luce spenta (qui o altrove) esce dall'elenco, una accesa
+    /// entra, e a zero resta l'elenco vuoto (con la sua nota).
     #[test]
     fn la_casa_filtrata_segue_gli_aggiornamenti() {
-        let (_spegni, p, _pillola, _c) = ponte_di_prova();
+        let (_spegni, p, _pillola, _c) = ponte_sulle_luci();
         let pannello = crate::Pannello::new().unwrap();
         p.riempi(&pannello);
         assert!(id_luci(&p).is_empty(), "ponte_di_prova: l'unica luce è spenta");
@@ -3484,8 +3226,8 @@ pub(crate) mod test {
         };
         p.ricevi(dati(true, true, false));
         assert_eq!(id_luci(&p), ["light.a", "light.b"]);
-        assert_eq!(pannello.get_luci().row_count(), 2, "il pannello vede lo stesso modello");
-        assert_eq!(p.luci.row_data(0).unwrap().stato, "Acceso");
+        assert_eq!(pannello.get_comandi_card().row_count(), 2, "il pannello vede lo stesso modello");
+        assert_eq!(p.comandi_card.row_data(0).unwrap().stato, "Accesa");
         // Spenta altrove: sparisce; una nuova accesa: compare.
         p.ricevi(dati(true, false, true));
         assert_eq!(id_luci(&p), ["light.a", "light.c"]);
@@ -3495,7 +3237,8 @@ pub(crate) mod test {
         // Il comando non confermato in tempo la riporta, con l'errore.
         p.ottimismo_scaduto(Instant::now() + Duration::from_secs(6));
         assert_eq!(id_luci(&p), ["light.a", "light.c"]);
-        assert_eq!(p.luci.row_data(0).unwrap().errore, ERRORE_SENZA_CONFERMA);
+        let a = p.comandi_card.row_data(0).unwrap();
+        assert!(a.errore && a.stato == "Non riuscito", "{a:?}");
         // Tutte spente: elenco vuoto.
         p.ricevi(dati(false, false, false));
         assert!(id_luci(&p).is_empty());
@@ -3505,7 +3248,7 @@ pub(crate) mod test {
     /// per ogni luce accesa che si vede, e nessun altro dispositivo.
     #[test]
     fn spegni_tutte_tocca_ogni_luce_accesa() {
-        let (_spegni, p, _pillola, _c) = ponte_di_prova();
+        let (_spegni, p, _pillola, _c) = ponte_sulle_luci();
         p.ricevi(CasaEvento::Dati(Arc::new(menu(
             vec![],
             vec![vec![luce("light.a", true), luce("light.b", false), interruttore("switch.c", true)], vec![luce("light.d", true)]],
@@ -3604,15 +3347,17 @@ pub(crate) mod test {
         assert_eq!(preferito(&interruttore("switch.s", true)).luminosita, None);
     }
 
-    /// La Casa filtrata è del pannello aperto: chiuso, il modello non tiene righe; riaperto, torna.
+    /// La pagina Casa è del pannello aperto: chiuso, i modelli non tengono righe; riaperta, tornano.
     #[test]
     fn le_luci_non_restano_in_memoria_a_pannello_chiuso() {
-        let (_spegni, p, _pillola, _c) = ponte_di_prova();
+        let (_spegni, p, _pillola, _c) = ponte_sulle_luci();
         p.ricevi(CasaEvento::Dati(Arc::new(menu(vec![], vec![vec![luce("light.a", true)]]))));
         assert_eq!(id_luci(&p), ["light.a"]);
         p.pannello_chiuso();
         assert!(id_luci(&p).is_empty());
-        p.apri_modelli();
+        assert_eq!((p.comandi_filtri.row_count(), p.comandi_scene.row_count()), (0, 0));
+        p.vista_comandi("casa");
+        p.filtro_pagina("casa", crate::moduli::pagina_casa::FILTRO_LUCI);
         assert_eq!(id_luci(&p), ["light.a"], "alla riapertura l'elenco si rifà");
     }
 
@@ -3624,7 +3369,7 @@ pub(crate) mod test {
     /// Rilievo 8: un esito negativo toglie l'attesa e mostra l'errore.
     #[test]
     fn esito_negativo_toglie_l_attesa() {
-        let (_spegni, p, _pillola, _c) = ponte_di_prova();
+        let (_spegni, p, _pillola, _c) = ponte_con_la_casa();
         p.tocca("light.a");
         let numero = numero_attesa(&p, "light.a");
         p.ricevi(CasaEvento::Esito { entity_id: "light.a".into(), numero, ok: false, errore: Some("guasto".into()) });
@@ -3638,7 +3383,7 @@ pub(crate) mod test {
     /// secondo tocco; quello del primo, arrivato dopo, non tocca nulla.
     #[test]
     fn l_esito_torna_al_suo_tocco_anche_fuori_ordine() {
-        let (_spegni, p, _pillola, _c) = ponte_di_prova();
+        let (_spegni, p, _pillola, _c) = ponte_con_la_casa();
         // Primo tocco: si accende (attesa n1), e la conferma arriva con i dati.
         p.tocca("light.a");
         let primo = numero_attesa(&p, "light.a");
@@ -3657,54 +3402,29 @@ pub(crate) mod test {
         assert_eq!(p.ottimismo.borrow().numero("light.a"), Some(terzo), "l'attesa del terzo tocco resta");
     }
 
-    /// Task 14e: le stanze della vista Casa nell'ordine del mapper, con l'icona scelta o quella
-    /// predefinita, «Altro» con la casa e in fondo le scene.
+    /// Task 14e, ridisegno F3: le card di una stanza rispondono al tocco come i preferiti (stesso
+    /// comando e stesso stato ottimistico); una stanza nascosta torna al filtro iniziale.
     #[test]
-    fn stanze_della_vista_casa() {
-        use casa_core::config::Config;
-        let mut m = menu(vec![], vec![vec![luce("light.a", true), luce("light.b", false)], vec![interruttore("switch.c", true)]]);
-        m.rooms[0].name = "Cucina".into();
-        m.rooms[1].name = "Sala giochi".into();
-        m.rooms.push(Room { area_id: String::new(), name: "Altro".into(), entities: vec![luce("light.z", false)] });
-        let AppEntity::Scene(s) = scena("scene.notte") else { unreachable!() };
-        m.scenes = vec![s];
-        let mut config = Config::default();
-        config.area_icons.insert("a1".into(), "🎮".into());
-        let stanze = stanze_ui(&m, &config.area_icons);
-        let nomi: Vec<&str> = stanze.iter().map(|s| s.nome.as_str()).collect();
-        assert_eq!(nomi, ["Cucina", "Sala giochi", "Altro", "Scene"]);
-        assert_eq!(stanze[0].icona as usize, crate::stanze::indice("🍳").unwrap(), "predefinita dal nome");
-        assert_eq!(stanze[1].icona as usize, crate::stanze::indice("🎮").unwrap(), "quella scelta");
-        assert_eq!((stanze[2].icona, stanze[3].icona), (-1, -2));
-        assert_eq!(stanze.iter().map(|s| s.quanti).collect::<Vec<_>>(), [2, 1, 1, 1]);
-        assert_eq!(dispositivi_stanza(&m, "a0").len(), 2);
-        assert_eq!(dispositivi_stanza(&m, GRUPPO_SCENE)[0].entity_id(), "scene.notte");
-        assert!(dispositivi_stanza(&m, "sparita").is_empty());
-    }
-
-    /// Task 14e: nella stanza aperta i dispositivi rispondono al tocco come i preferiti (stesso
-    /// comando e stesso stato ottimistico); una stanza nascosta si chiude da sola.
-    #[test]
-    fn i_dispositivi_della_stanza_aperta_rispondono_come_i_preferiti() {
-        let (_spegni, p, _pillola, _c) = ponte_di_prova();
+    fn le_card_della_stanza_rispondono_come_i_preferiti() {
+        let (_spegni, p, _pillola, _c) = ponte_con_la_casa();
         p.ricevi(CasaEvento::Dati(Arc::new(menu(vec![luce("light.a", false)], vec![vec![interruttore("switch.s", false)]]))));
-        p.stanza(Some("a0".into()));
-        assert_eq!(p.dispositivi.row_data(0).unwrap().stato, "Spento");
+        p.filtro_pagina("casa", "a0");
+        assert_eq!(stato_mostrato(&p), "Spento");
         p.tocca("switch.s");
-        assert_eq!(p.dispositivi.row_data(0).unwrap().stato, "Acceso", "stato ottimistico anche nella stanza");
+        assert_eq!(stato_mostrato(&p), "Acceso", "stato ottimistico anche nella stanza");
         assert_eq!(p.ottimismo.borrow().atteso("switch.s"), Some(&true));
-        // La stanza non c'è più (tutto nascosto): si chiude.
+        // La stanza non c'è più (tutto nascosto): il filtro iniziale, i preferiti.
         p.ricevi(CasaEvento::Dati(Arc::new(menu(vec![luce("light.a", false)], vec![]))));
-        assert!(p.stanza_aperta.borrow().is_none());
-        assert_eq!(p.dispositivi.row_count(), 0);
+        assert_eq!(p.filtro_casa.borrow().as_deref(), Some(crate::moduli::pagina_casa::FILTRO_PREFERITI));
+        assert_eq!(p.comandi_card.row_data(0).map(|c| c.id.to_string()).as_deref(), Some("light.a"));
     }
 
     /// Task 14e: un pulsante di Impostazioni › Dispositivi cambia la configurazione (quella che il
-    /// servizio salva) e rifà subito l'elenco; l'icona cambia anche le stanze del pannello.
+    /// servizio salva) e rifà subito l'elenco; l'icona cambia anche i filtri della pagina Casa.
     #[test]
     fn la_scheda_dispositivi_cambia_la_configurazione_e_l_elenco_subito() {
         use casa_core::types::{StanzaCatalogo, VoceCatalogo};
-        let (_spegni, p, _pillola, _c) = ponte_di_prova();
+        let (_spegni, p, _pillola, _c) = ponte_con_la_casa();
         let voce = |id: &str| VoceCatalogo { entity_id: id.into(), name: id.into(), kind: "light".into() };
         let mut m = menu(vec![], vec![vec![luce("light.a", false)], vec![luce("light.b", false)]]);
         m.catalogo = Arc::new(vec![
@@ -3727,7 +3447,8 @@ pub(crate) mod test {
         assert!(!ids(&p).contains(&"d:light.b".to_string()));
         p.scegli_icona("a0", 36);
         assert_eq!(p.casa.config().area_icons["a0"], crate::stanze::ICONE[36].0);
-        assert_eq!(p.stanze.row_data(0).unwrap().icona, 36, "le stanze del pannello prendono l'icona subito");
+        let filtro_a0 = p.comandi_filtri.iter().find(|f| f.id == "a0").expect("il filtro della stanza a0");
+        assert_eq!(filtro_a0.icona, 36, "i filtri della pagina prendono l'icona subito");
     }
 
     /// Task 14f: aggiunta, modifica, ordine ed eliminazione dei collegamenti cambiano la
@@ -3858,7 +3579,7 @@ pub(crate) mod test {
             temp_step: 0.5,
         });
         assert_eq!(stato_in_lettura(&termostato), "Riscaldamento · 20,5°");
-        assert_eq!(preferiti_ui(&menu(vec![serratura], vec![]), 1)[0].valore, "Chiusa");
+        assert_eq!(preferito(&serratura).valore, "Chiusa");
     }
 
     #[test]
@@ -3875,8 +3596,8 @@ pub(crate) mod test {
         o.tocca("light.a", true, &false, Instant::now());
         let mostrata = con_ottimismo(spenta, &o);
         assert!(mostrata.acceso);
-        assert_eq!(testo_stato(&mostrata), "Acceso");
-        assert!(voce_ui(&mostrata, true).acceso);
+        let card = crate::moduli::pagina_casa::card(&mostrata, true);
+        assert_eq!((card.stato.as_str(), card.acceso), ("Accesa", true));
         let altra = p("switch.b", Tipo::Interruttore, false, "off");
         assert!(!con_ottimismo(altra, &o).acceso, "solo il dispositivo toccato");
     }
@@ -3898,20 +3619,6 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn testo_dello_stato() {
-        assert_eq!(testo_stato(&p("light.a", Tipo::Interruttore, true, "on")), "Acceso");
-        assert_eq!(testo_stato(&p("switch.a", Tipo::Interruttore, false, "off")), "Spento");
-        assert_eq!(testo_stato(&p("scene.a", Tipo::Scena, false, "")), "Scena");
-        assert_eq!(testo_stato(&p("sensor.t", Tipo::Lettura, false, "21.5 °C")), "21.5 °C");
-        let mut x = p("light.a", Tipo::Interruttore, true, "on");
-        x.disponibile = false;
-        assert_eq!(testo_stato(&x), "Non disponibile");
-        x.disponibile = true;
-        x.errore = Some("not_found".into());
-        assert_eq!(testo_stato(&x), "Non riuscito");
-    }
-
-    #[test]
     fn genere_per_icona_e_tinta() {
         assert_eq!(genere(&p("light.a", Tipo::Interruttore, true, "on")), GenereUi::Luce);
         assert_eq!(genere(&p("switch.a", Tipo::Interruttore, true, "on")), GenereUi::Presa);
@@ -3923,27 +3630,8 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn riga_di_stato_della_casa() {
-        let m = menu(
-            vec![sensore("sensor.t", "21.5", Some("°C"))],
-            vec![vec![luce("light.a", true), luce("light.b", true), luce("light.c", false)], vec![sensore("sensor.t", "21.5", Some("°C"))]],
-        );
-        assert_eq!(riga_stato(&StatoConnessione::Connesso, Some(&m)), "2 luci accese · 21,5 °C");
-        let una = menu(vec![], vec![vec![luce("light.a", true)]]);
-        assert_eq!(riga_stato(&StatoConnessione::Connesso, Some(&una)), "1 luce accesa");
-        let spente = menu(vec![], vec![vec![luce("light.a", false)]]);
-        assert_eq!(riga_stato(&StatoConnessione::Connesso, Some(&spente)), "Luci spente");
-        assert_eq!(riga_stato(&StatoConnessione::Connesso, None), "Casa connessa");
-        assert_eq!(riga_stato(&StatoConnessione::InConnessione, Some(&m)), "Connessione alla casa…");
-        assert_eq!(riga_stato(&StatoConnessione::Disconnesso, Some(&m)), "Casa non connessa");
-        assert_eq!(riga_stato(&StatoConnessione::TokenMancante, None), "Token di Home Assistant mancante");
-        assert_eq!(riga_stato(&StatoConnessione::TokenNonValido, None), "Token di Home Assistant non valido");
-        assert_eq!(riga_stato(&StatoConnessione::NonConfigurato, Some(&m)), "Casa non configurata");
-    }
-
-    #[test]
     fn errori_in_frasi_semplici() {
-        let riga = |e: &str| riga_stato(&StatoConnessione::Errore(e.into()), None);
+        let riga = frase_errore;
         assert_eq!(riga("connessione non riuscita: IO error: Impossibile stabilire la connessione"), "Casa non raggiungibile");
         assert_eq!(riga("Home Assistant non risponde"), "Casa non raggiungibile");
         assert_eq!(riga("connessione chiusa da Home Assistant"), "Casa non raggiungibile");

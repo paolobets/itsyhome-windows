@@ -55,6 +55,74 @@ pub(crate) fn etichetta_col_fuoco(p: &Pannello) -> String {
     String::new()
 }
 
+/// Una card di prova dei Comandi (ridisegno F3, Task 4b), come la scrive Rust: un interruttore
+/// spento (luce, o presa per un `switch.`), una scena, una lettura (sola lettura, una serratura
+/// chiusa) o un lancio. Il nome per Narrator è quello di `pagina_casa::card`.
+pub(crate) fn card_casa(id: &str, nome: &str, tipo: crate::TipoCardUi) -> crate::CardUi {
+    use crate::{GenereUi, TipoCardUi};
+    let presa = id.starts_with("switch.");
+    let (genere, stato, toccabile) = match tipo {
+        TipoCardUi::Interruttore => (if presa { GenereUi::Presa } else { GenereUi::Luce }, if presa { "Spento" } else { "Spenta" }, true),
+        TipoCardUi::Scena => (GenereUi::Scena, "Scena", true),
+        TipoCardUi::Lettura => (GenereUi::Casa, "Chiusa", false),
+        TipoCardUi::Lancio => (GenereUi::Casa, "nas.lan", true),
+    };
+    let narratore = if tipo == TipoCardUi::Lettura { format!("{nome}, {stato}, sola lettura") } else { format!("{nome}, {stato}") };
+    crate::CardUi {
+        id: id.into(),
+        tipo,
+        genere,
+        nome: nome.into(),
+        stato: stato.into(),
+        toccabile,
+        narratore: narratore.into(),
+        ..Default::default()
+    }
+}
+
+/// Un filtro di prova dei Comandi: senza numero, l'icona della casa, il nome per Narrator.
+pub(crate) fn filtro(id: &str, nome: &str) -> crate::FiltroUi {
+    crate::FiltroUi { id: id.into(), nome: nome.into(), icona: -5, numero: Default::default(), filo: false, narratore: nome.into() }
+}
+
+/// Un pannello mostrato sulla pagina `modulo` dell'impianto Comandi, con questi filtri, card e
+/// scene, la pagina piena e la tastiera pronta (il fuoco sulle card). Restituisce gli eventi
+/// verso Rust: «filtro-pagina {modulo} {filtro}», «tocca-card {modulo} {id}», «azione-pagina
+/// {modulo} {azione}», «chiudi pannello». Uno solo per tutti i test dell'interfaccia.
+pub(crate) fn pannello_comandi(
+    modulo: &str,
+    filtri: Vec<crate::FiltroUi>,
+    card: Vec<crate::CardUi>,
+    scene: Vec<crate::CardUi>,
+) -> (Pannello, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
+    use slint::{ComponentHandle, ModelRc, VecModel};
+    piattaforma_di_prova();
+    let p = Pannello::new().expect("pannello");
+    crate::pannello::collega_fuoco(&p);
+    let debole = p.as_weak();
+    p.on_indice_voce(move |id| debole.upgrade().map_or(-1, |p| crate::pannello::indice_voce(&p.get_attese(), &id)));
+    p.set_aperto(true);
+    p.show().expect("pannello mostrato nel backend di prova");
+    let registro = crate::moduli::registro::Registro::nuovo(&[]);
+    p.set_schede(ModelRc::new(VecModel::from(crate::pannello::schede_ui(&registro, modulo))));
+    p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
+    p.global::<crate::Fuochi>().set_pronti(true);
+    p.set_comandi_modulo(modulo.into());
+    p.set_comandi_sintesi(crate::SintesiUi { titolo: "Prova".into(), azione_icona: crate::pannello::icona("nessuna"), ..Default::default() });
+    p.set_comandi_stato(crate::StatoPaginaUi { tipo: crate::TipoStatoPaginaUi::Pieno, ..Default::default() });
+    p.set_comandi_filtri(ModelRc::new(VecModel::from(filtri)));
+    p.set_comandi_card(ModelRc::new(VecModel::from(card)));
+    p.set_comandi_scene(ModelRc::new(VecModel::from(scene)));
+    p.set_vista(modulo.into());
+    let eventi = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+    let (e1, e2, e3, e4) = (eventi.clone(), eventi.clone(), eventi.clone(), eventi.clone());
+    p.on_filtro_pagina(move |m, f| e1.borrow_mut().push(format!("filtro-pagina {m} {f}")));
+    p.on_tocca_card(move |m, id| e2.borrow_mut().push(format!("tocca-card {m} {id}")));
+    p.on_azione_pagina(move |m, a, _| e3.borrow_mut().push(format!("azione-pagina {m} {a}")));
+    p.on_chiudi(move || e4.borrow_mut().push("chiudi pannello".into()));
+    (p, eventi)
+}
+
 /// Tutti i file `.slint` dell'assistente e della cornice della gestione.
 fn file_slint() -> Vec<PathBuf> {
     fn raccogli(cartella: &Path, file: &mut Vec<PathBuf>) {
@@ -3585,110 +3653,538 @@ mod accessibilita {
             .unwrap_or_default()
     }
 
-    fn voce_casa(id: &str, nome: &str) -> crate::PreferitoUi {
-        crate::PreferitoUi {
-            entity_id: id.into(),
-            nome: nome.into(),
-            genere: crate::GenereUi::Luce,
-            stato: "Spento".into(),
-            disponibile: true,
-            toccabile: true,
-            ..Default::default()
-        }
+    // ─── Comandi (pagina Casa, ridisegno F3, Task 4b) ───
+
+    /// I filtri di prova: «Preferiti», «Luci accese» col numero, «Tutta la casa», il filo, due
+    /// stanze col numero dei dispositivi.
+    fn filtri_di_prova() -> Vec<crate::FiltroUi> {
+        use crate::moduli::pagina_casa::{FILTRO_LUCI, FILTRO_PREFERITI, FILTRO_TUTTA};
+        let stanza = |id: &str, nome: &str, n: usize, filo: bool| crate::FiltroUi {
+            numero: n.to_string().into(),
+            filo,
+            narratore: format!("{nome}, {n} dispositivi").into(),
+            icona: 0,
+            ..super::filtro(id, nome)
+        };
+        vec![
+            crate::FiltroUi { icona: -3, ..super::filtro(FILTRO_PREFERITI, "Preferiti") },
+            crate::FiltroUi { icona: -4, numero: "2".into(), narratore: "Luci accese, 2".into(), ..super::filtro(FILTRO_LUCI, "Luci accese") },
+            super::filtro(FILTRO_TUTTA, "Tutta la casa"),
+            stanza("a0", "Soggiorno", 6, true),
+            stanza("a1", "Cucina", 4, false),
+        ]
     }
 
-    /// Un pannello sulla vista Casa con due stanze, un preferito e i dispositivi di una stanza;
-    /// restituisce gli eventi (stanze aperte e chiuse, tocchi, chiusura del pannello).
+    /// Le card di prova, tre per riga: Divano accesa all'80 %, Tavolo spenta, Lampada non
+    /// disponibile (tenue, non toccabile); Presa TV, la temperatura (lettura col valore) e la porta
+    /// (sola lettura).
+    fn card_di_prova() -> Vec<crate::CardUi> {
+        use super::card_casa;
+        use crate::TipoCardUi::{Interruttore, Lettura};
+        vec![
+            crate::CardUi {
+                acceso: true,
+                stato: "Accesa".into(),
+                valore: "80 %".into(),
+                narratore: "Divano, Accesa, 80 %".into(),
+                ..card_casa("light.divano", "Divano", Interruttore)
+            },
+            card_casa("light.tavolo", "Tavolo", Interruttore),
+            crate::CardUi {
+                stato: "Non disponibile".into(),
+                tenue: true,
+                toccabile: false,
+                narratore: "Lampada, Non disponibile".into(),
+                ..card_casa("light.lampada", "Lampada", Interruttore)
+            },
+            card_casa("switch.tv", "Presa TV", Interruttore),
+            crate::CardUi {
+                genere: crate::GenereUi::Termo,
+                stato: "Temperatura".into(),
+                valore: "21,5°".into(),
+                narratore: "Temperatura, 21,5°, sola lettura".into(),
+                ..card_casa("sensor.t", "Temperatura", Lettura)
+            },
+            card_casa("lock.porta", "Porta", Lettura),
+        ]
+    }
+
+    fn scene_di_prova() -> Vec<crate::CardUi> {
+        use crate::TipoCardUi::Scena;
+        vec![super::card_casa("scene.sera", "Sera", Scena), super::card_casa("scene.cinema", "Cinema", Scena)]
+    }
+
+    /// La pagina Casa di prova sui Comandi (filtri, card, scene).
     fn pannello_casa() -> (Pannello, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
-        piattaforma_di_prova();
-        let p = pannello();
-        p.set_schede(schede());
-        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
-        p.global::<crate::Fuochi>().set_pronti(true);
-        p.set_casa_pronta(true);
-        let stanza = |id: &str, nome: &str, quanti| crate::StanzaUi { area_id: id.into(), nome: nome.into(), icona: 0, quanti };
-        p.set_stanze(ModelRc::new(VecModel::from(vec![stanza("cucina", "Cucina", 2), stanza("soggiorno", "Soggiorno", 1)])));
-        p.set_preferiti(ModelRc::new(VecModel::from(vec![voce_casa("light.preferita", "Preferita")])));
-        p.set_dispositivi(ModelRc::new(VecModel::from(vec![
-            voce_casa("light.a", "Luce A"),
-            voce_casa("light.b", "Luce B"),
-        ])));
-        p.set_vista("casa".into());
-        let eventi = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
-        let (e1, e2, e3, e4) = (eventi.clone(), eventi.clone(), eventi.clone(), eventi.clone());
-        p.on_apri_stanza(move |a| e1.borrow_mut().push(format!("apri {a}")));
-        p.on_chiudi_stanza(move || e2.borrow_mut().push("chiudi stanza".into()));
-        p.on_tocca(move |id| e3.borrow_mut().push(format!("tocca {id}")));
-        p.on_chiudi(move || e4.borrow_mut().push("chiudi pannello".into()));
-        (p, eventi)
+        super::pannello_comandi("casa", filtri_di_prova(), card_di_prova(), scene_di_prova())
     }
 
-    /// Task 14e/14g: le stanze sono schede di un elenco (nome e quanti dispositivi per Narrator):
-    /// una sola selezionata, «Preferiti» o la stanza aperta.
-    #[test]
-    fn stanze_della_casa_accessibili() {
-        let (p, _) = pannello_casa();
-        let cucina = elemento(&p, "Cucina, 2 dispositivi");
-        assert_eq!(cucina.accessible_role(), Some(AccessibleRole::Tab));
-        assert_eq!(cucina.accessible_item_selected(), Some(false));
-        assert!(elemento(&p, "Soggiorno, 1 dispositivo").accessible_role().is_some());
-        cucina.invoke_accessible_default_action();
-        assert_eq!(p.get_stanza_aperta(), 0);
-        assert_eq!(elemento(&p, "Cucina, 2 dispositivi").accessible_item_selected(), Some(true));
-        // La griglia mostra i dispositivi della stanza al posto dei preferiti.
-        assert!(ElementHandle::find_by_accessible_label(&p, "Luce A, Spento").next().is_some());
-        assert!(ElementHandle::find_by_accessible_label(&p, "Preferita, Spento").next().is_none());
-        // Giro di correzioni 1: la scheda già selezionata resta tale (come «Preferiti»); si torna ai
-        // preferiti con «Preferiti».
-        elemento(&p, "Cucina, 2 dispositivi").invoke_accessible_default_action();
-        assert_eq!(p.get_stanza_aperta(), 0, "un secondo tocco non chiude la stanza");
-        scheda(&p, "Preferiti").invoke_accessible_default_action();
-        assert_eq!(p.get_stanza_aperta(), -1);
-        assert!(ElementHandle::find_by_accessible_label(&p, "Preferita, Spento").next().is_some());
-    }
-
-    /// La scheda dell'elenco con quel nome (il titolo della griglia può avere lo stesso testo).
-    fn scheda(p: &Pannello, nome: &str) -> ElementHandle {
+    /// I filtri (le schede dell'elenco «Filtri») per nome, senza le schede della barra.
+    fn filtro_tab(p: &Pannello, nome: &str) -> ElementHandle {
         ElementHandle::find_by_accessible_label(p, nome)
             .find(|e| e.accessible_role() == Some(AccessibleRole::Tab))
-            .unwrap_or_else(|| panic!("nessuna scheda «{nome}»"))
+            .unwrap_or_else(|| panic!("nessun filtro «{nome}»"))
     }
 
     fn titolo(p: &Pannello, testo: &str) -> bool {
         ElementHandle::find_by_accessible_label(p, testo).any(|e| e.accessible_role() == Some(AccessibleRole::Text))
     }
 
-    /// Task 14g: la prima voce dell'elenco è «Preferiti» (stella, senza numero: vedi il giro di
-    /// correzioni 1), selezionata all'apertura; toccandola la griglia torna ai preferiti col titolo
-    /// «Preferiti». Nessuna intestazione «STANZE» sopra «Preferiti»; nella riga alta non c'è più
-    /// «‹ Indietro».
+    fn eventi_di(eventi: &std::rc::Rc<std::cell::RefCell<Vec<String>>>) -> Vec<String> {
+        eventi.borrow().clone()
+    }
+
+    /// Ridisegno F3, Task 4b (da `stanze_della_casa_accessibili`, `preferiti_prima_voce_delle_stanze`):
+    /// i filtri sono le schede dell'elenco «Filtri», una sola selezionata, con indice e totale; il
+    /// clic ne sceglie un altro (`filtro-pagina casa a0`) e la selezione lo segue; nessun
+    /// «Indietro».
     #[test]
-    fn preferiti_prima_voce_delle_stanze() {
+    fn comandi_filtri_accessibili() {
         let (p, eventi) = pannello_casa();
-        let elenco = elemento(&p, "Preferiti e stanze");
+        let elenco = elemento(&p, "Filtri");
         assert_eq!(elenco.accessible_role(), Some(AccessibleRole::TabList));
-        assert!(ElementHandle::find_by_accessible_label(&p, "STANZE").next().is_none(), "niente «STANZE» sopra «Preferiti»");
-        assert!(ElementHandle::find_by_accessible_label(&p, "Preferiti, 1 dispositivo").next().is_none(), "senza numero");
-        let preferiti = scheda(&p, "Preferiti");
-        assert_eq!(preferiti.accessible_item_selected(), Some(true), "selezionata all'apertura");
-        assert_eq!((preferiti.accessible_item_index(), preferiti.accessible_item_count()), (Some(0), Some(3)));
-        let cucina = elemento(&p, "Cucina, 2 dispositivi");
-        assert_eq!((cucina.accessible_item_index(), cucina.accessible_item_count()), (Some(1), Some(3)));
-        assert!(titolo(&p, "Preferiti"), "titolo della griglia");
+        let nomi = ["Preferiti", "Luci accese, 2", "Tutta la casa", "Soggiorno, 6 dispositivi", "Cucina, 4 dispositivi"];
+        let scelti = || nomi.iter().filter(|n| filtro_tab(&p, n).accessible_item_selected() == Some(true)).count();
+        assert_eq!(scelti(), 1, "un solo filtro selezionato");
+        let preferiti = filtro_tab(&p, "Preferiti");
+        assert_eq!(preferiti.accessible_item_selected(), Some(true), "il filtro scelto: il primo");
+        assert_eq!((preferiti.accessible_item_index(), preferiti.accessible_item_count()), (Some(0), Some(5)));
+        let soggiorno = filtro_tab(&p, "Soggiorno, 6 dispositivi");
+        assert_eq!((soggiorno.accessible_item_index(), soggiorno.accessible_item_count()), (Some(3), Some(5)));
+        soggiorno.invoke_accessible_default_action();
+        assert_eq!(eventi_di(&eventi), ["filtro-pagina casa a0"]);
+        assert_eq!(filtro_tab(&p, "Soggiorno, 6 dispositivi").accessible_item_selected(), Some(true));
+        assert_eq!(scelti(), 1);
+        // Lo stesso filtro di nuovo: nulla verso Rust.
+        filtro_tab(&p, "Soggiorno, 6 dispositivi").invoke_accessible_default_action();
+        assert_eq!(eventi_di(&eventi).len(), 1);
         assert!(ElementHandle::find_by_accessible_label(&p, "Indietro").next().is_none(), "niente «Indietro»");
+    }
 
-        cucina.invoke_accessible_default_action();
-        assert_eq!(scheda(&p, "Preferiti").accessible_item_selected(), Some(false));
-        assert!(!titolo(&p, "Preferiti"), "titolo: la stanza");
-        assert!(titolo(&p, "Cucina"));
+    /// Ridisegno F3, Task 4b (spec §5.6): la card è l'interruttore. Ruolo `Switch` con lo stato,
+    /// nome per Narrator col valore; clic e Invio la toccano. La card di sola lettura non ha
+    /// pulsanti né interruttori (ruolo `Text`, C18: il fondo assente si vede nella foto) e Invio
+    /// non manda nulla; una non disponibile (tenue) non si tocca.
+    #[test]
+    fn comandi_card_interruttore() {
+        use slint::platform::Key;
+        let (p, eventi) = pannello_casa();
+        let divano = elemento(&p, "Divano, Accesa, 80 %");
+        assert_eq!((divano.accessible_role(), divano.accessible_checked()), (Some(AccessibleRole::Switch), Some(true)));
+        assert_eq!(elemento(&p, "Tavolo, Spenta").accessible_checked(), Some(false));
+        divano.invoke_accessible_default_action();
+        assert_eq!(eventi_di(&eventi), ["tocca-card casa light.divano"]);
+        // Da tastiera: il fuoco parte dalla prima card.
+        tasto(&p, Key::Return);
+        assert_eq!(etichetta_col_fuoco(&p), "Divano, Accesa, 80 %");
+        assert_eq!(eventi_di(&eventi).len(), 2);
+        // La non disponibile: tenue, spenta per Narrator, nessun tocco.
+        let lampada = elemento(&p, "Lampada, Non disponibile");
+        assert_eq!(lampada.accessible_enabled(), Some(false));
+        lampada.invoke_accessible_default_action();
+        tasto(&p, Key::RightArrow);
+        tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Lampada, Non disponibile");
+        tasto(&p, Key::Return);
+        // La sola lettura: ruolo Text, nessun interruttore né pulsante dentro la card, Invio nulla.
+        let porta = elemento(&p, "Porta, Chiusa, sola lettura");
+        assert_eq!(porta.accessible_role(), Some(AccessibleRole::Text));
+        let card_porta = ElementHandle::find_by_element_type_name(&p, "CardComando")
+            .find(|c| c.query_descendants().find_all().iter().any(|e| e.accessible_label().is_some_and(|l| l == "Porta, Chiusa, sola lettura")))
+            .expect("la card della porta");
+        assert!(
+            card_porta.query_descendants().find_all().iter().all(|e| !matches!(e.accessible_role(), Some(AccessibleRole::Switch | AccessibleRole::Button))),
+            "nessun comando nella card di sola lettura"
+        );
+        tasto(&p, Key::DownArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Porta, Chiusa, sola lettura");
+        tasto(&p, Key::Return);
+        tasto(&p, Key::Space);
+        assert_eq!(eventi_di(&eventi), ["tocca-card casa light.divano", "tocca-card casa light.divano"], "né la tenue né la sola lettura");
+        // La temperatura: il valore è il testo principale, il nome per Narrator una volta.
+        assert_eq!(elemento(&p, "Temperatura, 21,5°, sola lettura").accessible_role(), Some(AccessibleRole::Text));
+    }
 
-        scheda(&p, "Preferiti").invoke_accessible_default_action();
-        assert_eq!(p.get_stanza_aperta(), -1);
-        assert_eq!(scheda(&p, "Preferiti").accessible_item_selected(), Some(true));
-        assert!(ElementHandle::find_by_accessible_label(&p, "Preferita, Spento").next().is_some());
-        // «Preferiti» già selezionata: toccarla di nuovo non cambia nulla.
-        scheda(&p, "Preferiti").invoke_accessible_default_action();
-        assert_eq!(*eventi.borrow(), ["apri cucina", "chiudi stanza"]);
+    /// Ridisegno F3, Task 4b (da `stanza_da_tastiera_ed_esc_a_livelli`, `preferiti_da_tastiera`,
+    /// `tab_fra_stanze_card_e_dock`, `casa_filtrata_da_tastiera_senza_perdere_il_fuoco`): il giro
+    /// delle frecce fra filtri, card, testata e scene; Tab filtri → card → schede (Maiusc+Tab
+    /// all'indietro); Esc e Backspace a livelli (prima il filtro iniziale, poi il pannello o la
+    /// Panoramica); il fuoco mai perso.
+    #[test]
+    fn comandi_da_tastiera() {
+        use slint::platform::Key;
+        let (p, eventi) = pannello_casa();
+        p.set_comandi_sintesi(crate::SintesiUi {
+            titolo: "2 luci accese".into(),
+            azione_id: "casa.spegni".into(),
+            azione_testo: "Spegni tutte".into(),
+            azione_primaria: true,
+            azione_icona: crate::pannello::icona("spegni"),
+            ..Default::default()
+        });
+        // Dalla prima colonna ← al filtro scelto; ↓ muove senza scegliere; Invio sceglie e porta
+        // alle card.
+        tasto(&p, Key::LeftArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Preferiti");
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::DownArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Tutta la casa");
+        assert!(eventi_di(&eventi).is_empty(), "le frecce non scelgono");
+        tasto(&p, Key::Return);
+        assert_eq!(eventi_di(&eventi), ["filtro-pagina casa casa.tutta"]);
+        assert_eq!(etichetta_col_fuoco(&p), "Divano, Accesa, 80 %", "Invio porta alle card, dalla prima");
+        tasto(&p, Key::LeftArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Tutta la casa", "← torna sul filtro scelto");
+        tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Divano, Accesa, 80 %");
+        // Le frecce in griglia; ↑ dalla prima riga all'azione della testata, ↓ torna.
+        tasto(&p, Key::RightArrow);
+        tasto(&p, Key::DownArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Temperatura, 21,5°, sola lettura");
+        tasto(&p, Key::UpArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Tavolo, Spenta");
+        tasto(&p, Key::UpArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Spegni tutte");
+        tasto(&p, Key::DownArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Tavolo, Spenta");
+        // ↓ dall'ultima riga alle scene; ←/→ fra le scene; ↑ di nuovo alle card.
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::DownArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Sera, Scena");
+        tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Cinema, Scena");
+        tasto(&p, Key::UpArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Temperatura, 21,5°, sola lettura");
+        // Tab: dalle card alle schede; Maiusc+Tab di nuovo alle card, poi ai filtri; Tab alle card.
+        tasto(&p, Key::Tab);
+        assert!(etichetta_col_fuoco(&p).contains("scheda"), "Tab porta alle schede: {}", etichetta_col_fuoco(&p));
+        con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Temperatura, 21,5°, sola lettura", "di nuovo sulla card da cui si era usciti");
+        con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Tutta la casa", "Maiusc+Tab dalle card ai filtri, sul filtro scelto");
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Temperatura, 21,5°, sola lettura");
+        // Esc a livelli: prima il filtro iniziale (il fuoco sui filtri), poi chiude il pannello.
+        tasto(&p, Key::Escape);
+        assert_eq!(eventi_di(&eventi).last().map(String::as_str), Some("filtro-pagina casa casa.preferiti"));
+        assert_eq!(etichetta_col_fuoco(&p), "Preferiti");
+        assert_eq!(filtro_tab(&p, "Preferiti").accessible_item_selected(), Some(true));
+        tasto(&p, Key::Escape);
+        assert_eq!(eventi_di(&eventi).last().map(String::as_str), Some("chiudi pannello"));
+        // Backspace a livelli: una stanza scelta, poi il filtro iniziale, poi la Panoramica.
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::Return);
+        assert_eq!(eventi_di(&eventi).last().map(String::as_str), Some("filtro-pagina casa a0"));
+        tasto(&p, Key::Backspace);
+        assert_eq!((p.get_vista().as_str(), eventi_di(&eventi).last().cloned()), ("casa", Some("filtro-pagina casa casa.preferiti".into())));
+        tasto(&p, Key::Backspace);
+        assert_eq!(p.get_vista(), "panoramica");
+        // Il pannello ha ancora la tastiera: Tab porta il fuoco su un elemento vero.
+        tasto(&p, Key::Tab);
+        let col_fuoco = etichetta_col_fuoco(&p);
+        assert!(!col_fuoco.is_empty() && col_fuoco != "Pannello di ItsyHome", "fuoco su «{col_fuoco}»");
+    }
+
+    /// Ridisegno F3, Task 4b (Paolo, Domanda 2): la fila «SCENE» sta sotto l'ultima riga di card,
+    /// con l'etichetta che non è un nome per Narrator; ↓ dall'ultima riga va sulla prima scena e
+    /// Invio la tocca. In «Luci accese» (Rust non dà scene) la fila non c'è, e il fuoco che era
+    /// su una scena torna alle card.
+    #[test]
+    fn comandi_scene_in_fondo() {
+        use slint::platform::Key;
+        let (p, eventi) = pannello_casa();
+        let porta = elemento(&p, "Porta, Chiusa, sola lettura");
+        let sera = elemento(&p, "Sera, Scena");
+        assert_eq!(sera.accessible_role(), Some(AccessibleRole::Button));
+        assert!(sera.absolute_position().y >= porta.absolute_position().y + porta.size().height + 8.0 - 0.5, "sotto l'ultima riga");
+        let etichetta = ElementHandle::find_by_element_type_name(&p, "EtichettaMono")
+            .find(|e| e.absolute_position().y == sera.absolute_position().y)
+            .expect("l'etichetta «SCENE» accanto ai chip");
+        assert!(etichetta.absolute_position().x < sera.absolute_position().x, "l'etichetta prima dei chip");
+        assert!(ElementHandle::find_by_accessible_label(&p, "SCENE").next().is_none(), "«SCENE» non è un nome per Narrator");
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::DownArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Sera, Scena");
+        tasto(&p, Key::Return);
+        assert_eq!(eventi_di(&eventi), ["tocca-card casa scene.sera"]);
+        // «Luci accese»: nessuna fila; il fuoco della scena va alle card.
+        p.set_comandi_scene(ModelRc::new(VecModel::from(Vec::<crate::CardUi>::new())));
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&p, "Sera, Scena").next().is_none());
+        assert_eq!(etichetta_col_fuoco(&p), "Presa TV, Spento", "di nuovo sulla card dell'ultima riga da cui si era scesi");
+        tasto(&p, Key::Tab);
+        assert!(etichetta_col_fuoco(&p).contains("scheda"), "Tab non si perde: {}", etichetta_col_fuoco(&p));
+    }
+
+    /// Review Focus 1: il fuoco sulla card 3 di 4 (la quarta) e il modello che cala a 3: il fuoco
+    /// va sulla card 2 (la più vicina), col nome nuovo per Narrator, e il Tab seguente non si perde.
+    #[test]
+    fn comandi_card_tolta_col_fuoco_addosso() {
+        use crate::TipoCardUi::Interruttore;
+        use slint::platform::Key;
+        let card = |n: usize| (0..n).map(|i| super::card_casa(&format!("light.{i}"), &format!("Luce {i}"), Interruttore)).collect::<Vec<_>>();
+        let (p, _) = super::pannello_comandi("casa", filtri_di_prova(), card(4), vec![]);
+        for _ in 0..3 {
+            tasto(&p, Key::RightArrow);
+        }
+        assert_eq!(etichetta_col_fuoco(&p), "Luce 3, Spenta");
+        // Come il ponte: la luce col fuoco esce («Luci accese») e il modello si riscrive.
+        p.set_comandi_card(ModelRc::new(VecModel::from(card(3))));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&p), "Luce 2, Spenta", "sulla più vicina");
+        tasto(&p, Key::Tab);
+        let col_fuoco = etichetta_col_fuoco(&p);
+        assert!(col_fuoco.contains("scheda"), "Tab non si perde: «{col_fuoco}»");
+    }
+
+    /// Review Focus 2: 40 card con nomi di 80 caratteri e 30 filtri. La card col fuoco e il
+    /// filtro col fuoco restano in vista (la griglia e la colonna scorrono), nessun testo esce
+    /// dalla sua card, il nome intero resta per Narrator.
+    #[test]
+    fn comandi_molte_card_e_nomi_lunghi() {
+        use crate::TipoCardUi::Interruttore;
+        use slint::platform::Key;
+        let lungo = |i: usize| format!("{i:02} {}", "Lampada da terra del soggiorno grande ".repeat(3))[..80].to_owned();
+        let card: Vec<_> = (0..40).map(|i| super::card_casa(&format!("light.{i}"), &lungo(i), Interruttore)).collect();
+        let filtri: Vec<_> = (0..30).map(|i| super::filtro(&format!("a{i}"), &format!("Stanza {i} {}", "molto lunga ".repeat(4)))).collect();
+        let (p, _) = super::pannello_comandi("casa", filtri, card, vec![]);
+        let in_vista = |e: &ElementHandle| {
+            let (a, l) = (e.absolute_position(), e.size());
+            a.y >= 44.0 + 48.0 - 0.5 && a.y + l.height <= 44.0 + 224.0 + 0.5
+        };
+        for _ in 0..13 {
+            tasto(&p, Key::DownArrow);
+            slint::platform::update_timers_and_animations();
+        }
+        // Il nome intero (80 caratteri) per Narrator.
+        let nome = format!("{}, Spenta", lungo(39));
+        assert_eq!(etichetta_col_fuoco(&p), nome);
+        assert!(in_vista(&elemento(&p, &nome)), "la card col fuoco in vista");
+        // Nessun testo oltre la sua card.
+        let mut testi = 0;
+        for c in ElementHandle::find_by_element_type_name(&p, "CardComando") {
+            let (cp, cs) = (c.absolute_position(), c.size());
+            for e in c.query_descendants().match_type_name("Text").find_all() {
+                let (a, l) = (e.absolute_position(), e.size());
+                assert!(a.x >= cp.x - 0.5 && a.x + l.width <= cp.x + cs.width + 0.5, "un testo esce dalla card: {a:?} {l:?}");
+                testi += 1;
+            }
+        }
+        // La ricerca vede solo le card in vista (le altre sono ritagliate dallo scorrimento): almeno
+        // due righe, tre testi per card.
+        assert!(testi >= 6 * 3, "i testi delle card controllati: {testi}");
+        // I filtri: dall'ultima riga della prima colonna ← al filtro scelto, poi giù fino all'ultimo.
+        tasto(&p, Key::LeftArrow);
+        for _ in 0..29 {
+            tasto(&p, Key::DownArrow);
+            slint::platform::update_timers_and_animations();
+        }
+        let ultimo = format!("Stanza 29 {}", "molto lunga ".repeat(4));
+        assert_eq!(etichetta_col_fuoco(&p), ultimo);
+        assert!(in_vista(&filtro_tab(&p, &ultimo)), "il filtro col fuoco in vista");
+        for f in ElementHandle::find_by_element_type_name(&p, "FiltroComandi") {
+            assert_eq!(f.size().width, 172.0);
+            let fine = f.absolute_position().x + f.size().width;
+            for e in f.query_descendants().match_type_name("Text").find_all() {
+                assert!(e.absolute_position().x + e.size().width <= fine + 0.5, "un testo esce dal filtro: {:?} {:?}", e.absolute_position(), e.size());
+            }
+        }
+    }
+
+    /// Ridisegno F3, Task 4b: la testata da y 0 a 40, i filtri da x 0 a 172, le card 64 alte e
+    /// larghe 182 ± 1 in tre colonne da x 188, il riquadro dell'icona 32 a 12 dal bordo (ritmo 4/8,
+    /// da `card_casa_ritmo_4_8`); tutto dentro 752 × 224.
+    #[test]
+    fn comandi_geometria() {
+        let (p, _) = pannello_casa();
+        fine_arrivo();
+        let testata = ElementHandle::find_by_element_type_name(&p, "TestataPagina").next().expect("testata");
+        assert_eq!((testata.absolute_position().y, testata.size().height), (44.0, 40.0));
+        for f in ElementHandle::find_by_element_type_name(&p, "FiltroComandi") {
+            let (a, l) = (f.absolute_position(), f.size());
+            assert_eq!((a.x, l.width, l.height), (34.0, 172.0, 32.0), "un filtro");
+            assert!(a.y >= 44.0 + 48.0);
+        }
+        let card: Vec<ElementHandle> = ElementHandle::find_by_element_type_name(&p, "CardComando").collect();
+        assert_eq!(card.len(), 6);
+        let mut colonne: Vec<f32> = card.iter().map(|c| c.absolute_position().x).collect();
+        colonne.sort_by(f32::total_cmp);
+        colonne.dedup();
+        assert_eq!(colonne.len(), 3, "tre colonne: {colonne:?}");
+        assert_eq!(colonne[0], 34.0 + 188.0);
+        for c in &card {
+            let (a, l) = (c.absolute_position(), c.size());
+            assert_eq!(l.height, 64.0);
+            assert!((l.width - 182.0).abs() <= 1.0, "larga {}", l.width);
+            assert!(a.x + l.width <= 34.0 + 752.0 + 0.5 && a.y + l.height <= 44.0 + 224.0 + 0.5, "dentro il corpo: {a:?} {l:?}");
+            // Il riquadro dell'icona: 32 × 32, a 12 dal bordo, centrato in altezza.
+            let riquadro = c
+                .query_descendants()
+                .find_all()
+                .into_iter()
+                .find(|e| e.size().width == 32.0 && e.size().height == 32.0)
+                .expect("il riquadro dell'icona");
+            assert_eq!((riquadro.absolute_position().x - a.x, riquadro.absolute_position().y - a.y), (12.0, 16.0));
+        }
+        for s in ["Sera, Scena", "Cinema, Scena"] {
+            let e = elemento(&p, s);
+            assert!(e.absolute_position().y + e.size().height <= 44.0 + 224.0 + 0.5, "la scena «{s}» nel corpo");
+        }
+    }
+
+    /// Review Focus 3 (pre-flight C4): «Spegni tutte» primaria bianca con l'icona. Tolta dal modello
+    /// (la sintesi senza azione, come la scrive Rust dopo il tocco) nel suo rettangolo non c'è nessun
+    /// elemento cliccabile; col fuoco addosso, Invio la preme e il fuoco passa alla prima card, e il
+    /// Tab seguente non si perde.
+    #[test]
+    fn spegni_tutte_non_lascia_bersagli_sotto_il_clic() {
+        use slint::platform::Key;
+        let (p, eventi) = pannello_casa();
+        let con_azione = crate::SintesiUi {
+            titolo: "2 luci accese".into(),
+            azione_id: "casa.spegni".into(),
+            azione_testo: "Spegni tutte".into(),
+            azione_primaria: true,
+            azione_icona: crate::pannello::icona("spegni"),
+            ..Default::default()
+        };
+        let senza = crate::SintesiUi { titolo: "Luci spente".into(), azione_icona: crate::pannello::icona("nessuna"), ..Default::default() };
+        p.set_comandi_sintesi(con_azione.clone());
+        fine_scorrimento();
+        let pulsante = elemento(&p, "Spegni tutte");
+        assert_eq!(pulsante.accessible_role(), Some(AccessibleRole::Button));
+        let icone = pulsante.query_descendants().find_all().into_iter().filter(|e| e.size().width == 16.0 && e.size().height == 16.0).count();
+        assert_eq!(icone, 1, "primaria con l'icona");
+        let dove = rettangolo(&pulsante);
+        pulsante.invoke_accessible_default_action();
+        assert_eq!(eventi_di(&eventi), ["azione-pagina casa casa.spegni"]);
+        p.set_comandi_sintesi(senza.clone());
+        slint::platform::update_timers_and_animations();
+        let sotto: Vec<_> = i_slint_backend_testing::ElementQuery::from_root(&p)
+            .match_descendants()
+            .match_predicate(|e| matches!(e.accessible_role(), Some(AccessibleRole::Button | AccessibleRole::Switch | AccessibleRole::Tab)))
+            .find_all()
+            .into_iter()
+            .filter(|e| !staccati(rettangolo(e), dove, 0.0))
+            .map(|e| e.accessible_label().unwrap_or_default().to_string())
+            .collect();
+        assert!(sotto.is_empty(), "nel posto di «Spegni tutte» non nasce nulla di cliccabile: {sotto:?}");
+        // Da tastiera: ↑ dalla prima riga, Invio; tolta, il fuoco sulla prima card.
+        let con_azione_di_nuovo = con_azione.clone();
+        p.set_comandi_sintesi(con_azione);
+        tasto(&p, Key::RightArrow);
+        tasto(&p, Key::UpArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Spegni tutte");
+        tasto(&p, Key::Return);
+        assert_eq!(eventi_di(&eventi).last().map(String::as_str), Some("azione-pagina casa casa.spegni"));
+        p.set_comandi_sintesi(senza);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&p), "Divano, Accesa, 80 %", "sulla prima card");
+        // L'azione che torna (una luce riaccesa altrove) non si riprende il fuoco da sola.
+        p.set_comandi_sintesi(con_azione_di_nuovo);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&p), "Divano, Accesa, 80 %", "il fuoco resta sulla card");
+        tasto(&p, Key::Tab);
+        assert!(etichetta_col_fuoco(&p).contains("scheda"), "Tab non si perde: {}", etichetta_col_fuoco(&p));
+    }
+
+    /// Ridisegno F3, Task 4b (da `la_carta_casa_con_luci_accese_apre_la_casa_filtrata`, dec. 14):
+    /// la carta Casa con l'azione «Spegni tutte» (`casa.spegni`: ci sono luci accese) apre la
+    /// pagina Casa e chiede il filtro «Luci accese»; senza azione la apre e basta. Clic, Narrator
+    /// e Invio.
+    #[test]
+    fn la_carta_casa_con_luci_accese_apre_luci_accese() {
+        use slint::platform::Key;
+        let (p, eventi) = pannello_casa();
+        let moduli = quattro_moduli();
+        let mut casa = moduli.row_data(1).expect("la carta Casa");
+        casa.azione_id = crate::moduli::casa::SPEGNI.into();
+        moduli.set_row_data(1, casa.clone());
+        p.set_moduli(moduli.clone().into());
+        p.set_vista("panoramica".into());
+        elemento(&p, &casa.narratore).invoke_accessible_default_action();
+        assert_eq!(p.get_vista(), "casa");
+        assert_eq!(eventi_di(&eventi), ["filtro-pagina casa casa.luci"]);
+        // Senza luci accese (nessuna azione): la pagina, senza filtro chiesto.
+        p.set_vista("panoramica".into());
+        moduli.set_row_data(1, crate::ModuloUi { con_azione: false, azione_id: Default::default(), azione_testo: Default::default(), ..casa.clone() });
+        elemento(&p, &casa.narratore).invoke_accessible_default_action();
+        assert_eq!((p.get_vista().as_str(), eventi_di(&eventi).len()), ("casa", 1));
+        // Da tastiera: Tab fino alla carta Casa, Invio.
+        moduli.set_row_data(1, casa.clone());
+        tasto(&p, Key::Backspace);
+        assert_eq!(p.get_vista(), "panoramica");
+        for _ in 0..8 {
+            if etichetta_col_fuoco(&p) == casa.narratore.as_str() {
+                break;
+            }
+            tasto(&p, Key::Tab);
+        }
+        assert_eq!(etichetta_col_fuoco(&p), casa.narratore.as_str());
+        tasto(&p, Key::Return);
+        assert_eq!((p.get_vista().as_str(), eventi_di(&eventi).last().map(String::as_str)), ("casa", Some("filtro-pagina casa casa.luci")));
+    }
+
+    /// Ridisegno F3, Task 4b (da `casa_filtrata_senza_connessione_dice_lo_stato`,
+    /// `casa_filtrata_senza_luci_accese_ha_lo_stato_vuoto`; spec §5.6): senza la pagina piena lo
+    /// stato al posto dell'impianto. Vuoto con «Collega» (Invio lo preme), primo avvio senza
+    /// pulsanti, fuori servizio con «Riprova».
+    #[test]
+    fn stati_della_pagina_casa() {
+        use crate::{StatoPaginaUi, TipoStatoPaginaUi};
+        use slint::platform::Key;
+        let (p, eventi) = pannello_casa();
+        let stato = |tipo, frase: &str, azione: (&str, &str)| StatoPaginaUi {
+            tipo,
+            frase: frase.into(),
+            sotto: "Sotto".into(),
+            azione_id: azione.0.into(),
+            azione_testo: azione.1.into(),
+        };
+        p.set_comandi_stato(stato(TipoStatoPaginaUi::Vuoto, "Collega la casa", ("casa.collega", "Collega")));
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_element_type_name(&p, "ImpiantoComandi").next().is_none(), "nessun impianto");
+        assert!(titolo(&p, "Collega la casa"));
+        assert_eq!(elemento(&p, "Collega").accessible_role(), Some(AccessibleRole::Button));
+        tasto(&p, Key::Return);
+        assert_eq!(etichetta_col_fuoco(&p), "Collega");
+        assert_eq!(eventi_di(&eventi), ["azione-pagina casa casa.collega"]);
+        // Primo avvio: la frase, nessun pulsante nella pagina.
+        p.set_comandi_stato(stato(TipoStatoPaginaUi::PrimoAvvio, "Mi collego alla casa", ("", "")));
+        slint::platform::update_timers_and_animations();
+        assert!(titolo(&p, "Mi collego alla casa"));
+        let pulsanti = i_slint_backend_testing::ElementQuery::from_root(&p)
+            .match_descendants()
+            .match_predicate(|e| e.accessible_role() == Some(AccessibleRole::Button))
+            .find_all()
+            .into_iter()
+            .filter(|e| e.absolute_position().y >= 44.0 && e.absolute_position().y < 44.0 + 224.0)
+            .count();
+        assert_eq!(pulsanti, 0, "nessun pulsante nella pagina");
+        tasto(&p, Key::Return);
+        assert_eq!(eventi_di(&eventi).len(), 1);
+        // Fuori servizio con «Riprova».
+        p.set_comandi_stato(stato(TipoStatoPaginaUi::FuoriServizio, "Casa non raggiungibile", ("casa.riprova", "Riprova")));
+        slint::platform::update_timers_and_animations();
+        assert!(titolo(&p, "Casa non raggiungibile"));
+        tasto(&p, Key::Return);
+        assert_eq!(eventi_di(&eventi).last().map(String::as_str), Some("azione-pagina casa casa.riprova"));
+        // Di nuovo piena: l'impianto torna.
+        p.set_comandi_stato(StatoPaginaUi { tipo: TipoStatoPaginaUi::Pieno, ..Default::default() });
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_element_type_name(&p, "ImpiantoComandi").next().is_some());
+        // «Luci accese» senza luci (da `casa_filtrata_senza_luci_accese_ha_lo_stato_vuoto`): nessuna
+        // card, la nota lo dice e il fuoco sta sui filtri.
+        let nota = "Nessuna luce accesa: le luci spente non compaiono in questo filtro.";
+        p.set_comandi_card(ModelRc::new(VecModel::from(Vec::<crate::CardUi>::new())));
+        p.set_comandi_scene(ModelRc::new(VecModel::from(Vec::<crate::CardUi>::new())));
+        p.set_comandi_nota(nota.into());
+        slint::platform::update_timers_and_animations();
+        assert!(titolo(&p, nota));
+        tasto(&p, slint::platform::Key::DownArrow);
+        assert!(!etichetta_col_fuoco(&p).is_empty() && filtro_tab(&p, &etichetta_col_fuoco(&p)).accessible_role() == Some(AccessibleRole::Tab), "il fuoco sui filtri");
     }
 
     /// Task 14g: «‹ Indietro» non c'è in nessuna vista (si torna alla Panoramica dal dock, con
@@ -3779,209 +4275,36 @@ mod accessibilita {
         assert_eq!(p.get_scarto_contenuto(), 0.0);
     }
 
-    /// Task 14e/14g: da tastiera si va dalle card alle stanze (←, su «Preferiti»), si sceglie (↓) e
-    /// si apre (Invio); il fuoco passa ai dispositivi, Invio tocca. Esc a livelli: prima torna a
-    /// «Preferiti», poi chiude il pannello; Backspace torna prima a «Preferiti», poi alla Panoramica.
+    /// Invio sulla card col fuoco nel filtro «Luci accese»: la luce spenta esce (il ponte riscrive
+    /// il modello, con `set_vec`) e il fuoco passa alla card che prende il suo posto, o alla
+    /// precedente se era l'ultima; mai perso (da `casa_filtrata_da_tastiera_senza_perdere_il_fuoco`).
     #[test]
-    fn stanza_da_tastiera_ed_esc_a_livelli() {
+    fn comandi_luce_spenta_esce_senza_perdere_il_fuoco() {
+        use crate::TipoCardUi::Interruttore;
         use slint::platform::Key;
-        let (p, eventi) = pannello_casa();
-        tasto(&p, Key::LeftArrow);
-        tasto(&p, Key::DownArrow);
-        tasto(&p, Key::DownArrow);
-        tasto(&p, Key::Return);
-        assert_eq!(p.get_stanza_aperta(), 1);
-        tasto(&p, Key::RightArrow);
-        tasto(&p, Key::Return);
-        assert_eq!(*eventi.borrow(), ["apri soggiorno", "tocca light.b"]);
-        tasto(&p, Key::Escape);
-        assert_eq!(p.get_stanza_aperta(), -1, "il primo Esc torna a «Preferiti»");
-        assert_eq!(eventi.borrow().last().map(String::as_str), Some("chiudi stanza"));
-        assert_eq!(scheda(&p, "Preferiti").accessible_item_selected(), Some(true));
-        // Il fuoco è su «Preferiti»: ↓ e Invio riaprono la prima stanza.
-        tasto(&p, Key::DownArrow);
-        tasto(&p, Key::Return);
-        assert_eq!(p.get_stanza_aperta(), 0);
-        tasto(&p, Key::Backspace);
-        assert_eq!((p.get_stanza_aperta(), p.get_vista().as_str()), (-1, "casa"), "Backspace torna prima a «Preferiti»");
-        tasto(&p, Key::Backspace);
-        assert_eq!(p.get_vista(), "panoramica");
-        // Il pannello ha ancora la tastiera (prima il fuoco finiva su una card che spariva): Tab
-        // porta il fuoco su un elemento vero.
-        tasto(&p, Key::Tab);
-        let col_fuoco = etichetta_col_fuoco(&p);
-        assert!(!col_fuoco.is_empty() && col_fuoco != "Pannello di ItsyHome", "fuoco su «{col_fuoco}»");
-        tasto(&p, Key::Escape);
-        assert_eq!(eventi.borrow().last().map(String::as_str), Some("chiudi pannello"), "{:?}", eventi.borrow());
-    }
-
-    /// Task 14g: Invio su «Preferiti» (già selezionata) porta il fuoco alle card; con una stanza
-    /// aperta la chiude. ↑ dalla prima stanza torna a «Preferiti».
-    #[test]
-    fn preferiti_da_tastiera() {
-        use slint::platform::Key;
-        let (p, eventi) = pannello_casa();
-        tasto(&p, Key::LeftArrow);
-        tasto(&p, Key::Return);
-        tasto(&p, Key::Return);
-        assert_eq!(*eventi.borrow(), ["tocca light.preferita"], "Invio su «Preferiti» porta alle card");
-        tasto(&p, Key::LeftArrow);
-        tasto(&p, Key::DownArrow);
-        tasto(&p, Key::Return);
-        assert_eq!(p.get_stanza_aperta(), 0);
-        // Giro di correzioni 1: ← porta sulla stanza aperta, Invio lì torna alle card (come su
-        // «Preferiti») senza chiuderla.
-        tasto(&p, Key::LeftArrow);
-        tasto(&p, Key::Return);
-        assert_eq!(p.get_stanza_aperta(), 0, "Invio sulla stanza aperta non la chiude");
-        tasto(&p, Key::Return);
-        assert_eq!(eventi.borrow().last().map(String::as_str), Some("tocca light.a"), "il fuoco è tornato alle card");
-        tasto(&p, Key::LeftArrow);
-        tasto(&p, Key::UpArrow);
-        tasto(&p, Key::Return);
-        assert_eq!(p.get_stanza_aperta(), -1, "Invio su «Preferiti» chiude la stanza");
-        assert_eq!(eventi.borrow().last().map(String::as_str), Some("chiudi stanza"));
-    }
-
-    /// Task 14e: Tab passa dalle stanze alle card e al dock; Maiusc+Tab torna indietro.
-    #[test]
-    fn tab_fra_stanze_card_e_dock() {
-        use slint::platform::Key;
-        let (p, eventi) = pannello_casa();
-        // Contenuto (card) → Maiusc+Tab: stanze, su «Preferiti»; ↓ e Invio aprono la prima.
-        con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
-        tasto(&p, Key::DownArrow);
-        tasto(&p, Key::Return);
-        assert_eq!(*eventi.borrow(), ["apri cucina"]);
-        // Esc torna a «Preferiti» e il fuoco resta sulle stanze; Tab porta alle card.
-        tasto(&p, Key::Escape);
-        tasto(&p, Key::Tab);
-        tasto(&p, Key::Return);
-        assert_eq!(eventi.borrow().last().map(String::as_str), Some("tocca light.preferita"));
-    }
-
-    /// Un elenco di luci accese per la Casa filtrata, e il pannello che lo mostra.
-    fn luci_accese_di_prova(ids: &[&str]) -> std::rc::Rc<VecModel<crate::PreferitoUi>> {
-        std::rc::Rc::new(VecModel::from(
+        let accese = |ids: &[&str]| -> Vec<crate::CardUi> {
             ids.iter()
-                .map(|id| crate::PreferitoUi { acceso: true, stato: "Acceso".into(), ..voce_casa(id, &format!("Nome {id}")) })
-                .collect::<Vec<_>>(),
-        ))
-    }
-
-    /// 18/11, R1-16: dentro la card dispositivo il ritmo è a 4/8: margine di 12, nome a 40 e stato
-    /// a 20 dal fondo; nome e stato non si toccano né toccano l'icona.
-    #[test]
-    fn card_casa_ritmo_4_8() {
-        let (p, _) = pannello_casa();
-        let card = elemento(&p, "Preferita, Spento");
-        let (cp, cs) = (card.absolute_position(), card.size());
-        let figli: Vec<(f32, f32, f32, f32)> = card
-            .query_descendants()
-            .find_all()
-            .into_iter()
-            .filter(|e| e.size().width > 0.0 && e.size().height > 0.0)
-            .map(|e| (e.absolute_position().x - cp.x, e.absolute_position().y - cp.y, e.size().width, e.size().height))
-            .collect();
-        assert!(figli.iter().any(|f| f.0 == 12.0 && f.1 == cs.height - 40.0 && f.2 == cs.width - 24.0), "nome: {figli:?}");
-        assert!(figli.iter().any(|f| f.0 == 12.0 && f.1 == cs.height - 20.0 && f.2 == cs.width - 24.0), "stato: {figli:?}");
-        let icona = figli.iter().find(|f| f.0 == 12.0 && f.2 == 22.0).expect("icona a 12");
-        assert!(icona.1 + icona.3 <= cs.height - 40.0, "l'icona non tocca il nome: {icona:?} in {cs:?}");
-    }
-
-    /// 18/11 (Paolo) e ridisegno F1, Task 8: «N luci accese» porta ancora alla Casa filtrata, ma
-    /// è il clic (o Narrator, o Invio) sulla carta Casa con luci accese; senza luci accese la carta
-    /// apre la Casa completa.
-    #[test]
-    fn la_carta_casa_con_luci_accese_apre_la_casa_filtrata() {
-        use slint::platform::Key;
-        let (p, _) = pannello_casa();
-        p.set_schede(schede());
-        p.set_moduli(moduli_di_prova());
-        let casa = p.get_moduli().iter().find(|m| m.id == "casa").expect("la carta Casa").narratore.to_string();
-        p.set_vista("panoramica".into());
-        elemento(&p, &casa).invoke_accessible_default_action();
-        assert_eq!((p.get_vista().as_str(), p.get_filtro_luci()), ("casa", false), "senza luci: la Casa completa");
-        p.set_vista("panoramica".into());
-        p.set_luci(luci_accese_di_prova(&["light.a", "light.b"]).into());
-        let carta = elemento(&p, &casa);
-        assert_eq!(carta.accessible_role(), Some(AccessibleRole::Button));
-        carta.invoke_accessible_default_action();
-        assert_eq!((p.get_vista().as_str(), p.get_filtro_luci()), ("casa", true));
-        assert!(titolo(&p, "Luci accese (2)"), "l'intestazione dice quante");
-        assert!(ElementHandle::find_by_accessible_label(&p, "Nome light.a, Acceso").next().is_some());
-        elemento(&p, "Spegni tutte");
-        elemento(&p, "Tutta la casa");
-        // Da tastiera: Tab porta alla carta Casa (Agenti, la sua azione, Casa), Invio la apre.
-        tasto(&p, Key::Backspace);
-        tasto(&p, Key::Backspace);
-        assert_eq!(p.get_vista(), "panoramica");
-        for _ in 0..8 {
-            if etichetta_col_fuoco(&p) == casa {
-                break;
-            }
-            tasto(&p, Key::Tab);
-        }
-        assert_eq!(etichetta_col_fuoco(&p), casa);
-        tasto(&p, Key::Return);
-        assert_eq!((p.get_vista().as_str(), p.get_filtro_luci()), ("casa", true), "Invio sulla carta");
-    }
-
-    /// Backspace nella Casa filtrata torna all'elenco completo; il secondo, alla Panoramica.
-    #[test]
-    fn backspace_esce_dal_filtro_poi_dalla_casa() {
-        use slint::platform::Key;
-        let (p, _) = pannello_casa();
-        p.set_luci(luci_accese_di_prova(&["light.a"]).into());
-        p.set_filtro_luci(true);
-        tasto(&p, Key::Backspace);
-        assert_eq!((p.get_vista().as_str(), p.get_filtro_luci()), ("casa", false), "Backspace esce dal filtro");
-        tasto(&p, Key::Backspace);
-        assert_eq!(p.get_vista(), "panoramica");
-    }
-
-    /// La Casa filtrata da tastiera: Invio spegne la luce col fuoco e l'elenco si accorcia (come fa
-    /// il ponte, con `set_vec`) senza perdere il fuoco: passa alla riga che prende il posto, o alla
-    /// precedente se era l'ultima. ↑ porta a «Spegni tutte», → a «Tutta la casa»; Esc torna
-    /// all'elenco completo prima di chiudere.
-    #[test]
-    fn casa_filtrata_da_tastiera_senza_perdere_il_fuoco() {
-        use slint::platform::Key;
-        let (p, eventi) = pannello_casa();
-        let luci = luci_accese_di_prova(&["light.a", "light.b", "light.c"]);
-        p.set_luci(luci.clone().into());
-        p.set_filtro_luci(true);
-        let (e1, l1) = (eventi.clone(), luci.clone());
-        p.on_tocca(move |id| {
-            e1.borrow_mut().push(format!("tocca {id}"));
-            // Come il ponte: la luce spenta esce subito dall'elenco, e il modello si riscrive.
-            let resto: Vec<_> = l1.iter().filter(|l| l.entity_id != id).collect();
-            l1.set_vec(resto);
+                .map(|id| crate::CardUi { acceso: true, stato: "Accesa".into(), narratore: format!("Nome {id}, Accesa").into(), ..super::card_casa(id, &format!("Nome {id}"), Interruttore) })
+                .collect()
+        };
+        let (p, eventi) = super::pannello_comandi("casa", filtri_di_prova(), accese(&["light.a", "light.b", "light.c"]), vec![]);
+        let modello = std::rc::Rc::new(VecModel::from(accese(&["light.a", "light.b", "light.c"])));
+        p.set_comandi_card(modello.clone().into());
+        let (e1, m1) = (eventi.clone(), modello.clone());
+        p.on_tocca_card(move |m, id| {
+            e1.borrow_mut().push(format!("tocca-card {m} {id}"));
+            let resto: Vec<_> = m1.iter().filter(|c| c.id != id).collect();
+            m1.set_vec(resto);
         });
-        let e2 = eventi.clone();
-        p.on_spegni_tutte(move || e2.borrow_mut().push("spegni tutte".into()));
         tasto(&p, Key::Return);
-        assert_eq!(etichetta_col_fuoco(&p), "Nome light.b, Acceso", "spenta la prima, il fuoco è sulla riga al suo posto");
-        // Fuoco sull'ultima riga: spenta, il fuoco va alla precedente.
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&p), "Nome light.b, Accesa", "spenta la prima, il fuoco è sulla card al suo posto");
         tasto(&p, Key::RightArrow);
-        assert_eq!(etichetta_col_fuoco(&p), "Nome light.c, Acceso");
+        assert_eq!(etichetta_col_fuoco(&p), "Nome light.c, Accesa");
         tasto(&p, Key::Return);
-        assert_eq!(*eventi.borrow(), ["tocca light.a", "tocca light.c"]);
-        assert_eq!(etichetta_col_fuoco(&p), "Nome light.b, Acceso", "spenta l'ultima, il fuoco va alla più vicina");
-        // ↑ dalla prima riga: «Spegni tutte».
-        tasto(&p, Key::UpArrow);
-        tasto(&p, Key::Return);
-        assert_eq!(eventi.borrow().last().map(String::as_str), Some("spegni tutte"));
-        tasto(&p, Key::RightArrow);
-        assert_eq!(etichetta_col_fuoco(&p), "Tutta la casa");
-        tasto(&p, Key::Return);
-        assert!(!p.get_filtro_luci(), "«Tutta la casa» torna all'elenco completo");
-        // Di nuovo filtrata: Esc esce dal filtro, e solo il secondo chiude il pannello.
-        p.set_filtro_luci(true);
-        tasto(&p, Key::Escape);
-        assert_eq!((p.get_filtro_luci(), eventi.borrow().last().map(String::as_str)), (false, Some("spegni tutte")));
-        tasto(&p, Key::Escape);
-        assert_eq!(eventi.borrow().last().map(String::as_str), Some("chiudi pannello"));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(eventi_di(&eventi), ["tocca-card casa light.a", "tocca-card casa light.c"]);
+        assert_eq!(etichetta_col_fuoco(&p), "Nome light.b, Accesa", "spenta l'ultima, il fuoco va alla più vicina");
     }
 
     /// Gli elementi accessibili con ruolo di pulsante e senza nome.
@@ -3992,40 +4315,6 @@ mod accessibilita {
             .iter()
             .filter(|e| e.accessible_role() == Some(AccessibleRole::Button) && e.accessible_label().is_none_or(|l| l.is_empty()))
             .count()
-    }
-
-    /// Senza connessione la Casa filtrata non ha pulsanti che non funzionano: dice lo stato.
-    #[test]
-    fn casa_filtrata_senza_connessione_dice_lo_stato() {
-        let (p, _) = pannello_casa();
-        p.set_luci(luci_accese_di_prova(&["light.a"]).into());
-        p.set_filtro_luci(true);
-        elemento(&p, "Spegni tutte");
-        p.set_casa_pronta(false);
-        p.set_stato_casa("Casa non connessa".into());
-        assert!(ElementHandle::find_by_accessible_label(&p, "Spegni tutte").next().is_none());
-        assert!(titolo(&p, "Casa non connessa"));
-    }
-
-    /// Spente tutte: lo stato vuoto lo dice, con «Mostra tutta la casa» (anche da tastiera).
-    #[test]
-    fn casa_filtrata_senza_luci_accese_ha_lo_stato_vuoto() {
-        use slint::platform::Key;
-        let (p, _) = pannello_casa();
-        p.set_luci(luci_accese_di_prova(&["light.a"]).into());
-        p.set_filtro_luci(true);
-        assert!(!titolo(&p, "Nessuna luce accesa"));
-        p.set_luci(luci_accese_di_prova(&[]).into());
-        assert!(titolo(&p, "Nessuna luce accesa"));
-        assert!(ElementHandle::find_by_accessible_label(&p, "Spegni tutte").next().is_none(), "senza luci niente «Spegni tutte»");
-        let pulsante = elemento(&p, "Mostra tutta la casa");
-        assert_eq!(pulsante.accessible_role(), Some(AccessibleRole::Button));
-        tasto(&p, Key::Return);
-        assert!(!p.get_filtro_luci(), "Invio mostra tutta la casa");
-        // Anche il clic.
-        p.set_filtro_luci(true);
-        elemento(&p, "Mostra tutta la casa").invoke_accessible_default_action();
-        assert!(!p.get_filtro_luci());
     }
 
     fn con_modificatori_pannello(p: &Pannello, modificatori: &[slint::platform::Key], t: slint::platform::Key) {
@@ -8025,7 +8314,7 @@ mod accessibilita {
         let pc = pannello_connessioni();
         let (collegamenti, _) = pannello_collegamenti(quattro_collegamenti());
         collegamenti.set_vista("collegamenti".into());
-        for (p, tipo) in [(&casa, "VistaCasa"), (&agenti, "ImpiantoElencoDettaglio"), (&pc, "VistaPc"), (&collegamenti, "VistaCollegamenti")] {
+        for (p, tipo) in [(&casa, "ImpiantoComandi"), (&agenti, "ImpiantoElencoDettaglio"), (&pc, "VistaPc"), (&collegamenti, "VistaCollegamenti")] {
             // Lo scorrimento del cambio di vista finito.
             fine_scorrimento();
             fine_scorrimento();
@@ -8044,14 +8333,16 @@ mod accessibilita {
                 );
             }
         }
-        // La testata della pagina Agenti, sorella dell'impianto: anche lei nel corpo.
-        let testata = ElementHandle::find_by_element_type_name(&agenti, "TestataPagina").next().expect("testata");
-        for e in testata.query_descendants().find_all() {
-            let (a, l) = (e.absolute_position(), e.size());
-            if e.accessible_role().is_none_or(|r| r == AccessibleRole::None) || l.width <= 0.0 || l.height <= 0.0 {
-                continue;
+        // Le testate delle pagine Agenti e Casa, sorelle dell'impianto: anche loro nel corpo.
+        for p in [&agenti, &casa] {
+            let testata = ElementHandle::find_by_element_type_name(p, "TestataPagina").next().expect("testata");
+            for e in testata.query_descendants().find_all() {
+                let (a, l) = (e.absolute_position(), e.size());
+                if e.accessible_role().is_none_or(|r| r == AccessibleRole::None) || l.width <= 0.0 || l.height <= 0.0 {
+                    continue;
+                }
+                assert!(a.x >= 34.0 - 0.5 && a.y >= 44.0 - 0.5 && a.x + l.width <= 34.0 + 752.0 + 0.5 && a.y + l.height <= 44.0 + 40.0 + 0.5, "testata: «{}» {a:?} {l:?}", e.accessible_label().unwrap_or_default());
             }
-            assert!(a.x >= 34.0 - 0.5 && a.y >= 44.0 - 0.5 && a.x + l.width <= 34.0 + 752.0 + 0.5 && a.y + l.height <= 44.0 + 40.0 + 0.5, "testata: «{}» {a:?} {l:?}", e.accessible_label().unwrap_or_default());
         }
     }
 

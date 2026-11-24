@@ -3,8 +3,8 @@
 // più urgente dal basso. Riga alta 44: occhi al centro (partono da dove stavano quelli della
 // pillola), a sinistra data e meteo (solo nella Panoramica; nelle app resta vuota), l'ora a destra
 // e dopo di lei «⋯» (Task 14i: il menu dell'isola senza «Apri», con Impostazioni in testa); niente
-// «‹ Indietro» (Task 14g: alla Panoramica si torna dalla barra, con Backspace o Alt+←; nella vista
-// Casa «Preferiti» è la prima voce dell'elenco). Corpo 752 × 224 a (34, 44): la Panoramica
+// «‹ Indietro» (Task 14g: alla Panoramica si torna dalla barra, con Backspace o Alt+←). Corpo
+// 752 × 224 a (34, 44): la Panoramica
 // (`guscio/panoramica.slint`: l'orologio grande o, al suo posto, la voce che ti aspetta, e sotto
 // le carte dei moduli; «N in attesa ›» nella riga alta. In Orologio, Task 9: fascia e tessere, gli
 // avvisi nella fascia) o la vista di un'app. Barra bassa 64:
@@ -13,7 +13,7 @@
 // Tastiera: nella Panoramica Tab / Maiusc+Tab seguono l'ordine che calcola Rust
 // (`prossimo-fuoco`, `moduli::panoramica::ordine_tab`): voce («Nega» → «Consenti» o «Apri» →
 // «+N»), «N in attesa ›», carte (corpo → azione), schede, ricerca, volume, «⋯». Nelle altre viste
-// fra stanze, contenuto, schede, ricerca, volume (se c'è) e «⋯» (in
+// fra contenuto, schede, ricerca, volume (se c'è) e «⋯» (in
 // giro: da «⋯» Tab torna in cima; Invio o Spazio lì aprono il menu, che è in Slint dentro il
 // pannello — `menu.slint`, RC-58: con il menu aperto i tasti sono suoi e Esc chiude solo lui);
 // Invio o Spazio sul volume: muto sì/no; frecce dentro la zona
@@ -24,9 +24,13 @@
 // esatto, Esc o Backspace lo richiudono; nella
 // Panoramica ←/→ fra i bersagli (voce e carte), ↑/↓ fra la voce e le carte; Invio su una carta
 // apre la sua pagina, sul suo bottone fa l'azione; sulla voce Invio preme «Nega» (mai un consenso:
-// «Consenti» solo con Ctrl+Invio esatto); nelle schede ←/→ cambiano scheda; in Casa Tab passa dall'elenco alle
-// card: ↑/↓ fra «Preferiti» e le stanze e → alle card, le frecce fra le card, ← dalla prima colonna all'elenco
-// e ↑ dalla prima riga a «Riprova» quando c'è; Casa vuota e non connessa: «Apri Impostazioni»);
+// «Consenti» solo con Ctrl+Invio esatto); nelle schede ←/→ cambiano scheda.
+// Nella pagina Casa (impianto Comandi, ridisegno F3) il contenuto ha tre lati: i filtri (0), le card
+// (1) e la fila delle scene (2), più l'azione della testata (-1). Tab passa dai filtri alle card e poi
+// alle schede; nei filtri ↑/↓, Invio o Spazio sceglie e porta alle card, → alle card; nelle card le
+// frecce in griglia, ← dalla prima colonna al filtro scelto, ↑ dalla prima riga all'azione della
+// testata (se c'è), ↓ dall'ultima riga alle scene; nelle scene ←/→, ↑ torna alle card; Invio o
+// Spazio tocca una card toccabile o una scena; senza la pagina piena il pulsante dello stato.
 // In Collegamenti le frecce fra le card, ↑ dalla prima riga a «Modifica»; Invio apre la pagina.
 // Nella pagina Agenti (impianto Elenco + dettaglio, ridisegno F2) ↑/↓ fra le righe delle sessioni
 // (↑ dalla prima porta a «Dettagli» della testata, se c'è; ↓ torna), → al pulsante del dettaglio e
@@ -40,31 +44,31 @@
 // passano dall'uno all'altro prima di lasciare la vista; sul cursore ←/→ ±2 punti, Home/Fine
 // 0/100, Invio o Spazio muto sì/no; fra riquadri e righe le frecce (← → nella riga, ↑ ↓ fra
 // riquadri e righe), Invio o Spazio accendono/spengono o aprono la pagina di Windows.
-// Invio o Spazio attivano (su una stanza o «Preferiti»: la sceglie e porta alle card; su «N in
-// attesa ›»: apre la Coda); Backspace o Alt+← = indietro (prima torna a
-// «Preferiti»; dalla Coda alla Panoramica); Esc un livello alla volta: torna a «Preferiti», poi
-// chiude il pannello.
+// Invio o Spazio attivano (su «N in attesa ›»: apre la Coda); Backspace o Alt+← = indietro (nei
+// Comandi prima dal filtro scelto a quello iniziale; dalla Coda alla Panoramica); Esc un livello
+// alla volta: il filtro iniziale, poi chiude il pannello.
 // Un unico FocusScope tiene il fuoco e l'anello (visibile solo da tastiera) segue la
 // zona scelta.
 import { Tema, Movimento } from "tema.slint";
 import { Occhi } from "faccia.slint";
 import { Anello, Fuoco, Fuochi, Inerzia } from "componenti.slint";
 import { ContornoIsola, RigaAlta, Barra } from "guscio/cornice.slint";
-import { SchedaBarraUi, StatPcUi, PreferitoUi, PulsanteUi, VoceAttesaUi, UmoreUi, StanzaUi, CollegamentoUi, TipoReteUi, TintaBatteriaUi, VoceMenuUi, SchermoMenuUi, ModuloUi, TonoModuloUi, LivelloUi, RigaModuloUi, SintesiUi, StatoPaginaUi, TipoStatoPaginaUi } from "voci.slint";
+import { SchedaBarraUi, StatPcUi, PulsanteUi, VoceAttesaUi, UmoreUi, CollegamentoUi, TipoReteUi, TintaBatteriaUi, VoceMenuUi, SchermoMenuUi, ModuloUi, TonoModuloUi, LivelloUi, RigaModuloUi, SintesiUi, StatoPaginaUi, TipoStatoPaginaUi, CardUi, FiltroUi } from "voci.slint";
 import { ImpiantoElenco } from "impianti/elenco.slint";
 import { ImpiantoElencoDettaglio, GeometriaElencoDettaglio } from "impianti/elenco_dettaglio.slint";
+import { ImpiantoComandi } from "impianti/comandi.slint";
 import { TestataPagina, StatoPagina } from "guscio/pagina.slint";
 import { Permesso, Permessi } from "guscio/permesso.slint";
 import { MenuScuro } from "menu.slint";
 import { VistaPc } from "viste/pc.slint";
-import { VistaCasa } from "viste/casa.slint";
 import { VistaCollegamenti } from "viste/collegamenti.slint";
 import { Panoramica, Bersagli } from "guscio/panoramica.slint";
 
-export { SchedaBarraUi, StatPcUi, PreferitoUi, PulsanteUi, VoceAttesaUi, StanzaUi }
+export { SchedaBarraUi, StatPcUi, PulsanteUi, VoceAttesaUi }
 
-// Zona del pannello col fuoco da tastiera (`dock`: le schede della barra).
-enum Zona { attesa, stanze, contenuto, dock, ricerca, volume, menu }
+// Zona del pannello col fuoco da tastiera (`dock`: le schede della barra). I filtri dei Comandi non
+// sono una zona: sono il lato 0 del contenuto (`comandi-lato`, pre-flight C4).
+enum Zona { attesa, contenuto, dock, ricerca, volume, menu }
 
 export component Pannello inherits Window {
     in property <UmoreUi> umore: UmoreUi.tranquillo;
@@ -168,27 +172,30 @@ export component Pannello inherits Window {
     in property <string> cuffie-descrizione;
     // Vero mentre il pannello è aperto: guida l'animazione di apertura e il battito degli occhi.
     in-out property <bool> aperto;
-    // Casa: i preferiti (al massimo 8) e la riga di stato.
-    in property <[PreferitoUi]> preferiti;
-    // Le stanze della vista Casa e i dispositivi della stanza aperta (li dà Rust a `apri-stanza`).
-    in property <[StanzaUi]> stanze;
-    in property <[PreferitoUi]> dispositivi;
-    // Le luci accese adesso (le scrive Rust) e se la vista Casa le mostra al posto dei preferiti:
-    // il clic sulla carta Casa con luci accese. Una luce spenta esce dall'elenco subito.
-    in property <[PreferitoUi]> luci;
-    in-out property <bool> filtro-luci: false;
-    // «Spegni tutte» nella testata della vista Casa filtrata: un comando per ogni luce accesa.
-    callback spegni-tutte();
-    // La stanza aperta (indice in `stanze`, -1 = nessuna). Rust la riallinea se le stanze cambiano.
-    in-out property <int> stanza-aperta: -1;
-    in property <string> stato-casa;
-    in property <bool> casa-pronta;
-    // La casa non è configurata (nessun Home Assistant scelto): la vista Casa vuota invita alle
-    // Impostazioni (R1-13).
-    in property <bool> casa-da-configurare;
-    // Senza connessione: l'ora degli ultimi dati («dati delle 10:42») e se ha senso «Riprova».
-    in property <string> dati-delle;
-    in property <bool> casa-riprovabile;
+    // La pagina sull'impianto Comandi (ridisegno F3, Task 4b: Casa): tutto già pronto da
+    // `moduli::pagina_casa`, scritto da Rust solo a pagina aperta e solo se cambia. Un solo modello
+    // per l'impianto: `comandi-modulo` dice di quale pagina sono i dati (l'impianto li mostra solo
+    // nella sua vista, pre-flight C8). La sintesi della testata, lo stato della pagina, i filtri (il
+    // filtro scelto e quello iniziale, indici), le card, le scene e la nota.
+    in property <string> comandi-modulo;
+    in property <SintesiUi> comandi-sintesi;
+    in property <StatoPaginaUi> comandi-stato;
+    in property <[FiltroUi]> comandi-filtri;
+    in-out property <int> comandi-filtro: 0;
+    in property <int> comandi-filtro-iniziale: 0;
+    in property <[CardUi]> comandi-card;
+    in property <[CardUi]> comandi-scene;
+    in property <string> comandi-nota;
+    // La card col fuoco (indice): Rust la tiene sulla stessa card per id, o sulla più vicina se la
+    // sua sparisce.
+    in-out property <int> comandi-fuoco: 0;
+    // Il lato col fuoco da tastiera: -1 l'azione della testata, 0 i filtri (o il pulsante dello
+    // stato), 1 le card, 2 le scene. Si legge sempre in `comandi-lato-valido`.
+    in-out property <int> comandi-lato: 1;
+    // Un filtro scelto (clic, Invio, Esc o Backspace verso quello iniziale, la carta Casa con le
+    // luci accese): (id del modulo, id del filtro). Una card o una scena toccata: (modulo, id).
+    callback filtro-pagina(string, string);
+    callback tocca-card(string, string);
     // I collegamenti veloci (Task 14f) e l'errore dell'ultimo che non si è aperto (lo scrive Rust).
     in property <[CollegamentoUi]> collegamenti;
     in-out property <string> errore-collegamenti;
@@ -202,7 +209,6 @@ export component Pannello inherits Window {
     // vengono (la testata della Coda), scritto da Rust solo quando cambia.
     in property <[VoceAttesaUi]> attese;
     in property <int> moduli-in-attesa;
-    callback tocca(string);
     // Un pulsante di una voce in attesa nella Coda: (id della voce, id del pulsante).
     callback azione(string, string);
     // Un pulsante della voce che ti aspetta, nella Panoramica (clic, Narrator, Invio, Ctrl+Invio):
@@ -233,14 +239,9 @@ export component Pannello inherits Window {
     // La vista è cambiata (Rust decide quali fonti lente del PC campionare).
     callback vista-cambiata();
     callback chiudi();
-    // «Riprova» nella testata della vista Casa (stessa azione della voce «Casa non raggiungibile»).
-    callback riprova-casa();
-    // Una stanza della vista Casa aperta (area) o chiusa.
-    callback apri-stanza(string);
-    callback chiudi-stanza();
     // Un'azione di una pagina (id del modulo, id dell'azione, id della riga o ""): il terminale di
     // una sessione, «Collega», «Dettagli» (il permesso di una riga no: si decide nel dettaglio,
-    // da `azione-voce`). Va chiamata solo subito dopo
+    // da `azione-voce`); in Casa «Spegni tutte», «Spegni la stanza», «Riprova». Va chiamata solo subito dopo
     // il gesto dell'utente; la traduce Rust (`Ponte::azione_pagina`).
     callback azione-pagina(string, string, string);
     // Un collegamento scelto (id): Rust lo apre nel browser e chiude il pannello.
@@ -450,20 +451,56 @@ export component Pannello inherits Window {
     // L'anello si vede solo dopo un tasto; un clic lo spegne.
     property <bool> da-tastiera: false;
     property <int> fuoco-dock: 0;
-    property <int> fuoco-casa: 0;
-    property <int> colonne-casa: 4;
-    // Le card della vista Casa: i dispositivi della stanza aperta, altrimenti i preferiti.
-    property <bool> in-stanza: stanza-aperta >= 0 && stanza-aperta < stanze.length;
-    // La carta Casa porta alla Casa filtrata sulle luci accese: casa connessa e almeno una luce.
-    property <bool> luci-cliccabili: casa-pronta && luci.length > 0;
-    // La testata della Casa filtrata ha i suoi pulsanti solo a casa connessa: altrimenti dice lo
-    // stato (e «Riprova») come la Casa completa.
-    property <bool> testata-filtro: filtro-luci && casa-pronta;
-    property <[PreferitoUi]> griglia: filtro-luci ? luci : in-stanza ? dispositivi : preferiti;
-    property <int> fuoco-casa-valido: min(fuoco-casa, griglia.length - 1);
-    // Voce dell'elenco della vista Casa col fuoco: -1 = «Preferiti», poi l'indice della stanza.
-    property <int> fuoco-stanza: -1;
-    property <int> fuoco-stanza-valido: max(-1, min(fuoco-stanza, stanze.length - 1));
+    // ─── Comandi (pagina Casa) ───
+    // La vista è una pagina sull'impianto Comandi, e i dati scritti sono i suoi (pre-flight C8: un
+    // solo modello per due pagine, dal Task 5; finché Rust non li riscrive, nessuna card dell'altra).
+    property <bool> pagina-comandi: vista == "casa";
+    property <bool> comandi-qui: pagina-comandi && comandi-modulo == vista;
+    property <bool> comandi-pieno: comandi-qui && comandi-stato.tipo == TipoStatoPaginaUi.pieno;
+    property <int> n-filtri: comandi-pieno ? comandi-filtri.length : 0;
+    property <int> n-card: comandi-pieno ? comandi-card.length : 0;
+    property <int> n-scene: comandi-pieno ? comandi-scene.length : 0;
+    property <int> colonne-comandi: comandi-filtri.length > 0 ? 3 : 4;
+    // I quattro chip per riga della fila «SCENE» (come nell'impianto).
+    property <int> chip-per-riga: 4;
+    property <bool> comandi-testata: comandi-qui && comandi-sintesi.azione-testo != "";
+    property <bool> comandi-stato-azione: comandi-qui && !comandi-pieno && comandi-stato.azione-testo != "";
+    // Il filtro col fuoco da tastiera (lo muovono ↑/↓; scegliere è Invio) e la scena col fuoco.
+    property <int> fuoco-filtro: 0;
+    property <int> fuoco-scena: 0;
+    property <int> card-valida: max(0, min(comandi-fuoco, n-card - 1));
+    property <int> filtro-valido: max(0, min(fuoco-filtro, n-filtri - 1));
+    property <int> scena-valida: max(0, min(fuoco-scena, n-scene - 1));
+    // Il lato col fuoco vale solo se il suo elemento c'è (pre-flight C4, come `elenco-lato-valido`):
+    // la testata senza azione («Spegni tutte» sparito al tocco) porta alle card; scene vuote (filtro
+    // «Luci accese») all'ultima card; card vuote ai filtri. Senza la pagina piena: il pulsante dello
+    // stato (0) o quello della testata.
+    property <int> comandi-lato-valido: !comandi-pieno
+        ? (comandi-lato < 0 && comandi-testata ? -1 : comandi-stato-azione ? 0 : comandi-testata ? -1 : 0)
+        : comandi-lato < 0 && comandi-testata ? -1
+        : comandi-lato == 0 && n-filtri > 0 ? 0
+        : comandi-lato == 2 && n-scene > 0 ? 2
+        : n-card > 0 ? 1
+        : n-scene > 0 ? 2
+        : n-filtri > 0 ? 0 : 1;
+    // L'indice che l'impianto illumina sul lato valido.
+    property <int> comandi-indice: comandi-lato-valido == 0 ? filtro-valido : comandi-lato-valido == 2 ? scena-valida : card-valida;
+    // Il filtro scelto cambia (da qui o da Rust): il fuoco dei filtri lo segue.
+    changed comandi-filtro => {
+        fuoco-filtro = comandi-filtro;
+    }
+    // L'azione della testata sparisce col fuoco addosso: il lato si riallinea (le card), così una
+    // testata che torna dopo non si riprende il fuoco da sola. Lo stesso per la fila delle scene.
+    changed comandi-testata => {
+        if (!comandi-testata && comandi-lato < 0) {
+            comandi-lato = 1;
+        }
+    }
+    changed n-scene => {
+        if (n-scene == 0 && comandi-lato == 2) {
+            comandi-lato = 1;
+        }
+    }
     // Pagina Agenti: la riga scelta è un indice (`elenco-fuoco`), sempre dentro le righe che ci
     // sono (l'ordine è fermo a pannello aperto e quando ne cambia il numero Rust lo rimette sulla
     // stessa sessione o sulla più vicina). Il lato col fuoco vale solo se il suo elemento c'è:
@@ -539,8 +576,6 @@ export component Pannello inherits Window {
     property <int> fuoco-pc: 0;
     property <int> fuoco-pc-valido: pc-ha(fuoco-pc) ? fuoco-pc
         : pc-successivo(fuoco-pc) >= 0 ? pc-successivo(fuoco-pc) : pc-precedente(fuoco-pc);
-    // «Riprova» nella testata della vista Casa: casa non connessa che si può riprovare.
-    property <bool> riprova-visibile: !casa-pronta && casa-riprovabile && (griglia.length > 0 || stanze.length > 0);
     // Coda: il fuoco è un indice, come `claude-fuoco`. `fuoco-coda-riga` la riga scritta da tasti e
     // clic, `coda-riga` quella valida (sempre dentro le righe che ci sono: l'ultima tolta col fuoco
     // addosso lo passa alla precedente). Il pulsante col fuoco (-1 = la riga) vale solo per la voce
@@ -604,16 +639,16 @@ export component Pannello inherits Window {
             // «N in attesa ›» della riga alta.
             return vista == "panoramica" && in-attesa > 0;
         }
-        if (z == Zona.stanze) {
-            return vista == "casa" && stanze.length > 0;
-        }
         if (z == Zona.contenuto) {
-            // Casa vuota e non connessa: il fuoco va su «Apri Impostazioni». Collegamenti: le card,
-            // o «Aggiungi un collegamento» se non ce ne sono.
+            // Comandi (Casa): i filtri, le card, le scene, il pulsante dello stato o quello della
+            // testata. Collegamenti: le card, o «Aggiungi un collegamento» se non ce ne sono.
             // PC: il cursore del volume, i riquadri e le righe delle connessioni, se ci sono.
             // Agenti: le righe, il pulsante dello stato («Collega») o quello della testata.
             // Coda: le righe, o «Torna alla Panoramica» se è vuota.
-            return vista == "panoramica" || vista == "collegamenti" || vista == "coda" || (vista == "casa" && (griglia.length > 0 || filtro-luci || !casa-pronta))
+            return vista == "panoramica" || vista == "collegamenti" || vista == "coda"
+                // (Comandi coi dati non ancora scritti da Rust, nell'istante in cui la vista cambia:
+                // il contenuto c'è, il fuoco non va alle schede.)
+                || (pagina-comandi && (!comandi-qui || n-filtri > 0 || n-card > 0 || n-scene > 0 || comandi-stato-azione || comandi-testata))
                 || (vista == "agenti" && (elenco-pieno || elenco-stato-azione || elenco-testata))
                 || (vista == "pc" && pc-successivo(-1) >= 0);
         }
@@ -624,21 +659,22 @@ export component Pannello inherits Window {
         return true;
     }
 
-    // L'ordine di Tab fuori dalla Panoramica: stanze, contenuto, schede, ricerca, volume, «⋯» (e in
-    // giro; «N in attesa ›» c'è solo nella Panoramica).
+    // L'ordine di Tab fuori dalla Panoramica: contenuto, schede, ricerca, volume, «⋯» (e in giro;
+    // «N in attesa ›» c'è solo nella Panoramica).
     pure function zona-dopo(z: Zona, avanti: bool) -> Zona {
         if (avanti) {
-            return z == Zona.attesa ? Zona.stanze : z == Zona.stanze ? Zona.contenuto
+            return z == Zona.attesa ? Zona.contenuto
                 : z == Zona.contenuto ? Zona.dock : z == Zona.dock ? Zona.ricerca
                 : z == Zona.ricerca ? Zona.volume : z == Zona.volume ? Zona.menu : Zona.attesa;
         }
         return z == Zona.menu ? Zona.volume : z == Zona.volume ? Zona.ricerca : z == Zona.ricerca ? Zona.dock
-            : z == Zona.dock ? Zona.contenuto : z == Zona.contenuto ? Zona.stanze
-            : z == Zona.stanze ? Zona.attesa : Zona.menu;
+            : z == Zona.dock ? Zona.contenuto : z == Zona.contenuto ? Zona.attesa : Zona.menu;
     }
 
     // Tab nella vista PC: prima gli elementi del contenuto (volume, riquadri, righe), poi la zona
-    // seguente; entrando nel contenuto si parte dal primo (o dall'ultimo, all'indietro).
+    // seguente; entrando nel contenuto si parte dal primo (o dall'ultimo, all'indietro). Nei Comandi
+    // Tab passa dai filtri alle card (Maiusc+Tab dalle scene alle card e dalle card ai filtri), poi
+    // lascia il contenuto; entrando si parte dai filtri (all'indietro dalle card).
     function premi-tab(avanti: bool) {
         // Panoramica: l'ordine lo calcola Rust; un bersaglio che non c'è (il secondo pulsante di
         // una voce che ne ha uno) si salta.
@@ -656,9 +692,29 @@ export component Pannello inherits Window {
                 return;
             }
         }
+        if (zona == Zona.contenuto && pagina-comandi && comandi-pieno) {
+            let l = comandi-lato-valido;
+            if (avanti && l == 0 && n-card > 0) {
+                comandi-lato = 1;
+                return;
+            }
+            if (!avanti && l == 2 && n-card > 0) {
+                comandi-lato = 1;
+                return;
+            }
+            if (!avanti && l == 1 && n-filtri > 0) {
+                fuoco-filtro = comandi-filtro;
+                comandi-lato = 0;
+                return;
+            }
+        }
         passa-zona(avanti);
         if (zona == Zona.contenuto && vista == "pc") {
             fuoco-pc = avanti ? pc-successivo(-1) : pc-precedente(5);
+        }
+        if (zona == Zona.contenuto && pagina-comandi) {
+            fuoco-filtro = comandi-filtro;
+            comandi-lato = avanti && n-filtri > 0 ? 0 : 1;
         }
     }
 
@@ -754,7 +810,9 @@ export component Pannello inherits Window {
     }
 
     // Clic, Narrator o Invio sulla carta k (`2k`) o sul suo bottone (`2k + 1`): la pagina del
-    // modulo (la carta Casa con luci accese: la Casa filtrata), o l'azione.
+    // modulo, o l'azione. La carta Casa con l'azione «Spegni tutte» (`casa.spegni`: ci sono luci
+    // accese) apre la Casa sul filtro «Luci accese» (dec. 14): il filtro lo chiede a Rust, che lo
+    // tiene per la prima scrittura della pagina (pre-flight C9: un solo ingresso).
     function scegli-carta(id: int) {
         let k = floor(id / 2);
         if (k >= carte) {
@@ -764,8 +822,10 @@ export component Pannello inherits Window {
             if (moduli[k].con-azione) {
                 root.azione-modulo(moduli[k].id, moduli[k].azione-id);
             }
-        } else if (moduli[k].id == "casa" && luci-cliccabili) {
-            mostra-luci();
+        } else if (moduli[k].id == "casa" && moduli[k].con-azione && moduli[k].azione-id == "casa.spegni") {
+            fuoco-dock = max(0, scheda-di("casa"));
+            vai("casa");
+            root.filtro-pagina("casa", "casa.luci");
         } else if (scheda-di(moduli[k].id) >= 0) {
             apri(scheda-di(moduli[k].id), moduli[k].id);
         }
@@ -904,82 +964,135 @@ export component Pannello inherits Window {
         fuoco-coda-pulsante = -1;
     }
 
-    // Apre la stanza `i` della vista Casa; `alle-card`: da tastiera il fuoco passa ai suoi dispositivi.
-    function apri-stanza-i(i: int, alle-card: bool) {
-        if (i >= 0 && i < stanze.length) {
-            // Le card cambiano tutte: se una aveva il fuoco sparisce, il fuoco passa prima a `tasti`.
-            if (zona == Zona.contenuto) {
-                tasti.focus();
-            }
-            filtro-luci = false;
-            stanza-aperta = i;
-            fuoco-stanza = i;
-            fuoco-casa = 0;
-            root.apri-stanza(stanze[i].area-id);
-            if (alle-card) {
-                zona = Zona.contenuto;
-            }
+    // Sceglie il filtro `i` dei Comandi (clic, Invio o Spazio, Esc o Backspace verso quello
+    // iniziale). Le card cambiano tutte: se una aveva il fuoco sparisce, quindi il fuoco passa prima
+    // a `tasti` e poi torna sulla prima card (o resta sui filtri). Rust riceve il filtro solo se
+    // cambia (scegliere quello già scelto porta soltanto alle card). `alle-card`: da tastiera il
+    // fuoco passa alle card.
+    function scegli-filtro(i: int, alle-card: bool) {
+        if (i < 0 || i >= comandi-filtri.length) {
+            return;
         }
-    }
-
-    // Chiude la stanza aperta: torna «Preferiti» (selezionata, e col fuoco da tastiera).
-    function chiudi-stanza-ora() {
-        if (stanza-aperta >= 0) {
-            if (zona == Zona.contenuto) {
-                tasti.focus();
-            }
-            fuoco-stanza = -1;
-            stanza-aperta = -1;
-            fuoco-casa = 0;
-            root.chiudi-stanza();
-            if (zona == Zona.contenuto && ha-zona(Zona.stanze)) {
-                zona = Zona.stanze;
-            }
+        if (zona == Zona.contenuto) {
+            tasti.focus();
         }
-    }
-
-    // La Casa filtrata sulle luci accese (clic sulla carta Casa con luci accese): la vista Casa
-    // con l'elenco delle luci accese, il fuoco sulla prima.
-    function mostra-luci() {
-        fuoco-dock = max(0, scheda-di("casa"));
-        vai("casa");
-        filtro-luci = true;
-        fuoco-casa = 0;
-    }
-
-    // Torna all'elenco completo (Preferiti). Il fuoco da tastiera sta sulle card o nella testata,
-    // che cambiano tutte: passa prima a `tasti`, e poi alla prima card.
-    function esci-filtro() {
-        if (filtro-luci) {
-            if (zona == Zona.contenuto) {
-                tasti.focus();
-            }
-            filtro-luci = false;
-            fuoco-casa = 0;
+        fuoco-filtro = i;
+        comandi-fuoco = 0;
+        fuoco-scena = 0;
+        if (i != comandi-filtro) {
+            comandi-filtro = i;
+            root.filtro-pagina(comandi-modulo, comandi-filtri[i].id);
         }
-    }
-
-    // Clic o Invio su una stanza: la apre. Sulla stanza già aperta (la scheda selezionata) non
-    // cambia nulla, come su «Preferiti»: da tastiera il fuoco torna alle card. Ai preferiti si
-    // torna con «Preferiti», Esc o Backspace.
-    function scegli-stanza(i: int, alle-card: bool) {
-        if (i != stanza-aperta) {
-            apri-stanza-i(i, alle-card);
-        } else if (alle-card && griglia.length > 0 && ha-zona(Zona.contenuto)) {
+        if (alle-card) {
             zona = Zona.contenuto;
-            fuoco-casa = 0;
+            comandi-lato = 1;
         }
     }
 
-    // Clic o Invio su «Preferiti»: la stanza aperta si chiude; da tastiera il fuoco passa alle
-    // card, come scegliendo una stanza.
-    function scegli-preferiti(alle-card: bool) {
-        chiudi-stanza-ora();
-        esci-filtro();
-        fuoco-stanza = -1;
-        if (alle-card && griglia.length > 0 && ha-zona(Zona.contenuto)) {
-            zona = Zona.contenuto;
-            fuoco-casa = 0;
+    // Esc e Backspace nei Comandi: prima dal filtro scelto a quello iniziale (il fuoco, se era nella
+    // pagina, sui filtri), poi un livello su.
+    property <bool> puo-tornare-al-filtro: comandi-pieno && n-filtri > 0 && comandi-filtro != comandi-filtro-iniziale;
+    function torna-al-filtro-iniziale() {
+        let nella-pagina = zona == Zona.contenuto;
+        scegli-filtro(comandi-filtro-iniziale, false);
+        if (nella-pagina) {
+            comandi-lato = 0;
+        }
+    }
+
+    // Le frecce nei Comandi (vedi l'intestazione): nei filtri ↑/↓ muovono il fuoco (scegliere è
+    // Invio) e → porta alle card; nelle card le frecce in griglia, ← dalla prima colonna al filtro
+    // scelto, ↑ dalla prima riga all'azione della testata, ↓ dall'ultima riga alla prima scena;
+    // nelle scene ←/→ e ↑ di nuovo alle card. Senza la pagina piena ↑/↓ fra il pulsante dello stato
+    // e quello della testata.
+    function freccia-comandi(k: string) {
+        let l = comandi-lato-valido;
+        if (!comandi-pieno) {
+            if (k == Key.UpArrow && l >= 0 && comandi-testata) {
+                comandi-lato = -1;
+            } else if (k == Key.DownArrow && l < 0 && comandi-stato-azione) {
+                comandi-lato = 0;
+            }
+            return;
+        }
+        if (l < 0) {
+            if (k == Key.DownArrow) {
+                comandi-lato = n-card > 0 ? 1 : n-filtri > 0 ? 0 : 2;
+            }
+        } else if (l == 0) {
+            if (k == Key.UpArrow) {
+                fuoco-filtro = max(0, filtro-valido - 1);
+            } else if (k == Key.DownArrow) {
+                fuoco-filtro = min(n-filtri - 1, filtro-valido + 1);
+            } else if (k == Key.RightArrow && n-card > 0) {
+                comandi-lato = 1;
+            } else if (k == Key.RightArrow && n-scene > 0) {
+                comandi-lato = 2;
+            }
+        } else if (l == 1) {
+            let riga = floor(card-valida / colonne-comandi);
+            let ultima = floor((n-card - 1) / colonne-comandi);
+            if (k == Key.LeftArrow && mod(card-valida, colonne-comandi) == 0) {
+                if (n-filtri > 0) {
+                    fuoco-filtro = comandi-filtro;
+                    comandi-lato = 0;
+                }
+            } else if (k == Key.LeftArrow) {
+                comandi-fuoco = card-valida - 1;
+            } else if (k == Key.RightArrow) {
+                comandi-fuoco = min(n-card - 1, card-valida + 1);
+            } else if (k == Key.UpArrow && riga > 0) {
+                comandi-fuoco = card-valida - colonne-comandi;
+            } else if (k == Key.UpArrow && comandi-testata) {
+                comandi-lato = -1;
+            } else if (k == Key.DownArrow && card-valida + colonne-comandi < n-card) {
+                comandi-fuoco = card-valida + colonne-comandi;
+            } else if (k == Key.DownArrow && riga < ultima) {
+                // Nessuna card sotto in questa colonna: l'ultima.
+                comandi-fuoco = n-card - 1;
+            } else if (k == Key.DownArrow && n-scene > 0) {
+                fuoco-scena = 0;
+                comandi-lato = 2;
+            }
+        } else {
+            if (k == Key.LeftArrow) {
+                fuoco-scena = max(0, scena-valida - 1);
+            } else if (k == Key.RightArrow) {
+                fuoco-scena = min(n-scene - 1, scena-valida + 1);
+            } else if (k == Key.UpArrow && scena-valida >= chip-per-riga) {
+                fuoco-scena = scena-valida - chip-per-riga;
+            } else if (k == Key.UpArrow && n-card > 0) {
+                comandi-lato = 1;
+            } else if (k == Key.DownArrow && scena-valida + chip-per-riga < n-scene) {
+                fuoco-scena = scena-valida + chip-per-riga;
+            }
+        }
+    }
+
+    // Invio o Spazio nei Comandi: sull'azione della testata la sua azione (il fuoco passa prima a
+    // `tasti`, il pulsante può sparire: «Spegni tutte»; senza più azione il lato torna alle card,
+    // sulla prima); su un filtro lo sceglie e porta alle card; su una card toccabile o su una scena
+    // la tocca (una di sola lettura non fa nulla); senza la pagina piena il pulsante dello stato.
+    function attiva-comandi() {
+        let l = comandi-lato-valido;
+        if (l < 0) {
+            if (comandi-testata) {
+                tasti.focus();
+                comandi-fuoco = 0;
+                root.azione-pagina(comandi-modulo, comandi-sintesi.azione-id, "");
+            }
+        } else if (!comandi-pieno) {
+            if (comandi-stato-azione) {
+                root.azione-pagina(comandi-modulo, comandi-stato.azione-id, "");
+            }
+        } else if (l == 0) {
+            scegli-filtro(filtro-valido, true);
+        } else if (l == 1) {
+            if (comandi-card[card-valida].toccabile) {
+                root.tocca-card(comandi-modulo, comandi-card[card-valida].id);
+            }
+        } else if (comandi-scene[scena-valida].toccabile) {
+            root.tocca-card(comandi-modulo, comandi-scene[scena-valida].id);
         }
     }
 
@@ -990,18 +1103,16 @@ export component Pannello inherits Window {
         if (zona != Zona.dock) {
             tasti.focus();
         }
-        if (stanza-aperta >= 0) {
-            stanza-aperta = -1;
-            root.chiudi-stanza();
-        }
-        filtro-luci = false;
         vista = v;
         // Nella Panoramica il fuoco riparte dal bersaglio iniziale della voce che ti aspetta (di
         // solito «Nega»), altrimenti da nessuno.
         fuoco = v == "panoramica" && voce-mostrata ? bersaglio-iniziale-voce() : -1;
-        fuoco-casa = 0;
+        // Una pagina dei Comandi si apre sulle card, dalla prima (il filtro lo sceglie Rust).
+        comandi-fuoco = 0;
+        comandi-lato = 1;
+        fuoco-filtro = 0;
+        fuoco-scena = 0;
         fuoco-pc = 0;
-        fuoco-stanza = -1;
         fuoco-collegamento = 0;
         fuoco-coda-riga = 0;
         fuoco-coda-pulsante = -1;
@@ -1012,17 +1123,16 @@ export component Pannello inherits Window {
         }
     }
 
-    // Backspace o Alt+←, un livello alla volta: prima la stanza aperta, poi la Panoramica.
+    // Backspace o Alt+←, un livello alla volta: nei Comandi prima il filtro iniziale, poi la
+    // Panoramica.
     function indietro() {
         if (vista == "coda" && coda-aperta-valida) {
             chiudi-permesso();
         } else if (vista == "agenti" && elenco-lato-valido == 1) {
             // Dal dettaglio all'elenco, sulla sua riga.
             elenco-lato = 0;
-        } else if (filtro-luci) {
-            esci-filtro();
-        } else if (stanza-aperta >= 0) {
-            chiudi-stanza-ora();
+        } else if (puo-tornare-al-filtro) {
+            torna-al-filtro-iniziale();
         } else if (vista != "panoramica") {
             fuoco-dock = 0;
             vai("panoramica");
@@ -1163,15 +1273,8 @@ export component Pannello inherits Window {
             } else if (k == Key.DownArrow && (fuoco < 0 || fuoco >= Bersagli.nega) && carte > 0) {
                 fuoco = 0;
             }
-        } else if (zona == Zona.stanze) {
-            if (k == Key.UpArrow) {
-                fuoco-stanza = max(-1, fuoco-stanza-valido - 1);
-            } else if (k == Key.DownArrow) {
-                fuoco-stanza = min(stanze.length - 1, fuoco-stanza-valido + 1);
-            } else if (k == Key.RightArrow && ha-zona(Zona.contenuto)) {
-                zona = Zona.contenuto;
-                fuoco-casa = 0;
-            }
+        } else if (zona == Zona.contenuto && pagina-comandi) {
+            freccia-comandi(k);
         } else if (zona == Zona.contenuto && vista == "pc" && fuoco-pc-valido == 0) {
             // Il cursore del volume: ←/→ due punti.
             if (k == Key.LeftArrow) {
@@ -1210,33 +1313,6 @@ export component Pannello inherits Window {
             } else if (k == Key.DownArrow && fuoco-collegamento-valido + colonne-collegamenti < collegamenti.length) {
                 fuoco-collegamento = fuoco-collegamento-valido + colonne-collegamenti;
             }
-        } else if (zona == Zona.contenuto && vista == "casa" && griglia.length > 0) {
-            // -1 = «Riprova» nella testata (solo se c'è): ↑ dalla prima riga, ↓ torna alle card.
-            // Nella Casa filtrata la testata ha «Spegni tutte» (-1) e «Tutta la casa» (-2).
-            if (fuoco-casa < 0) {
-                if (k == Key.DownArrow) {
-                    fuoco-casa = 0;
-                } else if (testata-filtro && k == Key.RightArrow) {
-                    fuoco-casa = -2;
-                } else if (testata-filtro && k == Key.LeftArrow) {
-                    fuoco-casa = -1;
-                }
-            } else if (k == Key.LeftArrow && mod(fuoco-casa-valido, colonne-casa) == 0 && ha-zona(Zona.stanze)) {
-                // Dalla prima colonna all'elenco, sulla voce selezionata (la stanza aperta o
-                // «Preferiti»).
-                zona = Zona.stanze;
-                fuoco-stanza = stanza-aperta;
-            } else if (k == Key.LeftArrow) {
-                fuoco-casa = max(0, fuoco-casa-valido - 1);
-            } else if (k == Key.RightArrow) {
-                fuoco-casa = min(griglia.length - 1, fuoco-casa-valido + 1);
-            } else if (k == Key.UpArrow && fuoco-casa-valido >= colonne-casa) {
-                fuoco-casa = fuoco-casa-valido - colonne-casa;
-            } else if (k == Key.UpArrow && (riprova-visibile || testata-filtro)) {
-                fuoco-casa = -1;
-            } else if (k == Key.DownArrow && fuoco-casa-valido + colonne-casa < griglia.length) {
-                fuoco-casa = fuoco-casa-valido + colonne-casa;
-            }
         }
     }
 
@@ -1266,10 +1342,8 @@ export component Pannello inherits Window {
             root.muto-volume(!volume-muto);
         } else if (zona == Zona.menu) {
             apri-menu(true);
-        } else if (zona == Zona.stanze && fuoco-stanza-valido < 0) {
-            scegli-preferiti(true);
-        } else if (zona == Zona.stanze) {
-            scegli-stanza(fuoco-stanza-valido, true);
+        } else if (pagina-comandi) {
+            attiva-comandi();
         } else if (vista == "panoramica") {
             attiva-panoramica(false);
         } else if (vista == "agenti") {
@@ -1309,26 +1383,6 @@ export component Pannello inherits Window {
             } else if (fuoco-pc-valido == 3 || fuoco-pc-valido == 4) {
                 root.apri-pagina(fuoco-pc-valido - 3);
             }
-        } else if (vista == "casa" && filtro-luci && (griglia.length == 0 || (testata-filtro && fuoco-casa == -2))) {
-            // Nessuna luce accesa, o «Tutta la casa» nella testata: l'elenco completo.
-            esci-filtro();
-        } else if (vista == "casa" && griglia.length == 0) {
-            root.apri-app("impostazioni");
-        } else if (vista == "casa" && testata-filtro && fuoco-casa == -1) {
-            // Le luci si spengono tutte: il pulsante sparisce, il fuoco passa prima a `tasti`.
-            tasti.focus();
-            root.spegni-tutte();
-        } else if (vista == "casa" && fuoco-casa < 0) {
-            if (riprova-visibile) {
-                root.riprova-casa();
-            }
-        } else if (vista == "casa" && fuoco-casa-valido >= 0 && griglia[fuoco-casa-valido].toccabile) {
-            if (filtro-luci) {
-                // La luce spenta esce dall'elenco: il fuoco passa prima a `tasti`, poi alla riga
-                // che prende il suo posto (o alla più vicina).
-                tasti.focus();
-            }
-            root.tocca(griglia[fuoco-casa-valido].entity-id);
         }
     }
 
@@ -1350,15 +1404,14 @@ export component Pannello inherits Window {
                 menu-scuro.tasto(evento.text, evento.modifiers.shift);
                 return accept;
             }
-            // Un livello alla volta: con una stanza aperta torna a «Preferiti»; poi chiude il
+            // Un livello alla volta: nei Comandi dal filtro scelto a quello iniziale; poi chiude il
             // pannello (anche dalla Coda).
             if (evento.text == Key.Escape) {
                 if (vista == "coda" && coda-aperta-valida) {
                     chiudi-permesso();
-                } else if (filtro-luci && vista == "casa") {
-                    esci-filtro();
-                } else if (stanza-aperta >= 0) {
-                    chiudi-stanza-ora();
+                } else if (puo-tornare-al-filtro) {
+                    da-tastiera = true;
+                    torna-al-filtro-iniziale();
                 } else {
                     root.chiudi();
                 }
@@ -1540,56 +1593,71 @@ export component Pannello inherits Window {
                     ripara(id) => { root.fuoco = id; }
                 }
 
-                if vista == "casa": VistaCasa {
+                // La pagina Casa sull'impianto Comandi (ridisegno F3, Task 4b): la testata comune con
+                // la sintesi, poi l'impianto o, senza la pagina piena, lo stato. Un `if` per vista
+                // (pre-flight C8: istanze diverse, lo scorrimento riparte da capo), e solo coi dati
+                // della sua pagina (`comandi-qui`). Ogni fuoco chiede anche la vista: lasciandola, la
+                // zona nuova non deve accendere il fuoco su un elemento che sta sparendo.
+                if vista == "casa" && root.comandi-qui: Rectangle {
                     width: parent.width;
                     height: parent.height;
-                    voci: root.griglia;
-                    stanze: root.stanze;
-                    stanza-aperta: root.stanza-aperta;
-                    // Ogni fuoco della vista chiede anche `vista == "casa"`: lasciando la vista, la
-                    // zona nuova non deve accendere il fuoco su un elemento che sta sparendo (il suo
-                    // `changed` girerebbe dopo, su un elemento distrutto, e il pannello resterebbe
-                    // senza tastiera).
-                    fuoco-stanza: da-tastiera && zona == Zona.stanze && vista == "casa" && fuoco-stanza-valido >= 0 ? fuoco-stanza-valido : -1;
-                    fuoco-preferiti: da-tastiera && zona == Zona.stanze && vista == "casa" && fuoco-stanza-valido < 0;
-                    stato-casa: root.stato-casa;
-                    casa-pronta: root.casa-pronta;
-                    dati-delle: root.dati-delle;
-                    riprova: riprova-visibile;
-                    colonne: root.colonne-casa;
-                    fuoco: da-tastiera && zona == Zona.contenuto && vista == "casa" ? fuoco-casa-valido : -1;
-                    fuoco-riprova: da-tastiera && zona == Zona.contenuto && vista == "casa" && fuoco-casa < 0 && !testata-filtro;
-                    fuoco-impostazioni: da-tastiera && zona == Zona.contenuto && vista == "casa";
-                    filtro-luci: root.filtro-luci;
-                    fuoco-spegni: da-tastiera && zona == Zona.contenuto && vista == "casa" && testata-filtro && fuoco-casa == -1 && griglia.length > 0;
-                    fuoco-tutta: da-tastiera && zona == Zona.contenuto && vista == "casa" && filtro-luci && ((testata-filtro && fuoco-casa == -2) || griglia.length == 0);
-                    tocca(id) => {
-                        da-tastiera = false;
-                        root.tocca(id);
+
+                    TestataPagina {
+                        x: 0;
+                        y: 0;
+                        width: parent.width;
+                        titolo: root.comandi-sintesi.titolo;
+                        sotto: root.comandi-sintesi.sotto;
+                        tono: root.comandi-sintesi.tono;
+                        l1: root.comandi-sintesi.l1;
+                        l2: root.comandi-sintesi.l2;
+                        spesa: root.comandi-sintesi.spesa;
+                        spesa-nota: root.comandi-sintesi.spesa-nota;
+                        azione-testo: root.comandi-sintesi.azione-testo;
+                        azione-primaria: root.comandi-sintesi.azione-primaria;
+                        azione-icona: root.comandi-sintesi.azione-icona;
+                        fuoco-azione: da-tastiera && zona == Zona.contenuto && vista == "casa" && root.comandi-lato-valido < 0;
+                        azione => {
+                            da-tastiera = false;
+                            root.azione-pagina(root.comandi-modulo, root.comandi-sintesi.azione-id, "");
+                        }
                     }
-                    scegli-stanza(i) => {
-                        da-tastiera = false;
-                        scegli-stanza(i, false);
+
+                    if root.comandi-pieno: ImpiantoComandi {
+                        x: 0;
+                        y: 0;
+                        width: parent.width;
+                        height: parent.height;
+                        filtri: root.comandi-filtri;
+                        filtro: root.comandi-filtro;
+                        card: root.comandi-card;
+                        scene: root.comandi-scene;
+                        nota: root.comandi-nota;
+                        fuoco: root.comandi-indice;
+                        lato: root.comandi-lato-valido;
+                        con-fuoco: da-tastiera && zona == Zona.contenuto && vista == "casa";
+                        // Il clic su un filtro lo sceglie; su una card o una scena la tocca.
+                        scegli-filtro(i) => {
+                            da-tastiera = false;
+                            scegli-filtro(i, false);
+                        }
+                        tocca(id) => {
+                            da-tastiera = false;
+                            root.tocca-card(root.comandi-modulo, id);
+                        }
                     }
-                    scegli-preferiti => {
-                        da-tastiera = false;
-                        scegli-preferiti(false);
-                    }
-                    riprova-casa => {
-                        da-tastiera = false;
-                        root.riprova-casa();
-                    }
-                    spegni-tutte => {
-                        da-tastiera = false;
-                        root.spegni-tutte();
-                    }
-                    mostra-tutta => {
-                        da-tastiera = false;
-                        esci-filtro();
-                    }
-                    apri-impostazioni => {
-                        da-tastiera = false;
-                        root.apri-app("impostazioni");
+
+                    if !root.comandi-pieno: StatoPagina {
+                        x: 0;
+                        y: 48px;
+                        width: parent.width;
+                        height: parent.height - self.y;
+                        stato: root.comandi-stato;
+                        con-fuoco: da-tastiera && zona == Zona.contenuto && vista == "casa" && root.comandi-lato-valido >= 0;
+                        azione => {
+                            da-tastiera = false;
+                            root.azione-pagina(root.comandi-modulo, root.comandi-stato.azione-id, "");
+                        }
                     }
                 }
 
@@ -1912,11 +1980,10 @@ export component Pannello inherits Window {
     }
 
     // C'è un elemento per la zona e l'indice col fuoco da tastiera? Se no (clic col mouse, voce
-    // sparita, Casa svuotata) il fuoco torna a `tasti`, che tiene comunque la tastiera.
+    // sparita, pagina svuotata) il fuoco torna a `tasti`, che tiene comunque la tastiera.
     property <bool> bersaglio: zona == Zona.attesa ? ha-zona(Zona.attesa)
-        : zona == Zona.stanze ? ha-zona(Zona.stanze)
         : zona == Zona.contenuto ? ha-zona(Zona.contenuto) && (vista == "panoramica" || vista == "collegamenti" || vista == "agenti" || vista == "pc" || vista == "coda"
-            || (griglia.length > 0 ? (fuoco-casa >= 0 || riprova-visibile) : !casa-pronta))
+            || pagina-comandi)
         : zona == Zona.volume ? volume-disponibile
         : true;
     property <bool> fuoco-su-elemento: da-tastiera && bersaglio;

@@ -20,7 +20,8 @@ use casa_core::eventi::StatoConnessione;
 use casa_core::types::{AppEntity, MenuData, Room};
 use std::collections::HashMap;
 
-/// «★ Preferiti»: solo se l'utente ne ha scelti.
+/// «★ Preferiti»: solo se fra i preferiti scelti c'è qualcosa che non è una scena (le scene preferite
+/// stanno nella fila «SCENE»).
 pub const FILTRO_PREFERITI: &str = "casa.preferiti";
 /// «Luci accese»: le luci accese di tutta la casa.
 pub const FILTRO_LUCI: &str = "casa.luci";
@@ -61,8 +62,8 @@ fn stanza_di<'a>(menu: &'a MenuData, filtro: &str) -> Option<&'a Room> {
     menu.rooms.iter().find(|r| id_stanza(r) == filtro)
 }
 
-/// I filtri della colonna di sinistra, in quest'ordine: «Preferiti» (solo se l'utente ne ha
-/// scelti), «Luci accese» col numero (`accese`: le luci di adesso, con l'ottimismo), «Tutta la
+/// I filtri della colonna di sinistra, in quest'ordine: «Preferiti» (solo con un preferito che non
+/// è una scena, `ci_sono_preferiti`), «Luci accese» col numero (`accese`: le luci di adesso, con l'ottimismo), «Tutta la
 /// casa», poi le stanze nell'ordine salvato col numero dei dispositivi, il filo sopra la prima.
 /// `icone`: le icone scelte dall'utente per le stanze (`Config.area_icons`).
 pub fn filtri(menu: &MenuData, accese: usize, icone: &HashMap<String, String>) -> Vec<FiltroUi> {
@@ -103,8 +104,8 @@ pub fn filtri(menu: &MenuData, accese: usize, icone: &HashMap<String, String>) -
     v
 }
 
-/// Il filtro con cui si apre la pagina: «Preferiti» se l'utente ne ha scelti, altrimenti «Tutta la
-/// casa» (decisione di Paolo).
+/// Il filtro con cui si apre la pagina: «Preferiti» se c'è un preferito che non è una scena,
+/// altrimenti «Tutta la casa» (decisione di Paolo).
 pub fn filtro_iniziale(menu: &MenuData) -> &'static str {
     if ci_sono_preferiti(menu) { FILTRO_PREFERITI } else { FILTRO_TUTTA }
 }
@@ -291,16 +292,19 @@ pub fn sintesi(stato: &StatoConnessione, r1: &R1, filtro: &str, menu: Option<&Me
         azione_id: azione_id.into(),
         azione_testo: azione_testo.into(),
         azione_primaria,
-        // Mai l'`Image` vuota: non è uguale a se stessa e la sintesi sarebbe sempre «cambiata».
-        azione_icona: icona(if con_icona { "luce" } else { "nessuna" }),
+        // L'icona «spegni» (Lucide «power», come nella bozza `tc-casa-luci.png` e
+        // `tc-casa-stanza.png`) per «Spegni tutte» e «Spegni la stanza». Mai l'`Image` vuota: non
+        // è uguale a se stessa e la sintesi sarebbe sempre «cambiata».
+        azione_icona: icona(if con_icona { "spegni" } else { "nessuna" }),
         ..Default::default()
     }
 }
 
-/// Lo stato della pagina (spec §5.6): non configurata → un invito con «Collega»; in connessione →
-/// primo avvio; scollegata senza dati → fuori servizio con la frase dell'errore, «Nessun dato» e
-/// «Riprova» (o «Collega» se non si può riprovare); scollegata con dati e connessa → la pagina, e
-/// connessa senza dispositivi → vuoto, senza azione.
+/// Lo stato della pagina (spec §5.6): non configurata → un invito con «Collega»; in connessione (o
+/// connessa) senza dati → primo avvio; scollegata senza dati → fuori servizio con la frase
+/// dell'errore, «Nessun dato» e «Riprova» (o «Collega» se non si può riprovare); con dati, connessa,
+/// scollegata o in connessione (a ogni tentativo di riconnessione) → la pagina piena; connessa
+/// senza dispositivi → vuoto, senza azione.
 pub fn stato(stato: &StatoConnessione, menu: Option<&MenuData>) -> StatoPaginaUi {
     let frase = |tipo, frase: &str, sotto: &str, (azione_id, azione_testo): (&str, &str)| StatoPaginaUi {
         tipo,
@@ -614,9 +618,9 @@ mod test {
         let r1 = |s: &str| R1 { fatto: s.into(), valore: String::new() };
         // Le due icone sono vere e diverse, ognuna uguale a se stessa: un'`Image` vuota non lo è
         // (in Slint non è uguale nemmeno a un'altra vuota) e la sintesi risulterebbe sempre cambiata.
-        assert!(icona("luce") == icona("luce") && icona("nessuna") == icona("nessuna") && icona("luce") != icona("nessuna"));
+        assert!(icona("spegni") == icona("spegni") && icona("nessuna") == icona("nessuna") && icona("spegni") != icona("nessuna"));
         let v = |s: &SintesiUi| {
-            (s.tono, s.titolo.to_string(), s.sotto.to_string(), s.azione_id.to_string(), s.azione_testo.to_string(), s.azione_primaria, s.azione_icona == icona("luce"))
+            (s.tono, s.titolo.to_string(), s.sotto.to_string(), s.azione_id.to_string(), s.azione_testo.to_string(), s.azione_primaria, s.azione_icona == icona("spegni"))
         };
 
         // Connessa con 4 accese: «Spegni tutte», primaria, con l'icona (nei tre filtri della casa).

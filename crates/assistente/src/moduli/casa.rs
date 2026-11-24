@@ -77,11 +77,13 @@ fn temperature(menu: &MenuData, con_azione: bool) -> Option<(String, String)> {
 
 /// Il titolo della testata della pagina (`r1.fatto`): lo stato della connessione, poi le luci
 /// accese a parole («Luci spente», mai «0 luci»). `accese` sono le luci come si vedono adesso,
-/// con lo stato ottimistico dei comandi appena dati (`ponte::luci_accese_ora`).
+/// con lo stato ottimistico dei comandi appena dati (`ponte::luci_accese_ora`). In connessione coi
+/// dati di prima (casa-core lo dice a ogni tentativo di riconnessione) resta «Scollegata», come la
+/// pagina che resta piena: il titolo non alterna «Scollegata» e «Mi collego» (Task 4b).
 fn fatto_della_testata(stato: &StatoConnessione, menu: Option<&MenuData>, accese: usize) -> String {
     match (stato, menu) {
         (StatoConnessione::NonConfigurato, _) => "Da collegare".into(),
-        (StatoConnessione::InConnessione, _) | (StatoConnessione::Connesso, None) => "Mi collego".into(),
+        (StatoConnessione::InConnessione, None) | (StatoConnessione::Connesso, None) => "Mi collego".into(),
         (StatoConnessione::Connesso, Some(_)) => match accese {
             0 => "Luci spente".into(),
             1 => "1 luce accesa".into(),
@@ -109,7 +111,8 @@ fn carta_di(stato: &StatoConnessione, menu: Option<&MenuData>, accese: usize, da
             fisso(Tono::Calmo, "Mi collego", "—", None)
         }
         (StatoConnessione::Connesso, Some(m)) => {
-            let spegni = (accese > 0).then(|| azione(SPEGNI, "Spegni tutte", "luce")).flatten();
+            // L'icona «spegni» (power), la stessa di «Spegni tutte» nella testata della pagina.
+            let spegni = (accese > 0).then(|| azione(SPEGNI, "Spegni tutte", "spegni")).flatten();
             let (temperature, intere) = temperature(m, spegni.is_some())
                 .unwrap_or_else(|| ("Nessun sensore".into(), "Nessun sensore".into()));
             let titolo = match accese {
@@ -262,6 +265,7 @@ mod test {
         assert_eq!(fatto(&S::NonConfigurato, None).fatto, "Da collegare");
         assert_eq!(fatto(&S::InConnessione, None).fatto, "Mi collego");
         assert_eq!(fatto(&S::Connesso, None).fatto, "Mi collego", "connessa ma senza dati");
+        assert_eq!(fatto(&S::InConnessione, Some(&casa(2, None, None))).fatto, "Scollegata", "riconnessione coi dati di prima");
         for s in [S::Disconnesso, S::TokenNonValido, S::TokenMancante, S::Errore("timeout".into())] {
             assert_eq!(fatto(&s, Some(&casa(2, None, None))).fatto, "Scollegata", "{s:?}");
         }

@@ -12,7 +12,7 @@ use super::{aggiorna_modello, luci_accese_ora, Ponte};
 use crate::claude;
 use crate::finestra_impostazioni::{apri_alla_sezione, SEZIONE_CASA, SEZIONE_CLAUDE, SEZIONE_COLLEGAMENTI};
 use crate::moduli::registro::tono_ui;
-use crate::moduli::{agenti, casa, collegamenti, pagina_agenti, pc, Riassunto};
+use crate::moduli::{agenti, casa, collegamenti, pagina_agenti, pagina_casa, pc, Riassunto};
 use crate::pannello::schede_ui;
 use crate::{Pannello, TonoModuloUi};
 use slint::ModelRc;
@@ -198,13 +198,17 @@ impl Ponte {
     /// dell'azione, id della riga o ""). Nella pagina Agenti la riga è l'impronta della sessione:
     /// «Apri il terminale» la porta davanti (la stessa funzione della carta), «Collega» come la
     /// carta, «Dettagli» le schede delle API. Il permesso di una riga non è un'azione della pagina:
-    /// lo decide il dettaglio stesso, dalla guardia di `azione-voce` (Task 7). Va chiamata solo
-    /// subito dopo il gesto dell'utente.
+    /// lo decide il dettaglio stesso, dalla guardia di `azione-voce` (Task 7). Nella pagina Casa
+    /// (ridisegno F3, Task 4b) «Spegni tutte», «Riprova» e «Collega» sono quelle della carta,
+    /// «Spegni la stanza» spegne la stanza del filtro scelto. Va chiamata solo subito dopo il gesto
+    /// dell'utente.
     pub fn azione_pagina(&self, modulo: &str, azione: &str, riga: &str) {
         match (modulo, azione) {
             ("agenti", agenti::TERMINALE) => self.claude_apri_terminale(riga),
             ("agenti", agenti::COLLEGA) => self.azione_modulo(modulo, azione),
             ("agenti", pagina_agenti::DETTAGLI) => self.claude_apri_dettagli(),
+            ("casa", casa::SPEGNI | casa::RIPROVA | casa::COLLEGA) => self.azione_modulo(modulo, azione),
+            ("casa", pagina_casa::SPEGNI_STANZA) => self.spegni_la_stanza_scelta(),
             _ => eprintln!("azione di pagina sconosciuta: {modulo} {azione}"),
         }
     }

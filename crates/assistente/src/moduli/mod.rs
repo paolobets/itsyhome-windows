@@ -13,8 +13,6 @@ pub mod casa;
 pub mod collegamenti;
 pub mod misura;
 pub mod pagina_agenti;
-// Le funzioni pure della pagina Casa: il ponte le chiama dal Task 4 (ridisegno F3).
-#[cfg_attr(not(test), allow(dead_code))]
 pub mod pagina_casa;
 pub mod panoramica;
 pub mod pc;

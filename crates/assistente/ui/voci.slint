@@ -106,23 +106,6 @@ export struct StatPcUi {
     gpu-testo: string,
 }
 
-// Un preferito della casa, già pronto per l'interfaccia (vedi `ponte::voce_ui`).
-// `genere`: icona e tinta.
-// `stato`: il testo sotto il nome; `errore`: vuoto se l'ultimo comando non è fallito.
-// `toccabile`: un tocco manda un comando (luci, interruttori, scene disponibili, casa connessa).
-// `tenue`: non disponibile o casa non connessa (la voce si mostra spenta e non risponde).
-export struct PreferitoUi {
-    entity-id: string,
-    nome: string,
-    genere: GenereUi,
-    acceso: bool,
-    stato: string,
-    disponibile: bool,
-    errore: string,
-    toccabile: bool,
-    tenue: bool,
-}
-
 // Un pulsante di una voce «In attesa» (al massimo 2 per voce, anche nella pillola).
 // `delicato`: concede un permesso; nel pannello mai con Invio da solo, solo Ctrl+Invio o clic.
 export struct PulsanteUi {
@@ -173,15 +156,6 @@ export struct AmbienteUi {
     tono: TonoUi,
     attivo: bool,
     collegato: bool,
-}
-
-// Una stanza della vista Casa (vedi `ponte::stanze_ui`): `icona` è l'indice in `Icone.stanze`
-// (-1 «Altro», -2 le scene); `quanti`: i dispositivi mostrati.
-export struct StanzaUi {
-    area-id: string,
-    nome: string,
-    icona: int,
-    quanti: int,
 }
 
 // Il tipo di una riga di Impostazioni › Dispositivi (vedi `dispositivi::TipoRiga`).

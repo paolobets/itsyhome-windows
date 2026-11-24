@@ -1,0 +1,514 @@
+// L'impianto Comandi (ridisegno F3, Task 4b; spec §5.6, bozza `tc-isola`, `tc-casa-luci.png`,
+// `tc-casa-stanza.png`): a sinistra la colonna dei filtri (172, da y 48 sotto la testata della
+// pagina), a destra la griglia di card a misura fissa (64 alte, spazio 8: tre colonne da x 188 con
+// i filtri, quattro su tutta la larghezza senza), poi la fila «SCENE» e la nota. Lo usa la pagina
+// Casa (dal Task 5 anche Collegamenti, senza filtri).
+//
+// Tutto già pronto da Rust (`moduli::pagina_casa`): filtri, card, scene e nota. La tastiera la
+// governa il pannello (`tasti`): qui arrivano il lato col fuoco (0 i filtri, 1 le card, 2 le scene;
+// -1 è la testata, che sta nel pannello) e l'indice già valido su quel lato; il fuoco vero si sposta
+// da sé (`Fuoco`) perché Narrator legga ruolo e nome. Un clic su un filtro lo sceglie, su una card
+// o su una scena la tocca: decide Rust (`filtro-pagina`, `tocca-card`).
+import { Tema } from "../tema.slint";
+import { Icone, Icona } from "../icone.slint";
+import { CardUi, FiltroUi, TipoCardUi } from "../voci.slint";
+import { Anello, Fuoco, EtichettaMono } from "../componenti.slint";
+
+// Le misure dell'impianto, condivise col pannello e coi test: i filtri larghi `largo-filtri` da y
+// `cima`, la griglia da x `x-griglia`, card alte `alto-card` con lo `spazio` fra l'una e l'altra.
+export global GeometriaComandi {
+    out property <length> cima: 48px;
+    out property <length> largo-filtri: 172px;
+    out property <length> x-griglia: 188px;
+    out property <length> alto-card: 64px;
+    out property <length> spazio: 8px;
+}
+
+// Un filtro della colonna di sinistra, alto 32 r10: icona, nome, numero mono a destra. Una scheda
+// di un elenco di schede: Narrator dice il nome col numero («Soggiorno, 6 dispositivi»),
+// «selezionato» e la posizione. Quello scelto ha il fondo `scheda-attiva`.
+export component FiltroComandi inherits Rectangle {
+    in property <FiltroUi> filtro;
+    in property <bool> scelto;
+    in property <bool> anello;
+    in property <int> indice;
+    in property <int> totale;
+    callback scegli();
+
+    height: 32px;
+    border-radius: Tema.raggio-m;
+    background: root.scelto ? Tema.scheda-attiva : area.has-hover ? Tema.scheda-sopra : transparent;
+    accessible-role: tab;
+    accessible-label: root.filtro.narratore;
+    accessible-item-selectable: true;
+    accessible-item-selected: root.scelto;
+    accessible-item-index: root.indice;
+    accessible-item-count: root.totale;
+    accessible-action-default => { root.scegli(); }
+
+    Fuoco { chiede: root.anello; }
+
+    Icona {
+        x: 10px;
+        y: (parent.height - self.height) / 2;
+        width: 16px;
+        height: 16px;
+        source: Icone.di-stanza(root.filtro.icona);
+        colorize: root.scelto ? Tema.icona-attiva : Tema.icona;
+    }
+
+    // Nome e numero li dice già il filtro (accessible-label): i testi non si ripetono.
+    nome-testo := Text {
+        x: 34px;
+        width: max(0px, numero-testo.x - self.x - 8px);
+        height: parent.height;
+        text: root.filtro.nome;
+        vertical-alignment: center;
+        overflow: elide;
+        font-size: Tema.testo-corpo;
+        font-weight: root.scelto ? 700 : 500;
+        color: root.scelto ? Tema.testo : Tema.testo-2;
+        accessible-role: none;
+    }
+
+    numero-testo := Text {
+        x: parent.width - 10px - self.width;
+        width: root.filtro.numero != "" ? self.preferred-width : 0px;
+        height: parent.height;
+        text: root.filtro.numero;
+        vertical-alignment: center;
+        font-family: Tema.carattere-mono;
+        font-weight: 500;
+        font-size: Tema.testo-piccolo;
+        color: Tema.testo-tenue;
+        accessible-role: none;
+    }
+
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.scegli(); }
+    }
+
+    // Dentro il filtro: la colonna scorre e ritaglia ai suoi lati.
+    if root.anello: Anello {
+        raggio: parent.border-radius;
+        distanza: -2px;
+    }
+}
+
+// Una card dei Comandi, 64 r16, nelle quattro forme delle «Decisioni» del piano:
+// - interruttore (luci e prese): la card È l'interruttore (spec §5.6), ruolo `switch` col suo
+//   stato; riquadro dell'icona 32 r10 `g3`, bianco con l'icona nera da acceso; sotto il nome la
+//   parola («Accesa») e, dopo « · », il valore mono («80 %»);
+// - scena: come l'interruttore, ruolo `button`;
+// - sola lettura (sensori, serrature…): nessun riempimento, solo il filo, ruolo `text`; col valore
+//   numerico il valore mono 18 è il testo principale e il nome sta sotto;
+// - lancio (Collegamenti): il cerchio con l'iniziale al posto del riquadro, ruolo `button`.
+// Tenue (non disponibile, casa scollegata): colori con alfa 0,85. Un comando fallito: la parola
+// («Non riuscito») in `Tema.errore`. Il ruolo accessibile è una costante in Slint: ogni forma ha il
+// suo elemento, che tiene anche il fuoco vero (Narrator legge ruolo e nome di quello).
+export component CardComando inherits Rectangle {
+    in property <CardUi> card;
+    in property <bool> anello;
+    callback tocca();
+
+    property <bool> lettura: root.card.tipo == TipoCardUi.lettura;
+    property <bool> lancio: root.card.tipo == TipoCardUi.lancio;
+    property <bool> numerica: root.lettura && root.card.valore != "";
+    property <float> velatura: root.card.tenue ? 0.85 : 1.0;
+    property <bool> sopra: area.has-hover && root.card.toccabile;
+    property <length> x-testo: 56px;
+    property <length> largo-testo: max(0px, root.width - root.x-testo - 12px);
+
+    border-radius: Tema.raggio-xl;
+    border-width: 1px;
+    border-color: Tema.filo;
+    // Sola lettura: nessun riempimento, solo il filo.
+    background: root.lettura ? transparent : root.sopra ? Tema.g2 : Tema.g1;
+
+    if root.card.tipo == TipoCardUi.interruttore: Rectangle {
+        accessible-role: switch;
+        accessible-label: root.card.narratore;
+        accessible-checked: root.card.acceso;
+        accessible-enabled: root.card.toccabile;
+        accessible-action-default => {
+            if (root.card.toccabile) {
+                root.tocca();
+            }
+        }
+        Fuoco { chiede: root.anello; }
+    }
+
+    if root.card.tipo == TipoCardUi.scena || root.lancio: Rectangle {
+        accessible-role: button;
+        accessible-label: root.card.narratore;
+        accessible-enabled: root.card.toccabile;
+        accessible-action-default => {
+            if (root.card.toccabile) {
+                root.tocca();
+            }
+        }
+        Fuoco { chiede: root.anello; }
+    }
+
+    if root.lettura: Rectangle {
+        accessible-role: text;
+        accessible-label: root.card.narratore;
+        Fuoco { chiede: root.anello; }
+    }
+
+    // Il riquadro dell'icona; nella sola lettura senza fondo, col filo.
+    if !root.lancio: Rectangle {
+        x: 12px;
+        y: (parent.height - self.height) / 2;
+        width: 32px;
+        height: 32px;
+        border-radius: Tema.raggio-m;
+        border-width: root.lettura ? 1px : 0px;
+        border-color: Tema.filo;
+        background: root.card.acceso ? Tema.primario : root.lettura ? transparent : Tema.g3;
+
+        Icona {
+            x: 8px;
+            y: 8px;
+            width: 16px;
+            height: 16px;
+            source: Icone.di-genere(root.card.genere);
+            colorize: root.card.acceso ? Tema.testo-su-primario : root.card.tenue ? Tema.icona-spenta : Tema.icona;
+        }
+    }
+
+    // Il lancio: il cerchio con l'iniziale (lettera in nero sul colore del nome).
+    if root.lancio: Rectangle {
+        x: 12px;
+        y: (parent.height - self.height) / 2;
+        width: 32px;
+        height: 32px;
+        border-radius: 16px;
+        background: Tema.colore-collegamento(root.card.tinta).with-alpha(root.velatura);
+
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: root.card.iniziale;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            font-weight: 700;
+            font-size: Tema.testo-corpo;
+            color: Tema.nero;
+            accessible-role: none;
+        }
+    }
+
+    // Il testo principale: il nome, o il valore di una lettura numerica (mono 18).
+    Text {
+        x: root.x-testo;
+        y: root.numerica ? 9px : 13px;
+        width: root.largo-testo;
+        height: root.numerica ? 24px : 18px;
+        text: root.numerica ? root.card.valore : root.card.nome;
+        vertical-alignment: center;
+        overflow: elide;
+        font-family: root.numerica ? Tema.carattere-mono : Tema.carattere;
+        font-weight: 700;
+        font-size: root.numerica ? 18px : Tema.testo-corpo;
+        color: Tema.testo.with-alpha(root.velatura);
+        accessible-role: none;
+    }
+
+    // Sotto: la parola (o il nome, per una lettura numerica) e, dopo « · », il valore mono.
+    parola-testo := Text {
+        x: root.x-testo;
+        y: 33px;
+        width: min(self.preferred-width, max(0px, root.largo-testo - valore-testo.preferred-width));
+        height: 16px;
+        text: !root.numerica && root.card.valore != "" ? root.card.stato + " · " : root.card.stato;
+        vertical-alignment: center;
+        overflow: elide;
+        font-size: Tema.testo-piccolo;
+        color: root.card.errore ? Tema.errore : Tema.testo-2.with-alpha(root.velatura);
+        accessible-role: none;
+    }
+
+    valore-testo := Text {
+        x: parola-testo.x + parola-testo.width;
+        y: parola-testo.y;
+        width: !root.numerica && root.card.valore != "" ? max(0px, min(self.preferred-width, root.largo-testo - parola-testo.width)) : 0px;
+        height: 16px;
+        text: !root.numerica ? root.card.valore : "";
+        vertical-alignment: center;
+        overflow: elide;
+        font-family: Tema.carattere-mono;
+        font-weight: 500;
+        font-size: Tema.testo-piccolo;
+        color: Tema.testo-2.with-alpha(root.velatura);
+        accessible-role: none;
+    }
+
+    area := TouchArea {
+        enabled: root.card.toccabile;
+        mouse-cursor: root.card.toccabile ? pointer : default;
+        clicked => { root.tocca(); }
+    }
+
+    if root.anello: Anello { raggio: parent.border-radius; }
+}
+
+// Una scena della fila «SCENE»: chip 32 r10 `g3` con le scintille (Home Assistant non dà
+// un'icona per scena) e il nome; un tocco la attiva.
+export component ChipScena inherits Rectangle {
+    in property <CardUi> scena;
+    in property <bool> anello;
+    callback tocca();
+
+    property <float> velatura: root.scena.tenue ? 0.85 : 1.0;
+
+    height: 32px;
+    border-radius: Tema.raggio-m;
+    background: area.has-hover && root.scena.toccabile ? Tema.g4 : Tema.g3;
+    accessible-role: button;
+    accessible-label: root.scena.narratore;
+    accessible-enabled: root.scena.toccabile;
+    accessible-action-default => {
+        if (root.scena.toccabile) {
+            root.tocca();
+        }
+    }
+
+    Fuoco { chiede: root.anello; }
+
+    Icona {
+        x: 10px;
+        y: (parent.height - self.height) / 2;
+        width: 16px;
+        height: 16px;
+        source: Icone.scena;
+        colorize: root.scena.tenue ? Tema.icona-spenta : Tema.icona;
+    }
+
+    Text {
+        x: 32px;
+        width: max(0px, parent.width - self.x - 10px);
+        height: parent.height;
+        text: root.scena.nome;
+        vertical-alignment: center;
+        overflow: elide;
+        font-weight: 700;
+        font-size: Tema.testo-corpo;
+        color: (root.scena.errore ? Tema.errore : Tema.testo).with-alpha(root.velatura);
+        accessible-role: none;
+    }
+
+    area := TouchArea {
+        enabled: root.scena.toccabile;
+        mouse-cursor: root.scena.toccabile ? pointer : default;
+        clicked => { root.tocca(); }
+    }
+
+    if root.anello: Anello { raggio: parent.border-radius; }
+}
+
+export component ImpiantoComandi inherits Rectangle {
+    in property <[FiltroUi]> filtri;
+    // Il filtro scelto (indice).
+    in property <int> filtro;
+    in property <[CardUi]> card;
+    in property <[CardUi]> scene;
+    // La nota sotto le card («Le luci spente non compaiono in questo filtro.»), vuota se non c'è.
+    in property <string> nota;
+    // L'indice col fuoco sul lato `lato` (una card, una scena col lato 2, un filtro col lato 0),
+    // già valido: lo decide il pannello.
+    in property <int> fuoco;
+    in property <int> lato;
+    // Il fuoco da tastiera è nella pagina (altrimenti nessun anello e nessun fuoco vero).
+    in property <bool> con-fuoco;
+    // Tre colonne con i filtri, quattro senza: la card resta larga circa 182 nei due casi.
+    out property <int> colonne: root.filtri.length > 0 ? 3 : 4;
+    callback scegli-filtro(int);
+    callback tocca(string);
+
+    property <length> cima: GeometriaComandi.cima;
+    property <length> largo-filtri: GeometriaComandi.largo-filtri;
+    property <bool> con-filtri: root.filtri.length > 0;
+    property <length> x-griglia: root.con-filtri ? GeometriaComandi.x-griglia : 0px;
+    property <length> largo-griglia: root.width - root.x-griglia;
+    property <length> spazio: GeometriaComandi.spazio;
+    property <length> alto-card: GeometriaComandi.alto-card;
+    property <length> largo-card: (root.largo-griglia - (root.colonne - 1) * root.spazio) / root.colonne;
+    property <length> passo: root.alto-card + root.spazio;
+    // La griglia sporge di `bordo` su ogni lato: l'anello del fuoco, fuori dalla card, non viene
+    // tagliato dal ritaglio dello scorrimento.
+    property <length> bordo: 5px;
+    property <int> righe: ceil(root.card.length / root.colonne);
+    // La fila «SCENE» dopo l'ultima riga di card (con lo spazio), dentro lo scorrimento: l'etichetta
+    // e i chip, quattro per riga (larghi uguali: il nome lungo si accorcia, intero per Narrator).
+    property <length> y-scene: root.righe * root.passo;
+    property <length> x-chip: etichetta-scene.preferred-width + 12px;
+    property <int> chip-per-riga: 4;
+    property <length> largo-chip: (root.largo-griglia - root.x-chip - (root.chip-per-riga - 1) * root.spazio) / root.chip-per-riga;
+    property <length> passo-chip: 32px + root.spazio;
+    property <length> alto-scene: root.scene.length > 0 ? ceil(root.scene.length / root.chip-per-riga) * root.passo-chip - root.spazio : 0px;
+    property <length> y-nota: root.scene.length > 0 ? root.y-scene + root.alto-scene + root.spazio : root.y-scene;
+    property <length> alto-contenuto: root.nota != "" ? root.y-nota + 16px
+        : root.scene.length > 0 ? root.y-scene + root.alto-scene
+        : max(0px, root.righe * root.passo - root.spazio);
+    // I filtri: 32 l'uno, e il filo sopra la prima stanza (che viene dopo al più quattro filtri della
+    // casa) prende 9 in più.
+    property <length> passo-filtro: 32px;
+    property <int> indice-filo: root.filtri.length > 1 && root.filtri[1].filo ? 1
+        : root.filtri.length > 2 && root.filtri[2].filo ? 2
+        : root.filtri.length > 3 && root.filtri[3].filo ? 3
+        : root.filtri.length > 4 && root.filtri[4].filo ? 4 : -1;
+    property <length> alto-filtri: root.filtri.length * root.passo-filtro + (root.indice-filo >= 0 ? 9px : 0px);
+    property <int> n-card: root.card.length;
+    property <int> n-filtri: root.filtri.length;
+
+    pure function y-filtro(i: int) -> length {
+        return i * root.passo-filtro + (root.indice-filo >= 0 && i >= root.indice-filo ? 9px : 0px);
+    }
+
+    // Il filtro `i` in vista nella sua colonna, di quanto basta.
+    function filtro-in-vista(i: int) {
+        let y = root.y-filtro(i);
+        if (y + lista.content-y < 0) {
+            lista.content-y = -y;
+        } else if (y + root.passo-filtro + lista.content-y > lista.height) {
+            lista.content-y = lista.height - y - root.passo-filtro;
+        }
+    }
+
+    // Un elemento della griglia (cima `y`, alto `alto`, in coordinate del contenuto senza bordo) in
+    // vista, anello compreso.
+    function griglia-in-vista(y: length, alto: length) {
+        if (y + griglia.content-y < 0) {
+            griglia.content-y = -y;
+        } else if (y + alto + 2 * root.bordo + griglia.content-y > griglia.height) {
+            griglia.content-y = griglia.height - y - alto - 2 * root.bordo;
+        }
+    }
+
+    // L'elemento col fuoco fuori vista (sopra o sotto) torna dentro.
+    function porta-in-vista() {
+        if (root.lato == 0 && root.n-filtri > 0) {
+            root.filtro-in-vista(root.fuoco);
+        } else if (root.lato == 1 && root.n-card > 0) {
+            root.griglia-in-vista(floor(root.fuoco / root.colonne) * root.passo, root.alto-card);
+        } else if (root.lato == 2 && root.scene.length > 0) {
+            root.griglia-in-vista(root.y-scene + floor(root.fuoco / root.chip-per-riga) * root.passo-chip, 32px);
+        }
+    }
+    changed fuoco => { root.porta-in-vista(); }
+    changed lato => { root.porta-in-vista(); }
+    changed n-card => { root.porta-in-vista(); }
+    changed n-filtri => { root.porta-in-vista(); }
+    // Un altro filtro: la griglia riparte dall'alto e il filtro scelto si vede.
+    changed filtro => {
+        griglia.content-y = 0;
+        root.filtro-in-vista(root.filtro);
+    }
+
+    lista := Flickable {
+        x: 0;
+        y: root.cima;
+        width: root.largo-filtri;
+        height: root.height - root.cima;
+        content-width: self.width;
+        content-height: max(self.height, root.alto-filtri);
+        accessible-role: tab-list;
+        accessible-label: "Filtri";
+
+        // Il filo di separazione sopra la prima stanza.
+        if root.indice-filo >= 0: Rectangle {
+            x: 10px;
+            y: root.indice-filo * root.passo-filtro + 4px;
+            width: parent.width - 20px;
+            height: 1px;
+            background: Tema.filo;
+        }
+
+        for f[i] in root.filtri: FiltroComandi {
+            x: 0;
+            y: root.y-filtro(i);
+            width: lista.width;
+            filtro: f;
+            scelto: i == root.filtro;
+            anello: root.con-fuoco && root.lato == 0 && i == root.fuoco;
+            indice: i;
+            totale: root.filtri.length;
+            scegli => { root.scegli-filtro(i); }
+        }
+    }
+
+    // Quanti filtri ci sono oltre la colonna: un filo nello spazio fra filtri e griglia, solo se scorre.
+    if root.alto-filtri > lista.height: Rectangle {
+        x: root.largo-filtri + 6px;
+        y: lista.y + 4px + (lista.height - 8px - self.height) * (-lista.content-y / (root.alto-filtri - lista.height));
+        width: 3px;
+        height: max(16px, (lista.height - 8px) * lista.height / root.alto-filtri);
+        border-radius: 1.5px;
+        background: Tema.testo-tenue.with-alpha(0.5);
+    }
+
+    griglia := Flickable {
+        x: root.x-griglia - root.bordo;
+        y: root.cima - root.bordo;
+        width: root.largo-griglia + 2 * root.bordo;
+        height: root.height - root.cima + 2 * root.bordo;
+        content-width: self.width;
+        content-height: max(self.height, root.alto-contenuto + 2 * root.bordo);
+        interactive: root.alto-contenuto + 2 * root.bordo > self.height + 0.5px;
+
+        for c[i] in root.card: CardComando {
+            x: root.bordo + mod(i, root.colonne) * (root.largo-card + root.spazio);
+            y: root.bordo + floor(i / root.colonne) * root.passo;
+            width: root.largo-card;
+            height: root.alto-card;
+            card: c;
+            anello: root.con-fuoco && root.lato == 1 && i == root.fuoco;
+            tocca => { root.tocca(c.id); }
+        }
+
+        // «SCENE»: il nome della fila non è un secondo nome per Narrator (lo dicono i chip).
+        etichetta-scene := EtichettaMono {
+            visible: root.scene.length > 0;
+            x: root.bordo;
+            y: root.bordo + root.y-scene;
+            height: 32px;
+            text: "SCENE";
+            vertical-alignment: center;
+            color: Tema.testo-tenue;
+            accessible-role: none;
+        }
+
+        for s[i] in root.scene: ChipScena {
+            x: root.bordo + root.x-chip + mod(i, root.chip-per-riga) * (root.largo-chip + root.spazio);
+            y: root.bordo + root.y-scene + floor(i / root.chip-per-riga) * root.passo-chip;
+            width: root.largo-chip;
+            scena: s;
+            anello: root.con-fuoco && root.lato == 2 && i == root.fuoco;
+            tocca => { root.tocca(s.id); }
+        }
+
+        if root.nota != "": Text {
+            x: root.bordo;
+            y: root.bordo + root.y-nota;
+            width: root.largo-griglia;
+            height: 16px;
+            text: root.nota;
+            vertical-alignment: center;
+            overflow: elide;
+            font-size: Tema.testo-piccolo;
+            color: Tema.testo-tenue;
+        }
+    }
+
+    // Lo stesso filo per la griglia, appena fuori dal suo lato destro.
+    if griglia.content-height > griglia.height + 0.5px: Rectangle {
+        x: root.width + 2px;
+        y: griglia.y + 4px + (griglia.height - 8px - self.height) * (-griglia.content-y / (griglia.content-height - griglia.height));
+        width: 3px;
+        height: max(16px, (griglia.height - 8px) * griglia.height / griglia.content-height);
+        border-radius: 1.5px;
+        background: Tema.testo-tenue.with-alpha(0.5);
+    }
+}
