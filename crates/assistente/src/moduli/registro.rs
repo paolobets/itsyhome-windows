@@ -172,7 +172,9 @@ impl Registro {
                     con_azione: r.azione.is_some(),
                     azione_id: r.azione.as_ref().map(|a| a.id).unwrap_or_default().into(),
                     azione_testo: r.azione.as_ref().map(|a| a.testo.as_str()).unwrap_or_default().into(),
-                    azione_icona: r.azione.as_ref().map(|a| icona(a.icona)).unwrap_or_default(),
+                    // Senza azione l'icona «nessuna», mai l'`Image` vuota: in Slint un'immagine vuota
+                    // non è uguale a se stessa e la carta sembrerebbe cambiata a ogni scrittura.
+                    azione_icona: icona(r.azione.as_ref().map_or("nessuna", |a| a.icona)),
                     narratore: self.nome_narrator(i).into(),
                     narratore_azione: r
                         .azione

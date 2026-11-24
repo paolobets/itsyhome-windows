@@ -142,6 +142,13 @@ export component Pulsante inherits FocusScope {
     // Inerte durante l'armamento (`Inerzia`, Task 4): testo tenue sul fondo neutro, niente
     // passaggio né puntatore a mano, nessun clic, nessuna azione di Narrator, che lo sente spento.
     in property <bool> inerte;
+    // Un'icona di 16 px prima del testo, nel colore del testo (ridisegno F3, Task 4a: «Spegni
+    // tutte»). Si mostra solo se `con-icona` è vero: mai in base all'immagine, perché un'`Image`
+    // vuota non è mai uguale a se stessa e un SVG che non disegna nulla occuperebbe comunque il suo
+    // posto. Il pulsante si allarga di `posto-icona` e il testo si sposta con l'icona, al centro.
+    in property <image> icona;
+    in property <bool> con-icona;
+    property <length> posto-icona: con-icona ? 22px : 0px;
     // Il clic vale solo col puntatore MOSSO sopra il pulsante dopo la sua comparsa (ruling del
     // Task 7, I1: «Nega» e «Consenti» dei permessi e della voce che ti aspetta). Una superficie
     // nata sotto un puntatore fermo (la pagina aperta da una carta, un permesso che si apre) non
@@ -181,7 +188,7 @@ export component Pulsante inherits FocusScope {
     }
 
     height: altezza;
-    width: min(largo-max, max(largo-min, etichetta.preferred-width + margine-testo));
+    width: min(largo-max, max(largo-min, etichetta.preferred-width + margine-testo + posto-icona));
     focus-on-click: false;
     focus-on-tab-navigation: focalizzabile;
     accessible-role: button;
@@ -220,8 +227,23 @@ export component Pulsante inherits FocusScope {
                 ? (sopra ? Tema.pericolo-sopra : Tema.pericolo-fondo)
                 : (sopra ? Tema.neutro-sopra : Tema.neutro-fondo);
 
+        // Con l'icona, icona e testo stanno insieme al centro: il testo scivola a destra di metà
+        // del posto dell'icona.
+        if root.con-icona: Image {
+            x: (root.width - root.posto-icona - etichetta.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 16px;
+            height: 16px;
+            source: root.icona;
+            colorize: etichetta.color;
+            image-rendering: smooth;
+            accessible-role: none;
+        }
+
         etichetta := Text {
-            width: min(self.preferred-width, root.width - 12px);
+            width: min(self.preferred-width, root.width - 12px - root.posto-icona);
+            x: (root.width - self.width + root.posto-icona) / 2;
+            y: (parent.height - self.height) / 2;
             text: testo;
             horizontal-alignment: center;
             overflow: elide;
@@ -347,7 +369,24 @@ export global NomeRete {
     }
 }
 
-// Etichetta di sezione in maiuscoletto mono (12 px, spaziata).
+// L'etichetta mono del guscio (ridisegno F3, Task 4a; m6): il nome di una scheda della barra, di una
+// carta, di una fila («AGENTI», «SCENE»). JetBrains Mono NL 500, 11 px, tracking .07em: i token
+// `Tema.etichetta-*`, gli stessi valori di `Stile::Etichetta` in `moduli/misura.rs`, che ne misura
+// la larghezza (`MisuraTesto`, stile 3, misura proprio questo componente). Il testo lo passa
+// maiuscolo chi la usa (un `Text` non si può trasformare da dentro). Senza ruolo accessibile: il nome
+// lo dà chi la contiene. Ogni uso scrive comunque `accessible-role: none` (provato con
+// `scheda_attiva_ha_il_nome_e_lo_stato`: né il valore scritto qui né quello dell'uso bastano da
+// soli, e Narrator leggerebbe un secondo nome, «AGENTI», accanto a quello della scheda). Diversa da `Etichetta` qui sotto (12 px, le sezioni delle Impostazioni).
+export component EtichettaMono inherits Text {
+    font-family: Tema.carattere-mono;
+    font-weight: 500;
+    font-size: Tema.etichetta-corpo;
+    letter-spacing: Tema.etichetta-spaziatura;
+    accessible-role: none;
+}
+
+// Etichetta di sezione in maiuscoletto mono (12 px, spaziata): le sezioni delle Impostazioni. Per
+// il nome di una scheda o di una carta c'è `EtichettaMono` (11 px, token `Tema.etichetta-*`).
 export component Etichetta inherits Text {
     font-family: Tema.carattere-mono;
     font-size: Tema.testo-piccolo;

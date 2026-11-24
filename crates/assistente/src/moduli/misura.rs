@@ -11,7 +11,7 @@ pub enum Stile {
     Riga,
     /// JetBrains Mono NL 500, 11 px, tracking +0,77 (.07em): il nome della scheda della barra
     /// (`panoramica::geometria_schede`) e della carta. In Slint gli stessi valori sono
-    /// `Tema.etichetta-corpo` e `Tema.etichetta-spaziatura`.
+    /// `Tema.etichetta-corpo` e `Tema.etichetta-spaziatura`, i token di `EtichettaMono`.
     Etichetta,
     /// Inter 700, 11 px. Solo i test lo misurano (la capsula la dimensiona Slint).
     #[cfg(test)]

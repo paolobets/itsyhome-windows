@@ -9,7 +9,7 @@ mod collegamento;
 mod dettagli;
 
 pub use collegamento::Contesto;
-use super::{ponte, Ponte, MARGINE_SVEGLIA};
+use super::{ponte, scrivi_se_cambia, Ponte, MARGINE_SVEGLIA};
 use crate::attenzione::{Fonte, Livello, Pulsante, Voce, PULSANTE_IMPOSTAZIONI};
 use crate::claude::{
     self, ID_AGGIORNA, ID_COLLEGAMENTO, ID_DECISIONE_TARDIVA, ID_TERMINALE_MANCANTE, PERMESSI_RISOLVIBILI, PULSANTE_CONSENTI, PULSANTE_NEGA, PULSANTE_TERMINALE,
@@ -1413,23 +1413,6 @@ fn raggiungibili(catene: &[Vec<(u32, String)>]) -> Vec<bool> {
     vec![RAGGIUNGIBILE_PROVA.with(Cell::get); catene.len()]
 }
 
-// Nei test, le proprietà della pagina scritte davvero da `scrivi_se_cambia` in questo thread
-// (pre-flight C18).
-#[cfg(test)]
-thread_local! {
-    static PROPRIETA_SCRITTE: Cell<u64> = const { Cell::new(0) };
-}
-
-/// Scrive una proprietà della pagina solo se il valore cambia (leggerezza: un valore uguale non
-/// ridisegna nulla).
-fn scrivi_se_cambia<T: PartialEq>(attuale: T, nuovo: T, scrivi: impl FnOnce(T)) {
-    if attuale != nuovo {
-        #[cfg(test)]
-        PROPRIETA_SCRITTE.with(|c| c.set(c.get() + 1));
-        scrivi(nuovo);
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -2825,7 +2808,7 @@ mod test {
     /// dentro `scrivi_se_cambia`); un cambio vero sì.
     #[test]
     fn pagina_scritta_solo_se_cambia() {
-        use crate::ponte::RIGHE_SCRITTE;
+        use crate::ponte::{PROPRIETA_SCRITTE, RIGHE_SCRITTE};
         let (_s, p, _pillola, _d) = ponte_di_prova();
         let pannello = con_pannello(&p);
         let ora = ora_adesso();

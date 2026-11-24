@@ -21,7 +21,11 @@ component LimiteBarra inherits Rectangle {
     in property <LimiteUi> limite;
     property <color> tinta: limite.caldo ? Tema.attivo : limite.vecchio ? Tema.testo-tenue : Tema.testo-2;
 
-    width: riga.preferred-width;
+    // Larghezza preferita quella piena; stretto dal gruppo di destra si accorcia solo la barra
+    // (minimo zero), i testi no.
+    preferred-width: riga.preferred-width;
+    min-width: riga.min-width;
+    horizontal-stretch: 1;
     accessible-role: text;
     accessible-label: limite.narratore;
 
@@ -46,9 +50,13 @@ component LimiteBarra inherits Rectangle {
         }
 
         Rectangle {
-            width: 44px;
+            preferred-width: 44px;
+            min-width: 0px;
+            horizontal-stretch: 1;
 
+            // Una barra più stretta di 12 px non dice più nulla: sparisce, resta il numero.
             Rectangle {
+                visible: parent.width >= 12px;
                 x: 0;
                 y: (parent.height - self.height) / 2;
                 width: parent.width;
@@ -90,6 +98,13 @@ export component TestataPagina inherits Rectangle {
     in property <string> spesa-nota;
     // Il pulsante d'azione della pagina («Dettagli»); vuoto = nessuno.
     in property <string> azione-testo;
+    // L'azione principale della pagina (ridisegno F3: «Spegni tutte» di Casa): pulsante bianco con
+    // l'icona `azione-icona` prima del testo. Le altre azioni sono neutre e senza icona. L'icona si
+    // mostra solo se l'azione c'è ed è primaria, mai in base all'immagine (Agenti e le secondarie
+    // passano l'icona «nessuna», uno SVG che non disegna nulla: un'`Image` vuota non è mai uguale a
+    // se stessa in Slint e non si può confrontare).
+    in property <bool> azione-primaria;
+    in property <image> azione-icona;
     in property <bool> fuoco-azione;
     // L'altezza: 40, la Coda 28 fino a F5 (pre-flight C11).
     in property <length> alta: 40px;
@@ -101,6 +116,13 @@ export component TestataPagina inherits Rectangle {
     // Lo spazio che resta a sinistra del gruppo di destra (16 di respiro se il gruppo c'è).
     property <length> libero: max(0px, root.width - destra.width - (destra.width > 0px ? 16px : 0px));
     property <length> x-titolo: con-occhi ? 15px + 9px : 0px;
+    // Lo spazio che il registro garantisce al titolo (`moduli::misura::SPAZIO_R1`, 320: un `fatto`
+    // di 32 caratteri ci sta intero). Il gruppo di destra non può prendersi più di quel che avanza:
+    // se non ci sta si stringe lui (le barre dei limiti si accorciano fino a sparire), non il
+    // titolo. Il titolo corto non chiede 320 ma la sua larghezza: finché ci sta tutto, le barre
+    // restano intere. Lo controlla `testata_lascia_spazio_al_titolo_col_gruppo_piu_largo`.
+    property <length> spazio-titolo: min(titolo-testo.preferred-width, 320px);
+    property <length> massimo-destra: max(0px, root.width - x-titolo - spazio-titolo - 16px);
 
     if con-occhi: Occhietti {
         x: 0;
@@ -141,7 +163,7 @@ export component TestataPagina inherits Rectangle {
     destra := HorizontalLayout {
         x: root.width - self.width;
         y: (parent.height - self.height) / 2;
-        width: self.preferred-width;
+        width: min(self.preferred-width, root.massimo-destra);
         height: 32px;
         spacing: 14px;
 
@@ -151,8 +173,11 @@ export component TestataPagina inherits Rectangle {
         // L'importo in mono; senza (nessuna chiave, nessun dato) la nota al suo posto, tenue, su
         // due righe al più in 200 px (come diceva la card della vista di prima). Narrator legge
         // sempre come valore quello che si vede.
+        // Se il gruppo non ci sta si stringono prima le barre dei limiti (hanno lo stretch); solo
+        // se non basta cede un po' anche l'importo (l'ellissi), mai l'azione.
         if root.spesa != "" || root.spesa-nota != "": Rectangle {
-            width: root.spesa != "" ? spesa-testo.preferred-width : min(spesa-testo.preferred-width, 200px);
+            preferred-width: root.spesa != "" ? spesa-testo.preferred-width : min(spesa-testo.preferred-width, 200px);
+            min-width: min(self.preferred-width, 48px);
             accessible-role: text;
             accessible-label: "Spesa API del mese";
             accessible-value: root.spesa != "" ? root.spesa : root.spesa-nota;
@@ -175,7 +200,9 @@ export component TestataPagina inherits Rectangle {
 
         if root.azione-testo != "": Pulsante {
             testo: root.azione-testo;
-            tipo: TipoPulsante.neutro;
+            tipo: root.azione-primaria ? TipoPulsante.azione : TipoPulsante.neutro;
+            con-icona: root.azione-primaria;
+            icona: root.azione-icona;
             altezza: 32px;
             raggio: 9px;
             largo-min: 72px;

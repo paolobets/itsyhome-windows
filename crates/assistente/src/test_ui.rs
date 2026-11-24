@@ -32,6 +32,29 @@ pub fn piattaforma_che_disegna() {
     .expect("backend che disegna");
 }
 
+/// Un tasto premuto e rilasciato sulla finestra del pannello. Uno solo per tutti i test
+/// dell'interfaccia (anche quelli dei ponti): `testo` è una stringa o un `Key`.
+pub(crate) fn tasto(p: &Pannello, testo: impl Into<slint::SharedString> + Clone) {
+    use slint::{platform::WindowEvent, ComponentHandle};
+    p.window().dispatch_event(WindowEvent::KeyPressed { text: testo.clone().into() });
+    p.window().dispatch_event(WindowEvent::KeyReleased { text: testo.into() });
+}
+
+/// Il nome accessibile dell'elemento col fuoco, o del primo suo antenato che ne ha uno.
+pub(crate) fn etichetta_col_fuoco(p: &Pannello) -> String {
+    use i_slint_core::accessibility::AccessibleStringProperty;
+    use i_slint_core::item_tree::ParentItemTraversalMode;
+    use slint::ComponentHandle;
+    let mut corrente = i_slint_core::window::WindowInner::from_pub(p.window()).focus_item.borrow().upgrade();
+    while let Some(item) = corrente {
+        if let Some(e) = item.accessible_string_property(AccessibleStringProperty::Label).filter(|e| !e.is_empty()) {
+            return e.to_string();
+        }
+        corrente = item.parent_item(ParentItemTraversalMode::StopAtPopups);
+    }
+    String::new()
+}
+
 /// Tutti i file `.slint` dell'assistente e della cornice della gestione.
 fn file_slint() -> Vec<PathBuf> {
     fn raccogli(cartella: &Path, file: &mut Vec<PathBuf>) {
@@ -675,7 +698,7 @@ fn linea_riempita_a_meta() {
 
 mod accessibilita {
     //! FE13/FE16: ruoli, nomi e stati che Narrator legge (UI Automation li riceve da AccessKit).
-    use super::piattaforma_di_prova;
+    use super::{etichetta_col_fuoco, piattaforma_di_prova, tasto};
     use crate::{
         AspettoPillolaUi, FinestraImpostazioni, LivelloUi, Pannello, Pillola, PulsanteUi, SchedaBarraUi, StatPcUi,
         VoceAttesaUi,
@@ -735,6 +758,64 @@ mod accessibilita {
         // La vista `agenti` è la scheda Agenti.
         p.set_vista("agenti".into());
         assert_eq!(elemento(&p, "Agenti, scheda 2 di 5").accessible_item_selected(), Some(true));
+    }
+
+    /// Ridisegno F3, Task 4a (m6): lo stile «etichetta» di `MisuraTesto` è proprio un
+    /// `EtichettaMono`, lo stesso componente con cui si disegnano il nome della scheda e quello della
+    /// carta: la misura di Rust (`Stile::Etichetta`) è la sua, per «AGENTI», «COLLEGAMENTI», «SCENE».
+    #[test]
+    fn etichetta_mono_come_stile_etichetta() {
+        use crate::moduli::misura::{larghezza, Stile, MARGINE};
+        piattaforma_di_prova();
+        let misura = crate::MisuraTesto::new().expect("misura creata col backend di prova");
+        misura.set_stile(3);
+        assert_eq!(ElementHandle::find_by_element_type_name(&misura, "EtichettaMono").count(), 1, "lo stile 3 misura un EtichettaMono");
+        for testo in ["AGENTI", "COLLEGAMENTI", "SCENE"] {
+            misura.set_testo(testo.into());
+            let (slint, rust) = (misura.get_larghezza(), larghezza(testo, Stile::Etichetta));
+            assert!((rust - slint).abs() <= MARGINE, "«{testo}»: Rust {rust}, Slint {slint}");
+            assert!(slint > 20.0, "«{testo}» ha una larghezza vera: {slint}");
+        }
+        // Gli altri stili non lo usano per misurare (nessun doppio testo che pesa sulla misura).
+        misura.set_stile(0);
+        misura.set_testo("AGENTI".into());
+        assert!((misura.get_larghezza() - larghezza("AGENTI", Stile::Titolo)).abs() <= MARGINE);
+
+        // Chi disegna il nome della scheda e della carta usa lo stesso componente.
+        let p = pannello();
+        p.set_schede(schede());
+        let registro = crate::moduli::registro::Registro::nuovo(&[]);
+        p.set_moduli(ModelRc::new(VecModel::from(registro.moduli_ui())));
+        let nomi = ElementHandle::find_by_element_type_name(&p, "EtichettaMono").count();
+        // 5 nomi di scheda (invisibili o no sono nell'albero) e 4 nomi di carta.
+        assert!(nomi >= 9, "scheda e carta usano EtichettaMono: {nomi}");
+        // Ma nessuno è un secondo nome per Narrator: il nome lo dà la scheda o la carta.
+        for nome in ["PANORAMICA", "AGENTI", "CASA", "PC", "LINK", "COLLEGAMENTI"] {
+            assert!(ElementHandle::find_by_accessible_label(&p, nome).next().is_none(), "«{nome}» non è un nome per Narrator");
+        }
+    }
+
+    /// Ridisegno F3, Task 4a: i filtri della Casa che non sono una stanza hanno la loro icona:
+    /// Preferiti la stella, Luci accese la lampadina, Tutta la casa e «Altro» la casa; le scene la
+    /// loro. I codici negativi (`pagina_casa::ICONA_*`) cadevano tutti sulla casa.
+    #[test]
+    fn icone_dei_filtri_della_casa() {
+        use crate::moduli::pagina_casa::{ICONA_ALTRO, ICONA_LUCI, ICONA_PREFERITI, ICONA_TUTTA};
+        use crate::Icone;
+        piattaforma_di_prova();
+        let p = Pannello::new().expect("pannello");
+        let icone = p.global::<Icone>();
+        let di = |codice: i32| icone.invoke_di_stanza(codice);
+        assert!(di(ICONA_PREFERITI) == icone.get_stella(), "Preferiti: la stella");
+        assert!(di(ICONA_LUCI) == icone.get_luce(), "Luci accese: la lampadina");
+        assert!(di(ICONA_TUTTA) == icone.get_casa(), "Tutta la casa: la casa");
+        assert!(di(ICONA_ALTRO) == icone.get_casa(), "Altro: la casa");
+        assert!(di(-2) == icone.get_scena(), "le scene");
+        // Tre icone diverse fra loro (nessuna cade sul resto).
+        assert!(di(ICONA_PREFERITI) != di(ICONA_LUCI) && di(ICONA_LUCI) != di(ICONA_TUTTA) && di(ICONA_PREFERITI) != di(ICONA_TUTTA));
+        // Una stanza vera: la sua, dall'indice.
+        assert!(di(0) == icone.get_stanze().row_data(0).expect("la prima stanza"));
+        assert!(di(0) != di(1));
     }
 
     /// Ridisegno F1, Task 6: nella barra le schede (ruolo Tab, i nomi del modello), la ricerca
@@ -3388,12 +3469,6 @@ mod accessibilita {
         assert!(!aperta(), "un clic fuori dal riquadro la chiude");
     }
 
-    fn tasto(p: &Pannello, testo: impl Into<slint::SharedString> + Clone) {
-        use slint::platform::WindowEvent;
-        p.window().dispatch_event(WindowEvent::KeyPressed { text: testo.clone().into() });
-        p.window().dispatch_event(WindowEvent::KeyReleased { text: testo.into() });
-    }
-
     #[test]
     fn la_tastiera_regge_col_fuoco_sugli_elementi() {
         // FE13: `tasti` avvolge il pannello e intercetta i tasti prima degli elementi che hanno il
@@ -3783,20 +3858,6 @@ mod accessibilita {
         tasto(&p, Key::Tab);
         tasto(&p, Key::Return);
         assert_eq!(eventi.borrow().last().map(String::as_str), Some("tocca light.preferita"));
-    }
-
-    /// Il nome accessibile dell'elemento col fuoco, o del primo suo antenato che ne ha uno.
-    fn etichetta_col_fuoco(p: &Pannello) -> String {
-        use i_slint_core::accessibility::AccessibleStringProperty;
-        use i_slint_core::item_tree::ParentItemTraversalMode;
-        let mut corrente = i_slint_core::window::WindowInner::from_pub(p.window()).focus_item.borrow().upgrade();
-        while let Some(item) = corrente {
-            if let Some(e) = item.accessible_string_property(AccessibleStringProperty::Label).filter(|e| !e.is_empty()) {
-                return e.to_string();
-            }
-            corrente = item.parent_item(ParentItemTraversalMode::StopAtPopups);
-        }
-        String::new()
     }
 
     /// Un elenco di luci accese per la Casa filtrata, e il pannello che lo mostra.
@@ -5633,6 +5694,117 @@ mod accessibilita {
         p.set_elenco_sintesi(crate::SintesiUi { spesa: "".into(), spesa_nota: "nessun dato".into(), ..sintesi_agenti(true) });
         nota_al_posto(&p, "nessun dato");
         assert!(c_e(&p, "Dettagli"));
+    }
+
+    /// Ridisegno F3, Task 4a: l'azione primaria della testata è bianca e porta la sua icona, ma solo
+    /// se c'è un'azione primaria (testo non vuoto e `azione-primaria`), mai in base all'immagine: le
+    /// azioni di Agenti e le secondarie portano l'icona «nessuna» (un SVG che non disegna nulla) e
+    /// non cambiano né larghezza né posto; senza azione il titolo sta dove stava.
+    #[test]
+    fn testata_azione_primaria_con_icona_solo_se_c_e_l_azione() {
+        let (p, _) = pannello_agenti(pagina_piena(), tre_righe_agenti());
+        let icona = crate::pannello::icona;
+        let immagini_nel = |r: (f32, f32, f32, f32)| {
+            ElementHandle::find_by_element_type_name(&p, "Image")
+                .filter(|i| {
+                    let q = rettangolo(i);
+                    q.0 >= r.0 - 0.5 && q.2 <= r.2 + 0.5 && q.1 >= r.1 - 0.5 && q.3 <= r.3 + 0.5
+                })
+                .count()
+        };
+        let nuda = |testo: &str, primaria: bool, immagine: &str| crate::SintesiUi {
+            l1: Default::default(),
+            l2: Default::default(),
+            spesa: "".into(),
+            spesa_nota: "".into(),
+            azione_testo: testo.into(),
+            azione_primaria: primaria,
+            azione_icona: icona(immagine),
+            ..sintesi_agenti(true)
+        };
+        // Senza azione: nessun pulsante, il titolo al suo posto (x 34 + occhietti 24).
+        p.set_elenco_sintesi(nuda("", false, "nessuna"));
+        let titolo_senza = rettangolo(&elemento(&p, "1 al lavoro"));
+        assert_eq!(titolo_senza.0, 34.0 + 24.0, "il titolo dopo gli occhietti");
+        // Una primaria senza testo non è un'azione: né pulsante né icona, titolo fermo.
+        for immagine in ["luce", "nessuna"] {
+            p.set_elenco_sintesi(nuda("", true, immagine));
+            assert!(!c_e(&p, "Spegni tutte"));
+            assert_eq!(rettangolo(&elemento(&p, "1 al lavoro")), titolo_senza, "primaria senza testo ({immagine}): il titolo non si sposta");
+        }
+        // Un'azione secondaria (come «Dettagli»): la stessa larghezza con l'icona vera e con
+        // «nessuna», nessuna immagine nel pulsante.
+        p.set_elenco_sintesi(nuda("Spegni tutte", false, "nessuna"));
+        let secondaria = rettangolo(&elemento(&p, "Spegni tutte"));
+        assert_eq!(immagini_nel(secondaria), 0, "una secondaria non ha icona");
+        p.set_elenco_sintesi(nuda("Spegni tutte", false, "luce"));
+        assert_eq!(rettangolo(&elemento(&p, "Spegni tutte")), secondaria, "l'immagine non decide: stessa misura");
+        assert_eq!(immagini_nel(secondaria), 0, "una secondaria non ha icona nemmeno se l'immagine c'è");
+        // La primaria: l'icona dentro il pulsante, più largo dello spazio dell'icona, sempre a
+        // destra del corpo e con l'icona che non esce dal pulsante.
+        p.set_elenco_sintesi(nuda("Spegni tutte", true, "luce"));
+        let primaria = rettangolo(&elemento(&p, "Spegni tutte"));
+        assert_eq!(immagini_nel(primaria), 1, "la primaria porta la sua icona");
+        assert!((primaria.2 - primaria.0) - (secondaria.2 - secondaria.0) >= 20.0, "il pulsante fa posto all'icona: {primaria:?} contro {secondaria:?}");
+        assert!((primaria.2 - (34.0 + 752.0)).abs() < 0.5, "il pulsante resta a destra del corpo: {primaria:?}");
+        assert_eq!(rettangolo(&elemento(&p, "1 al lavoro")).0, titolo_senza.0, "il titolo non si sposta con l'azione");
+        // Il testo non è coperto dall'icona: il pulsante si legge come prima.
+        assert_eq!(elemento(&p, "Spegni tutte").accessible_role(), Some(AccessibleRole::Button));
+        // Tolta l'azione, il titolo e le immagini della testata tornano com'erano.
+        p.set_elenco_sintesi(nuda("", true, "luce"));
+        assert_eq!(rettangolo(&elemento(&p, "1 al lavoro")), titolo_senza);
+        assert_eq!(immagini_nel((34.0, 44.0, 34.0 + 752.0, 44.0 + 40.0)), 0, "nessuna immagine nella testata senza azione");
+    }
+
+    /// Ridisegno F3, Task 4a (spazio del titolo): alla larghezza vera della pagina (752) un titolo
+    /// lungo ha almeno `SPAZIO_R1` px di spazio anche col gruppo di destra più largo che le pagine
+    /// possono avere: se non ci sta si stringe il gruppo (prima le barre dei limiti, poi l'importo),
+    /// non lo spazio che il registro garantisce ai `fatto`. I casi sono quelli veri: Agenti con due
+    /// limiti, la spesa e «Dettagli» (nessuna icona), e un'azione primaria con l'icona accanto ai
+    /// due limiti. Il caso con anche la spesa non esiste (Agenti non ha un'azione primaria, Casa
+    /// non ha limiti né spesa) e non ci starebbe: due limiti senza barre, la spesa e «Spegni tutte»
+    /// con l'icona fanno 410 px, il gruppo ne può avere 392.
+    #[test]
+    fn testata_lascia_spazio_al_titolo_col_gruppo_piu_largo() {
+        use crate::moduli::misura::SPAZIO_R1;
+        let (p, _) = pannello_agenti(pagina_piena(), tre_righe_agenti());
+        let lungo = "W".repeat(60);
+        let corpo_a_destra = 34.0 + 752.0;
+        for (azione, primaria, icona, spesa) in [
+            ("Dettagli", false, "nessuna", "412,80 $"),
+            ("Dettagli", false, "nessuna", "12.345,67 $"),
+            ("Spegni tutte", true, "luce", ""),
+        ] {
+            p.set_elenco_sintesi(crate::SintesiUi {
+                titolo: lungo.as_str().into(),
+                sotto: "".into(),
+                spesa: spesa.into(),
+                spesa_nota: "".into(),
+                azione_testo: azione.into(),
+                azione_primaria: primaria,
+                azione_icona: crate::pannello::icona(icona),
+                ..sintesi_agenti(true)
+            });
+            let titolo = rettangolo(&elemento(&p, lungo.as_str()));
+            let spazio = titolo.2 - titolo.0;
+            assert!(spazio >= SPAZIO_R1, "«{azione}», spesa «{spesa}»: il titolo ha {spazio} px, ne servono {SPAZIO_R1}");
+            // E il gruppo di destra sta ancora tutto dentro il corpo, senza sovrapporsi al titolo.
+            let a = rettangolo(&elemento(&p, azione));
+            let primo_limite = rettangolo(&elemento(&p, "Claude, limite 5 ore, 34 %, si azzera alle 14:30"));
+            assert!(a.2 <= corpo_a_destra + 0.5, "«{azione}», spesa «{spesa}»: il pulsante esce dal corpo: {a:?}");
+            assert!(titolo.2 <= primo_limite.0 + 0.5, "«{azione}», spesa «{spesa}»: titolo e limiti si sovrappongono: {titolo:?} {primo_limite:?}");
+            // Il gruppo si stringe sulle barre, non sull'importo: «412,80 $» resta intero (8 cifre
+            // mono da 7,2 px: 57,6).
+            if spesa == "412,80 $" {
+                let importo = rettangolo(&elemento(&p, "Spesa API del mese"));
+                assert!(importo.2 - importo.0 >= 57.0, "l'importo non si accorcia per le barre: {importo:?}");
+            }
+        }
+        // Con poco da dire il gruppo resta intero: un titolo breve non toglie nulla alle barre.
+        p.set_elenco_sintesi(sintesi_agenti(true));
+        let barra = |nome: &str| rettangolo(&elemento(&p, nome));
+        let (l1, l2) = (barra("Claude, limite 5 ore, 34 %, si azzera alle 14:30"), barra("Claude, limite 7 giorni, 61 %, si azzera mercoledì alle 14:30"));
+        assert!(l1.2 - l1.0 > 150.0 && l2.2 - l2.0 > 120.0, "barre intere col titolo corto: {l1:?} {l2:?}");
     }
 
     /// «Dettagli» sta nella testata: ↑ dalla prima riga ci arriva, Invio apre le schede delle API,

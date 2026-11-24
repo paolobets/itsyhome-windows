@@ -13,7 +13,7 @@
 //   Narrator) e si vede al passaggio o col fuoco sulla carta (dissolvenza 120 ms); nella tessera
 //   dell'Orologio si vede sempre.
 import { Tema, Movimento } from "../tema.slint";
-import { Anello, Fuoco } from "../componenti.slint";
+import { Anello, EtichettaMono, Fuoco } from "../componenti.slint";
 import { ModuloUi, TonoModuloUi } from "../voci.slint";
 import { Luce } from "luce.slint";
 import { Occhietti } from "occhietti.slint";
@@ -105,16 +105,12 @@ export component CartaVista inherits Rectangle {
         accessible-role: none;
     }
 
-    nome := Text {
+    nome := EtichettaMono {
         x: 36px;
         y: 12px;
         height: 18px;
         width: max(0px, root.width - 36px - margine - (con-capsula ? capsula.width + 6px : 0px));
         text: (con-capsula ? root.modulo.nome-breve : root.modulo.nome).to-uppercase();
-        font-family: Tema.carattere-mono;
-        font-weight: 500;
-        font-size: Tema.etichetta-corpo;
-        letter-spacing: Tema.etichetta-spaziatura;
         color: Tema.testo-2;
         vertical-alignment: center;
         overflow: elide;

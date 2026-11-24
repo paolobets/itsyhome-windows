@@ -2,18 +2,24 @@
 // serve solo al test che confronta la misura di Rust con la resa di Slint (che applica anche la
 // crenatura). Gli stili: 0 titolo, 1 titolo numerico, 2 riga, 3 etichetta, 4 capsula.
 import { Tema } from "../tema.slint";
+import { EtichettaMono } from "../componenti.slint";
 
 export component MisuraTesto inherits Window {
     in property <string> testo;
     in property <int> stile;
-    out property <length> larghezza: misura.preferred-width;
+    // L'etichetta (3) si misura con l'`EtichettaMono` vera, quella con cui si disegnano le schede e
+    // le carte; gli altri stili col testo qui sotto.
+    out property <length> larghezza: root.stile == 3 ? etichetta.preferred-width : misura.preferred-width;
+
+    etichetta := EtichettaMono {
+        text: root.stile == 3 ? root.testo : "";
+    }
 
     misura := Text {
-        text: root.testo;
-        font-family: (root.stile == 1 || root.stile == 3) ? Tema.carattere-mono : Tema.carattere;
+        text: root.stile == 3 ? "" : root.testo;
+        font-family: root.stile == 1 ? Tema.carattere-mono : Tema.carattere;
         font-weight: (root.stile == 0 || root.stile == 4) ? 700 : 500;
-        // L'etichetta (3) coi token che usa anche chi la disegna (`SchedaBarra`).
-        font-size: root.stile == 0 ? 18px : (root.stile == 1 ? 26px : (root.stile == 2 ? 12px : root.stile == 3 ? Tema.etichetta-corpo : 11px));
-        letter-spacing: root.stile == 0 ? -0.27px : (root.stile == 1 ? -0.52px : (root.stile == 3 ? Tema.etichetta-spaziatura : 0px));
+        font-size: root.stile == 0 ? 18px : (root.stile == 1 ? 26px : (root.stile == 2 ? 12px : 11px));
+        letter-spacing: root.stile == 0 ? -0.27px : (root.stile == 1 ? -0.52px : 0px);
     }
 }

@@ -216,6 +216,7 @@ mod test {
     use crate::attenzione::Livello;
     use crate::moduli::casa;
     use crate::ponte::test::{luce, menu, ponte_di_prova, ponte_di_prova_con};
+    use crate::test_ui::{etichetta_col_fuoco, tasto};
     use crate::{Pannello, TonoModuloUi};
     use casa_core::eventi::{CasaEvento, StatoConnessione};
     use claude_hook::evento::{EventoHook, TipoEvento};
@@ -559,24 +560,32 @@ mod test {
         assert!(p.get_armamenti() > armamenti, "la scelta arrivata sul permesso riarma «Consenti»");
     }
 
-    fn tasto(p: &Pannello, k: slint::platform::Key) {
-        use slint::platform::WindowEvent;
-        p.window().dispatch_event(WindowEvent::KeyPressed { text: k.into() });
-        p.window().dispatch_event(WindowEvent::KeyReleased { text: k.into() });
-    }
-
-    /// Il nome accessibile dell'elemento col fuoco vero, o del primo antenato che ne ha uno.
-    fn etichetta_col_fuoco(p: &Pannello) -> String {
-        use i_slint_core::accessibility::AccessibleStringProperty;
-        use i_slint_core::item_tree::ParentItemTraversalMode;
-        let mut corrente = i_slint_core::window::WindowInner::from_pub(p.window()).focus_item.borrow().upgrade();
-        while let Some(item) = corrente {
-            if let Some(e) = item.accessible_string_property(AccessibleStringProperty::Label).filter(|e| !e.is_empty()) {
-                return e.to_string();
-            }
-            corrente = item.parent_item(ParentItemTraversalMode::StopAtPopups);
-        }
-        String::new()
+    /// Review Focus 5 (ridisegno F3, Task 4a): una carta senza azione non si riscrive se nulla
+    /// cambia. L'icona dell'azione di una carta senza azione era un'`Image` vuota, che in Slint non
+    /// è mai uguale a se stessa: la riga sembrava sempre cambiata e `aggiorna_modello` la
+    /// riscriveva a ogni `moduli_scrivi`. Vale con carte senza azione e con una carta con l'azione.
+    #[test]
+    fn carta_senza_azione_non_si_riscrive_se_nulla_cambia() {
+        use crate::ponte::RIGHE_SCRITTE;
+        let (_spegni, ponte, _pillola, _cartella) = ponte_di_prova();
+        let p = Pannello::new().expect("pannello");
+        ponte.riempi(&p);
+        ponte.pannello_aperto(&p);
+        let senza_azione = || p.get_moduli().iter().filter(|m| !m.con_azione).count();
+        assert!(senza_azione() >= 2, "alla partenza più carte senza azione");
+        let righe = || RIGHE_SCRITTE.with(|c| c.get());
+        // Nessuna carta ha un'immagine vuota in mano: quella dell'azione è «nessuna».
+        let prima = righe();
+        ponte.moduli_scrivi();
+        ponte.moduli_scrivi();
+        assert_eq!(righe(), prima, "carte senza azione: nessuna riga riscritta");
+        // Con una carta che ha l'azione («Spegni tutte») e le altre senza, ancora nulla.
+        ponte.ricevi(CasaEvento::Dati(Arc::new(menu(vec![], vec![vec![luce("light.a", true)]]))));
+        assert!(p.get_moduli().iter().any(|m| m.con_azione), "una carta con l'azione");
+        let prima = righe();
+        ponte.moduli_scrivi();
+        ponte.moduli_scrivi();
+        assert_eq!(righe(), prima, "con un'azione e le altre senza: nessuna riga riscritta");
     }
 
     /// A pannello chiuso un evento della casa non tocca il registro né scrive `modello_moduli`;

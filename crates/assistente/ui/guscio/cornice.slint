@@ -4,7 +4,7 @@
 // I simboli sono `Path` o SVG, mai glifi. Il fuoco vero lo portano i `Fuoco` interni, chiesti dal
 // pannello (che tiene i tasti in `tasti`); qui nessun tasto si gestisce.
 import { Tema, Movimento } from "../tema.slint";
-import { Anello, Fuoco } from "../componenti.slint";
+import { Anello, EtichettaMono, Fuoco } from "../componenti.slint";
 import { Icone } from "../icone.slint";
 import { SchedaBarraUi, TonoModuloUi } from "../voci.slint";
 import { Luce } from "luce.slint";
@@ -255,15 +255,10 @@ export component SchedaBarra inherits Rectangle {
         image-rendering: smooth;
     }
 
-    Text {
+    EtichettaMono {
         x: 38px;
         width: max(0px, root.width - 38px);
         text: root.scheda.nome;
-        font-family: Tema.carattere-mono;
-        // Lo stesso peso di `Stile::Etichetta` (mono 500): scritto, non ereditato.
-        font-weight: 500;
-        font-size: Tema.etichetta-corpo;
-        letter-spacing: Tema.etichetta-spaziatura;
         color: Tema.testo;
         opacity: root.attiva ? 1 : 0;
         animate opacity { duration: 160ms; }

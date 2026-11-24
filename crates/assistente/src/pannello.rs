@@ -73,7 +73,7 @@ thread_local! {
 }
 
 /// Le icone che Rust passa all'interfaccia: un solo elenco, nome e SVG insieme.
-const ICONE_SVG: [(&str, &[u8]); 9] = [
+const ICONE_SVG: [(&str, &[u8]); 11] = [
     ("panoramica", include_bytes!("../assets/icone/panoramica.svg")),
     // Il modulo Agenti (ridisegno F1): il terminale di Lucide (ISC).
     ("agenti", include_bytes!("../assets/icone/lucide/terminal.svg")),
@@ -87,6 +87,10 @@ const ICONE_SVG: [(&str, &[u8]); 9] = [
     ("claude", include_bytes!("../assets/icone/claude.svg")),
     // L'azione «Spegni tutte» della carta Casa (ridisegno F1).
     ("luce", include_bytes!("../assets/icone/luce.svg")),
+    // Le icone della pagina Casa che Rust passa alle strutture (ridisegno F3): la stella dei
+    // preferiti e il tasto di accensione di «Spegni» (Lucide «star» e «power», ISC).
+    ("stella", include_bytes!("../assets/icone/lucide/star.svg")),
+    ("spegni", include_bytes!("../assets/icone/lucide/power.svg")),
     // Un'icona che non disegna nulla, per i posti dove un'azione non ne ha una. Non si lascia
     // l'`Image` vuota: in Slint un'immagine vuota non è uguale a se stessa, e una riga che la
     // contiene risulterebbe sempre cambiata (e sempre riscritta).
@@ -901,6 +905,8 @@ mod test {
             let dimensioni = icona(nome).size();
             assert!(dimensioni.width > 0 && dimensioni.height > 0, "icona {nome}");
         }
+        // Le icone della pagina Casa (F3) sono ognuna la sua, e nessuna l'icona che non disegna.
+        assert!(icona("spegni") != icona("luce") && icona("stella") != icona("luce") && icona("spegni") != icona("nessuna"));
         assert_eq!(icona("non-esiste").size().width, 0);
     }
 }

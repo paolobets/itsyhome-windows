@@ -131,10 +131,14 @@ export global Icone {
         @image-url("../assets/icone/lucide/droplet.svg")
     ];
 
-    // L'icona di una stanza dal suo indice in `stanze`; -1 = «Altro» (la casa), -2 = le scene.
+    // L'icona di un filtro della Casa dal suo codice (`FiltroUi.icona`, vedi `pagina_casa::ICONA_*`):
+    // l'indice in `stanze` per una stanza; -1 «Altro» e -5 «Tutta la casa» la casa, -2 le scene,
+    // -3 «Preferiti» la stella, -4 «Luci accese» la lampadina.
     public pure function di-stanza(i: int) -> image {
         if (i >= 0 && i < stanze.length) { return stanze[i]; }
         if (i == -2) { return scena; }
+        if (i == -3) { return stella; }
+        if (i == -4) { return luce; }
         return casa;
     }
 

@@ -1140,6 +1140,24 @@ fn aggiorna_modello<T: Clone + PartialEq + 'static>(modello: &VecModel<T>, voci:
     riscritte
 }
 
+// Nei test, le proprietà delle pagine scritte davvero da `scrivi_se_cambia` in questo thread
+// (pre-flight C11 e C18: i test «scritta solo se cambia» contano le righe e le proprietà, un
+// controllo che confronta solo i valori non potrebbe fallire).
+#[cfg(test)]
+thread_local! {
+    pub(crate) static PROPRIETA_SCRITTE: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Scrive una proprietà della pagina solo se il valore cambia (leggerezza: un valore uguale non
+/// ridisegna nulla). Comune a tutte le pagine.
+pub(crate) fn scrivi_se_cambia<T: PartialEq>(attuale: T, nuovo: T, scrivi: impl FnOnce(T)) {
+    if attuale != nuovo {
+        #[cfg(test)]
+        PROPRIETA_SCRITTE.with(|c| c.set(c.get() + 1));
+        scrivi(nuovo);
+    }
+}
+
 impl Ponte {
     pub fn casa(&self) -> &CasaService {
         &self.casa
