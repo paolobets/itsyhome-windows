@@ -170,6 +170,8 @@ pub fn sintesi(
         spesa_nota: spesa.1.into(),
         azione_id: azione_id.into(),
         azione_testo: azione_testo.into(),
+        azione_primaria: false,
+        azione_icona: crate::pannello::icona("nessuna"),
     }
 }
 

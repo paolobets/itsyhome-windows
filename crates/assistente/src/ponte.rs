@@ -85,6 +85,9 @@ pub struct Preferito {
     pub valore: String,
     pub disponibile: bool,
     pub errore: Option<String>,
+    /// La luminosità di una luce accesa, in percento (`LightEntity.brightness`, che il mapper dà
+    /// già in percento e a luce spenta non dà): `None` per tutto il resto.
+    pub luminosita: Option<u8>,
 }
 
 /// I campi comuni di ogni entità.
@@ -105,7 +108,7 @@ pub fn base(e: &AppEntity) -> &BaseEntity {
     }
 }
 
-fn preferito(e: &AppEntity) -> Preferito {
+pub(crate) fn preferito(e: &AppEntity) -> Preferito {
     let b = base(e);
     let (tipo, acceso, valore) = match e {
         AppEntity::Light(l) => (Tipo::Interruttore, l.is_on, b.state.clone()),
@@ -131,6 +134,10 @@ fn preferito(e: &AppEntity) -> Preferito {
         valore,
         disponibile: b.is_available,
         errore: None,
+        luminosita: match e {
+            AppEntity::Light(l) if l.is_on => l.brightness.filter(|b| b.is_finite()).map(|b| b.round().clamp(0.0, 100.0) as u8).filter(|&b| b > 0),
+            _ => None,
+        },
     }
 }
 
@@ -247,14 +254,24 @@ pub fn dispositivi_stanza(menu: &MenuData, area_id: &str) -> Vec<AppEntity> {
     menu.rooms.iter().find(|r| r.area_id == area_id).map(|r| r.entities.clone()).unwrap_or_default()
 }
 
-/// Le luci accese e disponibili delle stanze, nell'ordine delle stanze (le stesse che conta
-/// `riga_stato`): la vista Casa filtrata.
-pub fn luci_accese(menu: &MenuData) -> Vec<Preferito> {
+/// Le luci accese e disponibili delle stanze **come si vedono adesso**, nell'ordine delle stanze:
+/// con lo stato ottimistico dei tocchi (una luce appena spenta esce subito, una appena accesa
+/// entra, prima di ogni conferma di Home Assistant). È la sola vista ottimistica: la carta di
+/// Casa, la pagina, «Spegni tutte» e il conteggio partono da qui (ridisegno F3, C1).
+pub fn luci_accese_ora(menu: &MenuData, ottimismo: &Ottimismo<bool>) -> Vec<Preferito> {
+    luci_accese_in(menu, None, ottimismo)
+}
+
+/// Come `luci_accese_ora`, ma solo di una stanza (`Some(area_id)`; «Altro» è l'`area_id` vuoto).
+pub fn luci_accese_in(menu: &MenuData, area: Option<&str>, ottimismo: &Ottimismo<bool>) -> Vec<Preferito> {
     menu.rooms
         .iter()
+        .filter(|r| area.is_none_or(|a| r.area_id == a))
         .flat_map(|r| r.entities.iter())
-        .filter(|e| matches!(e, AppEntity::Light(l) if l.is_on && l.base.is_available))
+        .filter(|e| matches!(e, AppEntity::Light(_)))
         .map(preferito)
+        .map(|p| con_ottimismo(p, ottimismo))
+        .filter(|p| p.acceso && p.disponibile)
         .collect()
 }
 
@@ -471,10 +488,16 @@ pub fn riprovabile(s: &StatoConnessione) -> bool {
     matches!(s, StatoConnessione::Errore(_) | StatoConnessione::InConnessione)
 }
 
+/// L'errore tecnico viene dal portachiavi (il token salvato non si legge), non dalla rete: la
+/// chiave su cui `frase_errore` e `casa::frase_errore_breve` scelgono la frase.
+pub fn errore_del_portachiavi(e: &str) -> bool {
+    e.starts_with("portachiavi")
+}
+
 /// Una frase semplice al posto dell'errore tecnico di casa-core (il dettaglio resta per le
 /// Impostazioni, sezione Informazioni).
 pub fn frase_errore(e: &str) -> &'static str {
-    if e.starts_with("portachiavi") {
+    if errore_del_portachiavi(e) {
         "Token salvato non leggibile"
     } else {
         "Casa non raggiungibile"
@@ -496,6 +519,10 @@ pub fn con_ottimismo(mut p: Preferito, ottimismo: &Ottimismo<bool>) -> Preferito
     if let Some(&acceso) = ottimismo.atteso(&p.entity_id) {
         p.acceso = acceso;
         p.valore = if acceso { "on" } else { "off" }.into();
+        // Una luce che si mostra spenta non tiene la luminosità di quando era accesa.
+        if !acceso {
+            p.luminosita = None;
+        }
     }
     p
 }
@@ -1188,6 +1215,8 @@ impl Ponte {
                     self.cervello.borrow_mut().ricevi(Segnale::ComandoFallito, ora);
                 }
                 self.ricostruisci_preferiti();
+                // Un comando fallito rimette le luci come erano: anche la carta lo dice.
+                self.moduli_aggiorna("casa");
             }
             CasaEvento::ConfigNonSalvata(e) => {
                 eprintln!("{e}");
@@ -1394,10 +1423,8 @@ impl Ponte {
             };
             // Le luci accese adesso: con lo stato ottimistico, così una luce appena spenta esce
             // dall'elenco subito; una che non risponde (errore) torna col suo messaggio.
-            let luci: Vec<PreferitoUi> = luci_accese(menu)
+            let luci: Vec<PreferitoUi> = luci_accese_ora(menu, &ottimismo)
                 .into_iter()
-                .map(|p| con_ottimismo(p, &ottimismo))
-                .filter(|p| p.acceso && p.disponibile)
                 .map(|mut p| {
                     p.errore = errori.get(&p.entity_id).cloned();
                     voce_ui(&p, connesso)
@@ -2302,6 +2329,8 @@ impl Ponte {
         let ora = Instant::now();
         let Some((dominio, servizio, numero, acceso)) = self.avvia_tocco(entity_id, ora) else { return };
         self.ricostruisci_preferiti();
+        // La carta di Casa dice subito le luci di adesso, non quelle di prima del tocco.
+        self.moduli_aggiorna("casa");
         if self.traccia_tocco && acceso {
             eprintln!("tocco {entity_id}: icona cambiata nel modello dopo {} µs", ora.elapsed().as_micros());
         }
@@ -2342,14 +2371,22 @@ impl Ponte {
     /// verso Home Assistant, nessuna conferma: spegnere luci non è un'azione delicata).
     pub fn spegni_tutte(&self) {
         let ora = Instant::now();
-        let accese: Vec<String> = self.luci.iter().map(|l| l.entity_id.to_string()).collect();
+        // Le luci accese come si vedono adesso (C1): dal menu e dall'ottimismo, non da un modello
+        // dell'interfaccia (che a pannello chiuso è vuoto e può restare indietro).
+        let accese: Vec<String> = {
+            let menu = self.menu.borrow();
+            let ottimismo = self.ottimismo.borrow();
+            menu.as_ref().map(|m| luci_accese_ora(m, &ottimismo).into_iter().map(|p| p.entity_id).collect()).unwrap_or_default()
+        };
         let partiti: Vec<_> = accese
             .iter()
             .filter_map(|id| self.avvia_tocco(id, ora).map(|(dominio, servizio, numero, _)| (id, dominio, servizio, numero)))
             .collect();
-        // I modelli una volta sola (non una per luce), poi i comandi.
+        // I modelli e la carta una volta sola (non una per luce), poi i comandi: il pulsante sparisce
+        // subito, senza aspettare la conferma di Home Assistant.
         if !partiti.is_empty() {
             self.ricostruisci_preferiti();
+            self.moduli_aggiorna("casa");
         }
         for (id, dominio, servizio, numero) in partiti {
             self.casa.comando(id, dominio, servizio, numero);
@@ -2382,6 +2419,7 @@ impl Ponte {
         }
         if !scadute.confermate.is_empty() {
             self.ricostruisci_preferiti();
+            self.moduli_aggiorna("casa");
         }
         if !scadute.fallite.is_empty() {
             for id in scadute.fallite {
@@ -2390,6 +2428,7 @@ impl Ponte {
             }
             self.cervello.borrow_mut().ricevi(Segnale::ComandoFallito, ora);
             self.ricostruisci_preferiti();
+            self.moduli_aggiorna("casa");
             self.aggiorna_umore();
         }
         self.arma_sveglia_ottimismo();
@@ -3012,6 +3051,14 @@ pub(crate) mod test {
         })
     }
 
+    /// Una luce accesa con la luminosità in percento (come la dà il mapper).
+    pub fn luce_con_luminosita(id: &str, percento: f32) -> AppEntity {
+        let AppEntity::Light(mut l) = luce(id, true) else { unreachable!() };
+        l.brightness = Some(percento);
+        l.supports_brightness = true;
+        AppEntity::Light(l)
+    }
+
     pub fn luce_non_disponibile(id: &str) -> AppEntity {
         let AppEntity::Light(mut l) = luce(id, false) else { unreachable!() };
         l.base = base(id, false);
@@ -3170,6 +3217,7 @@ pub(crate) mod test {
             valore: valore.into(),
             disponibile: true,
             errore: None,
+            luminosita: None,
         }
     }
 
@@ -3395,7 +3443,7 @@ pub(crate) mod test {
                 vec![luce("light.d", true), luce_non_disponibile("light.e")],
             ],
         );
-        let ids: Vec<String> = luci_accese(&m).into_iter().map(|p| p.entity_id).collect();
+        let ids: Vec<String> = luci_accese_ora(&m, &Ottimismo::default()).into_iter().map(|p| p.entity_id).collect();
         assert_eq!(ids, ["light.a", "light.d"], "né spente, né non disponibili, né interruttori");
         // Quante dice la riga di stato (le stesse).
         assert_eq!(riga_stato(&StatoConnessione::Connesso, Some(&m)), "2 luci accese");
@@ -3461,6 +3509,81 @@ pub(crate) mod test {
         p.ricevi(CasaEvento::Stato(StatoConnessione::Disconnesso));
         p.spegni_tutte();
         assert!(p.ottimismo.borrow().numero("light.d").is_none(), "casa non connessa: nessun comando");
+    }
+
+    /// Le righe della carta di Casa nel modello dei moduli: (titolo, c'è l'azione «Spegni tutte»).
+    fn carta_casa(p: &Ponte) -> (String, bool) {
+        let riga = p.modello_moduli.iter().find(|m| m.id == "casa").expect("la carta di Casa");
+        (riga.titolo.to_string(), riga.con_azione)
+    }
+
+    /// Review Focus 3 (C1): «Spegni tutte» spegne subito la vista, prima di ogni conferma di HA.
+    /// Con due luci accese, dopo il tocco le luci accese di adesso sono zero e la carta di Casa non
+    /// ha più l'azione, mentre il menu (i dati veri) ne ha ancora due; una seconda pressione non
+    /// manda comandi. La conferma negativa di una luce la riporta, con la sua azione.
+    #[test]
+    fn spegni_tutte_conta_con_l_ottimismo() {
+        use crate::moduli::casa;
+        let (_spegni, p, _pillola, _c) = ponte_di_prova();
+        p.ricevi(CasaEvento::Dati(Arc::new(menu(vec![], vec![vec![luce("light.a", true), luce("light.b", true), luce("light.c", false)]]))));
+        let accese = |p: &Ponte| luci_accese_ora(p.menu.borrow().as_ref().unwrap(), &p.ottimismo.borrow()).len();
+        assert_eq!(accese(&p), 2);
+        assert_eq!(carta_casa(&p), ("2 luci".into(), true));
+
+        p.spegni_tutte();
+        // I dati veri dicono ancora due accese: la conferma di HA non è arrivata.
+        let veri = luci_accese_ora(p.menu.borrow().as_ref().unwrap(), &Ottimismo::default()).len();
+        assert_eq!(veri, 2, "il menu è quello di prima");
+        assert_eq!(accese(&p), 0, "la vista ottimistica: nessuna luce accesa");
+        assert_eq!(carta_casa(&p), ("Luci spente".into(), false), "la carta non ha più «Spegni tutte»");
+        let r = casa::riassunto(&p.stato.borrow(), p.menu.borrow().as_deref(), accese(&p), None);
+        assert!(r.azione.is_none() && r.r1.fatto == "Luci spente", "{r:?}");
+
+        // Un secondo «Spegni tutte» (il clic nello stesso punto) non manda comandi.
+        let (na, nb) = (numero_attesa(&p, "light.a"), numero_attesa(&p, "light.b"));
+        assert_ne!(na, nb);
+        p.spegni_tutte();
+        assert_eq!((numero_attesa(&p, "light.a"), numero_attesa(&p, "light.b")), (na, nb), "nessun tocco nuovo");
+        assert!(p.ottimismo.borrow().numero("light.c").is_none(), "la luce già spenta non riceve comandi");
+
+        // Una conferma negativa riporta la luce: la vista e la carta tornano a dirlo.
+        p.ricevi(CasaEvento::Esito { entity_id: "light.b".into(), numero: nb, ok: false, errore: Some("guasto".into()) });
+        assert_eq!(accese(&p), 1);
+        assert_eq!(carta_casa(&p), ("1 luce".into(), true), "la carta segue anche un comando fallito");
+        // Il comando non confermato in tempo riporta anche l'altra.
+        p.ottimismo_scaduto(Instant::now() + Duration::from_secs(6));
+        assert_eq!(accese(&p), 2);
+        assert_eq!(carta_casa(&p), ("2 luci".into(), true));
+    }
+
+    /// Una luce che si accende con un tocco entra subito nella vista (stesso stato ottimistico), e
+    /// «Spegni tutte» la spegne anche a pannello chiuso (non legge più il modello dell'interfaccia).
+    #[test]
+    fn la_vista_ottimistica_vale_anche_per_chi_si_accende_e_a_pannello_chiuso() {
+        let (_spegni, p, _pillola, _c) = ponte_di_prova();
+        p.ricevi(CasaEvento::Dati(Arc::new(menu(vec![], vec![vec![luce("light.a", false), luce("light.b", true)]]))));
+        p.pannello_chiuso();
+        p.tocca("light.a");
+        let ids = |p: &Ponte| -> Vec<String> {
+            luci_accese_ora(p.menu.borrow().as_ref().unwrap(), &p.ottimismo.borrow()).into_iter().map(|l| l.entity_id).collect()
+        };
+        assert_eq!(ids(&p), ["light.a", "light.b"], "la luce appena accesa si conta subito");
+        p.spegni_tutte();
+        assert!(ids(&p).is_empty(), "il pannello è chiuso e i modelli sono vuoti: il conto non dipende da loro");
+        assert!(p.ottimismo.borrow().numero("light.b").is_some());
+    }
+
+    /// La luminosità arriva dal mapper (già in percento) e una luce che si mostra spenta non la tiene.
+    #[test]
+    fn luminosita_della_luce_accesa() {
+        let m = menu(vec![], vec![vec![luce_con_luminosita("light.a", 79.6), luce("light.b", true), luce_con_luminosita("light.c", 100.0)]]);
+        let l: Vec<Option<u8>> = luci_accese_ora(&m, &Ottimismo::default()).iter().map(|p| p.luminosita).collect();
+        assert_eq!(l, [Some(80), None, Some(100)]);
+        let mut o = Ottimismo::<bool>::default();
+        o.tocca("light.a", false, &true, Instant::now());
+        let a = con_ottimismo(preferito(&m.rooms[0].entities[0]), &o);
+        assert_eq!((a.acceso, a.luminosita), (false, None), "spenta: niente luminosità");
+        assert_eq!(preferito(&interruttore("switch.s", true)).luminosita, None);
     }
 
     /// La Casa filtrata è del pannello aperto: chiuso, il modello non tiene righe; riaperto, torna.

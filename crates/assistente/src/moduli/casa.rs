@@ -2,7 +2,7 @@
 
 use super::{misura, riga, Azione, Riassunto, Tono, R1};
 use crate::orologio::temperatura_breve;
-use crate::ponte::{frase_errore, luci_accese, riprovabile};
+use crate::ponte::{errore_del_portachiavi, frase_errore, riprovabile};
 use casa_core::eventi::StatoConnessione;
 use casa_core::types::{AppEntity, MenuData};
 
@@ -28,12 +28,13 @@ fn fisso(tono: Tono, titolo: impl Into<String>, testo: &str, azione: Option<Azio
 }
 
 /// La frase della carta per un errore della casa: quella di `frase_errore` (intera per Narrator),
-/// più corta nella carta, dove accanto c'è «Riprova».
-fn frase_breve(frase: &'static str) -> &'static str {
-    match frase {
-        "Casa non raggiungibile" => "Non raggiungibile",
-        "Token salvato non leggibile" => "Token illeggibile",
-        altra => altra,
+/// più corta nella carta, dove accanto c'è «Riprova». Sulla stessa chiave di `frase_errore`
+/// (l'errore tecnico), non sul suo testo: se la frase cambia, non resta indietro.
+pub fn frase_errore_breve(e: &str) -> &'static str {
+    if errore_del_portachiavi(e) {
+        "Token illeggibile"
+    } else {
+        "Non raggiungibile"
     }
 }
 
@@ -46,9 +47,14 @@ fn dentro(menu: &MenuData) -> Option<String> {
         }
         _ => None,
     })?;
+    Some(gradi(valore))
+}
+
+/// Una temperatura per la carta e per le card: un decimale al più e la virgola («21,5°», «9°»).
+pub(super) fn gradi(valore: f64) -> String {
     let decimi = (valore * 10.0).round() / 10.0;
     let testo = if decimi.fract() == 0.0 { format!("{}", decimi as i64) } else { format!("{decimi:.1}") };
-    Some(format!("{}°", testo.replace('.', ",")))
+    format!("{}°", testo.replace('.', ","))
 }
 
 /// La riga delle temperature, con quelle che ci sono: «21,5° dentro, 9° fuori»; se tutte e due
@@ -70,13 +76,13 @@ fn temperature(menu: &MenuData, con_azione: bool) -> Option<(String, String)> {
 }
 
 /// Il titolo della testata della pagina (`r1.fatto`): lo stato della connessione, poi le luci
-/// accese a parole («Luci spente», mai «0 luci»). Le luci sono quelle del menu, senza lo stato
-/// ottimistico dei comandi appena dati.
-fn fatto_della_testata(stato: &StatoConnessione, menu: Option<&MenuData>) -> String {
+/// accese a parole («Luci spente», mai «0 luci»). `accese` sono le luci come si vedono adesso,
+/// con lo stato ottimistico dei comandi appena dati (`ponte::luci_accese_ora`).
+fn fatto_della_testata(stato: &StatoConnessione, menu: Option<&MenuData>, accese: usize) -> String {
     match (stato, menu) {
         (StatoConnessione::NonConfigurato, _) => "Da collegare".into(),
         (StatoConnessione::InConnessione, _) | (StatoConnessione::Connesso, None) => "Mi collego".into(),
-        (StatoConnessione::Connesso, Some(m)) => match luci_accese(m).len() {
+        (StatoConnessione::Connesso, Some(_)) => match accese {
             0 => "Luci spente".into(),
             1 => "1 luce accesa".into(),
             n => format!("{n} luci accese"),
@@ -85,16 +91,17 @@ fn fatto_della_testata(stato: &StatoConnessione, menu: Option<&MenuData>) -> Str
     }
 }
 
-/// La carta di Casa: lo stato della connessione, gli ultimi dati arrivati (`menu`) e l'ora in cui
-/// sono arrivati (`dati_delle`, «hh:mm»).
-pub fn riassunto(stato: &StatoConnessione, menu: Option<&MenuData>, dati_delle: Option<&str>) -> Riassunto {
-    let mut r = carta_di(stato, menu, dati_delle);
-    r.r1 = R1 { fatto: fatto_della_testata(stato, menu), valore: String::new() };
+/// La carta di Casa: lo stato della connessione, gli ultimi dati arrivati (`menu`), le luci accese
+/// adesso (`accese`: con lo stato ottimistico, così «Spegni tutte» sparisce al tocco e non alla
+/// conferma di Home Assistant) e l'ora in cui i dati sono arrivati (`dati_delle`, «hh:mm»).
+pub fn riassunto(stato: &StatoConnessione, menu: Option<&MenuData>, accese: usize, dati_delle: Option<&str>) -> Riassunto {
+    let mut r = carta_di(stato, menu, accese, dati_delle);
+    r.r1 = R1 { fatto: fatto_della_testata(stato, menu, accese), valore: String::new() };
     r
 }
 
 /// La carta senza il titolo della testata (`riassunto` lo aggiunge).
-fn carta_di(stato: &StatoConnessione, menu: Option<&MenuData>, dati_delle: Option<&str>) -> Riassunto {
+fn carta_di(stato: &StatoConnessione, menu: Option<&MenuData>, accese: usize, dati_delle: Option<&str>) -> Riassunto {
     let collega = || azione(COLLEGA, "Collega", "collegamenti");
     match (stato, menu) {
         (StatoConnessione::NonConfigurato, _) => fisso(Tono::Vuoto, "Da collegare", "Collega la casa", collega()),
@@ -102,7 +109,6 @@ fn carta_di(stato: &StatoConnessione, menu: Option<&MenuData>, dati_delle: Optio
             fisso(Tono::Calmo, "Mi collego", "—", None)
         }
         (StatoConnessione::Connesso, Some(m)) => {
-            let accese = luci_accese(m).len();
             let spegni = (accese > 0).then(|| azione(SPEGNI, "Spegni tutte", "luce")).flatten();
             let (temperature, intere) = temperature(m, spegni.is_some())
                 .unwrap_or_else(|| ("Nessun sensore".into(), "Nessun sensore".into()));
@@ -118,10 +124,7 @@ fn carta_di(stato: &StatoConnessione, menu: Option<&MenuData>, dati_delle: Optio
         (StatoConnessione::Errore(_) | StatoConnessione::Disconnesso | StatoConnessione::TokenNonValido | StatoConnessione::TokenMancante, _) => {
             let azione = if riprovabile(stato) { azione(RIPROVA, "Riprova", "collegamenti") } else { collega() };
             let (breve, intera): (String, String) = match stato {
-                StatoConnessione::Errore(e) => {
-                    let frase = frase_errore(e);
-                    (frase_breve(frase).into(), frase.into())
-                }
+                StatoConnessione::Errore(e) => (frase_errore_breve(e).into(), frase_errore(e).into()),
                 StatoConnessione::TokenNonValido => ("Token non valido".into(), "Token non valido".into()),
                 StatoConnessione::TokenMancante => ("Token mancante".into(), "Token mancante".into()),
                 _ => {
@@ -139,8 +142,21 @@ fn carta_di(stato: &StatoConnessione, menu: Option<&MenuData>, dati_delle: Optio
 mod test {
     use super::*;
     use crate::moduli::controlla;
+    use crate::ottimismo::Ottimismo;
+    use crate::ponte::luci_accese_ora;
     use crate::ponte::test::{luce, menu, sensore};
     use casa_core::types::Meteo;
+
+    /// Le luci accese come le vede il ponte senza tocchi in corso (`ponte::luci_accese_ora`).
+    fn accese(m: Option<&MenuData>) -> usize {
+        m.map_or(0, |m| luci_accese_ora(m, &Ottimismo::default()).len())
+    }
+
+    /// `super::riassunto` con le luci accese di chi non ha tocchi in corso: i test della scala
+    /// non ripetono il conteggio a ogni riga (`accese_le_dice_il_chiamante` prova il parametro).
+    fn riassunto(stato: &StatoConnessione, menu: Option<&MenuData>, dati_delle: Option<&str>) -> Riassunto {
+        super::riassunto(stato, menu, accese(menu), dati_delle)
+    }
 
     fn vista(r: &Riassunto) -> (Tono, &str, &str, Option<&str>) {
         (r.tono, r.titolo.as_str(), r.sec.as_str(), r.azione.as_ref().map(|a| a.testo.as_str()))
@@ -199,6 +215,43 @@ mod test {
         assert_eq!(vista(&riassunto(&S::Connesso, Some(&casa(0, Some("19.0"), Some(9.0))), None)), (Tono::Calmo, "Luci spente", "19° dentro, 9° fuori", None));
         assert_eq!(vista(&riassunto(&S::Connesso, Some(&casa(0, None, None)), None)), (Tono::Calmo, "Luci spente", "Nessun sensore", None));
         assert_eq!(vista(&riassunto(&S::Connesso, Some(&casa(3, None, None)), None)), (Tono::Calmo, "3 luci", "Nessun sensore", Some("Spegni tutte")));
+    }
+
+    /// C1: le luci accese le dice il chiamante (con lo stato ottimistico dei tocchi), non il menu:
+    /// il menu ne ha ancora quattro accese, ma due sono appena state spente e la carta non le conta
+    /// (nessun «Spegni tutte» se non resta nulla da spegnere), prima di ogni conferma di HA.
+    #[test]
+    fn accese_le_dice_il_chiamante() {
+        use StatoConnessione as S;
+        let m = casa(4, Some("21"), None);
+        let r = super::riassunto(&S::Connesso, Some(&m), 2, None);
+        assert_eq!((r.titolo.as_str(), r.r1.fatto.as_str(), r.azione.as_ref().map(|a| a.id)), ("2 luci", "2 luci accese", Some(SPEGNI)));
+        let r = super::riassunto(&S::Connesso, Some(&m), 1, None);
+        assert_eq!((r.titolo.as_str(), r.r1.fatto.as_str()), ("1 luce", "1 luce accesa"));
+        let r = super::riassunto(&S::Connesso, Some(&m), 0, None);
+        assert_eq!((r.titolo.as_str(), r.r1.fatto.as_str(), r.azione.is_none()), ("Luci spente", "Luci spente", true));
+        // Con un tocco in corso il conteggio è quello ottimistico, non quello del menu.
+        let mut o = Ottimismo::<bool>::default();
+        for id in ["light.l0", "light.l1", "light.l2", "light.l3"] {
+            o.tocca(id, false, &true, std::time::Instant::now());
+        }
+        assert_eq!(luci_accese_ora(&m, &o).len(), 0);
+        assert_eq!(super::riassunto(&S::Connesso, Some(&m), luci_accese_ora(&m, &o).len(), None).azione, None);
+    }
+
+    /// `frase_errore_breve` sceglie sulla stessa chiave di `frase_errore`: l'errore del portachiavi
+    /// dà «Token illeggibile», ogni altro «Non raggiungibile», e la frase intera resta quella di
+    /// `frase_errore` (la carta e Narrator non si scostano).
+    #[test]
+    fn frase_breve_sulla_chiave_della_frase_intera() {
+        for (e, breve, intera) in [
+            ("portachiavi: illeggibile", "Token illeggibile", "Token salvato non leggibile"),
+            ("portachiavi", "Token illeggibile", "Token salvato non leggibile"),
+            ("timeout", "Non raggiungibile", "Casa non raggiungibile"),
+            ("", "Non raggiungibile", "Casa non raggiungibile"),
+        ] {
+            assert_eq!((frase_errore_breve(e), frase_errore(e)), (breve, intera), "{e:?}");
+        }
     }
 
     /// Il titolo della testata (`r1.fatto`): lo stato della connessione, poi le luci accese a parole.

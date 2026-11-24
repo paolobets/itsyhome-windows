@@ -8,7 +8,7 @@
 //! diverso da quello mostrato.
 
 use super::con_claude::adesso_unix;
-use super::{aggiorna_modello, Ponte};
+use super::{aggiorna_modello, luci_accese_ora, Ponte};
 use crate::claude;
 use crate::finestra_impostazioni::{apri_alla_sezione, SEZIONE_CASA, SEZIONE_CLAUDE, SEZIONE_COLLEGAMENTI};
 use crate::moduli::registro::tono_ui;
@@ -90,7 +90,10 @@ impl Ponte {
             }
             "casa" => {
                 let (stato, menu, dati) = (self.stato.borrow(), self.menu.borrow(), self.dati_delle.borrow());
-                Some(casa::riassunto(&stato, menu.as_deref(), dati.as_deref()))
+                // Le luci accese come si vedono adesso (con l'ottimismo dei tocchi): la stessa
+                // vista della pagina e di «Spegni tutte».
+                let accese = menu.as_deref().map_or(0, |m| luci_accese_ora(m, &self.ottimismo.borrow()).len());
+                Some(casa::riassunto(&stato, menu.as_deref(), accese, dati.as_deref()))
             }
             "collegamenti" => Some(self.casa.con_config(|c| collegamenti::riassunto(&c.collegamenti))),
             _ => None,
@@ -586,12 +589,16 @@ mod test {
         ponte.pannello_aperto(&p);
         assert_eq!(titolo(&p, 1), "Luci spente");
         ponte.pannello_chiuso();
+        let scritte = crate::ponte::RIGHE_SCRITTE.with(|c| c.get());
         for accese in [1, 3] {
             let luci = (0..accese).map(|i| luce(&format!("light.l{i}"), true)).collect();
             ponte.ricevi(CasaEvento::Dati(Arc::new(menu(vec![], vec![luci]))));
         }
         assert!(ponte.moduli_vecchi.get(), "da rifare all'apertura");
         assert_eq!(ponte.modello_moduli.row_data(1).map(|m| m.titolo.to_string()).as_deref(), Some("Luci spente"), "modello fermo");
+        // Il titolo uguale non basta (un modello riscritto con gli stessi valori passerebbe): le
+        // scritture vere di `aggiorna_modello` in questo thread sono ferme.
+        assert_eq!(crate::ponte::RIGHE_SCRITTE.with(|c| c.get()), scritte, "nessuna riga scritta a pannello chiuso");
         assert_eq!(ponte.registro().nome_narrator(1), "Casa, Luci spente, Nessun sensore, modulo 2 di 4", "registro fermo");
         ponte.ricevi(CasaEvento::Stato(StatoConnessione::Connesso));
         // Riapertura: i dati di adesso (l'ultimo), una volta sola.

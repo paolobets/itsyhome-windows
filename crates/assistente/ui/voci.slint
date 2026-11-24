@@ -308,6 +308,50 @@ export struct SintesiUi {
     spesa-nota: string,
     azione-id: string,
     azione-testo: string,
+    // Ridisegno F3: l'azione primaria (bianca) con la sua icona, come «Spegni tutte» di Casa.
+    // Agenti: falso e vuota.
+    azione-primaria: bool,
+    azione-icona: image,
+}
+
+// ─── La pagina Casa sull'impianto Comandi (ridisegno F3) ──────────────────────────────────────
+// Tutto già pronto da `moduli::pagina_casa`.
+
+// La forma di una card dei Comandi: l'interruttore (luci e prese: la card è l'interruttore), la
+// scena (un tocco la attiva), la lettura (solo da leggere) e il lancio (Collegamenti).
+export enum TipoCardUi { interruttore, scena, lettura, lancio }
+
+// Una card dei Comandi. `stato`: la parola sotto il nome («Accesa», «Non disponibile»; per un
+// sensore numerico il nome stesso); `valore`: «80 %» accanto alla parola, o il numero grande di
+// una lettura («21,5°»); `acceso`: riquadro bianco; `toccabile`: un tocco manda un comando;
+// `tenue`: non disponibile o casa scollegata; `errore`: «Non riuscito». `iniziale` e `tinta` (indice
+// in `Tema.colore-collegamento`) servono solo al lancio. `narratore`: il nome intero per Narrator.
+export struct CardUi {
+    id: string,
+    tipo: TipoCardUi,
+    genere: GenereUi,
+    nome: string,
+    stato: string,
+    valore: string,
+    acceso: bool,
+    toccabile: bool,
+    tenue: bool,
+    errore: bool,
+    iniziale: string,
+    tinta: int,
+    narratore: string,
+}
+
+// Un filtro della colonna di sinistra dei Comandi. `icona`: indice in `Icone.stanze` per le
+// stanze, un codice negativo per gli altri (vedi `pagina_casa::ICONA_*`); `numero`: «4» o vuoto;
+// `filo`: il filo di separazione sta sopra il filtro; `narratore`: «Soggiorno, 6 dispositivi».
+export struct FiltroUi {
+    id: string,
+    nome: string,
+    icona: int,
+    numero: string,
+    filo: bool,
+    narratore: string,
 }
 
 // Lo stato di una pagina: `pieno` mostra l'elenco; gli altri una frase con al più un'azione.

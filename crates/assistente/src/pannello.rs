@@ -73,7 +73,7 @@ thread_local! {
 }
 
 /// Le icone che Rust passa all'interfaccia: un solo elenco, nome e SVG insieme.
-const ICONE_SVG: [(&str, &[u8]); 8] = [
+const ICONE_SVG: [(&str, &[u8]); 9] = [
     ("panoramica", include_bytes!("../assets/icone/panoramica.svg")),
     // Il modulo Agenti (ridisegno F1): il terminale di Lucide (ISC).
     ("agenti", include_bytes!("../assets/icone/lucide/terminal.svg")),
@@ -87,6 +87,10 @@ const ICONE_SVG: [(&str, &[u8]); 8] = [
     ("claude", include_bytes!("../assets/icone/claude.svg")),
     // L'azione «Spegni tutte» della carta Casa (ridisegno F1).
     ("luce", include_bytes!("../assets/icone/luce.svg")),
+    // Un'icona che non disegna nulla, per i posti dove un'azione non ne ha una. Non si lascia
+    // l'`Image` vuota: in Slint un'immagine vuota non è uguale a se stessa, e una riga che la
+    // contiene risulterebbe sempre cambiata (e sempre riscritta).
+    ("nessuna", include_bytes!("../assets/icone/nessuna.svg")),
 ];
 
 /// L'icona SVG di un'app del registro (bianca: il colore lo dà l'interfaccia), dalla cache;

@@ -5578,6 +5578,8 @@ mod accessibilita {
             spesa_nota: if con_chiave { "aggiornato alle 16:02" } else { crate::claude::SPESA_SENZA_CHIAVE }.into(),
             azione_id: if con_chiave { crate::moduli::pagina_agenti::DETTAGLI } else { "" }.into(),
             azione_testo: if con_chiave { "Dettagli" } else { "" }.into(),
+            azione_primaria: false,
+            azione_icona: Default::default(),
         }
     }
 

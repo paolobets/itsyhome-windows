@@ -2887,7 +2887,10 @@ mod test {
         // Vista chiusa: gli eventi non scrivono nulla nel pannello.
         manda(&p, ev("a", TipoEvento::UserPromptSubmit));
         assert_eq!(pannello.get_elenco_righe().row_count(), 0, "vista chiusa: nessun lavoro");
-        assert_eq!(pannello.get_elenco_sintesi(), crate::SintesiUi::default(), "né la sintesi");
+        // (Non `== SintesiUi::default()`: la sintesi ha un'`Image` e una vuota non è uguale a se
+        // stessa, quel confronto non potrebbe mai riuscire.)
+        let sintesi = pannello.get_elenco_sintesi();
+        assert!(sintesi.titolo.is_empty() && sintesi.sotto.is_empty() && !sintesi.l1.presente && !sintesi.l2.presente, "né la sintesi: {sintesi:?}");
         // Si apre: le righe ci sono, di colpo.
         p.vista_claude(true);
         let righe = pannello.get_elenco_righe();

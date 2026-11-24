@@ -13,6 +13,9 @@ pub mod casa;
 pub mod collegamenti;
 pub mod misura;
 pub mod pagina_agenti;
+// Le funzioni pure della pagina Casa: il ponte le chiama dal Task 4 (ridisegno F3).
+#[cfg_attr(not(test), allow(dead_code))]
+pub mod pagina_casa;
 pub mod panoramica;
 pub mod pc;
 pub mod registro;
@@ -342,8 +345,8 @@ mod test {
         // Casa: ogni stato, cento luci accese.
         let cento = menu(vec![], vec![(0..100).map(|i| luce(&format!("light.l{i}"), true)).collect()]);
         for s in [S::NonConfigurato, S::InConnessione, S::Connesso, S::Disconnesso, S::TokenNonValido, S::TokenMancante] {
-            fatti.push(casa::riassunto(&s, Some(&cento), None).r1.fatto);
-            fatti.push(casa::riassunto(&s, None, None).r1.fatto);
+            fatti.push(casa::riassunto(&s, Some(&cento), 100, None).r1.fatto);
+            fatti.push(casa::riassunto(&s, None, 0, None).r1.fatto);
         }
         // PC: le misure al massimo e la batteria quasi scarica.
         let stat = |cpu, ram, batteria| StatPc {
