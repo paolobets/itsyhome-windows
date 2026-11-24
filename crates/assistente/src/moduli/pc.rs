@@ -4,7 +4,7 @@ use super::{riga, Riassunto, Tono, R1};
 use crate::pc_stats::{StatPc, SOGLIA_BATTERIA_INFO};
 
 /// Da qui in su CPU o RAM meritano uno sguardo.
-const SOGLIA_CARICO: f32 = 85.0;
+pub(crate) const SOGLIA_CARICO: f32 = 85.0;
 
 fn percento(v: f32) -> u32 {
     v.round().clamp(0.0, 100.0) as u32

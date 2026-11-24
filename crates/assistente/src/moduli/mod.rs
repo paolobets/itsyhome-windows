@@ -15,6 +15,7 @@ pub mod misura;
 pub mod pagina_agenti;
 pub mod pagina_casa;
 pub mod pagina_collegamenti;
+pub mod pagina_pc;
 pub mod panoramica;
 pub mod pc;
 pub mod registro;

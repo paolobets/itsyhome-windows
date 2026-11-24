@@ -338,3 +338,43 @@ export struct StatoPaginaUi {
     azione-id: string,
     azione-testo: string,
 }
+
+// ─── La pagina PC sull'impianto Misure (ridisegno F3) ───────────────────────────────────────────
+// Tutto già pronto da `moduli::pagina_pc`.
+
+// Una misura del PC (CPU, Memoria, Disco, Batteria o GPU): quattro posti fissi, `presente` falso =
+// il posto resta vuoto (né batteria né GPU). `etichetta` è «CPU», «Memoria»: l'aspetto maiuscolo lo
+// fa Slint. Senza dato `valore` è «—», `unita` e `frazione` non ci sono e `dettaglio` dice il
+// motivo («Lettura in corso», «Non letta»). `tono`: calmo, attivo oltre la soglia, fatto in carica.
+// `narratore`: il nome intero per Narrator (mai l'etichetta maiuscola).
+export struct MisuraUi {
+    presente: bool,
+    id: string,
+    icona: image,
+    etichetta: string,
+    valore: string,
+    unita: string,
+    frazione: float,
+    dettaglio: string,
+    tono: TonoModuloUi,
+    narratore: string,
+}
+
+// La forma di una riga della pagina PC: `stato` (solo da leggere, fuori da Windows), l'interruttore
+// (Wi-Fi e Bluetooth), il cursore (Volume) e i rimandi alle pagine di Windows.
+export enum TipoRigaMisuraUi { stato, interruttore, cursore, rimandi }
+
+// Una riga della pagina PC. `valore`: la parola o il numero accanto al nome; `acceso`: l'interruttore
+// è acceso (per il cursore: non è muto); `attiva`: si può azionare (falso se la radio non c'è o non
+// è ancora stata letta); `errore`: il testo di un cambio rifiutato da Windows, vuoto altrimenti.
+export struct RigaMisuraUi {
+    id: string,
+    tipo: TipoRigaMisuraUi,
+    icona: image,
+    nome: string,
+    valore: string,
+    acceso: bool,
+    attiva: bool,
+    errore: string,
+    narratore: string,
+}
