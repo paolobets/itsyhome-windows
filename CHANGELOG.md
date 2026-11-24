@@ -9,6 +9,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 > **Nota sul trasporto di M3.** Le sezioni «Task 1», «Task 2», «Task 4», «Task 6» e «Task 7» qui sotto raccontano il primo giro, con hook HTTP su `127.0.0.1`, porta, codice segreto, variabile `ISOLA_HOOK_TOKEN`, `assistente --barra-stato` e «Rigenera il codice». **Nulla di tutto ciò è mai stato rilasciato**: i Task 7A/7B (18/11) lo hanno sostituito con l'aiutante `isola-hook.exe` e un tubo con nome riservato all'utente (spec M3 §10). Le sezioni restano come storia.
 
+### Changed (Ridisegno F2, chiusura: misure e confronto)
+- **Che cosa c'è in F2**: impianto Elenco + dettaglio e pagina Agenti nuova (sintesi coi limiti a barra e la spesa, elenco delle sessioni, dettaglio), il permesso come componente del guscio (usato dalla Coda e dalla pagina Agenti, con le regole di M3 dentro), l'aspetto inerte di «Nega» e «Consenti» per i 600 ms dell'armamento, il clic sulla pillola con un permesso che porta alla pagina Agenti. Chiusi i punti parcheggiati da F1 (n1/n2 della voce, «Errore» rosa, «Nega» muto senza segno): elenco in `docs/superpowers/plans/2026-11-20-assistente-ridisegno-f1-rimandati.md` («Dopo F2»).
+- **Verifiche**: `cargo test --workspace` 1052 passati, 0 falliti, 4 ignorati (F1 chiudeva a 983); `cargo clippy --workspace --all-targets -- -D warnings` pulito; `cargo build --release -p assistente` ok.
+- **Misure** (exe release su istanza di prova, cartella finta, nessuna casa, `tools\misura.ps1`, medie dal secondo 10, RAM = memoria privata; partenza = release di d1c2845 misurata nel Task 1, e per confronto la stessa release rimisurata nello stesso giro di prove):
+
+  | | Partenza (Task 1) | Dopo F2 |
+  |---|---|---|
+  | A riposo (solo pillola), RAM privata | 7,9 MB | **7,8–7,9 MB** (media 7,9) |
+  | A riposo, CPU media | 0,02 % | **0,002 %** (picco 0,11 %) |
+  | Pannello aperto fermo (`--apri`), RAM privata | 14,1 MB | **14,2–14,5 MB** (due prove: 14,2 e 14,45) |
+  | Pannello aperto fermo, CPU media | 0,05 % | **0,08 %** (due prove, picchi 0,3–0,4 %); la release di partenza, rimisurata, 0,056 % |
+  | Pagina Agenti aperta, 3 sessioni finte al lavoro, RAM privata | 14,8 MB | **15,2 MB** (14,9–15,5; la partenza rimisurata 15,2) |
+  | Pagina Agenti con 3 sessioni, CPU media (dal secondo 15) | 0,30 % | **0,29–0,31 %** (due prove; la partenza rimisurata 0,33 %), picchi 3–3,5 % agli `Stop` delle sessioni |
+  | Dopo 10 aperture e chiusure di Agenti (secondo avvio, Esc, 15 s), RAM privata | 10,2–10,5 MB (F1) | **10,5 → 10,8 MB** (cicli 2–10: 10,58–10,80; la partenza rimisurata 10,23 → 10,69) |
+
+  Niente cresce a ogni apertura: il ritorno dopo la chiusura sale di 0,3 MB fra il primo ciclo e l'ultimo, come la partenza (0,5 MB), e resta 2,6–2,9 MB sopra il riposo puro (il pannello lascia in memoria ciò che Skia ha messo in cache, come già in F1). Il pannello fermo costa circa 0,02 punti di CPU più della partenza nelle stesse ore (fra i picchi dei battiti degli occhi); la pagina Agenti non costa più della partenza.
+- **Fotogrammi** (contati dai `RedrawRequested` di winit con una build usa e getta, mai committata): con il pannello aperto fermo restano solo il battito degli occhi (circa 12 fotogrammi in 190 ms ogni 4,6 s) e, una volta al minuto, i 2 fotogrammi del cambio dell'ora; con gli occhi che non battono (umore `sleep`) **nessun altro fotogramma** in 25 s. All'arrivo di una voce che ti aspetta (`--prova-avviso bloccante --dopo 15`, a pannello aperto) c'è una sola raffica di 38 fotogrammi che dura 611 ms (600 ms dell'armamento più il fotogramma di chiusura, nel margine di un fotogramma del Task 4) e poi niente fuori dal battito. La pillola a riposo non è stata misurata in questo giro: il PC era bloccato (la pillola non si disegna) e va rifatta con lo schermo sbloccato.
+- **Confronto visivo** con `tc-agenti`, `tc-coda` e `tc-griglia-aspetta` (finestra vera dell'app a 175 % e 100 %): composizione, gerarchia, luce dal basso, capsule e anello del fuoco coincidono. Differenze volute o note: «Consenti» è neutro (regola M3), niente Codex, Mail, Musica e Focus (quattro moduli), «chiesto alle 01:54» al posto di «da 42 s», la cartella è il solo nome finale, l'anello del fuoco sta su una scheda del dock a pillola; nell'elenco la parola accanto al nome è tagliata con l'ellissi quando non c'è posto («Chiede: Coma…», il testo intero lo sente Narrator). Le voci con il solo pulsante delicato (n1/n2) non si possono produrre dal vivo (oggi nessun modulo le crea): le provano i test del Task 1. La Coda col permesso aperto non è stata fotografata dal vivo (stesso componente della pagina Agenti, provato dai test).
+- **Prova dal vivo con Paolo**: da fare (Task 9, Step 5); l'elenco delle cose da provare è nei rimandati.
+
 ### Fixed (Ridisegno F2, Task 8, giro di correzioni 1)
 - La guardia dell'arrivo dalla pillola vale solo per il primo cambio del dettaglio: un test prova che, se più tardi la riga col fuoco sparisce e al suo posto arriva quel permesso, il fuoco torna sulla riga (regola del Task 7).
 - `entra-nel-permesso(voce)` riceve la voce chiesta ed entra solo se il dettaglio mostra proprio quella; altrimenti il fuoco resta sulla riga.

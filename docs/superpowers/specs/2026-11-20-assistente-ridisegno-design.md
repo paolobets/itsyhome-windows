@@ -433,6 +433,37 @@ deciso diversamente da questa spec:
   ammessa); a riposo nessun fotogramma.
 - **Rimandati**: `Registro::config()` e il «fissato» di una voce `claude` (F6); la ricerca resta inerte (F5).
 
+**F2 fatta (24/11/2026, ramo `v3-assistente`; prova dal vivo con Paolo ancora da fare).** Impianto Elenco + dettaglio, pagina
+Agenti (sintesi coi limiti a barra, elenco, dettaglio) e componente `Permesso` del guscio, usato da Coda e Agenti, sono dentro;
+si sono chiusi per primi i punti parcheggiati da F1 (n1/n2 della voce, «Errore» rosa, «Nega» inerte durante l'armamento);
+misure di chiusura nel CHANGELOG («Ridisegno F2, chiusura»). Ciò che il piano ha deciso diversamente da questa spec:
+- **Decisioni di Paolo (23/11)**: il clic su una riga **la sceglie** (il terminale dal pulsante del dettaglio o con Invio);
+  **«chiesto alle 14:32»** al posto di «da 42 s» della bozza (un contatore dei secondi vorrebbe un timer, §3) e **solo il nome
+  della cartella**; **«Consenti» neutro come «Nega»** confermato; **il clic sulla pillola con un permesso apre la pagina
+  Agenti** con quella sessione scelta, non la Coda (la Coda resta la strada di «Apri» della voce nella Panoramica e il ripiego
+  se la sessione non ha riga).
+- **Il permesso è un componente solo** (`ui/guscio/permesso.slint`) con le regole di M3 dentro; nel pannello ce ne sono **due
+  istanze fisse**, mai dentro un `if` (un id dentro un `if` non si raggiunge da fuori), con `visible` legato alla vista. La Coda
+  tiene la sua riga (`RigaElenco`) fino a F5; ogni decisione passa da `azione-voce` e dalla guardia di 600 ms di Rust.
+- **Aspetto inerte** dei due pulsanti per i 600 ms dell'armamento: un'animazione lineare su una proprietà che non si disegna
+  (componente `Inerzia`, uno solo nel pannello), non un timer; vale anche con «Mostra animazioni» spento. La guardia vera resta
+  in Rust. **Non vale per la pillola** (altra finestra): resta rimandato.
+- **Un clic su «Nega» o «Consenti» vale solo se il puntatore si è mosso sopra il pulsante dopo la sua comparsa** (movimenti a
+  pulsante alzato); una superficie nata sotto il puntatore non decide con un clic fermo. Conseguenza accettata: con un
+  touchscreen un tocco non decide (restano tastiera e Narrator). È una regola in più rispetto a §7, per entrambi i permessi e
+  per la voce.
+- **Pagina Agenti**: nome della riga = titolo della scheda di Claude Code (altrimenti la cartella); fornitore come parola
+  («Claude»); «caldo» deciso sul numero arrotondato che si legge; senza chiave da amministratore la testata scrive la nota al
+  posto della spesa («Aggiungi una chiave da amministratore nelle Impostazioni»), visibile e letta da Narrator; «Dettagli» solo
+  con la chiave; «Nessuna sessione aperta» **senza azione**; «Torna all'elenco» resta un pulsante per il mouse; l'etichetta
+  del campo dipende dallo strumento («TERMINALE» solo per un comando, «FILE», «INDIRIZZO», «RICERCA») e il «$» solo per il
+  comando.
+- **Tastiera**: → o Invio sulla riga di un permesso portano il fuoco su «Nega», mai una decisione; Invio sulla riga di una
+  sessione apre il terminale; Esc nel permesso di Agenti chiude il pannello; il riquadro del comando mostra circa due righe
+  alla volta.
+- **Rimandati**: il campo `r1` del contratto (arriva in F3, con le pagine con sintesi); la pillola inerte; elenco completo in
+  `docs/superpowers/plans/2026-11-20-assistente-ridisegno-f1-rimandati.md` («Dopo F2»).
+
 **Scelte del coordinatore sulle fette (20/11).**
 - *Coda minima e via la riga «In attesa» già in F1*: le voci non bloccanti devono restare raggiungibili in ogni fetta
   da F1 a F5, così ognuna lascia isola completa; la Coda minima usa l'impianto Elenco, che F2 poi riusa.

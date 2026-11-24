@@ -90,3 +90,56 @@ Vedi la sezione «Possono aspettare (F2+)» riportata qui sotto.
   - Resta il margine stretto di «+N» verso le righe dell'elenco (m1).
 - **REQUISITO Task 8 → Task 10** (`centro-a` = 224): **soddisfatto** (Task 10, `misure_slint_e_rust`).
 
+
+## Dopo F2 (24/11/2026)
+
+Stato dei punti di F1 e rimandati nuovi della fetta F2 (registro di lavoro `.superpowers/sdd/2026-11-23-assistente-ridisegno-f2/`). La revisione dell'intera fetta (Task 9 Step 4) e la prova dal vivo con Paolo (Step 5) non sono ancora fatte: i punti che le riguardano sono sotto «Da provare dal vivo» e «Per la revisione finale».
+
+### Punti di F1 chiusi in F2
+
+- **n1** (fuoco perso se la voce A è sostituita da una B con solo pulsante delicato) e **n2** (testo sopra «Apri»): chiusi nel Task 1, con le regole anche per `init`, `vai`, `voce-altre`, `in-attesa` e ↑.
+- **Task 8 m2 / «Nega» muto senza segno**: chiuso nel Task 4 (aspetto inerte per i 600 ms, componente `Inerzia`).
+- **Task 8 m5 / test titolo↔`MASSIMO_STRUMENTO`**: chiuso nel Task 1 (`titolo_della_voce_con_strumento_al_massimo`).
+- **«Errore» blu nella vista Agenti** (Task 4 e Task 10 di F1): chiuso nel Task 5, la sessione in errore è rosa.
+- **Task 7: permesso aperto che cambia posto si richiude**: chiuso nel Task 3 (la validità la decide l'id).
+- **Task 7: testo dell'avviso di prova che parla di «voce espansa»**: chiuso nel Task 8.
+- **Task 7: nessun test isola il riarmo al fondo di un testo lungo**: chiuso per la pagina Agenti (`agenti_fondo_del_testo_riarma`, Task 7).
+- **Task 8 m1** («+N» a 2 px dal «Nega» della riga 0 della Coda): affrontato nel Task 3 (i pulsanti del permesso nella Coda sono alti 32 e finiscono 4 px sopra le righe, con test sui rettangoli interi).
+- **Task 4 / Task 10: vista Claude e `VoceAperta`**: tolte (Task 6 e Task 3), con i loro test rinati sulle superfici nuove.
+
+### Di F1 non portati in F2 (restano aperti per F3+)
+
+- **Task 8 m6**: legame `Stile::Etichetta`↔`Tema.etichetta-*` solo a commento.
+- **Task 9 (minor)**: test del doppio clic «{n} avvisi ›»→Coda, test «non riscrive» della fascia, test della scala 0,96, animazioni a vuoto uscendo dalla Panoramica.
+- **Task 2 (minor)**: nome di carta/scheda con token di corpo/tracking condivisi con `MisuraTesto` (o componente `EtichettaCarta`).
+- **Task 7 m1–m3 di `task-7-rereview-1.md`**: il file è andato perso; la revisione dell'intera fetta ricontrolla la Coda col permesso da capo.
+
+### Nuovi rimandati di F2
+
+- Task 1: percorsi extra (`init`, `vai`, `voce-altre`, `in-attesa`, ↑) senza test con voce a solo pulsante delicato; asserzioni «Invio non concede» che non possono fallire (usare Ctrl+Invio); la regola C20 riarma senza `Permessi.chiede`; fuoco carta 1→0; `solo_delicato` duplica `solo_consenti`; CHANGELOG «Tab va avanti» non provato.
+- Task 2: il test di `chiesto` non prova il fuso (passare il fuso a `permesso_ui`); `testo_notifica` dovrebbe leggere la sessione da `v.permesso.sessione`; costruttore condiviso per l'`EventoHook` di permesso nei test.
+- Task 3: passo di 24 px nel test del doppio clic per dimezzare il tempo della suite.
+- Task 4: la pillola (altra finestra, solo «Consenti» protetto, senza armamenti) non si mostra inerte: oltre F2 (F4).
+- Task 6: helper `tasto`/`etichetta_col_fuoco` ripetuti; voce della casa con `creata` nel futuro nel test; nessun test della nota su due righe con titolo lungo; senza chiave la cartella solo nel dettaglio; filo g4; «Collega» primario.
+- Task 8: O1, la regola «una volta sola» di `permesso-chiesto` dipende da `vista_claude` falso a ogni apertura: commento o `debug_assert!` in `pannello_aperto`.
+- Task 9: misura a riposo del pannello (con la finestra visibile) più alta di 0,02 punti di CPU di F1 a parità di sessione; da riguardare se cresce.
+
+### Per la revisione finale
+
+- Task 3: mutazioni non eseguite D2, E, F, G, H, K, L, N, O, P, R (patch in `scratchpad\mut3p\`, `rerev3b.sh`): provare per prime P (posto invisibile di «Consenti» cliccabile) e O (posto di «Nega» che si sposta). Posizioni durante lo scivolamento di 26 px in 280 ms dalla Panoramica non verificate.
+- Task 1/4: doppio riarmo possibile (`consenti-compare` del C20 più `claude_riarma`) quando A→B passa da «Apri» a «Consenti»: il conteggio degli `armamenti` lo tiene presente (innocuo).
+
+### Da provare dal vivo con Paolo (Task 9 Step 5)
+
+- Claude Code vero con un permesso **negato e uno consentito** dalla pagina Agenti (anche arrivandoci col clic sulla pillola), dalla Coda e dalla voce della Panoramica; nella Coda «Consenti» entro 600 ms ignorato (aspetto inerte visibile) e permesso lungo consentito solo dopo il fondo.
+- **Doppio clic reale su «Nega» con due permessi** (Panoramica e Agenti); la voce con un solo pulsante delicato (`--prova-avviso`); nomi delle sessioni = titoli delle schede di Claude Code.
+- Tastiera e **Narrator con UI Automation vera** su righe, dettaglio, permesso e carte; anello del fuoco nella colonna che scorre e nel testo del permesso a 125/150 %; pagina Agenti a 100 % e 175 %.
+- **Tocco su uno schermo touch vero, penna, touchpad** (clic senza muovere il cursore): un tocco non decide un permesso (regola del movimento, Task 7); Esc nel permesso di Agenti chiude il pannello; il riquadro del comando mostra circa due righe alla volta (un testo lungo chiede molti ↓).
+- Fuori da F2, nello stesso giro se Paolo vuole: volume, Griglia/Orologio, fascia e avvisi, scala 0,96, luce della carta a 125/150 %, `pc.slint` `to-uppercase()` con Narrator.
+
+### Da dire a Paolo
+
+- «Apri» della voce nella Panoramica porta ancora alla Coda; è la pillola che porta alla pagina Agenti (la decisione 5 riguarda solo la pillola).
+- Subito dopo l'apertura dalla pillola un Invio nega (il fuoco è su «Nega»; nei primi 600 ms lo ferma la guardia).
+- Esc nel permesso di Agenti chiude il pannello; col touchscreen un tocco non decide un permesso (usa Ctrl+Invio o il mouse): se Paolo usa il touchscreen va rivisto.
+- Scelte del coordinatore da confermare o togliere: «Torna all'elenco» come pulsante per il mouse (costo: un pulsante da togliere); l'etichetta sopra il campo secondo lo strumento («TERMINALE», «FILE», «INDIRIZZO», «RICERCA»); senza chiave da amministratore la nota della spesa in chiaro nella testata.
