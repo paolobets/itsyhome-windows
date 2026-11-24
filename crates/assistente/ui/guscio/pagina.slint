@@ -118,6 +118,9 @@ export component TestataPagina inherits Rectangle {
         overflow: elide;
         font-weight: 700;
         font-size: 18px;
+        // Lo stesso tracking dello stile Titolo della carta (`misura.slint`): la misura in pixel
+        // di `moduli::misura` (SPAZIO_R1) vale così anche qui.
+        letter-spacing: -0.27px;
         color: Tema.testo;
     }
 

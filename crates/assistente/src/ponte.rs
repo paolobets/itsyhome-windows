@@ -2442,6 +2442,8 @@ impl Ponte {
         aggiorna_modello(&self.modello_attese, voci);
         // Le voci alzano il tono delle carte dei loro moduli (e la luce dell'isola).
         self.moduli_livelli();
+        // I permessi in attesa sono voci: la carta di Agenti li dice come la pagina («1 ti aspetta»).
+        self.moduli_aggiorna("agenti");
         self.claude_riarma(Instant::now());
         servizi::colora_linea();
         if let Some(p) = self.pannello.borrow().upgrade() {

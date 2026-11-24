@@ -7,7 +7,7 @@
 
 use super::agenti::{COLLEGA, TERMINALE};
 use super::registro::tono_ui;
-use super::Tono;
+use super::{Tono, R1};
 use crate::attenzione::DatiPermesso;
 use crate::claude::{nome_visto, RigaSessione, TestoLimite};
 use crate::{CampoDettaglioUi, LimiteUi, RigaModuloUi, SintesiUi, StatoPaginaUi, TipoStatoPaginaUi};
@@ -129,11 +129,13 @@ fn limite(nome: &str, l: Option<(TestoLimite, bool)>, con_fornitore: bool, sogli
     }
 }
 
-/// La riga di sintesi: titolo e sotto-testo dalle righe (i permessi vincono, poi chi lavora),
-/// i limiti delle 5 ore e dei 7 giorni (`ricordato`: da prima del riavvio), la spesa già scritta
-/// da `claude::testo_spesa` e «Dettagli» solo con la chiave da amministratore.
+/// La riga di sintesi: il titolo è `r1.fatto` (lo stesso della carta: `agenti::riassunto`), il tono
+/// e il sotto-testo vengono dalle righe (i permessi vincono, poi chi lavora), i limiti delle 5 ore
+/// e dei 7 giorni (`ricordato`: da prima del riavvio), la spesa già scritta da
+/// `claude::testo_spesa` e «Dettagli» solo con la chiave da amministratore.
 pub fn sintesi(
     collegato: bool,
+    r1: &R1,
     righe: &[RigaModuloUi],
     limiti: [Option<(TestoLimite, bool)>; 2],
     soglia: u8,
@@ -144,25 +146,22 @@ pub fn sintesi(
     let permessi = righe.iter().filter(|r| !r.voce.is_empty()).count();
     // Una riga col permesso ha sempre il tono Aspetta: basta il tono.
     let lavorano = righe.iter().filter(|r| r.tono == tono_ui(Tono::Attivo)).count();
-    let (tono, titolo, sotto) = if !collegato {
-        (Tono::Vuoto, "Da collegare".to_owned(), String::new())
+    // Quando il titolo è già il conteggio delle sessioni, niente sotto-testo doppio.
+    let (tono, sotto) = if !collegato {
+        (Tono::Vuoto, String::new())
     } else if permessi > 0 {
-        let titolo = if permessi == 1 { "1 ti aspetta".to_owned() } else { format!("{permessi} ti aspettano") };
-        (Tono::Aspetta, titolo, sessioni(n))
+        (Tono::Aspetta, sessioni(n))
     } else if lavorano > 0 {
-        (Tono::Attivo, format!("{lavorano} al lavoro"), sessioni(n))
-    } else if n == 0 {
-        (Tono::Calmo, "A riposo".to_owned(), String::new())
+        (Tono::Attivo, sessioni(n))
     } else {
-        // Il titolo è già il conteggio: niente sotto-testo doppio.
-        (Tono::Calmo, sessioni(n), String::new())
+        (Tono::Calmo, String::new())
     };
     let [cinque, sette] = limiti;
     let primo_c_e = cinque.is_some();
     let (azione_id, azione_testo) = if con_chiave { (DETTAGLI, "Dettagli") } else { ("", "") };
     SintesiUi {
         tono: tono_ui(tono),
-        titolo: titolo.into(),
+        titolo: r1.fatto.as_str().into(),
         sotto: sotto.into(),
         l1: limite("5 ore", cinque, true, soglia),
         // Il fornitore sul primo limite che c'è.
@@ -363,8 +362,10 @@ mod test {
         assert_eq!(nota(true, true), su_windows("Apre l'ultimo terminale usato"), "il ripiego vince");
     }
 
-    fn sintesi_di(collegato: bool, righe: &[RigaModuloUi]) -> (TonoModuloUi, String, String) {
-        let s = sintesi(collegato, righe, [None, None], 80, ("", SPESA_SENZA_CHIAVE), false);
+    /// Il titolo è `r1.fatto` passato (lo dà `agenti::riassunto`); tono e sotto vengono dalle righe.
+    fn sintesi_di(collegato: bool, fatto: &str, righe: &[RigaModuloUi]) -> (TonoModuloUi, String, String) {
+        let r1 = R1 { fatto: fatto.into(), valore: String::new() };
+        let s = sintesi(collegato, &r1, righe, [None, None], 80, ("", SPESA_SENZA_CHIAVE), false);
         (s.tono, s.titolo.to_string(), s.sotto.to_string())
     }
 
@@ -378,18 +379,29 @@ mod test {
         let lavora = riga(&sessione(Stato::Lavora, false), None, false, false);
         let fatto = riga(&sessione(Stato::Fatto, true), None, false, false);
         let permesso = riga(&sessione(Stato::TiAspetta, false), Some(("v", 0, &d)), false, false);
-        assert_eq!(sintesi_di(false, &[]), atteso(TonoModuloUi::Vuoto, "Da collegare", ""));
-        assert_eq!(sintesi_di(false, std::slice::from_ref(&lavora)), atteso(TonoModuloUi::Vuoto, "Da collegare", ""));
-        assert_eq!(sintesi_di(true, &[]), atteso(TonoModuloUi::Calmo, "A riposo", ""));
+        assert_eq!(sintesi_di(false, "Da collegare", &[]), atteso(TonoModuloUi::Vuoto, "Da collegare", ""));
+        assert_eq!(sintesi_di(false, "Da collegare", std::slice::from_ref(&lavora)), atteso(TonoModuloUi::Vuoto, "Da collegare", ""));
+        assert_eq!(sintesi_di(true, "A riposo", &[]), atteso(TonoModuloUi::Calmo, "A riposo", ""));
         // Al lavoro: il conteggio delle sessioni sotto, al singolare con una.
-        assert_eq!(sintesi_di(true, &[lavora.clone(), lavora.clone(), fatto.clone()]), atteso(TonoModuloUi::Attivo, "2 al lavoro", "3 sessioni"));
-        assert_eq!(sintesi_di(true, std::slice::from_ref(&lavora)), atteso(TonoModuloUi::Attivo, "1 al lavoro", "1 sessione"));
+        assert_eq!(sintesi_di(true, "2 al lavoro", &[lavora.clone(), lavora.clone(), fatto.clone()]), atteso(TonoModuloUi::Attivo, "2 al lavoro", "3 sessioni"));
+        assert_eq!(sintesi_di(true, "1 al lavoro", std::slice::from_ref(&lavora)), atteso(TonoModuloUi::Attivo, "1 al lavoro", "1 sessione"));
         // I permessi vincono, al singolare e al plurale.
-        assert_eq!(sintesi_di(true, &[permesso.clone(), lavora.clone()]), atteso(TonoModuloUi::Aspetta, "1 ti aspetta", "2 sessioni"));
-        assert_eq!(sintesi_di(true, &[permesso.clone(), permesso.clone()]), atteso(TonoModuloUi::Aspetta, "2 ti aspettano", "2 sessioni"));
+        assert_eq!(sintesi_di(true, "1 ti aspetta", &[permesso.clone(), lavora.clone()]), atteso(TonoModuloUi::Aspetta, "1 ti aspetta", "2 sessioni"));
+        assert_eq!(sintesi_di(true, "2 ti aspettano", &[permesso.clone(), permesso.clone()]), atteso(TonoModuloUi::Aspetta, "2 ti aspettano", "2 sessioni"));
         // Calme: il titolo è già il conteggio, sotto niente (C17: né «1 sessioni» né doppioni).
-        assert_eq!(sintesi_di(true, std::slice::from_ref(&fatto)), atteso(TonoModuloUi::Calmo, "1 sessione", ""));
-        assert_eq!(sintesi_di(true, &[fatto.clone(), fatto.clone(), fatto]), atteso(TonoModuloUi::Calmo, "3 sessioni", ""));
+        assert_eq!(sintesi_di(true, "1 sessione", std::slice::from_ref(&fatto)), atteso(TonoModuloUi::Calmo, "1 sessione", ""));
+        assert_eq!(sintesi_di(true, "3 sessioni", &[fatto.clone(), fatto.clone(), fatto]), atteso(TonoModuloUi::Calmo, "3 sessioni", ""));
+    }
+
+    /// Il titolo della sintesi è `r1.fatto` così com'è, non rifatto dalle righe (che qui direbbero
+    /// «1 ti aspetta»). Che `r1` sia quello della carta lo prova il ponte (`con_moduli`,
+    /// `titolo_della_sintesi_e_r1`).
+    #[test]
+    fn il_titolo_viene_da_r1() {
+        let d = dati();
+        let permesso = riga(&sessione(Stato::TiAspetta, false), Some(("v", 0, &d)), false, false);
+        let (_, titolo, _) = sintesi_di(true, "Titolo del registro", &[permesso]);
+        assert_eq!(titolo, "Titolo del registro");
     }
 
     fn limite(frazione: f32, azzera: &str) -> TestoLimite {
@@ -400,7 +412,7 @@ mod test {
     }
 
     fn limiti(l: [Option<(TestoLimite, bool)>; 2], soglia: u8) -> [LimiteUi; 2] {
-        let s = sintesi(true, &[], l, soglia, ("", ""), false);
+        let s = sintesi(true, &R1::default(), &[], l, soglia, ("", ""), false);
         [s.l1, s.l2]
     }
 
@@ -446,10 +458,10 @@ mod test {
 
     #[test]
     fn spesa_e_dettagli() {
-        let senza = sintesi(true, &[], [None, None], 80, ("", SPESA_SENZA_CHIAVE), false);
+        let senza = sintesi(true, &R1::default(), &[], [None, None], 80, ("", SPESA_SENZA_CHIAVE), false);
         assert_eq!((senza.spesa.as_str(), senza.spesa_nota.as_str()), ("", SPESA_SENZA_CHIAVE));
         assert_eq!((senza.azione_id.as_str(), senza.azione_testo.as_str()), ("", ""), "senza chiave nessun «Dettagli»");
-        let con = sintesi(true, &[], [None, None], 80, ("412,80 $", "aggiornato alle 14:02"), true);
+        let con = sintesi(true, &R1::default(), &[], [None, None], 80, ("412,80 $", "aggiornato alle 14:02"), true);
         assert_eq!((con.spesa.as_str(), con.spesa_nota.as_str()), ("412,80 $", "aggiornato alle 14:02"));
         assert_eq!((con.azione_id.as_str(), con.azione_testo.as_str()), (DETTAGLI, "Dettagli"));
     }

@@ -1,6 +1,6 @@
 //! Il riassunto dei Collegamenti: quanti sono e quello che l'utente apre di più.
 
-use super::{riga_con_nome, Azione, Riassunto, Tono};
+use super::{riga_con_nome, Azione, Riassunto, Tono, R1};
 use casa_core::config::Collegamento;
 
 /// «Apri {nome}»: il collegamento più usato, come un clic sulla sua card.
@@ -28,6 +28,7 @@ pub fn riassunto(c: &[Collegamento]) -> Riassunto {
             sec: "Aggiungine uno".into(),
             sec_intera: "Aggiungine uno".into(),
             azione: Some(Azione { id: AGGIUNGI, testo: "Aggiungi".into(), icona: "collegamenti" }),
+            r1: R1 { fatto: "Nessun collegamento".into(), valore: String::new() },
         };
     };
     let titolo = format!("{} link", c.len());
@@ -41,6 +42,7 @@ pub fn riassunto(c: &[Collegamento]) -> Riassunto {
         sec,
         sec_intera: intera,
         azione: Some(Azione { id: APRI, testo: format!("Apri {}", primo.nome), icona: "collegamenti" }),
+        r1: R1 { fatto: if c.len() == 1 { "1 collegamento".into() } else { format!("{} collegamenti", c.len()) }, valore: String::new() },
     }
 }
 
@@ -48,6 +50,7 @@ pub fn riassunto(c: &[Collegamento]) -> Riassunto {
 mod test {
     use super::*;
     use crate::moduli::controlla;
+    use crate::moduli::misura::{larghezza, Stile, MARGINE, SPAZIO_R1};
 
     fn col(id: &str, nome: &str, lanci: u32, ultimo: i64) -> Collegamento {
         Collegamento { id: id.into(), nome: nome.into(), url: format!("https://{id}.esempio.lan"), lanci, ultimo_lancio: ultimo }
@@ -84,6 +87,17 @@ mod test {
         assert_eq!(r.azione.map(|a| a.testo), Some("Apri Proxmox".to_owned()));
     }
 
+    /// Il titolo della testata (`r1.fatto`): nessuno, uno, tanti; il valore non c'è.
+    #[test]
+    fn scala_per_stato() {
+        let fatto = |c: &[Collegamento]| riassunto(c).r1;
+        assert_eq!(fatto(&[]), R1 { fatto: "Nessun collegamento".into(), valore: String::new() });
+        assert_eq!(fatto(&[col("a", "NAS", 0, 0)]).fatto, "1 collegamento");
+        assert_eq!(fatto(&[col("a", "NAS", 0, 0), col("b", "Proxmox", 4, 9)]).fatto, "2 collegamenti");
+        let molti: Vec<Collegamento> = (0..100).map(|i| col(&format!("c{i}"), "NAS", 0, 0)).collect();
+        assert_eq!(fatto(&molti).fatto, "100 collegamenti");
+    }
+
     #[test]
     fn ogni_gradino_sta_nei_limiti() {
         let molti: Vec<Collegamento> = (0..100).map(|i| col(&format!("c{i}"), "NAS", 0, 0)).collect();
@@ -95,8 +109,24 @@ mod test {
         ] {
             let r = riassunto(&c);
             assert_eq!(controlla("collegamenti", &r), Ok(()), "{r:?}");
+            // Il titolo della testata c'è sempre, e `controlla` lo misura (caratteri e pixel).
+            assert!(!r.r1.fatto.is_empty(), "{r:?}");
+            assert!(larghezza(&r.r1.fatto, Stile::Titolo) <= SPAZIO_R1 - MARGINE, "{r:?}");
         }
         assert_eq!(controlla("collegamenti", &riassunto(&[])), Ok(()));
+        // Il nome più lungo non entra nel titolo della testata: nome da 40 «W», titolo uguale.
+        let lungo = riassunto(&[col("a", &"W".repeat(40), 4, 1)]);
+        assert_eq!(lungo.r1.fatto, "1 collegamento");
+        assert_eq!(controlla("collegamenti", &lungo), Ok(()));
+    }
+
+    /// Senza collegamenti il titolo della testata dice la cosa a parole: mai «0».
+    #[test]
+    fn assenza_non_e_zero() {
+        let r = riassunto(&[]);
+        assert!(!r.r1.fatto.contains('0') && !r.r1.valore.contains('0'), "{r:?}");
+        assert!(!r.r1.fatto.is_empty(), "mai un vuoto");
+        assert_eq!(r.r1.fatto, "Nessun collegamento");
     }
 
     /// Un nome di 40 «W»: nella carta ellissi, intero per Narrator e nel bottone; il registro non

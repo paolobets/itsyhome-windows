@@ -24,6 +24,13 @@ pub const SPAZIO_PIENO: f32 = 154.0;
 pub const SPAZIO_CON_AZIONE: f32 = 116.0;
 /// Differenza ammessa fra questa misura e la resa di Slint, che applica anche la crenatura.
 pub const MARGINE: f32 = 3.0;
+/// Spazio per il `fatto` di `r1`, il titolo della testata di pagina (`Stile::Titolo`, come la
+/// carta: il titolo della testata ha lo stesso tracking).
+pub const SPAZIO_R1: f32 = 320.0;
+/// Caratteri al più del `fatto` di `r1` (spec §5.10).
+pub const MASSIMO_FATTO: usize = 32;
+/// Caratteri al più del `valore` di `r1` (spec §5.10).
+pub const MASSIMO_VALORE: usize = 8;
 
 const INTER_MEDIO: &[u8] = include_bytes!("../../assets/font/Inter-Medium.ttf");
 const INTER_NERO: &[u8] = include_bytes!("../../assets/font/Inter-Bold.ttf");

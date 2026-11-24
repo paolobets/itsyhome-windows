@@ -85,9 +85,8 @@ impl Ponte {
     fn riassunto_di(&self, id: &str) -> Option<Riassunto> {
         match id {
             "agenti" => {
-                let collegato = self.casa.con_config(|c| c.claude.collegato);
-                let (cinque, sette) = self.limiti_a(adesso_unix());
-                Some(agenti::riassunto(collegato, &self.claude_sessioni.borrow(), (cinque.as_ref(), sette.as_ref())))
+                let pagina = self.permessi_della_pagina();
+                Some(self.riassunto_agenti(&Self::permessi_dal_piu_vecchio(&pagina), adesso_unix()))
             }
             "casa" => {
                 let (stato, menu, dati) = (self.stato.borrow(), self.menu.borrow(), self.dati_delle.borrow());
@@ -96,6 +95,17 @@ impl Ponte {
             "collegamenti" => Some(self.casa.con_config(|c| collegamenti::riassunto(&c.collegamenti))),
             _ => None,
         }
+    }
+
+    /// La carta di Agenti (e il suo `r1`, il titolo della sintesi della pagina) a un'ora data.
+    /// `permessi`: i permessi che la pagina mostra, **uno per sessione con riga**, dal più vecchio
+    /// (`permessi_dal_piu_vecchio`). È la stessa `permessi_della_pagina` della pagina: «{n} ti
+    /// aspettano» conta le sessioni con un permesso, non i permessi, perché è il numero di righe
+    /// che la pagina porta in alto.
+    pub(super) fn riassunto_agenti(&self, permessi: &[agenti::PermessoInAttesa], ora: i64) -> Riassunto {
+        let collegato = self.casa.con_config(|c| c.claude.collegato);
+        let (cinque, sette) = self.limiti_a(ora);
+        agenti::riassunto(collegato, &self.claude_sessioni.borrow(), (cinque.as_ref(), sette.as_ref()), permessi)
     }
 
     /// Un dato del modulo `id` è cambiato: a pannello aperto se ne ricalcola il riassunto e, se è
@@ -153,7 +163,11 @@ impl Ponte {
         match (modulo, azione) {
             ("agenti", agenti::TERMINALE) => {
                 // La sessione di cui parla la carta, come il clic sulla sua riga nella vista.
-                let impronta = agenti::sessione_dell_azione(&self.claude_sessioni.borrow()).map(|s| claude::id_sessione(&s.id));
+                // Con un permesso in attesa la carta parla del permesso e non ha azione.
+                let pagina = self.permessi_della_pagina();
+                let permessi = Self::permessi_dal_piu_vecchio(&pagina);
+                let impronta =
+                    agenti::sessione_dell_azione(&self.claude_sessioni.borrow(), &permessi).map(|s| claude::id_sessione(&s.id));
                 if let Some(impronta) = impronta {
                     self.claude_apri_terminale(&impronta);
                 }
@@ -266,6 +280,125 @@ mod test {
         ponte.claude_evento(evento("a", TipoEvento::UserPromptSubmit), 1, Instant::now());
         assert_eq!(titolo(&p, 0), "1 al lavoro");
         assert_eq!(p.get_moduli().row_data(0).map(|m| m.tono), Some(TonoModuloUi::Attivo));
+    }
+
+    /// Un permesso in attesa di `sessione`, come lo manda Claude Code (il canale non c'è: prova).
+    fn chiedi_permesso(ponte: &crate::ponte::Ponte, numero: u64, sessione: &str, sequenza: u64) {
+        let e = EventoHook { strumento: Some("Bash".into()), riassunto: Some("npm test".into()), ..evento(sessione, TipoEvento::PermissionRequest) };
+        ponte.claude_permesso(numero, e, None, sequenza, Instant::now());
+    }
+
+    /// Il pannello aperto con la pagina Agenti viva e Claude collegato.
+    fn pagina_agenti_aperta() -> (Pannello, std::rc::Rc<crate::ponte::Ponte>, impl Sized) {
+        let (spegni, ponte, pillola, cartella) = ponte_di_prova();
+        let p = Pannello::new().expect("pannello");
+        ponte.riempi(&p);
+        ponte.pannello_aperto(&p);
+        ponte.casa().aggiorna_config(|c| c.claude.collegato = true);
+        (p, ponte, (spegni, pillola, cartella))
+    }
+
+    /// m2: la carta di Agenti dice il permesso come la pagina. Un permesso in attesa: «1 ti aspetta»
+    /// col tono Aspetta e senza azione (il permesso si decide nella pagina); tolto, la carta torna
+    /// a parlare della sessione.
+    #[test]
+    fn carta_agenti_segue_i_permessi() {
+        let (p, ponte, _tieni) = pagina_agenti_aperta();
+        ponte.claude_evento(evento("a", TipoEvento::UserPromptSubmit), 1, Instant::now());
+        assert_eq!(titolo(&p, 0), "1 al lavoro");
+        chiedi_permesso(&ponte, 9, "a", 2);
+        let carta = p.get_moduli().row_data(0).expect("la carta di Agenti");
+        assert_eq!(
+            (carta.titolo.as_str(), carta.tono, carta.parola.as_str(), carta.sec.as_str(), carta.con_azione),
+            ("1 ti aspetta", TonoModuloUi::Aspetta, "Aspetta", "cartella-a: Comando", false)
+        );
+        // Un altro permesso, di un'altra sessione: la carta conta le sessioni.
+        ponte.claude_evento(evento("b", TipoEvento::UserPromptSubmit), 3, Instant::now());
+        chiedi_permesso(&ponte, 10, "b", 4);
+        let carta = p.get_moduli().row_data(0).expect("la carta di Agenti");
+        assert_eq!((carta.titolo.as_str(), carta.sec.as_str()), ("2 ti aspettano", "2 permessi"));
+        // «Apri il terminale» non c'è, e se arriva lo stesso (clic su una carta vecchia) non fa nulla.
+        portati_davanti_prova();
+        ponte.azione_modulo("agenti", crate::moduli::agenti::TERMINALE);
+        assert!(portati_davanti_prova().is_empty(), "con un permesso la carta non ha azione");
+        // Tolti i permessi la carta torna a parlare delle sessioni.
+        ponte.claude_decidi(9, claude_hook::Decisione::Nega, Instant::now());
+        assert_eq!(titolo(&p, 0), "1 ti aspetta");
+        ponte.claude_decidi(10, claude_hook::Decisione::Nega, Instant::now());
+        assert_eq!(titolo(&p, 0), "2 al lavoro");
+        assert_eq!(p.get_moduli().row_data(0).map(|m| (m.tono, m.con_azione)), Some((TonoModuloUi::Attivo, true)));
+    }
+
+    /// C14(a): il titolo della sintesi della pagina e `r1.fatto` del registro per «agenti» sono lo
+    /// stesso testo, per ogni gradino. Il confronto passa dal ponte (la pagina scrive la sintesi, il
+    /// registro tiene il riassunto), con in più il testo atteso: non basta che coincidano.
+    #[test]
+    fn titolo_della_sintesi_e_r1() {
+        let (p, ponte, _tieni) = pagina_agenti_aperta();
+        let aggiorna = || {
+            ponte.moduli_aggiorna("agenti");
+            ponte.aggiorna_vista_claude_a(super::super::con_claude::adesso_unix());
+        };
+        let titolo_pagina = || p.get_elenco_sintesi().titolo.to_string();
+        let r1 = || ponte.registro().r1("agenti").map(|r| r.fatto.clone()).unwrap_or_default();
+
+        // Scollegata.
+        ponte.casa().aggiorna_config(|c| c.claude.collegato = false);
+        ponte.vista_claude(true);
+        aggiorna();
+        let mut visti = Vec::new();
+        let mut passo = |atteso: &str| {
+            aggiorna();
+            assert_eq!(titolo_pagina(), atteso, "la sintesi della pagina");
+            assert_eq!(r1(), atteso, "r1 del registro");
+            visti.push(atteso.to_owned());
+        };
+        passo("Da collegare");
+        // Collegata, nessuna sessione.
+        ponte.casa().aggiorna_config(|c| c.claude.collegato = true);
+        passo("A riposo");
+        // Due al lavoro.
+        ponte.claude_evento(evento("a", TipoEvento::UserPromptSubmit), 1, Instant::now());
+        ponte.claude_evento(evento("b", TipoEvento::UserPromptSubmit), 2, Instant::now());
+        passo("2 al lavoro");
+        // Un permesso, poi due (di due sessioni).
+        chiedi_permesso(&ponte, 5, "a", 3);
+        passo("1 ti aspetta");
+        chiedi_permesso(&ponte, 6, "b", 4);
+        passo("2 ti aspettano");
+        // Due permessi della stessa sessione: la pagina porta una riga sola, la carta conta una sessione.
+        ponte.claude_decidi(6, claude_hook::Decisione::Nega, Instant::now());
+        chiedi_permesso(&ponte, 7, "a", 5);
+        passo("1 ti aspetta");
+        assert_eq!(visti.len(), 6);
+    }
+
+    /// C14(b): i permessi della pagina, una mappa senza ordine, arrivano alla carta dal più vecchio
+    /// (ora della richiesta, poi numero della voce) sempre allo stesso modo.
+    #[test]
+    fn permessi_dal_piu_vecchio_in_modo_deterministico() {
+        use crate::attenzione::DatiPermesso;
+        use std::collections::HashMap;
+        let dati = |alle| DatiPermesso { alle, ..Default::default() };
+        let mappa: HashMap<String, (String, i32, DatiPermesso)> = [
+            ("sessione-c", "claude.permesso.10", 100),
+            ("sessione-a", "claude.permesso.9", 100),
+            ("sessione-d", "claude.permesso.3", 200),
+            ("sessione-b", "claude.permesso.12", 50),
+        ]
+        .into_iter()
+        .map(|(sessione, voce, alle)| (sessione.to_owned(), (voce.to_owned(), 0, dati(alle))))
+        .collect();
+        let ordine = |m: &HashMap<String, (String, i32, DatiPermesso)>| -> Vec<String> {
+            crate::ponte::Ponte::permessi_dal_piu_vecchio(m).iter().map(|(i, _)| (*i).to_owned()).collect()
+        };
+        // Per ora, poi per numero (9 prima di 10: numerico, non alfabetico).
+        assert_eq!(ordine(&mappa), ["sessione-b", "sessione-a", "sessione-c", "sessione-d"]);
+        for _ in 0..20 {
+            let rifatta: HashMap<_, _> = mappa.clone().into_iter().collect();
+            assert_eq!(ordine(&rifatta), ordine(&mappa), "stesso ordine a ogni giro");
+        }
+        assert!(ordine(&HashMap::new()).is_empty());
     }
 
     /// La carta dei Collegamenti segue l'elenco e i lanci; «Apri {nome}» apre il più usato come il

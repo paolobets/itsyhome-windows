@@ -94,6 +94,13 @@ impl Registro {
         cambiato
     }
 
+    /// Il titolo della testata di pagina che il registro tiene per un modulo, per i test che lo
+    /// confrontano con quello scritto in pagina.
+    #[cfg(test)]
+    pub fn r1(&self, id: &str) -> Option<&super::R1> {
+        self.posto(id).map(|p| &p.riassunto.r1)
+    }
+
     /// Il tono mostrato da un modulo (riassunto alzato dalle voci); `Vuoto` per un id sconosciuto.
     /// Le carte lo leggono da `moduli_ui`, le schede della barra da qui (`pannello::schede_ui`).
     pub fn tono_effettivo(&self, id: &str) -> Tono {
@@ -203,7 +210,7 @@ pub fn tono_ui(t: Tono) -> TonoModuloUi {
 mod test {
     use super::*;
     use crate::moduli::misura::{larghezza, Stile, MARGINE, SPAZIO_CON_AZIONE, SPAZIO_PIENO};
-    use crate::moduli::Azione;
+    use crate::moduli::{Azione, R1};
 
     fn config(ids: &[&str]) -> Vec<ConfigModulo> {
         ids.iter().map(|id| ConfigModulo { id: (*id).into(), fissato: true }).collect()
@@ -221,6 +228,7 @@ mod test {
             sec: sec.into(),
             sec_intera: sec.into(),
             azione: None,
+            r1: R1::default(),
         }
     }
 

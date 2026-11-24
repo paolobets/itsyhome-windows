@@ -1,6 +1,6 @@
 //! Il riassunto del PC: la scala per stato della carta, da un campione delle statistiche.
 
-use super::{riga, Riassunto, Tono};
+use super::{riga, Riassunto, Tono, R1};
 use crate::pc_stats::{StatPc, SOGLIA_BATTERIA_INFO};
 
 /// Da qui in su CPU o RAM meritano uno sguardo.
@@ -11,7 +11,17 @@ fn percento(v: f32) -> u32 {
 }
 
 fn carta(tono: Tono, titolo: String, testo: &str) -> Riassunto {
-    Riassunto { tono, titolo, titolo_numerico: false, sec: riga(testo, false), sec_intera: testo.into(), azione: None }
+    let titolo_r1 = titolo.clone();
+    Riassunto {
+        tono,
+        titolo,
+        titolo_numerico: false,
+        sec: riga(testo, false),
+        sec_intera: testo.into(),
+        azione: None,
+        // Il titolo della testata è quello della carta; senza misura è il motivo (`primo_avvio`).
+        r1: R1 { fatto: titolo_r1, valore: String::new() },
+    }
 }
 
 /// La carta del PC. `None`: il primo campione utile non è ancora arrivato (la CPU è una differenza
@@ -46,6 +56,7 @@ pub fn riassunto(stat: Option<&StatPc>) -> Riassunto {
 mod test {
     use super::*;
     use crate::moduli::controlla;
+    use crate::moduli::misura::MASSIMO_FATTO;
     use crate::pc_stats::{LetturaBatteria, StatoBatteria};
 
     const GB: u64 = 1 << 30;
@@ -85,6 +96,23 @@ mod test {
         assert!(riassunto(Some(&piena)).azione.is_none(), "il PC non ha azioni");
     }
 
+    /// Il titolo della testata (`r1.fatto`) segue la scala della carta; al primo avvio è il motivo.
+    #[test]
+    fn r1_per_stato() {
+        let fatto = |s: Option<&StatPc>| riassunto(s).r1.fatto;
+        assert_eq!(fatto(None), "Lettura in corso");
+        assert_eq!(fatto(Some(&stat(Some(90.4), 40, None))), "CPU 90 %");
+        assert_eq!(fatto(Some(&stat(Some(12.0), 88, None))), "RAM 88 %");
+        assert_eq!(fatto(Some(&stat(Some(86.0), 97, None))), "RAM 97 %");
+        assert_eq!(fatto(Some(&stat(Some(12.0), 40, Some((18.0, StatoBatteria::Scarica))))), "Batteria 18 %");
+        assert_eq!(fatto(Some(&stat(Some(12.0), 40, Some((18.0, StatoBatteria::InCarica))))), "Tutto regolare");
+        assert_eq!(fatto(Some(&stat(Some(12.0), 40, None))), "Tutto regolare");
+        let mut senza = stat(None, 40, None);
+        senza.ram_totale = 0;
+        assert_eq!(fatto(Some(&senza)), "Misure non lette", "nessuna misura: il motivo, non «Tutto regolare»");
+        assert!(riassunto(None).r1.valore.is_empty());
+    }
+
     #[test]
     fn ogni_gradino_sta_nei_limiti() {
         for s in [
@@ -98,6 +126,7 @@ mod test {
             let r = riassunto(Some(&s));
             assert_eq!(controlla("pc", &r), Ok(()), "{r:?}");
             assert!(!r.sec.ends_with('…'), "{r:?}");
+            assert!(!r.r1.fatto.is_empty() && r.r1.fatto.chars().count() <= MASSIMO_FATTO, "{r:?}");
         }
         let r = riassunto(Some(&stat(Some(84.0), 84, Some((100.0, StatoBatteria::Scarica)))));
         assert_eq!(r.sec, "CPU 84 %, RAM 84 %");
@@ -117,5 +146,10 @@ mod test {
         assert_eq!(vista(&r), (Tono::Vuoto, "—", "Misure non lette"));
         let r = riassunto(Some(&stat(None, 40, None)));
         assert_eq!(r.sec, "RAM 40 %", "CPU non letta: solo la RAM");
+        // Anche il titolo della testata: «—» no, il motivo a parole; mai «0 %».
+        for r in [riassunto(None), riassunto(Some(&senza))] {
+            assert!(!r.r1.fatto.contains('0') && !r.r1.valore.contains('0'), "{r:?}");
+            assert!(!r.r1.fatto.is_empty() && r.r1.fatto != "—", "{r:?}");
+        }
     }
 }

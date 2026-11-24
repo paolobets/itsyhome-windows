@@ -1,6 +1,6 @@
 //! Il riassunto di Casa (Home Assistant): la scala per stato della carta.
 
-use super::{misura, riga, Azione, Riassunto, Tono};
+use super::{misura, riga, Azione, Riassunto, Tono, R1};
 use crate::orologio::temperatura_breve;
 use crate::ponte::{frase_errore, luci_accese, riprovabile};
 use casa_core::eventi::StatoConnessione;
@@ -18,7 +18,7 @@ fn azione(id: &'static str, testo: &str, icona: &'static str) -> Option<Azione> 
 }
 
 fn carta(tono: Tono, titolo: String, sec: String, sec_intera: String, azione: Option<Azione>) -> Riassunto {
-    Riassunto { tono, titolo, titolo_numerico: false, sec, sec_intera, azione }
+    Riassunto { tono, titolo, titolo_numerico: false, sec, sec_intera, azione, r1: R1::default() }
 }
 
 /// Riassunto con la riga già pronta (uguale per la carta e per Narrator).
@@ -69,9 +69,32 @@ fn temperature(menu: &MenuData, con_azione: bool) -> Option<(String, String)> {
     }
 }
 
+/// Il titolo della testata della pagina (`r1.fatto`): lo stato della connessione, poi le luci
+/// accese a parole («Luci spente», mai «0 luci»). Le luci sono quelle del menu, senza lo stato
+/// ottimistico dei comandi appena dati.
+fn fatto_della_testata(stato: &StatoConnessione, menu: Option<&MenuData>) -> String {
+    match (stato, menu) {
+        (StatoConnessione::NonConfigurato, _) => "Da collegare".into(),
+        (StatoConnessione::InConnessione, _) | (StatoConnessione::Connesso, None) => "Mi collego".into(),
+        (StatoConnessione::Connesso, Some(m)) => match luci_accese(m).len() {
+            0 => "Luci spente".into(),
+            1 => "1 luce accesa".into(),
+            n => format!("{n} luci accese"),
+        },
+        _ => "Scollegata".into(),
+    }
+}
+
 /// La carta di Casa: lo stato della connessione, gli ultimi dati arrivati (`menu`) e l'ora in cui
 /// sono arrivati (`dati_delle`, «hh:mm»).
 pub fn riassunto(stato: &StatoConnessione, menu: Option<&MenuData>, dati_delle: Option<&str>) -> Riassunto {
+    let mut r = carta_di(stato, menu, dati_delle);
+    r.r1 = R1 { fatto: fatto_della_testata(stato, menu), valore: String::new() };
+    r
+}
+
+/// La carta senza il titolo della testata (`riassunto` lo aggiunge).
+fn carta_di(stato: &StatoConnessione, menu: Option<&MenuData>, dati_delle: Option<&str>) -> Riassunto {
     let collega = || azione(COLLEGA, "Collega", "collegamenti");
     match (stato, menu) {
         (StatoConnessione::NonConfigurato, _) => fisso(Tono::Vuoto, "Da collegare", "Collega la casa", collega()),
@@ -178,6 +201,23 @@ mod test {
         assert_eq!(vista(&riassunto(&S::Connesso, Some(&casa(3, None, None)), None)), (Tono::Calmo, "3 luci", "Nessun sensore", Some("Spegni tutte")));
     }
 
+    /// Il titolo della testata (`r1.fatto`): lo stato della connessione, poi le luci accese a parole.
+    #[test]
+    fn r1_per_stato() {
+        use StatoConnessione as S;
+        let fatto = |s: &StatoConnessione, m: Option<&MenuData>| riassunto(s, m, Some("10:42")).r1;
+        assert_eq!(fatto(&S::NonConfigurato, None).fatto, "Da collegare");
+        assert_eq!(fatto(&S::InConnessione, None).fatto, "Mi collego");
+        assert_eq!(fatto(&S::Connesso, None).fatto, "Mi collego", "connessa ma senza dati");
+        for s in [S::Disconnesso, S::TokenNonValido, S::TokenMancante, S::Errore("timeout".into())] {
+            assert_eq!(fatto(&s, Some(&casa(2, None, None))).fatto, "Scollegata", "{s:?}");
+        }
+        assert_eq!(fatto(&S::Connesso, Some(&casa(0, None, None))).fatto, "Luci spente");
+        assert_eq!(fatto(&S::Connesso, Some(&casa(1, None, None))).fatto, "1 luce accesa");
+        assert_eq!(fatto(&S::Connesso, Some(&casa(4, Some("21"), Some(9.0)))).fatto, "4 luci accese");
+        assert_eq!(fatto(&S::Connesso, Some(&casa(4, None, None))).valore, "");
+    }
+
     /// Coi dati peggiori (cento luci, temperature negative coi decimali, la frase d'errore più
     /// lunga di `frase_errore`) ogni gradino sta nella carta senza accorciare un testo fisso.
     #[test]
@@ -199,8 +239,10 @@ mod test {
                 let r = riassunto(s, m.as_ref(), Some("23:59"));
                 assert_eq!(controlla("casa", &r), Ok(()), "{r:?}");
                 assert!(!r.sec.ends_with('…'), "un testo fisso non si accorcia: {r:?}");
+                assert!(!r.r1.fatto.is_empty() && !r.r1.fatto.ends_with('…'), "{r:?}");
             }
         }
+        assert_eq!(riassunto(&S::Connesso, menu[1].as_ref(), None).r1.fatto, "100 luci accese");
         let cento = riassunto(&S::Connesso, menu[1].as_ref(), None);
         assert_eq!((cento.titolo.as_str(), cento.sec.as_str()), ("100 luci", "-12,6° dentro"), "accanto al bottone resta dentro");
         let spente = riassunto(&S::Connesso, menu[2].as_ref(), None);
@@ -215,8 +257,11 @@ mod test {
             let r = riassunto(&s, None, None);
             assert!(!r.titolo.contains('0') && !r.sec.contains('0'), "{s:?}: {r:?}");
             assert!(!r.titolo.is_empty() && !r.sec.is_empty(), "{s:?}: mai un vuoto");
+            assert!(!r.r1.fatto.contains('0') && !r.r1.valore.contains('0'), "{s:?}: {r:?}");
+            assert!(!r.r1.fatto.is_empty(), "{s:?}: mai un vuoto nel titolo della testata");
         }
         let r = riassunto(&S::Connesso, Some(&casa(0, None, None)), None);
         assert!(!r.titolo.contains('0') && !r.sec.contains('0'), "nessuna luce accesa: parole, non zero: {r:?}");
+        assert!(!r.r1.fatto.contains('0') && !r.r1.valore.contains('0'), "nessuna luce accesa: «Luci spente»: {r:?}");
     }
 }

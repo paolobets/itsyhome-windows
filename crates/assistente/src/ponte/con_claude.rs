@@ -1132,8 +1132,9 @@ impl Ponte {
     /// voce, il suo posto fra le attese (come nel modello delle attese, che segue `ordinate`) e i
     /// suoi dati. Una riga c'è solo da collegato e per una sessione dell'elenco; il permesso è il
     /// più vecchio della sessione (`permessi_per_sessione`) e la sua voce è fra le attese. Unica
-    /// regola, per la pagina (`aggiorna_vista_claude_a`) e per la pillola (`permesso_ha_riga`).
-    fn permessi_della_pagina(&self) -> HashMap<String, (String, i32, crate::attenzione::DatiPermesso)> {
+    /// regola, per la pagina (`aggiorna_vista_claude_a`), per la pillola (`permesso_ha_riga`) e per
+    /// la carta di Agenti (`riassunto_agenti`, via `permessi_dal_piu_vecchio`).
+    pub(super) fn permessi_della_pagina(&self) -> HashMap<String, (String, i32, crate::attenzione::DatiPermesso)> {
         if !self.casa.con_config(|c| c.claude.collegato) {
             return HashMap::new();
         }
@@ -1150,6 +1151,19 @@ impl Ponte {
                 Some((impronta, (voce, posto as i32, dati)))
             })
             .collect()
+    }
+
+    /// I permessi della pagina (`permessi_della_pagina`: una voce per sessione con riga) dal più
+    /// vecchio, in modo deterministico anche se la mappa non ha ordine: per l'ora della richiesta
+    /// (`DatiPermesso.alle`), poi per il numero della voce. È l'elenco che la carta di Agenti
+    /// riceve (`agenti::riassunto`): («impronta della sessione», dati).
+    pub(super) fn permessi_dal_piu_vecchio(
+        permessi: &HashMap<String, (String, i32, crate::attenzione::DatiPermesso)>,
+    ) -> Vec<(&str, &crate::attenzione::DatiPermesso)> {
+        let mut v: Vec<(&str, &str, &crate::attenzione::DatiPermesso)> =
+            permessi.iter().map(|(impronta, (voce, _, d))| (impronta.as_str(), voce.as_str(), d)).collect();
+        v.sort_by_key(|(impronta, voce, d)| (d.alle, claude::id_permesso_da_voce(voce).unwrap_or(u64::MAX), *impronta));
+        v.into_iter().map(|(impronta, _, d)| (impronta, d)).collect()
     }
 
     /// La pagina Agenti ha la riga che porta questo permesso (id della voce), secondo
@@ -1225,7 +1239,10 @@ impl Ponte {
             claude::testo_spesa(ultimo.as_ref().and_then(|(_, esito)| esito.as_ref().ok()), con_chiave)
         };
         let soglia = self.casa.con_config(|c| c.claude.soglia_limite).clamp(50, 100);
-        let sintesi = pagina_agenti::sintesi(collegato, &voci, self.limiti_della_pagina(ora), soglia, (&spesa, &nota), con_chiave);
+        // Il titolo della sintesi è `r1.fatto` della carta di Agenti: un solo testo per i due posti,
+        // calcolato dagli stessi permessi della pagina.
+        let r1 = self.riassunto_agenti(&Self::permessi_dal_piu_vecchio(&permessi), ora).r1;
+        let sintesi = pagina_agenti::sintesi(collegato, &r1, &voci, self.limiti_della_pagina(ora), soglia, (&spesa, &nota), con_chiave);
         let stato = pagina_agenti::stato(collegato, voci.len());
         let n = super::aggiorna_modello(&self.elenco_righe, voci);
         self.casa.diagnosi().conta_n(Contatore::ui_righe, n);
