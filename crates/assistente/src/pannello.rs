@@ -551,23 +551,10 @@ impl Apertura {
             #[cfg(not(windows))]
             let _ = id;
         });
-        // Un collegamento: il browser predefinito e, se è partito, il pannello si chiude (fuori da
-        // questo callback). Se non è partito il pannello resta aperto e lo dice.
-        let a = self.io.clone();
-        pannello.on_apri_collegamento(move |id| {
-            if a.upgrade().is_some_and(|ap| ap.ponte.apri_collegamento(&id)) {
-                dopo(&a, Apertura::chiudi);
-            }
-        });
-        // «Modifica» e «Aggiungi un collegamento»: le Impostazioni sulla scheda Collegamenti.
-        let a = self.io.clone();
-        pannello.on_gestisci_collegamenti(move || {
-            let a = a.clone();
-            finestra_impostazioni::apri_alla_sezione(finestra_impostazioni::SEZIONE_COLLEGAMENTI, move || {
-                dopo(&a, Apertura::apri_impostazioni);
-                true
-            });
-        });
+        // Un collegamento scelto (`tocca-card`: il browser predefinito e, se è partito, il pannello
+        // si chiude dal gancio `chiudi_pannello` del ponte) e «Modifica» o «Aggiungi un
+        // collegamento» (`azione-pagina`: le Impostazioni sulla scheda Collegamenti) passano dal
+        // ponte, come le carte (Ridisegno F3, Task 5).
 
         let a = self.io.clone();
         pannello.window().on_winit_window_event(move |_, evento| {

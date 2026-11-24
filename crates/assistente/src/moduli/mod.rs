@@ -5,7 +5,7 @@
 //! stanno nei limiti in pixel della carta (spec §13.6–§13.7): `controlla` li misura coi caratteri
 //! incorporati, e il `Registro` scarta un riassunto che non ci sta.
 //!
-//! I riassunti dei moduli sono funzioni pure (`agenti`, `casa`, `pc`): il ponte le chiama quando
+//! I riassunti dei moduli sono funzioni pure (`agenti`, `casa`, `collegamenti`, `pc`): il ponte le chiama quando
 //! cambia un loro dato (`ponte::con_moduli`).
 
 pub mod agenti;
@@ -14,6 +14,7 @@ pub mod collegamenti;
 pub mod misura;
 pub mod pagina_agenti;
 pub mod pagina_casa;
+pub mod pagina_collegamenti;
 pub mod panoramica;
 pub mod pc;
 pub mod registro;

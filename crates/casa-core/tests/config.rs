@@ -392,10 +392,15 @@ fn configurazione_senza_contatori() {
     let mut c = c;
     c.collegamenti[0].lanci = 7;
     c.collegamenti[0].ultimo_lancio = 1_763_600_000;
+    // Un `.tmp` lasciato da una scrittura interrotta, creato a mano prima del salvataggio: se il
+    // salvataggio non passasse dal `.tmp` e dal rename, resterebbe lì.
+    let tmp = d.path().join("assistente.json.tmp");
+    std::fs::write(&tmp, "avanzo di una scrittura interrotta").unwrap();
+    assert!(tmp.exists(), "il `.tmp` di partenza c'è");
     st.salva(&c).unwrap();
     let testo = std::fs::read_to_string(&file).unwrap();
     assert!(testo.contains("\"ultimoLancio\": 1763600000"), "camelCase come il resto: {testo}");
     assert!(testo.contains("\"lanci\": 7"), "{testo}");
     assert_eq!(st.leggi(), c);
-    assert!(!d.path().join("assistente.json.tmp").exists(), "scrittura atomica: il .tmp è stato rinominato");
+    assert!(!tmp.exists(), "scrittura atomica: il `.tmp` è stato riscritto e rinominato, non ne resta nessuno");
 }

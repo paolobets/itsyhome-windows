@@ -7,12 +7,12 @@
 //! cambiato (`aggiorna_modello` tocca solo le righe diverse) e il tono dell'isola solo se è
 //! diverso da quello mostrato.
 
-use super::con_claude::adesso_unix;
 use super::{aggiorna_modello, luci_accese_ora, Ponte};
 use crate::claude;
 use crate::finestra_impostazioni::{apri_alla_sezione, SEZIONE_CASA, SEZIONE_CLAUDE, SEZIONE_COLLEGAMENTI};
 use crate::moduli::registro::tono_ui;
-use crate::moduli::{agenti, casa, collegamenti, pagina_agenti, pagina_casa, pc, Riassunto};
+use crate::moduli::{agenti, casa, collegamenti, pagina_agenti, pagina_casa, pagina_collegamenti, pc, Riassunto};
+use crate::orologio::adesso_unix;
 use crate::pannello::schede_ui;
 use crate::{Pannello, TonoModuloUi};
 use slint::ModelRc;
@@ -183,10 +183,8 @@ impl Ponte {
                 // Il più usato di adesso (lo stesso della carta), aperto come il clic sulla sua
                 // card: se il browser parte il pannello si chiude, se no resta aperto con l'errore.
                 let id = self.casa.con_config(|c| collegamenti::piu_usato(&c.collegamenti).map(|c| c.id.clone()));
-                if id.is_some_and(|id| self.apri_collegamento(&id)) {
-                    if let Some(chiudi) = self.chiudi_pannello.borrow().as_ref() {
-                        chiudi();
-                    }
+                if let Some(id) = id {
+                    self.lancia_collegamento(&id);
                 }
             }
             ("collegamenti", collegamenti::AGGIUNGI) => apri_alla_sezione(SEZIONE_COLLEGAMENTI, || self.chiedi_impostazioni()),
@@ -201,7 +199,8 @@ impl Ponte {
     /// lo decide il dettaglio stesso, dalla guardia di `azione-voce` (Task 7). Nella pagina Casa
     /// (ridisegno F3, Task 4b) «Spegni tutte», «Riprova» e «Collega» sono quelle della carta,
     /// «Spegni la stanza» spegne la stanza del filtro scelto. Va chiamata solo subito dopo il gesto
-    /// dell'utente.
+    /// dell'utente. In Collegamenti (Task 5) «Modifica» e «Aggiungi un collegamento» aprono le
+    /// Impostazioni sulla scheda Collegamenti, come «Aggiungi» della carta.
     pub fn azione_pagina(&self, modulo: &str, azione: &str, riga: &str) {
         match (modulo, azione) {
             ("agenti", agenti::TERMINALE) => self.claude_apri_terminale(riga),
@@ -209,6 +208,9 @@ impl Ponte {
             ("agenti", pagina_agenti::DETTAGLI) => self.claude_apri_dettagli(),
             ("casa", casa::SPEGNI | casa::RIPROVA | casa::COLLEGA) => self.azione_modulo(modulo, azione),
             ("casa", pagina_casa::SPEGNI_STANZA) => self.spegni_la_stanza_scelta(),
+            ("collegamenti", pagina_collegamenti::MODIFICA | collegamenti::AGGIUNGI) => {
+                apri_alla_sezione(SEZIONE_COLLEGAMENTI, || self.chiedi_impostazioni());
+            }
             _ => eprintln!("azione di pagina sconosciuta: {modulo} {azione}"),
         }
     }
@@ -345,7 +347,7 @@ mod test {
         let (p, ponte, _tieni) = pagina_agenti_aperta();
         let aggiorna = || {
             ponte.moduli_aggiorna("agenti");
-            ponte.aggiorna_vista_claude_a(super::super::con_claude::adesso_unix());
+            ponte.aggiorna_vista_claude_a(crate::orologio::adesso_unix());
         };
         let titolo_pagina = || p.get_elenco_sintesi().titolo.to_string();
         let r1 = || ponte.registro().r1("agenti").map(|r| r.fatto.clone()).unwrap_or_default();
@@ -455,6 +457,33 @@ mod test {
         ponte.azione_modulo("collegamenti", crate::moduli::collegamenti::APRI);
         assert_eq!(chiusure.get(), 1, "nessuna chiusura se il browser non è partito");
         assert_eq!(ponte.casa().config().collegamenti[1].lanci, 5);
+    }
+
+    /// Rimandato di F1 (Task 5): «Aggiungi» della carta dei Collegamenti (senza collegamenti) apre le
+    /// Impostazioni, una volta sola. Lo stesso fanno «Modifica» e «Aggiungi un collegamento» della
+    /// pagina (`azione-pagina`), e nient'altro (nessun lancio, nessuna chiusura del pannello).
+    #[test]
+    fn aggiungi_della_carta_apre_le_impostazioni() {
+        use crate::moduli::{collegamenti, pagina_collegamenti};
+        use std::cell::Cell;
+        use std::rc::Rc;
+        let (_spegni, ponte, _pillola, _cartella) = ponte_di_prova();
+        let aperte = Rc::new(Cell::new(0));
+        let a = aperte.clone();
+        ponte.su_apri_impostazioni(move || a.set(a.get() + 1));
+        let chiusure = Rc::new(Cell::new(0));
+        let c = chiusure.clone();
+        ponte.su_chiudi_pannello(move || c.set(c.get() + 1));
+        ponte.su_apri_url(|_| panic!("nessun collegamento da aprire"));
+        ponte.azione_modulo("collegamenti", collegamenti::AGGIUNGI);
+        assert_eq!(aperte.get(), 1, "le Impostazioni chieste una volta");
+        // Le azioni della pagina Collegamenti portano alle stesse Impostazioni.
+        ponte.azione_pagina("collegamenti", pagina_collegamenti::MODIFICA, "");
+        ponte.azione_pagina("collegamenti", collegamenti::AGGIUNGI, "");
+        assert_eq!(aperte.get(), 3);
+        // Un'azione che non è sua non apre nulla.
+        ponte.azione_pagina("collegamenti", "collegamenti.boh", "");
+        assert_eq!((aperte.get(), chiusure.get()), (3, 0));
     }
 
     fn evento(id: &str, tipo: TipoEvento) -> EventoHook {

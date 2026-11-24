@@ -26,6 +26,12 @@ pub fn adesso() -> (String, String) {
     ora_e_data(Local::now().naive_local())
 }
 
+/// Adesso, in secondi dall'epoca (i limiti dell'abbonamento, il file di stato e il conteggio dei
+/// lanci dei collegamenti parlano così).
+pub fn adesso_unix() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+}
+
 /// La data per la riga alta: `"VEN 13 NOV"`.
 pub fn data_breve(t: NaiveDateTime) -> String {
     format!(

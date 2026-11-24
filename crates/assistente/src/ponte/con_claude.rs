@@ -15,6 +15,7 @@ use crate::claude::{
     self, ID_AGGIORNA, ID_COLLEGAMENTO, ID_DECISIONE_TARDIVA, ID_TERMINALE_MANCANTE, PERMESSI_RISOLVIBILI, PULSANTE_CONSENTI, PULSANTE_NEGA, PULSANTE_TERMINALE,
 };
 use crate::moduli::pagina_agenti;
+use crate::orologio::adesso_unix;
 use crate::pillola;
 use crate::umore::Umore;
 use crate::{FinestraImpostazioni, LivelloUi, RigaModuloUi};
@@ -357,11 +358,6 @@ impl Gestore for GestoreIsola {
             }
         });
     }
-}
-
-/// Adesso, in secondi dall'epoca (i limiti dell'abbonamento e il file di stato parlano così).
-pub(super) fn adesso_unix() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
 /// Voci di contesto tenute al più (una per sessione, come le sessioni).

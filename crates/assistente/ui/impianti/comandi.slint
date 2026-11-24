@@ -407,7 +407,9 @@ export component ImpiantoComandi inherits Rectangle {
         root.filtro-in-vista(root.filtro);
     }
 
+    // Senza filtri (Collegamenti) la colonna non c'è: nemmeno un elenco vuoto per Narrator.
     lista := Flickable {
+        visible: root.con-filtri;
         x: 0;
         y: root.cima;
         width: root.largo-filtri;

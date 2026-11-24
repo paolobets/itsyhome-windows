@@ -1,5 +1,5 @@
-//! Le pagine sugli impianti di F3 nel ponte (ridisegno F3, Task 4b): per ora la pagina Casa
-//! sull'impianto Comandi (dal Task 5 anche Collegamenti, sugli stessi modelli).
+//! Le pagine sugli impianti di F3 nel ponte (ridisegno F3, Task 4b e 5): le pagine Casa e
+//! Collegamenti sull'impianto Comandi, sugli stessi modelli (una sola pagina alla volta).
 //!
 //! Leggerezza (spec §3): i modelli della pagina (`comandi_*`) si riempiono solo a pagina aperta
 //! (`pagina_comandi`), si riscrivono solo le righe cambiate (`aggiorna_modello`) e le proprietà
@@ -7,8 +7,8 @@
 //! cambia passa da `casa_cambiata` (pre-flight C10): la pagina, se aperta, e la carta.
 
 use super::{aggiorna_modello, luci_accese_ora, ponte, scrivi_se_cambia, Ponte};
-use crate::moduli::casa;
 use crate::moduli::pagina_casa::{self, FILTRO_ALTRO};
+use crate::moduli::{casa, collegamenti, pagina_collegamenti};
 use crate::{CardUi, FiltroUi, Pannello, SintesiUi, StatoPaginaUi};
 use casa_core::diagnosi::Contatore;
 use slint::{Model, ModelRc, SharedString};
@@ -51,6 +51,7 @@ impl Ponte {
     pub fn vista_comandi(&self, vista: &str) {
         let nuova = match vista {
             "casa" => Some("casa"),
+            "collegamenti" => Some("collegamenti"),
             _ => None,
         };
         if self.pagina_comandi.get() == nuova {
@@ -71,6 +72,7 @@ impl Ponte {
             }
         }
         self.scrivi_pagina_casa();
+        self.scrivi_pagina_collegamenti();
     }
 
     /// Un dato della casa è cambiato (stato, dati, un tocco, un esito, un'attesa scaduta, la
@@ -97,13 +99,32 @@ impl Ponte {
         }
     }
 
-    /// Una card o una scena toccata (clic, Invio, Narrator): il suo comando. Va chiamata solo
-    /// subito dopo il gesto dell'utente.
+    /// Una card o una scena toccata (clic, Invio, Narrator): il suo comando; in Collegamenti il
+    /// lancio del collegamento. Va chiamata solo subito dopo il gesto dell'utente.
     pub fn tocca_card(&self, modulo: &str, id: &str) {
         match modulo {
             "casa" => self.tocca(id),
+            "collegamenti" => self.lancia_collegamento(id),
             _ => eprintln!("tocco di una pagina sconosciuta: {modulo} {id}"),
         }
+    }
+
+    /// Un collegamento da aprire (la card della pagina, «Apri {nome}» della carta): il browser e,
+    /// se è partito, il pannello si chiude dal gancio `chiudi_pannello` (fuori da questo callback).
+    /// Se non è partito il pannello resta aperto con l'errore nel sotto della sintesi.
+    pub(super) fn lancia_collegamento(&self, id: &str) {
+        if self.apri_collegamento(id) {
+            if let Some(chiudi) = self.chiudi_pannello.borrow().as_ref() {
+                chiudi();
+            }
+        }
+    }
+
+    /// I collegamenti o i loro lanci sono cambiati (salvati, tolti, spostati, aperti): la pagina
+    /// Collegamenti, se aperta, e la carta.
+    pub(super) fn collegamenti_cambiati(&self) {
+        self.scrivi_pagina_collegamenti();
+        self.moduli_aggiorna("collegamenti");
     }
 
     /// «Spegni la stanza» della testata: le luci accese della stanza del filtro scelto (con
@@ -214,19 +235,58 @@ impl Ponte {
             scrivi_se_cambia(p.get_comandi_lato(), 0, |v| p.set_comandi_lato(v));
         }
     }
+
+    /// Scrive la pagina Collegamenti, solo se è aperta (`pagina_comandi`) e solo ciò che è cambiato:
+    /// le card riga per riga, le proprietà se diverse. Niente filtri né scene (l'impianto dà
+    /// quattro colonne). La card col fuoco resta la stessa per id, o passa alla più vicina se la
+    /// sua sparisce (un collegamento tolto dalle Impostazioni, Review Focus 1). Il titolo della
+    /// sintesi è `r1.fatto` della carta; il sotto è il più usato o l'errore dell'ultimo lancio.
+    pub fn scrivi_pagina_collegamenti(&self) {
+        if self.pagina_comandi.get() != Some("collegamenti") {
+            return;
+        }
+        let elenco = self.casa.con_config(|c| c.collegamenti.clone());
+        let r1 = collegamenti::riassunto(&elenco).r1;
+        let card: Vec<CardUi> = elenco.iter().map(pagina_collegamenti::card).collect();
+        let sintesi = pagina_collegamenti::sintesi(&elenco, &r1, self.errore_lancio.borrow().as_deref());
+        let stato = pagina_collegamenti::stato(elenco.len());
+
+        let p = self.pannello.borrow().upgrade();
+        let fuoco = p.as_ref().map_or(0, |p| p.get_comandi_fuoco().max(0) as usize);
+        let nuovo_fuoco = self
+            .comandi_card
+            .row_data(fuoco)
+            .and_then(|c| card.iter().position(|nuova| nuova.id == c.id))
+            .unwrap_or_else(|| fuoco.min(card.len().saturating_sub(1)));
+
+        let d = self.casa.diagnosi();
+        d.conta(Contatore::ui_ricostruzioni);
+        d.conta_n(Contatore::ui_righe, aggiorna_modello(&self.comandi_card, card));
+        let Some(p) = p else { return };
+        scrivi_se_cambia(p.get_comandi_modulo(), SharedString::from("collegamenti"), |v| p.set_comandi_modulo(v));
+        // Nessun filtro: l'indice scelto e quello iniziale sono sempre 0.
+        scrivi_se_cambia(p.get_comandi_filtro(), 0, |v| p.set_comandi_filtro(v));
+        scrivi_se_cambia(p.get_comandi_filtro_iniziale(), 0, |v| p.set_comandi_filtro_iniziale(v));
+        scrivi_se_cambia(p.get_comandi_fuoco(), nuovo_fuoco as i32, |v| p.set_comandi_fuoco(v));
+        scrivi_se_cambia(p.get_comandi_sintesi(), sintesi, |v| p.set_comandi_sintesi(v));
+        scrivi_se_cambia(p.get_comandi_stato(), stato, |v| p.set_comandi_stato(v));
+        scrivi_se_cambia(p.get_comandi_nota(), SharedString::new(), |v| p.set_comandi_nota(v));
+    }
 }
 
 #[cfg(test)]
 mod test {
     use crate::moduli::casa::{RIPROVA, SPEGNI};
     use crate::moduli::pagina_casa::{FILTRO_LUCI, FILTRO_PREFERITI, FILTRO_TUTTA, SPEGNI_STANZA};
+    use crate::moduli::pagina_collegamenti::MODIFICA;
     use crate::ponte::test::{interruttore, luce, menu, ponte_di_prova, scena, Spegni};
     use crate::ponte::{Ponte, PROPRIETA_SCRITTE, RIGHE_SCRITTE};
     use crate::{Pannello, TipoStatoPaginaUi};
+    use casa_core::config::Collegamento;
     use casa_core::eventi::{CasaEvento, StatoConnessione};
     use casa_core::types::{AppEntity, MenuData};
     use slint::Model;
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::rc::Rc;
     use std::sync::Arc;
 
@@ -444,6 +504,184 @@ mod test {
             assert_eq!(p.get_comandi_stato().tipo, TipoStatoPaginaUi::Pieno, "{stato:?}: le card restano");
             assert_eq!(p.get_comandi_sintesi().azione_id, RIPROVA);
         }
+    }
+
+    /// Il ponte di prova con tre collegamenti (NAS, Proxmox, Router; nessun lancio) e il pannello
+    /// aperto sulla pagina Collegamenti. Il browser è finto (`su_apri_url`): nessun browser vero.
+    fn collegamenti_aperti() -> (Spegni, Rc<Ponte>, Pannello, impl Sized) {
+        let (spegni, ponte, pillola, cartella) = ponte_di_prova();
+        ponte.casa().aggiorna_config(|c| {
+            c.collegamenti = [("nas", "NAS"), ("pve", "Proxmox"), ("router", "Router")]
+                .into_iter()
+                .map(|(id, nome)| Collegamento { id: id.into(), nome: nome.into(), url: format!("https://{id}.esempio.lan/"), ..Default::default() })
+                .collect();
+        });
+        let p = Pannello::new().expect("pannello");
+        ponte.riempi(&p);
+        ponte.pannello_aperto(&p);
+        p.set_vista("collegamenti".into());
+        ponte.vista_comandi("collegamenti");
+        (spegni, ponte, p, (pillola, cartella))
+    }
+
+    fn sotto(p: &Pannello) -> String {
+        p.get_comandi_sintesi().sotto.to_string()
+    }
+
+    /// La card di un collegamento, dalla pagina: l'URL va al browser (finto) e il pannello si
+    /// chiude solo se è partito, con un lancio in più; se il browser non parte il pannello resta
+    /// aperto, il sotto della sintesi dice quale non si è aperto e il conteggio non cambia; il
+    /// lancio riuscito toglie la frase. L'errore del ponte per le Impostazioni è un'altra cosa.
+    #[test]
+    fn lancio_dalla_pagina() {
+        let (_s, ponte, p, _t) = collegamenti_aperti();
+        let aperti = Rc::new(RefCell::new(Vec::<String>::new()));
+        let a = aperti.clone();
+        ponte.su_apri_url(|_| Err("ShellExecuteW: 2".into()));
+        let chiusure = Rc::new(Cell::new(0));
+        let c = chiusure.clone();
+        ponte.su_chiudi_pannello(move || c.set(c.get() + 1));
+        let lanci = |ponte: &Ponte| ponte.casa().config().collegamenti.iter().map(|c| c.lanci).collect::<Vec<_>>();
+        assert_eq!(id_card(&p), ["nas", "pve", "router"]);
+        assert_eq!((p.get_comandi_sintesi().titolo.as_str(), sotto(&p).as_str()), ("3 collegamenti", "Più usato: NAS"));
+
+        // Il browser non parte: pannello aperto, l'errore nel sotto, nessun lancio in più.
+        ponte.tocca_card("collegamenti", "nas");
+        ponte.tocca_card("collegamenti", "nas");
+        assert_eq!((chiusure.get(), lanci(&ponte)), (0, vec![0, 0, 0]), "nessuna chiusura, nessun lancio");
+        let frase = "«NAS» non si è aperto: il dettaglio è in Impostazioni › Informazioni";
+        assert_eq!(sotto(&p), frase);
+        assert_eq!(p.get_comandi_sintesi().tono, crate::TonoModuloUi::Errore);
+        assert!(ponte.errore_collegamento.borrow().as_deref().is_some_and(|e| e.contains("ShellExecuteW: 2")), "il dettaglio per le Impostazioni c'è ancora");
+        assert_eq!(p.get_comandi_modulo(), "collegamenti");
+
+        // Il browser parte: l'URL, un lancio in più, il pannello si chiude, la frase sparisce.
+        ponte.su_apri_url(move |url| {
+            a.borrow_mut().push(url.to_owned());
+            Ok(())
+        });
+        ponte.tocca_card("collegamenti", "pve");
+        assert_eq!(*aperti.borrow(), ["https://pve.esempio.lan/"]);
+        assert_eq!((chiusure.get(), lanci(&ponte)), (1, vec![0, 1, 0]));
+        assert_eq!(sotto(&p), "Più usato: Proxmox", "il più usato è cambiato e la frase non c'è più");
+        assert!(ponte.errore_lancio.borrow().is_none());
+        // Un doppio tocco prima della chiusura non lancia due volte.
+        ponte.tocca_card("collegamenti", "pve");
+        assert_eq!((aperti.borrow().len(), chiusure.get(), lanci(&ponte)), (1, 1, vec![0, 1, 0]));
+        // Un collegamento che non c'è: niente.
+        ponte.pannello_chiuso();
+        ponte.tocca_card("collegamenti", "sparito");
+        assert_eq!((aperti.borrow().len(), chiusure.get()), (1, 1));
+    }
+
+    /// C24: la frase dell'ultimo lancio non riuscito muore col pannello, come il testo di prima: il
+    /// pannello nuovo non la rivede.
+    #[test]
+    fn errore_del_lancio_muore_col_pannello() {
+        let (_s, ponte, p, _t) = collegamenti_aperti();
+        ponte.su_apri_url(|_| Err("ShellExecuteW: 2".into()));
+        ponte.tocca_card("collegamenti", "router");
+        assert!(sotto(&p).starts_with("«Router» non si è aperto"), "{}", sotto(&p));
+        // Lasciare la pagina e tornarci a pannello aperto non la toglie (è ancora vero).
+        ponte.vista_comandi("panoramica");
+        ponte.vista_comandi("collegamenti");
+        assert!(sotto(&p).starts_with("«Router» non si è aperto"), "{}", sotto(&p));
+        ponte.pannello_chiuso();
+        assert!(ponte.errore_lancio.borrow().is_none());
+        let p = Pannello::new().expect("pannello");
+        ponte.riempi(&p);
+        ponte.pannello_aperto(&p);
+        p.set_vista("collegamenti".into());
+        ponte.vista_comandi("collegamenti");
+        assert_eq!(sotto(&p), "Più usato: NAS");
+    }
+
+    /// Review Focus 5: due scritture di fila senza cambi non riscrivono nessuna riga e nessuna
+    /// proprietà; a pagina chiusa un cambio dei collegamenti non scrive nulla (e i modelli sono
+    /// vuoti); un cambio vero sì.
+    #[test]
+    fn pagina_collegamenti_scritta_solo_se_cambia() {
+        let (_s, ponte, p, _t) = collegamenti_aperti();
+        assert_eq!(p.get_comandi_modulo(), "collegamenti");
+        assert_eq!((p.get_comandi_filtri().row_count(), p.get_comandi_scene().row_count()), (0, 0), "nessun filtro né scena");
+        assert_eq!(p.get_comandi_stato().tipo, TipoStatoPaginaUi::Pieno);
+        assert_eq!(p.get_comandi_sintesi().azione_id, MODIFICA);
+        azzera();
+        ponte.scrivi_pagina_collegamenti();
+        ponte.scrivi_pagina_collegamenti();
+        assert_eq!(scritte(), (0, 0), "nulla di cambiato, nulla di scritto");
+        // Un cambio vero: un collegamento spostato.
+        ponte.sposta_collegamento("router", -1);
+        assert_eq!(id_card(&p), ["nas", "router", "pve"]);
+        let (righe, proprieta) = scritte();
+        assert!(righe > 0, "le righe che cambiano si scrivono: {righe} righe, {proprieta} proprietà");
+        // A pagina chiusa: modelli vuoti e nulla scritto.
+        ponte.vista_comandi("panoramica");
+        assert_eq!(p.get_comandi_card().row_count(), 0, "nessuna riga in memoria");
+        azzera();
+        ponte.elimina_collegamento("nas");
+        assert_eq!(scritte().1, 0, "pagina chiusa: nessuna proprietà scritta");
+        assert_eq!(p.get_comandi_card().row_count(), 0);
+        // Riaperta: i dati di adesso.
+        ponte.vista_comandi("collegamenti");
+        assert_eq!(id_card(&p), ["router", "pve"]);
+    }
+
+    /// Review Focus 1: un collegamento tolto dalle Impostazioni a pagina aperta. Il fuoco resta
+    /// sulla stessa card (per id) se c'è ancora, passa alla più vicina se è quella tolta, e senza
+    /// collegamenti la pagina diventa lo stato vuoto con «Aggiungi un collegamento».
+    #[test]
+    fn collegamento_tolto_con_la_pagina_aperta() {
+        let (_s, ponte, p, _t) = collegamenti_aperti();
+        p.set_comandi_fuoco(2);
+        // Tolto uno prima di quello col fuoco: il fuoco segue il suo (Router passa dal posto 2 al 1).
+        ponte.elimina_collegamento("nas");
+        assert_eq!((id_card(&p), p.get_comandi_fuoco()), (vec!["pve".to_owned(), "router".to_owned()], 1));
+        // Tolto proprio quello col fuoco, l'ultimo: il fuoco sul nuovo ultimo.
+        ponte.elimina_collegamento("router");
+        assert_eq!((id_card(&p), p.get_comandi_fuoco()), (vec!["pve".to_owned()], 0));
+        assert_eq!((p.get_comandi_sintesi().titolo.as_str(), sotto(&p).as_str()), ("1 collegamento", "Più usato: Proxmox"));
+        // Nessuno: stato vuoto con il suo invito, nessuna «Modifica».
+        ponte.elimina_collegamento("pve");
+        let s = p.get_comandi_stato();
+        assert_eq!((s.tipo, s.azione_id.as_str()), (TipoStatoPaginaUi::Vuoto, crate::moduli::collegamenti::AGGIUNGI));
+        assert_eq!((p.get_comandi_sintesi().titolo.as_str(), p.get_comandi_sintesi().azione_id.as_str()), ("Nessun collegamento", ""));
+        assert_eq!(p.get_comandi_card().row_count(), 0);
+        // Un collegamento salvato torna a riempire la pagina.
+        assert_eq!(ponte.salva_collegamento("", "NAS", "nas.esempio.lan"), "");
+        assert_eq!(p.get_comandi_stato().tipo, TipoStatoPaginaUi::Pieno);
+        assert_eq!(p.get_comandi_card().row_count(), 1);
+    }
+
+    /// C8 dal ponte: Casa e Collegamenti scrivono sugli stessi modelli. Passando dall'una all'altra
+    /// i modelli sono quelli della sola pagina aperta (filtri e scene di Casa non restano in
+    /// Collegamenti, i collegamenti non restano in Casa) e `comandi-modulo` dice di chi sono.
+    #[test]
+    fn comandi_pagine_dal_ponte_non_si_mescolano() {
+        let (_s, ponte, p, _t) = collegamenti_aperti();
+        ponte.ricevi(CasaEvento::Dati(Arc::new(casa_di_prova(false, false))));
+        assert_eq!((p.get_comandi_modulo().as_str(), id_card(&p)), ("collegamenti", vec!["nas".to_owned(), "pve".to_owned(), "router".to_owned()]));
+        assert_eq!((p.get_comandi_filtri().row_count(), p.get_comandi_scene().row_count()), (0, 0));
+        // Casa: le sue card, i suoi filtri, le sue scene; nessun collegamento.
+        p.set_vista("casa".into());
+        ponte.vista_comandi("casa");
+        assert_eq!(p.get_comandi_modulo(), "casa");
+        assert_eq!(id_card(&p), ["light.a", "light.b", "switch.p", "light.c"]);
+        assert!(p.get_comandi_filtri().row_count() > 0 && p.get_comandi_scene().row_count() == 1);
+        // Un collegamento salvato con la pagina Casa aperta non scrive nulla sui suoi modelli.
+        assert_eq!(ponte.salva_collegamento("", "Switch", "switch.esempio.lan"), "");
+        assert_eq!(id_card(&p), ["light.a", "light.b", "switch.p", "light.c"]);
+        // Di nuovo Collegamenti: i suoi dati, senza filtri né scene.
+        p.set_vista("collegamenti".into());
+        ponte.vista_comandi("collegamenti");
+        assert_eq!(p.get_comandi_modulo(), "collegamenti");
+        assert_eq!(id_card(&p), ["nas", "pve", "router", "switch"]);
+        assert_eq!((p.get_comandi_filtri().row_count(), p.get_comandi_scene().row_count()), (0, 0));
+        assert_eq!(p.get_comandi_nota(), "");
+        // Un evento della casa a pagina Collegamenti aperta non tocca i suoi modelli.
+        ponte.ricevi(CasaEvento::Dati(Arc::new(casa_di_prova(false, true))));
+        assert_eq!(id_card(&p), ["nas", "pve", "router", "switch"]);
+        assert_eq!((p.get_comandi_filtri().row_count(), p.get_comandi_scene().row_count()), (0, 0));
     }
 
     /// La pagina non configurata è un invito («Collega la casa» con «Collega»); scollegata con i

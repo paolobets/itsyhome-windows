@@ -4585,117 +4585,232 @@ mod accessibilita {
         ]))
     }
 
-    /// Un pannello sulla vista Collegamenti; restituisce gli eventi (aperture, «gestisci»,
-    /// chiusura del pannello).
-    fn pannello_collegamenti(voci: ModelRc<crate::CollegamentoUi>) -> (Pannello, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
-        piattaforma_di_prova();
-        let p = pannello();
-        p.set_schede(schede());
-        p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
-        p.global::<crate::Fuochi>().set_pronti(true);
-        p.set_collegamenti(voci);
-        let eventi = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
-        let (e1, e2, e3) = (eventi.clone(), eventi.clone(), eventi.clone());
-        p.on_apri_collegamento(move |id| e1.borrow_mut().push(format!("apri {id}")));
-        p.on_gestisci_collegamenti(move || e2.borrow_mut().push("gestisci".into()));
-        p.on_chiudi(move || e3.borrow_mut().push("chiudi pannello".into()));
+    /// I sei collegamenti di prova (ridisegno F3, Task 5), nell'ordine dell'utente: quattro nella
+    /// prima riga della griglia (quattro colonne), due nella seconda.
+    fn sei_collegamenti() -> Vec<casa_core::config::Collegamento> {
+        let col = |id: &str, nome: &str, url: &str| casa_core::config::Collegamento {
+            id: id.into(),
+            nome: nome.into(),
+            url: url.into(),
+            ..Default::default()
+        };
+        vec![
+            col("proxmox", "Proxmox", "https://esempio.lan:8006"),
+            col("nas", "NAS", "http://nas.esempio.lan/admin?x=1"),
+            col("router", "Router", "https://router.esempio.lan"),
+            col("stampante", "Stampante", "http://192.0.2.20"),
+            col("nvr", "Telecamere", "https://nvr.esempio.lan"),
+            col("switch", "Switch", "http://switch.esempio.lan"),
+        ]
+    }
+
+    /// Le card dei collegamenti come le scrive Rust (`pagina_collegamenti::card`).
+    fn card_dei_collegamenti(c: &[casa_core::config::Collegamento]) -> Vec<crate::CardUi> {
+        c.iter().map(crate::moduli::pagina_collegamenti::card).collect()
+    }
+
+    /// Un pannello sulla pagina Collegamenti dell'impianto Comandi, con questi collegamenti, la sua
+    /// sintesi e il suo stato come li scrive Rust; restituisce gli eventi verso Rust («tocca-card
+    /// collegamenti {id}», «azione-pagina collegamenti {azione}», «chiudi pannello»).
+    fn pannello_collegamenti(c: &[casa_core::config::Collegamento]) -> (Pannello, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
+        use crate::moduli::{collegamenti::riassunto, pagina_collegamenti};
+        let (p, eventi) = super::pannello_comandi("collegamenti", vec![], card_dei_collegamenti(c), vec![]);
+        p.set_comandi_sintesi(pagina_collegamenti::sintesi(c, &riassunto(c).r1, None));
+        p.set_comandi_stato(pagina_collegamenti::stato(c.len()));
         (p, eventi)
     }
 
-    /// La barra ha «Collegamenti» (ultima scheda); la vista mostra le card (nome e indirizzo
-    /// accorciato per Narrator, pulsanti) nell'ordine dato; un tocco chiede di aprire quell'id.
+    /// Ridisegno F3, Task 5 (da `vista_collegamenti_card_accessibili`): la barra ha «Collegamenti»
+    /// (ultima scheda); la pagina mostra le card (nome, indirizzo accorciato e «si apre nel browser»
+    /// per Narrator) nell'ordine dato, quattro per riga su tutta la larghezza; un tocco manda il
+    /// collegamento a Rust e «Modifica» è un'azione della testata.
     #[test]
-    fn vista_collegamenti_card_accessibili() {
-        let (p, eventi) = pannello_collegamenti(quattro_collegamenti());
+    fn collegamenti_card_accessibili() {
+        let (p, eventi) = pannello_collegamenti(&sei_collegamenti());
         let scheda = elemento(&p, "Collegamenti, scheda 5 di 5");
         assert_eq!(scheda.accessible_role(), Some(AccessibleRole::Tab));
-        scheda.invoke_accessible_default_action();
-        assert_eq!(p.get_vista(), "collegamenti");
-        let proxmox = elemento(&p, "Proxmox, esempio.lan:8006");
+        assert_eq!(scheda.accessible_item_selected(), Some(true), "la scheda della pagina aperta");
+        let nome = |n: &str, corto: &str| format!("{n}, {corto}, si apre nel browser");
+        let proxmox = elemento(&p, &nome("Proxmox", "esempio.lan:8006"));
         assert_eq!(proxmox.accessible_role(), Some(AccessibleRole::Button));
-        assert_eq!(proxmox.accessible_description().as_deref(), Some("Si apre nel browser"));
-        assert!(ElementHandle::find_by_accessible_label(&p, "NAS, nas.esempio.lan/admin").next().is_some(), "senza query");
-        // Ordine: Proxmox, NAS e Router nella prima riga (3 colonne), Stampante sotto.
-        let x = |nome: &str| elemento(&p, nome).absolute_position();
-        let (a, b, c, d) = (
-            x("Proxmox, esempio.lan:8006"),
-            x("NAS, nas.esempio.lan/admin"),
-            x("Router, router.esempio.lan"),
-            x("Stampante, 192.0.2.20"),
-        );
-        assert!(a.x < b.x && b.x < c.x && a.y == c.y && d.y > a.y && d.x == a.x, "{a:?} {b:?} {c:?} {d:?}");
-        elemento(&p, "NAS, nas.esempio.lan/admin").invoke_accessible_default_action();
-        elemento(&p, "Modifica i collegamenti").invoke_accessible_default_action();
-        assert_eq!(*eventi.borrow(), ["apri nas", "gestisci"]);
+        assert_eq!(proxmox.accessible_enabled(), Some(true));
+        assert!(ElementHandle::find_by_accessible_label(&p, &nome("NAS", "nas.esempio.lan/admin")).next().is_some(), "senza query");
+        // Ordine: quattro nella prima riga (quattro colonne, nessun filtro), le altre due sotto.
+        let x = |n: &str, corto: &str| elemento(&p, &nome(n, corto)).absolute_position();
+        let (a, b, c, d, e) =
+            (x("Proxmox", "esempio.lan:8006"), x("NAS", "nas.esempio.lan/admin"), x("Router", "router.esempio.lan"), x("Stampante", "192.0.2.20"), x("Telecamere", "nvr.esempio.lan"));
+        assert!(a.x < b.x && b.x < c.x && c.x < d.x && a.y == d.y && e.y > a.y && e.x == a.x, "{a:?} {b:?} {c:?} {d:?} {e:?}");
+        assert_eq!(a.x, 34.0, "senza filtri la griglia parte dal bordo del contenuto");
+        assert_eq!(proxmox.size().width, (752.0 - 3.0 * 8.0) / 4.0, "quattro colonne su tutta la larghezza");
+        assert!(ElementHandle::find_by_accessible_label(&p, "Filtri").next().is_none(), "nessun filtro");
+        // L'iniziale nel cerchio è decorativa: Narrator legge solo il nome della card.
+        assert!(ElementHandle::find_by_accessible_label(&p, "P").next().is_none(), "iniziale di Proxmox esposta");
+        elemento(&p, &nome("NAS", "nas.esempio.lan/admin")).invoke_accessible_default_action();
+        elemento(&p, "Modifica").invoke_accessible_default_action();
+        assert_eq!(*eventi.borrow(), ["tocca-card collegamenti nas", "azione-pagina collegamenti collegamenti.modifica"]);
+        // La scheda porta alla pagina: da un'altra vista, Narrator la apre.
+        p.set_vista("panoramica".into());
+        elemento(&p, "Collegamenti, scheda 5 di 5").invoke_accessible_default_action();
+        assert_eq!(p.get_vista(), "collegamenti");
     }
 
-    /// Da tastiera: frecce fra le card (3 colonne), Invio apre; ↑ dalla prima riga porta a
-    /// «Modifica», Invio lì apre le Impostazioni; Esc chiude il pannello (un solo livello).
+    /// Ridisegno F3, Task 5 (da `vista_collegamenti_da_tastiera`): da tastiera le frecce vanno in
+    /// griglia (quattro colonne, ai bordi si resta), Invio o Spazio apre il collegamento; ← dalla
+    /// prima colonna non va da nessuna parte (nessun filtro); ↑ dalla prima riga porta a «Modifica»,
+    /// Invio lì apre le Impostazioni, ↓ torna alle card; Tab porta alle schede e Maiusc+Tab torna
+    /// alla card; Esc chiude il pannello (un solo livello), Backspace porta alla Panoramica.
     #[test]
-    fn vista_collegamenti_da_tastiera() {
+    fn collegamenti_da_tastiera() {
         use slint::platform::Key;
-        let (p, eventi) = pannello_collegamenti(quattro_collegamenti());
-        // Dal dock: Tab, → fino a «Collegamenti», Invio.
-        tasto(&p, Key::Tab);
-        for _ in 0..4 {
-            tasto(&p, Key::RightArrow);
-        }
-        tasto(&p, Key::Return);
-        assert_eq!(p.get_vista(), "collegamenti");
-        // Il fuoco va sul contenuto (dalle schede Tab passa dalla ricerca e da «⋯», senza volume,
-        // e poi al contenuto: «Indietro» non c'è più): prima card; ↓ porta alla quarta (sotto la
-        // prima), Invio.
-        tasto(&p, Key::Tab);
-        tasto(&p, Key::Tab);
-        tasto(&p, Key::Tab);
+        let (p, eventi) = pannello_collegamenti(&sei_collegamenti());
+        let nome = |n: &str, corto: &str| format!("{n}, {corto}, si apre nel browser");
+        // Il fuoco parte dalla prima card; ← non va da nessuna parte (nessun filtro).
+        tasto(&p, Key::LeftArrow);
+        assert_eq!(etichetta_col_fuoco(&p), nome("Proxmox", "esempio.lan:8006"));
+        // ↓ porta alla quinta (sotto la prima), Invio apre.
         tasto(&p, Key::DownArrow);
+        assert_eq!(etichetta_col_fuoco(&p), nome("Telecamere", "nvr.esempio.lan"));
         tasto(&p, Key::Return);
-        // → dall'ultima resta lì; ↑ torna alla prima riga, → alla seconda card.
+        // → alla sesta; → dall'ultima resta lì; ↑ torna alla seconda card, Spazio apre.
         tasto(&p, Key::RightArrow);
-        tasto(&p, Key::UpArrow);
         tasto(&p, Key::RightArrow);
-        tasto(&p, Key::Return);
-        // ↑ dalla prima riga: «Modifica».
+        assert_eq!(etichetta_col_fuoco(&p), nome("Switch", "switch.esempio.lan"));
         tasto(&p, Key::UpArrow);
+        assert_eq!(etichetta_col_fuoco(&p), nome("NAS", "nas.esempio.lan/admin"));
+        tasto(&p, Key::Space);
+        // ↑ dalla prima riga: «Modifica», Invio apre le Impostazioni; ↓ torna alle card, dalla
+        // prima (come in Casa: l'azione della testata può sparire dopo il tocco).
+        tasto(&p, Key::UpArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Modifica");
         tasto(&p, Key::Return);
-        assert_eq!(*eventi.borrow(), ["apri stampante", "apri nas", "gestisci"]);
-        let col_fuoco = i_slint_core::window::WindowInner::from_pub(p.window()).focus_item.borrow().upgrade();
-        assert!(col_fuoco.is_some(), "il pannello ha ancora il fuoco");
+        tasto(&p, Key::DownArrow);
+        assert_eq!(etichetta_col_fuoco(&p), nome("Proxmox", "esempio.lan:8006"));
+        assert_eq!(
+            *eventi.borrow(),
+            ["tocca-card collegamenti nvr", "tocca-card collegamenti nas", "azione-pagina collegamenti collegamenti.modifica"]
+        );
+        // Tab: dalle card alle schede; Maiusc+Tab di nuovo alla card da cui si era usciti.
+        tasto(&p, Key::Tab);
+        assert!(etichetta_col_fuoco(&p).contains("scheda"), "Tab porta alle schede: {}", etichetta_col_fuoco(&p));
+        con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), nome("Proxmox", "esempio.lan:8006"));
+        // Esc: un solo livello, chiude il pannello; Backspace porta alla Panoramica.
         tasto(&p, Key::Escape);
         assert_eq!(eventi.borrow().last().map(String::as_str), Some("chiudi pannello"));
+        tasto(&p, Key::Backspace);
+        assert_eq!(p.get_vista(), "panoramica");
+        // Il pannello ha ancora la tastiera: Tab porta il fuoco su un elemento vero.
+        tasto(&p, Key::Tab);
+        let col_fuoco = etichetta_col_fuoco(&p);
+        assert!(!col_fuoco.is_empty() && col_fuoco != "Pannello di ItsyHome", "fuoco su «{col_fuoco}»");
     }
 
     /// Senza collegamenti: lo stato vuoto con «Aggiungi un collegamento», che apre le
-    /// Impostazioni (col mouse, con Narrator e con Invio).
+    /// Impostazioni (col mouse, con Narrator e con Invio); niente «Modifica».
     #[test]
-    fn vista_collegamenti_vuota() {
+    fn collegamenti_vuota() {
         use slint::platform::Key;
-        let (p, eventi) = pannello_collegamenti(ModelRc::new(VecModel::from(Vec::<crate::CollegamentoUi>::new())));
-        p.set_vista("collegamenti".into());
-        assert!(ElementHandle::find_by_accessible_label(&p, "Nessun collegamento").next().is_some());
-        assert!(ElementHandle::find_by_accessible_label(&p, "Modifica i collegamenti").next().is_none(), "niente da modificare");
+        let (p, eventi) = pannello_collegamenti(&[]);
+        assert!(ElementHandle::find_by_accessible_label(&p, "Nessun collegamento").any(|e| e.accessible_role() == Some(AccessibleRole::Text)), "il titolo a parole");
+        assert!(ElementHandle::find_by_accessible_label(&p, "Modifica").next().is_none(), "niente da modificare");
+        assert!(ElementHandle::find_by_element_type_name(&p, "ImpiantoComandi").next().is_none(), "nessuna griglia");
         let aggiungi = elemento(&p, "Aggiungi un collegamento");
         assert_eq!(aggiungi.accessible_role(), Some(AccessibleRole::Button));
         aggiungi.invoke_accessible_default_action();
         tasto(&p, Key::Return);
-        assert_eq!(*eventi.borrow(), ["gestisci", "gestisci"]);
+        assert_eq!(etichetta_col_fuoco(&p), "Aggiungi un collegamento", "il fuoco sul pulsante");
+        assert_eq!(*eventi.borrow(), ["azione-pagina collegamenti collegamenti.aggiungi", "azione-pagina collegamenti collegamenti.aggiungi"]);
+        // Tab non si perde: porta alle schede.
+        tasto(&p, Key::Tab);
+        assert!(etichetta_col_fuoco(&p).contains("scheda"), "Tab porta alle schede: {}", etichetta_col_fuoco(&p));
     }
 
-    /// Un errore di apertura compare nella testata della vista.
+    /// Un lancio non riuscito compare nel sotto della testata; la testata non ripete
+    /// «COLLEGAMENTI» né «Si aprono nel browser» (il suggerimento sta sulla card, per Narrator).
     #[test]
-    fn vista_collegamenti_dice_se_non_si_e_aperto() {
-        let (p, _) = pannello_collegamenti(quattro_collegamenti());
-        p.set_vista("collegamenti".into());
-        // R1-23: la testata non ripete più «COLLEGAMENTI» né «Si aprono nel browser»; resta il
-        // suggerimento sulla card (per Narrator) e, se serve, l'errore.
+    fn collegamenti_dice_se_non_si_e_aperto() {
+        use crate::moduli::{collegamenti::riassunto, pagina_collegamenti};
+        let c = sei_collegamenti();
+        let (p, _) = pannello_collegamenti(&c);
+        assert!(titolo(&p, "6 collegamenti"), "il titolo è quello della carta");
+        assert!(titolo(&p, "Più usato: Proxmox"), "senza errori il sotto è il più usato");
         assert!(ElementHandle::find_by_accessible_label(&p, "Si aprono nel browser").next().is_none());
         assert!(ElementHandle::find_by_accessible_label(&p, "COLLEGAMENTI").next().is_none());
-        // L'iniziale nel cerchio è decorativa: Narrator legge solo il nome della card.
-        assert!(ElementHandle::find_by_accessible_label(&p, "P").next().is_none(), "iniziale di Proxmox esposta");
-        assert!(ElementHandle::find_by_accessible_label(&p, "S").next().is_none(), "iniziale di Stampante esposta");
-        assert!(ElementHandle::find_by_accessible_label(&p, "Proxmox, esempio.lan:8006").next().is_some());
-        p.set_errore_collegamenti("«NAS» non si è aperto".into());
-        assert!(ElementHandle::find_by_accessible_label(&p, "«NAS» non si è aperto").next().is_some());
+        let errore = "«NAS» non si è aperto: il dettaglio è in Impostazioni › Informazioni";
+        p.set_comandi_sintesi(pagina_collegamenti::sintesi(&c, &riassunto(&c).r1, Some(errore)));
+        assert!(titolo(&p, errore), "l'errore nel sotto della testata");
+        assert!(!titolo(&p, "Più usato: Proxmox"), "al posto del più usato");
+        assert!(titolo(&p, "6 collegamenti"), "il titolo resta");
+        // Il lancio seguente riuscito toglie la frase.
+        p.set_comandi_sintesi(pagina_collegamenti::sintesi(&c, &riassunto(&c).r1, None));
+        assert!(!titolo(&p, errore));
+    }
+
+    /// Review Focus 1: il fuoco sull'ultima card (la sesta) e un collegamento tolto dalle
+    /// Impostazioni (il modello cala): il fuoco va sul nuovo ultimo, col nome nuovo per Narrator, e
+    /// il Tab seguente non si perde.
+    #[test]
+    fn collegamenti_tolto_col_fuoco_addosso() {
+        use slint::platform::Key;
+        let mut c = sei_collegamenti();
+        let (p, _) = pannello_collegamenti(&c);
+        tasto(&p, Key::DownArrow);
+        tasto(&p, Key::RightArrow);
+        assert_eq!(etichetta_col_fuoco(&p), "Switch, switch.esempio.lan, si apre nel browser");
+        // Come il ponte: l'ultimo collegamento esce e il modello si riscrive.
+        c.pop();
+        p.set_comandi_card(ModelRc::new(VecModel::from(card_dei_collegamenti(&c))));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(etichetta_col_fuoco(&p), "Telecamere, nvr.esempio.lan, si apre nel browser", "sul nuovo ultimo");
+        tasto(&p, Key::Tab);
+        let col_fuoco = etichetta_col_fuoco(&p);
+        assert!(col_fuoco.contains("scheda"), "Tab non si perde: «{col_fuoco}»");
+        // Tolti tutti: lo stato vuoto prende il posto della griglia e il fuoco non resta nel vuoto.
+        p.set_comandi_card(ModelRc::new(VecModel::from(Vec::<crate::CardUi>::new())));
+        p.set_comandi_stato(crate::moduli::pagina_collegamenti::stato(0));
+        slint::platform::update_timers_and_animations();
+        tasto(&p, Key::Tab);
+        assert!(!etichetta_col_fuoco(&p).is_empty(), "il fuoco su un elemento vero");
+    }
+
+    /// C8 (ridisegno F3, Task 5): Casa e Collegamenti condividono l'impianto Comandi e i suoi
+    /// modelli. Passando da una pagina all'altra, finché Rust non ha riscritto i dati della pagina
+    /// nuova, nessuna card dell'altra compare (né i suoi filtri né le sue scene); poi compaiono
+    /// solo quelle della nuova. Il controllo di pagina è `comandi-qui` (`comandi-modulo == vista`).
+    #[test]
+    fn comandi_cambio_pagina_senza_card_dell_altra() {
+        let (p, _) = pannello_casa();
+        let card_casa = ["Divano, Accesa, 80 %", "Tavolo, Spenta", "Porta, Chiusa, sola lettura", "Sera, Scena"];
+        let visibili = |p: &Pannello, nomi: &[&str]| nomi.iter().filter(|n| ElementHandle::find_by_accessible_label(p, n).next().is_some()).count();
+        assert_eq!(visibili(&p, &card_casa), 4, "Casa mostra le sue card");
+        assert!(ElementHandle::find_by_accessible_label(&p, "Filtri").next().is_some());
+
+        // Collegamenti si apre, Rust non ha ancora scritto: i dati sono ancora quelli di Casa.
+        p.set_vista("collegamenti".into());
+        slint::platform::update_timers_and_animations();
+        assert_eq!(p.get_comandi_modulo(), "casa", "i dati sono ancora quelli di Casa");
+        assert_eq!(visibili(&p, &card_casa), 0, "nessuna card di Casa in Collegamenti");
+        assert!(ElementHandle::find_by_accessible_label(&p, "Filtri").next().is_none(), "né i suoi filtri");
+        assert!(ElementHandle::find_by_element_type_name(&p, "CardComando").next().is_none(), "nessuna card");
+
+        // Rust scrive i collegamenti: compaiono solo quelli.
+        let c = sei_collegamenti();
+        p.set_comandi_modulo("collegamenti".into());
+        p.set_comandi_filtri(ModelRc::new(VecModel::from(Vec::<crate::FiltroUi>::new())));
+        p.set_comandi_card(ModelRc::new(VecModel::from(card_dei_collegamenti(&c))));
+        p.set_comandi_scene(ModelRc::new(VecModel::from(Vec::<crate::CardUi>::new())));
+        p.set_comandi_stato(crate::moduli::pagina_collegamenti::stato(c.len()));
+        slint::platform::update_timers_and_animations();
+        let lanci = ["Proxmox, esempio.lan:8006, si apre nel browser", "Switch, switch.esempio.lan, si apre nel browser"];
+        assert_eq!(visibili(&p, &lanci), 2, "Collegamenti mostra i suoi");
+        assert_eq!(visibili(&p, &card_casa), 0);
+
+        // Si torna a Casa senza che Rust abbia riscritto: nessun collegamento in Casa.
+        p.set_vista("casa".into());
+        slint::platform::update_timers_and_animations();
+        assert_eq!(p.get_comandi_modulo(), "collegamenti");
+        assert_eq!(visibili(&p, &lanci), 0, "nessun collegamento in Casa");
+        assert!(ElementHandle::find_by_element_type_name(&p, "CardComando").next().is_none(), "nessuna card");
     }
 
     // ─── Ridisegno F2, Task 6: la pagina Agenti sull'impianto Elenco + dettaglio ───
@@ -8312,9 +8427,9 @@ mod accessibilita {
         let (agenti, _) = pannello_agenti(pagina_piena(), tre_righe_agenti());
         agenti.set_elenco_sintesi(sintesi_agenti(true));
         let pc = pannello_connessioni();
-        let (collegamenti, _) = pannello_collegamenti(quattro_collegamenti());
-        collegamenti.set_vista("collegamenti".into());
-        for (p, tipo) in [(&casa, "ImpiantoComandi"), (&agenti, "ImpiantoElencoDettaglio"), (&pc, "VistaPc"), (&collegamenti, "VistaCollegamenti")] {
+        // Collegamenti (ridisegno F3, Task 5): lo stesso impianto Comandi della Casa, senza filtri.
+        let (collegamenti, _) = pannello_collegamenti(&sei_collegamenti());
+        for (p, tipo) in [(&casa, "ImpiantoComandi"), (&agenti, "ImpiantoElencoDettaglio"), (&pc, "VistaPc"), (&collegamenti, "ImpiantoComandi")] {
             // Lo scorrimento del cambio di vista finito.
             fine_scorrimento();
             fine_scorrimento();

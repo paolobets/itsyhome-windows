@@ -622,13 +622,17 @@ pub struct Ponte {
     pensa_da: Cell<Option<Instant>>,
     /// Impostazioni › Dispositivi: le righe e le stanze compresse (solo finché l'app gira).
     righe: Rc<VecModel<RigaDispositivoUi>>,
-    /// I collegamenti veloci, per il pannello e per Impostazioni › Collegamenti.
+    /// I collegamenti veloci, per Impostazioni › Collegamenti (la pagina del pannello ha le sue card).
     collegamenti: Rc<VecModel<CollegamentoUi>>,
     /// Chi apre un collegamento nel browser (`sistema::browser::apri`; i test lo sostituiscono:
     /// nessun browser vero durante le prove).
     apri_url: RefCell<Rc<ApriUrl>>,
     /// Ultimo collegamento non aperto, col dettaglio tecnico, per Impostazioni › Informazioni.
     errore_collegamento: RefCell<Option<String>>,
+    /// La frase dell'ultimo lancio non riuscito, nel sotto della sintesi della pagina Collegamenti
+    /// (ridisegno F3, Task 5). Un'altra cosa da `errore_collegamento` (il dettaglio tecnico di
+    /// Impostazioni › Informazioni): si azzera con un lancio riuscito e alla chiusura del pannello.
+    errore_lancio: RefCell<Option<String>>,
     /// Un collegamento è già partito da questo pannello: Invio ripetuto o doppio clic, prima che
     /// il pannello si chiuda, non aprono altre schede. Torna falso alla chiusura del pannello.
     collegamento_aperto: Cell<bool>,
@@ -833,6 +837,7 @@ pub fn collega(
         collegamenti: Rc::new(VecModel::default()),
         apri_url: RefCell::new(Rc::new(crate::sistema::browser::apri)),
         errore_collegamento: RefCell::new(None),
+        errore_lancio: RefCell::new(None),
         collegamento_aperto: Cell::new(false),
         compresse: RefCell::new(std::collections::HashSet::new()),
         mostrato: RefCell::new(None),
@@ -1440,7 +1445,7 @@ impl Ponte {
 
     // ─── Collegamenti veloci (Task 14f) ──────────────────────────────────────
 
-    /// I collegamenti della configurazione per il pannello e le Impostazioni.
+    /// I collegamenti della configurazione per le Impostazioni.
     fn aggiorna_collegamenti(&self) {
         let voci: Vec<CollegamentoUi> = self.casa.con_config(|c| {
             c.collegamenti
@@ -1476,7 +1481,7 @@ impl Ponte {
         match esito {
             Ok(id) => {
                 self.aggiorna_collegamenti();
-                self.moduli_aggiorna("collegamenti");
+                self.collegamenti_cambiati();
                 self.fuoco_collegamento(&id, "modifica");
                 String::new()
             }
@@ -1492,7 +1497,7 @@ impl Ponte {
             collegamenti::elimina(c, id);
         });
         self.aggiorna_collegamenti();
-        self.moduli_aggiorna("collegamenti");
+        self.collegamenti_cambiati();
         let n = self.collegamenti.row_count();
         let resta = indice.filter(|_| n > 0).and_then(|i| self.collegamenti.row_data(i.min(n - 1)));
         match resta {
@@ -1509,7 +1514,7 @@ impl Ponte {
         });
         self.aggiorna_collegamenti();
         // L'ordine conta a parità di lanci (tutti a zero: il primo).
-        self.moduli_aggiorna("collegamenti");
+        self.collegamenti_cambiati();
         let n = self.collegamenti.row_count();
         let Some(i) = (0..n).find(|i| self.collegamenti.row_data(*i).is_some_and(|r| r.id == id)) else { return };
         let azione = match verso {
@@ -1546,33 +1551,28 @@ impl Ponte {
         let errore = match esito {
             Ok(()) => {
                 self.collegamento_aperto.set(true);
-                self.scrivi_errore_collegamento("");
-                // Il browser è partito: un lancio in più, salvato col resto della configurazione
-                // (solo qui, in locale; il conteggio decide il «più usato» della carta).
-                let ora = con_claude::adesso_unix();
+                // Il browser è partito: l'errore di un lancio di prima non vale più.
+                self.errore_lancio.borrow_mut().take();
+                // Un lancio in più, salvato col resto della configurazione (solo qui, in locale;
+                // il conteggio decide il «più usato» della carta e della sintesi).
+                let ora = orologio::adesso_unix();
                 self.casa.aggiorna_config(|c| {
                     collegamenti::conta_lancio(c, id, ora);
                 });
-                self.moduli_aggiorna("collegamenti");
+                self.collegamenti_cambiati();
                 return true;
             }
             Err(e) => e,
         };
         eprintln!("collegamento «{nome}» non aperto: {errore}");
         *self.errore_collegamento.borrow_mut() = Some(format!("{} · «{nome}» non aperto: {errore}", adesso_hh_mm()));
-        self.scrivi_errore_collegamento(&format!("«{nome}» non si è aperto: il dettaglio è in Impostazioni › Informazioni"));
+        // La frase nel sotto della sintesi della pagina Collegamenti (se è aperta).
+        *self.errore_lancio.borrow_mut() = Some(format!("«{nome}» non si è aperto: il dettaglio è in Impostazioni › Informazioni"));
+        self.scrivi_pagina_collegamenti();
         if let Some(f) = self.finestra.borrow().upgrade() {
             self.riempi_impostazioni(&f);
         }
         false
-    }
-
-    fn scrivi_errore_collegamento(&self, testo: &str) {
-        if let Some(p) = self.pannello.borrow().upgrade() {
-            if p.get_errore_collegamenti() != testo {
-                p.set_errore_collegamenti(testo.into());
-            }
-        }
     }
 
     /// `Apertura` dice come aprire la finestra delle Impostazioni (chiudendo il pannello).
@@ -1865,7 +1865,6 @@ impl Ponte {
     pub fn riempi(&self, p: &Pannello) {
         self.apri_modelli();
         self.comandi_nel_pannello(p);
-        p.set_collegamenti(ModelRc::from(self.collegamenti.clone()));
         p.set_elenco_righe(ModelRc::from(self.elenco_righe.clone()));
         p.set_attese(ModelRc::from(self.modello_attese.clone()));
         // La modalità della Panoramica (Impostazioni › Isola › Panoramica), prima delle voci.
@@ -2032,6 +2031,8 @@ impl Ponte {
         self.permesso_richiesto.borrow_mut().take();
         // Né un filtro chiesto dalla carta: la prossima Casa riparte dal filtro iniziale.
         self.filtro_richiesto.borrow_mut().take();
+        // Né l'errore dell'ultimo lancio: come il testo di prima, muore col pannello.
+        self.errore_lancio.borrow_mut().take();
         // La pagina dei Comandi si chiude: i suoi modelli si svuotano (niente righe in memoria).
         self.vista_comandi("");
         // Le radio si liberano e la rete torna a seguire solo la pillola.
@@ -3520,7 +3521,7 @@ pub(crate) mod test {
         p.su_apri_url(|_| Ok(()));
         assert_eq!(p.salva_collegamento("", "NAS", "nas.esempio.lan"), "");
         assert_eq!(p.casa.config().collegamenti[0].lanci, 0);
-        let prima = crate::ponte::con_claude::adesso_unix();
+        let prima = crate::orologio::adesso_unix();
         assert!(p.apri_collegamento("nas"));
         let c = p.casa.config().collegamenti[0].clone();
         assert_eq!(c.lanci, 1);
