@@ -367,12 +367,16 @@ export enum TipoRigaMisuraUi { stato, interruttore, cursore, rimandi }
 // Una riga della pagina PC. `valore`: la parola o il numero accanto al nome; `acceso`: l'interruttore
 // è acceso (per il cursore: non è muto); `attiva`: si può azionare (falso se la radio non c'è o non
 // è ancora stata letta); `errore`: il testo di un cambio rifiutato da Windows, vuoto altrimenti.
+// `giu` e `su`: il traffico del Wi-Fi acceso («1,2 MB/s», «0,3 MB/s»), vuoti altrimenti; le frecce
+// le disegna Slint, le parole «giù» e «su» stanno solo nel `narratore`.
 export struct RigaMisuraUi {
     id: string,
     tipo: TipoRigaMisuraUi,
     icona: image,
     nome: string,
     valore: string,
+    giu: string,
+    su: string,
     acceso: bool,
     attiva: bool,
     errore: string,

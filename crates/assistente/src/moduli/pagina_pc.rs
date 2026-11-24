@@ -100,10 +100,11 @@ pub fn usato_di_totale(usato: u64, totale: u64) -> String {
     }
 }
 
-/// «1,2 MB/s giù, 0,3 MB/s su»: il traffico del Wi-Fi in byte al secondo come lo legge Narrator
-/// (le frecce le disegna Slint). È il dato che c'è: non la velocità del collegamento.
-pub fn velocita_testo(giu: u64, su: u64) -> String {
-    format!("{} giù, {} su", crate::pc_stats::formatta_velocita(giu), crate::pc_stats::formatta_velocita(su))
+/// Il traffico del Wi-Fi in byte al secondo, già formattato: («1,2 MB/s», «0,3 MB/s»). Le frecce
+/// le disegna Slint, le parole «giù» e «su» sono solo per Narrator. È il dato che c'è: non la
+/// velocità del collegamento.
+fn traffico(v: Option<(u64, u64)>) -> Option<(String, String)> {
+    v.map(|(giu, su)| (crate::pc_stats::formatta_velocita(giu), crate::pc_stats::formatta_velocita(su)))
 }
 
 fn cpu(stat: Option<&StatPc>, cpu_pronta: bool, gpu: Option<f32>) -> MisuraUi {
@@ -129,7 +130,7 @@ fn memoria(stat: Option<&StatPc>) -> MisuraUi {
 /// Il disco: i GB liberi (non la percentuale), la barra è l'occupato. Dischi e reti si leggono solo
 /// a pagina PC aperta: finché `lente_lette` è falso il motivo è «Lettura in corso», mai «Non letta».
 fn disco(stat: Option<&StatPc>, lente_lette: bool) -> MisuraUi {
-    const ETICHETTA: &str = "Disco C:";
+    const ETICHETTA: &str = "Disco";
     let Some(s) = stat.filter(|_| lente_lette) else { return assente("disco", ETICHETTA, IN_CORSO) };
     if s.disco_totale == 0 {
         return assente("disco", ETICHETTA, NON_LETTA);
@@ -150,50 +151,83 @@ fn disco(stat: Option<&StatPc>, lente_lette: bool) -> MisuraUi {
     }
 }
 
-/// Il quarto posto: la batteria se c'è, altrimenti la GPU se si legge, altrimenti vuoto. Senza
-/// campione è la batteria in attesa (quattro posti, tutti «—»).
-fn quarto(stat: Option<&StatPc>, gpu: Option<f32>) -> MisuraUi {
-    let Some(s) = stat else { return assente("batteria", "Batteria", IN_CORSO) };
-    if let Some(b) = s.batteria.filter(|b| b.percentuale.is_finite()) {
-        let (dettaglio, tono) = match b.stato {
-            StatoBatteria::InCarica => ("In carica", Tono::Fatto),
-            StatoBatteria::Piena => ("Carica", Tono::Fatto),
-            StatoBatteria::Scarica => ("A batteria", Tono::Calmo),
-            StatoBatteria::Sconosciuto => ("", Tono::Calmo),
-        };
-        return in_percento("batteria", "Batteria", b.percentuale, dettaglio.into(), tono);
-    }
-    match gpu {
-        Some(g) => in_percento("gpu", "GPU", g, String::new(), Tono::Calmo),
-        None => vuota(),
+/// Chi occupa il quarto posto. Si decide una volta (`decidi_quarto`) e poi resta fermo per tutta la
+/// pagina aperta: `gpu_pct: None` vuol dire sia «nessuna GPU» sia «non ancora letta», e la batteria
+/// può mancare in un campione, quindi ricalcolarlo a ogni campione lo farebbe comparire e sparire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Quarto {
+    /// Le fonti lente non sono ancora state lette: il posto non si mostra.
+    #[default]
+    DaDecidere,
+    Batteria,
+    Gpu,
+    /// Né batteria né GPU: il posto resta vuoto.
+    Vuoto,
+}
+
+/// La scelta del quarto posto: la batteria se c'è, altrimenti la GPU se si legge, altrimenti vuoto;
+/// `DaDecidere` finché `lente_lette` è falso. Il ponte la chiama al primo campione con le fonti
+/// lente lette e poi la tiene fino alla chiusura della pagina.
+pub fn decidi_quarto(stat: &StatPc, lente_lette: bool) -> Quarto {
+    if !lente_lette {
+        Quarto::DaDecidere
+    } else if stat.batteria.is_some_and(|b| b.percentuale.is_finite()) {
+        Quarto::Batteria
+    } else if buono(stat.gpu_pct).is_some() {
+        Quarto::Gpu
+    } else {
+        Quarto::Vuoto
     }
 }
 
-/// Le quattro misure, ognuna al suo posto: CPU, Memoria, Disco (GB liberi) e Batteria; senza
-/// batteria il quarto posto va alla GPU, senza né l'una né l'altra resta vuoto. `None`: il primo
-/// campione non c'è ancora (quattro «—»). `cpu_pronta`: la CPU è una differenza fra due campioni.
-/// `lente_lette`: il campionatore ha già letto le fonti lente (disco, GPU): finché è falso il
-/// disco dice «Lettura in corso», e il quarto posto senza batteria si decide solo dopo, così non
-/// compare e sparisce (`gpu_pct: None` vuol dire sia «nessuna GPU» sia «non ancora letta»).
-pub fn misure(stat: Option<&StatPc>, cpu_pronta: bool, lente_lette: bool) -> [MisuraUi; 4] {
-    let gpu = buono(stat.and_then(|s| s.gpu_pct));
-    let con_batteria = stat.is_some_and(|s| s.batteria.is_some_and(|b| b.percentuale.is_finite()));
-    [cpu(stat, cpu_pronta, gpu.filter(|_| con_batteria)), memoria(stat), disco(stat, lente_lette), quarto(stat, gpu)]
+/// Il quarto posto già deciso. Se il suo dato manca in un campione il posto resta, con «—» e
+/// «Non letta»: mai vuoto, mai l'altra misura.
+fn quarto(stat: Option<&StatPc>, scelta: Quarto) -> MisuraUi {
+    match scelta {
+        Quarto::DaDecidere | Quarto::Vuoto => vuota(),
+        Quarto::Batteria => match stat.and_then(|s| s.batteria).filter(|b| b.percentuale.is_finite()) {
+            Some(b) => {
+                let (dettaglio, tono) = match b.stato {
+                    StatoBatteria::InCarica => ("In carica", Tono::Fatto),
+                    StatoBatteria::Piena => ("Carica", Tono::Fatto),
+                    StatoBatteria::Scarica => ("A batteria", Tono::Calmo),
+                    StatoBatteria::Sconosciuto => ("", Tono::Calmo),
+                };
+                in_percento("batteria", "Batteria", b.percentuale, dettaglio.into(), tono)
+            }
+            None => assente("batteria", "Batteria", if stat.is_some() { NON_LETTA } else { IN_CORSO }),
+        },
+        Quarto::Gpu => match buono(stat.and_then(|s| s.gpu_pct)) {
+            Some(g) => in_percento("gpu", "GPU", g, String::new(), Tono::Calmo),
+            None => assente("gpu", "GPU", if stat.is_some() { NON_LETTA } else { IN_CORSO }),
+        },
+    }
+}
+
+/// Le quattro misure, ognuna al suo posto: CPU, Memoria, Disco (GB liberi) e il quarto posto
+/// (`Quarto`: Batteria, GPU o vuoto). `None`: il primo campione non c'è ancora (i posti dicono
+/// «—»). `cpu_pronta`: la CPU è una differenza fra due campioni. `lente_lette`: il campionatore ha
+/// già letto le fonti lente (disco, GPU): finché è falso il disco dice «Lettura in corso». Con la
+/// batteria al quarto posto la GPU, se si legge, sta nel dettaglio della CPU.
+pub fn misure(stat: Option<&StatPc>, cpu_pronta: bool, lente_lette: bool, scelta: Quarto) -> [MisuraUi; 4] {
+    let gpu = buono(stat.and_then(|s| s.gpu_pct)).filter(|_| scelta == Quarto::Batteria);
+    [cpu(stat, cpu_pronta, gpu), memoria(stat), disco(stat, lente_lette), quarto(stat, scelta)]
 }
 
 /// Quello che il ponte sa del PC per le righe: tutto già letto, niente di Windows qui dentro (la
 /// pagina compila e si prova ovunque). `wifi` e `bluetooth`: `None` = non ancora letti, altrimenti
-/// (presente, acceso). `velocita`: il traffico già in parole (`velocita_testo`). `volume`: livello
-/// 0..1 e muto, `None` senza uscita audio. `errore_radio`: Windows ha rifiutato un cambio.
+/// (presente, acceso). `velocita`: il traffico (giù, su) in byte al secondo. `volume`: livello
+/// 0..1 e muto, `None` senza uscita audio. `errore_radio`: l'id della riga (`WIFI` o `BLUETOOTH`)
+/// la cui radio Windows ha rifiutato di cambiare; il testo del rifiuto va solo su quella.
 pub struct RighePc<'a> {
     pub windows: bool,
-    pub velocita: Option<String>,
+    pub velocita: Option<(u64, u64)>,
     pub nome_rete: Option<&'a str>,
     pub wifi: Option<(bool, bool)>,
     pub bluetooth: Option<(bool, bool)>,
     pub cuffie: Option<(&'a str, u8)>,
     pub volume: Option<(f32, bool)>,
-    pub errore_radio: bool,
+    pub errore_radio: Option<&'a str>,
 }
 
 fn riga(id: &str, tipo: TipoRigaMisuraUi, nome: &str, valore: &str, narratore: String) -> RigaMisuraUi {
@@ -203,6 +237,8 @@ fn riga(id: &str, tipo: TipoRigaMisuraUi, nome: &str, valore: &str, narratore: S
         icona: icona("nessuna"),
         nome: nome.into(),
         valore: valore.into(),
+        giu: "".into(),
+        su: "".into(),
         acceso: false,
         attiva: false,
         errore: "".into(),
@@ -210,9 +246,9 @@ fn riga(id: &str, tipo: TipoRigaMisuraUi, nome: &str, valore: &str, narratore: S
     }
 }
 
-/// Un interruttore di radio. `acceso_valore` e `acceso_narratore`: cosa dire a radio accesa (il
-/// nome della rete e la velocità, o le cuffie); altrimenti «Acceso».
-fn radio(id: &str, nome: &str, stato: Option<(bool, bool)>, acceso_valore: Option<(String, String)>, errore: bool) -> RigaMisuraUi {
+/// Un interruttore di radio. `acceso_valore`: cosa dire a radio accesa, (a vista, per Narrator): il
+/// nome della rete, o le cuffie; altrimenti «Acceso». `traffico`: giù e su già formattati.
+fn radio(id: &str, nome: &str, stato: Option<(bool, bool)>, acceso_valore: Option<(String, String)>, traffico: Option<(String, String)>, errore: bool) -> RigaMisuraUi {
     let (presente, acceso) = match stato {
         Some((presente, acceso)) => (presente, presente && acceso),
         None => (false, false),
@@ -230,6 +266,11 @@ fn radio(id: &str, nome: &str, stato: Option<(bool, bool)>, acceso_valore: Optio
     if let Some(d) = dettaglio {
         narratore = format!("{narratore}, {d}");
     }
+    // Il traffico solo a radio accesa; per Narrator con le parole «giù» e «su».
+    let (giu, su) = traffico.filter(|_| acceso).unwrap_or_default();
+    if !giu.is_empty() {
+        narratore = format!("{narratore}, {giu} giù, {su} su");
+    }
     let rifiuto = errore && presente;
     if rifiuto {
         narratore = format!("{narratore}, {RIFIUTO}");
@@ -237,6 +278,8 @@ fn radio(id: &str, nome: &str, stato: Option<(bool, bool)>, acceso_valore: Optio
     RigaMisuraUi {
         acceso,
         attiva: presente,
+        giu: giu.into(),
+        su: su.into(),
         errore: if rifiuto { RIFIUTO.into() } else { "".into() },
         ..riga(id, TipoRigaMisuraUi::Interruttore, nome, &valore, narratore)
     }
@@ -246,21 +289,22 @@ fn radio(id: &str, nome: &str, stato: Option<(bool, bool)>, acceso_valore: Optio
 /// rimandi alle pagine di Windows. Fuori da Windows una sola riga di stato, la rete.
 pub fn righe(r: &RighePc) -> Vec<RigaMisuraUi> {
     if !r.windows {
-        let (valore, narratore) = match &r.velocita {
-            Some(v) => (v.as_str(), format!("Rete, {v}")),
-            None => ("—", "Rete, non letta".to_owned()),
-        };
-        return vec![riga(RETE, TipoRigaMisuraUi::Stato, "Rete", valore, narratore)];
+        return vec![match traffico(r.velocita) {
+            Some((giu, su)) => RigaMisuraUi { giu: giu.clone().into(), su: su.clone().into(), ..riga(RETE, TipoRigaMisuraUi::Stato, "Rete", "", format!("Rete, {giu} giù, {su} su")) },
+            None => riga(RETE, TipoRigaMisuraUi::Stato, "Rete", "—", "Rete, non letta".to_owned()),
+        }];
     }
-    // Il nome della rete e il traffico solo a Wi-Fi acceso: «Casa 1,2 MB/s giù, 0,3 MB/s su».
-    let rete: Vec<&str> = [r.nome_rete.filter(|n| !n.is_empty()), r.velocita.as_deref().filter(|v| !v.is_empty())].into_iter().flatten().collect();
-    let wifi = (!rete.is_empty()).then(|| (rete.join(" "), rete.join(", ")));
+    // Il nome della rete a vista accanto all'interruttore, il traffico nei suoi due campi.
+    let wifi = r.nome_rete.filter(|n| !n.is_empty()).map(|n| (n.to_owned(), n.to_owned()));
     // Le cuffie: «Cuffie 70 %» a vista, il loro nome per Narrator.
     let cuffie = r.cuffie.map(|(nome, pct)| {
         let pct = pct.min(100);
         (format!("Cuffie {pct} %"), format!("{nome} {pct} %"))
     });
-    let mut v = vec![radio(WIFI, "Wi-Fi", r.wifi, wifi, r.errore_radio), radio(BLUETOOTH, "Bluetooth", r.bluetooth, cuffie, r.errore_radio)];
+    let mut v = vec![
+        radio(WIFI, "Wi-Fi", r.wifi, wifi, traffico(r.velocita), r.errore_radio == Some(WIFI)),
+        radio(BLUETOOTH, "Bluetooth", r.bluetooth, cuffie, None, r.errore_radio == Some(BLUETOOTH)),
+    ];
     if let Some((livello, muto)) = r.volume.filter(|(l, _)| l.is_finite()) {
         let p = percento(livello * 100.0);
         let narratore = if muto { format!("Volume {p} %, muto") } else { format!("Volume {p} %") };
@@ -329,16 +373,24 @@ mod test {
         StatPc { batteria: Some(LetturaBatteria { percentuale, stato }), ..stat() }
     }
 
+    /// `misure` col quarto posto deciso dal campione stesso (come farà il ponte una volta sola);
+    /// senza campione il posto è la batteria in attesa. Chi prova la decisione chiama
+    /// `super::misure` con il suo `Quarto`.
+    fn misure(stat: Option<&StatPc>, cpu_pronta: bool, lente_lette: bool) -> [MisuraUi; 4] {
+        let scelta = stat.map_or(Quarto::Batteria, |s| decidi_quarto(s, lente_lette));
+        super::misure(stat, cpu_pronta, lente_lette, scelta)
+    }
+
     fn tutto() -> RighePc<'static> {
         RighePc {
             windows: true,
-            velocita: Some("1,2 MB/s giù, 0,3 MB/s su".into()),
+            velocita: Some((1_258_291, 314_573)),
             nome_rete: Some("Casa"),
             wifi: Some((true, true)),
             bluetooth: Some((true, true)),
             cuffie: Some(("Cuffie di Paolo", 70)),
             volume: Some((0.4, false)),
-            errore_radio: false,
+            errore_radio: None,
         }
     }
 
@@ -356,7 +408,7 @@ mod test {
             [
                 ("cpu", "CPU", "12", "%", "GPU 37 %"),
                 ("memoria", "Memoria", "48", "%", "7,7 di 16 GB"),
-                ("disco", "Disco C:", "182", "GB", "liberi su 476 GB"),
+                ("disco", "Disco", "182", "GB", "liberi su 476 GB"),
                 ("batteria", "Batteria", "84", "%", "In carica"),
             ]
         );
@@ -386,8 +438,42 @@ mod test {
         let m = misure(Some(&stat()), true, true);
         assert!(!m[3].presente);
         assert!(m[..3].iter().all(|k| k.presente));
-        // Il posto vuoto resta vuoto anche prima delle fonti lente: la GPU non compare e sparisce.
-        assert!(!misure(Some(&stat()), true, false)[3].presente);
+    }
+
+    /// C13: il quarto posto si decide una volta e poi resta fermo. Prima delle fonti lente non si
+    /// mostra, anche se il campione ha già la GPU; dopo, un dato che manca in un campione lascia il
+    /// posto con «—» «Non letta», e una batteria che compare dopo la scelta della GPU non lo cambia.
+    #[test]
+    fn quarto_posto_fermo() {
+        let con_gpu = StatPc { gpu_pct: Some(37.0), ..stat() };
+        // Prima delle fonti lente: DaDecidere, e il posto non si mostra pur con la GPU nel campione.
+        assert_eq!(decidi_quarto(&con_gpu, false), Quarto::DaDecidere);
+        let m = super::misure(Some(&con_gpu), true, false, Quarto::DaDecidere);
+        assert!(!m[3].presente);
+        // Dopo: batteria, GPU o vuoto.
+        assert_eq!(decidi_quarto(&con_gpu, true), Quarto::Gpu);
+        assert_eq!(decidi_quarto(&StatPc { gpu_pct: Some(37.0), ..con_batteria(50.0, StatoBatteria::Scarica) }, true), Quarto::Batteria);
+        assert_eq!(decidi_quarto(&stat(), true), Quarto::Vuoto);
+        assert_eq!(decidi_quarto(&StatPc { gpu_pct: Some(f32::NAN), ..stat() }, true), Quarto::Vuoto);
+
+        // GPU scelta, poi un campione senza GPU: il posto resta, «—» «Non letta», e il campione di
+        // un'altra misura non lo cambia.
+        let m = super::misure(Some(&stat()), true, true, Quarto::Gpu);
+        assert_eq!((m[3].presente, m[3].id.as_str(), m[3].valore.as_str(), m[3].unita.as_str(), m[3].frazione, m[3].dettaglio.as_str()), (true, "gpu", "—", "", 0.0, "Non letta"));
+        assert_eq!(m[3].narratore.as_str(), "GPU, non letta");
+        // GPU scelta, poi un campione con la batteria: sempre la GPU, e la CPU non porta «GPU» nel dettaglio.
+        let s = StatPc { gpu_pct: Some(40.0), ..con_batteria(84.0, StatoBatteria::InCarica) };
+        let m = super::misure(Some(&s), true, true, Quarto::Gpu);
+        assert_eq!((m[3].id.as_str(), m[3].valore.as_str(), m[0].dettaglio.as_str()), ("gpu", "40", ""));
+
+        // Batteria scelta, poi un campione senza batteria: il posto resta, «—» «Non letta»; la GPU
+        // del campione non lo prende e nemmeno il dettaglio della CPU la mostra.
+        let s = StatPc { gpu_pct: Some(40.0), ..stat() };
+        let m = super::misure(Some(&s), true, true, Quarto::Batteria);
+        assert_eq!((m[3].presente, m[3].id.as_str(), m[3].valore.as_str(), m[3].dettaglio.as_str()), (true, "batteria", "—", "Non letta"));
+        assert_eq!(m[0].dettaglio.as_str(), "GPU 40 %", "con la batteria scelta la GPU sta nel dettaglio della CPU");
+        // Vuoto resta vuoto anche se poi compare una GPU.
+        assert!(!super::misure(Some(&s), true, true, Quarto::Vuoto)[3].presente);
     }
 
     /// Review Focus 4: un dato che manca è «—» col motivo, mai «0». Senza campione, quattro
@@ -461,8 +547,18 @@ mod test {
             ordine,
             [(WIFI, TipoRigaMisuraUi::Interruttore), (BLUETOOTH, TipoRigaMisuraUi::Interruttore), (VOLUME, TipoRigaMisuraUi::Cursore), (RIMANDI, TipoRigaMisuraUi::Rimandi)]
         );
-        assert_eq!((r[0].nome.as_str(), r[0].valore.as_str(), r[0].acceso, r[0].attiva), ("Wi-Fi", "Casa 1,2 MB/s giù, 0,3 MB/s su", true, true));
-        assert_eq!(r[0].narratore.as_str(), "Wi-Fi, acceso, Casa, 1,2 MB/s giù, 0,3 MB/s su");
+        assert_eq!((r[0].nome.as_str(), r[0].valore.as_str(), r[0].acceso, r[0].attiva), ("Wi-Fi", "Casa", true, true));
+        // Il traffico ha i suoi campi (le frecce le disegna Slint), senza le parole per Narrator.
+        assert_eq!((r[0].giu.as_str(), r[0].su.as_str()), ("1,2 MB/s", "307,2 KB/s"));
+        assert_eq!(r[0].narratore.as_str(), "Wi-Fi, acceso, Casa, 1,2 MB/s giù, 307,2 KB/s su");
+        assert!(r[1..].iter().all(|k| k.giu.is_empty() && k.su.is_empty()));
+        // Un nome rete di 32 caratteri sta tutto nel suo campo: il traffico non ne fa parte.
+        let lungo = "Vodafone-Casa-Piano-Terra-5GHz-X";
+        let l = righe(&RighePc { nome_rete: Some(lungo), ..tutto() });
+        assert_eq!((l[0].valore.as_str(), l[0].giu.as_str()), (lungo, "1,2 MB/s"));
+        // Il traffico di una radio spenta non si mostra.
+        let s = righe(&RighePc { wifi: Some((true, false)), ..tutto() });
+        assert_eq!((s[0].giu.as_str(), s[0].su.as_str(), s[0].narratore.as_str()), ("", "", "Wi-Fi, spento"));
         assert_eq!((r[1].nome.as_str(), r[1].valore.as_str(), r[1].acceso, r[1].attiva), ("Bluetooth", "Cuffie 70 %", true, true));
         assert_eq!(r[1].narratore.as_str(), "Bluetooth, acceso, Cuffie di Paolo 70 %");
         assert_eq!((r[2].nome.as_str(), r[2].valore.as_str(), r[2].acceso, r[2].attiva), ("Volume", "40 %", true, true));
@@ -500,15 +596,22 @@ mod test {
         // Fuori da Windows: una sola riga di stato con la velocità, nessun interruttore.
         let f = righe(&RighePc { windows: false, nome_rete: None, wifi: None, bluetooth: None, cuffie: None, volume: None, ..tutto() });
         assert_eq!(f.len(), 1);
-        assert_eq!((f[0].id.as_str(), f[0].tipo, f[0].nome.as_str(), f[0].valore.as_str(), f[0].attiva), (RETE, TipoRigaMisuraUi::Stato, "Rete", "1,2 MB/s giù, 0,3 MB/s su", false));
+        assert_eq!((f[0].id.as_str(), f[0].tipo, f[0].nome.as_str(), f[0].giu.as_str(), f[0].su.as_str(), f[0].attiva), (RETE, TipoRigaMisuraUi::Stato, "Rete", "1,2 MB/s", "307,2 KB/s", false));
+        assert_eq!(f[0].narratore.as_str(), "Rete, 1,2 MB/s giù, 307,2 KB/s su");
         let f = righe(&RighePc { windows: false, velocita: None, ..tutto() });
-        assert_eq!((f.len(), f[0].valore.as_str()), (1, "—"));
+        assert_eq!((f.len(), f[0].valore.as_str(), f[0].giu.as_str()), (1, "—", ""));
 
-        // Il rifiuto di Windows: il testo sta sulle radio che si possono azionare, non sul resto.
-        let e = righe(&RighePc { errore_radio: true, ..tutto() });
-        assert_eq!((e[0].errore.as_str(), e[1].errore.as_str()), ("Non riuscito: apro le Impostazioni di Windows", "Non riuscito: apro le Impostazioni di Windows"));
+        // Il rifiuto di Windows sta solo sulla riga della radio che ha fallito, e Narrator lo legge
+        // una volta sola.
+        let rifiuto = "Non riuscito: apro le Impostazioni di Windows";
+        let e = righe(&RighePc { errore_radio: Some(BLUETOOTH), ..tutto() });
+        assert!(e[0].errore.is_empty(), "il Wi-Fi non c'entra");
+        assert_eq!(e[1].errore.as_str(), rifiuto);
         assert!(e[2].errore.is_empty() && e[3].errore.is_empty());
-        assert!(e[0].narratore.ends_with("Non riuscito: apro le Impostazioni di Windows"), "{}", e[0].narratore);
+        assert!(e[1].narratore.ends_with(rifiuto) && !e[0].narratore.contains(rifiuto), "{} / {}", e[0].narratore, e[1].narratore);
+        let e = righe(&RighePc { errore_radio: Some(WIFI), ..tutto() });
+        assert_eq!((e[0].errore.as_str(), e[1].errore.as_str()), (rifiuto, ""));
+        assert_eq!(e.iter().filter(|k| k.narratore.contains(rifiuto)).count(), 1);
     }
 
     /// «Muto» con l'audio, «Riattiva l'audio» da muto, nessuna azione senza uscita audio; il
@@ -561,7 +664,7 @@ mod test {
         let m = misure(Some(&s), true, true);
         assert_eq!(m[0].narratore.as_str(), "CPU, 12 %, GPU 37 %");
         assert_eq!(m[1].narratore.as_str(), "Memoria, 48 %, 7,7 di 16 GB");
-        assert_eq!(m[2].narratore.as_str(), "Disco C:, 182 GB liberi su 476 GB");
+        assert_eq!(m[2].narratore.as_str(), "Disco, 182 GB liberi su 476 GB");
         assert_eq!(m[3].narratore.as_str(), "Batteria, 84 %, In carica");
         atteso("gpu", "GPU, 37 %");
         assert_eq!(misure(None, false, false)[0].narratore.as_str(), "CPU, lettura in corso");
@@ -582,9 +685,9 @@ mod test {
         for k in misure(Some(&s), true, true).iter().chain(misure(None, false, false).iter()) {
             testi.extend([k.etichetta.to_string(), k.valore.to_string(), k.unita.to_string(), k.dettaglio.to_string(), k.narratore.to_string()]);
         }
-        for r in [tutto(), RighePc { windows: false, ..tutto() }, RighePc { errore_radio: true, wifi: Some((false, false)), ..tutto() }] {
+        for r in [tutto(), RighePc { windows: false, ..tutto() }, RighePc { errore_radio: Some(BLUETOOTH), wifi: Some((false, false)), ..tutto() }] {
             for k in righe(&r) {
-                testi.extend([k.nome.to_string(), k.valore.to_string(), k.errore.to_string(), k.narratore.to_string()]);
+                testi.extend([k.nome.to_string(), k.valore.to_string(), k.giu.to_string(), k.su.to_string(), k.errore.to_string(), k.narratore.to_string()]);
             }
         }
         let r1 = R1 { fatto: "Tutto regolare".into(), valore: String::new() };
