@@ -3673,6 +3673,34 @@ mod accessibilita {
         super::pannello_comandi("casa", filtri_di_prova(), card_di_prova(), scene_di_prova())
     }
 
+    /// Prova dal vivo di F3 (Paolo): una luce accesa si colora di giallo (`Tema.luce-accesa` nel
+    /// riquadro dell'icona), nel disegno vero; una presa accesa e una luce spenta no.
+    #[test]
+    fn comandi_luce_accesa_gialla() {
+        use super::card_casa;
+        use crate::TipoCardUi::Interruttore;
+        super::piattaforma_che_disegna();
+        let accesa = |c: crate::CardUi, narratore: &str| crate::CardUi { acceso: true, stato: "Accesa".into(), narratore: narratore.into(), ..c };
+        let card = vec![
+            accesa(card_casa("light.divano", "Divano", Interruttore), "Divano, Accesa"),
+            accesa(card_casa("switch.tv", "Presa TV", Interruttore), "Presa TV, Acceso"),
+            card_casa("light.tavolo", "Tavolo", Interruttore),
+        ];
+        let (p, _) = super::pannello_comandi("casa", filtri_di_prova(), card, vec![]);
+        fine_arrivo();
+        let foto = p.window().take_snapshot().expect("il disegno del pannello");
+        let scala = foto.width() as f32 / p.window().size().to_logical(p.window().scale_factor()).width;
+        let giallo = rgb_del_token("luce-accesa");
+        let riquadro = |nome: &str| {
+            let (x0, y0, _, y1) = rettangolo(&elemento(&p, nome));
+            let centro = (y0 + y1) / 2.0;
+            (x0 + 16.0, centro - 12.0, x0 + 40.0, centro + 12.0)
+        };
+        assert!(ha_il_colore(&foto, scala, riquadro("Divano, Accesa"), giallo), "la luce accesa è gialla");
+        assert!(!ha_il_colore(&foto, scala, riquadro("Presa TV, Acceso"), giallo), "la presa accesa resta bianca");
+        assert!(!ha_il_colore(&foto, scala, riquadro("Tavolo, Spenta"), giallo), "la luce spenta non è gialla");
+    }
+
     /// I filtri (le schede dell'elenco «Filtri») per nome, senza le schede della barra.
     fn filtro_tab(p: &Pannello, nome: &str) -> ElementHandle {
         ElementHandle::find_by_accessible_label(p, nome)

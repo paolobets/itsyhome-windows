@@ -11,7 +11,7 @@
 // o su una scena la tocca: decide Rust (`filtro-pagina`, `tocca-card`).
 import { Tema } from "../tema.slint";
 import { Icone, Icona } from "../icone.slint";
-import { CardUi, FiltroUi, TipoCardUi } from "../voci.slint";
+import { CardUi, FiltroUi, GenereUi, TipoCardUi } from "../voci.slint";
 import { Anello, Fuoco, EtichettaMono } from "../componenti.slint";
 
 // Le misure dell'impianto, condivise col pannello e coi test: i filtri larghi `largo-filtri` da y
@@ -119,12 +119,15 @@ export component CardComando inherits Rectangle {
     property <bool> sopra: area.has-hover && root.card.toccabile;
     property <length> x-testo: 56px;
     property <length> largo-testo: max(0px, root.width - root.x-testo - 12px);
+    // Una luce accesa si colora di giallo (chiesto da Paolo nella prova dal vivo di F3): bordo,
+    // fondo e riquadro dell'icona nella tinta della luce. Le prese accese restano col primario.
+    property <bool> luce-accesa: root.card.acceso && root.card.genere == GenereUi.luce;
 
     border-radius: Tema.raggio-xl;
     border-width: 1px;
-    border-color: Tema.filo;
+    border-color: root.luce-accesa ? Tema.luce-bordo : Tema.filo;
     // Sola lettura: nessun riempimento, solo il filo.
-    background: root.lettura ? transparent : root.sopra ? Tema.g2 : Tema.g1;
+    background: root.lettura ? transparent : root.luce-accesa ? Tema.luce-card : root.sopra ? Tema.g2 : Tema.g1;
 
     if root.card.tipo == TipoCardUi.interruttore: Rectangle {
         accessible-role: switch;
@@ -166,7 +169,7 @@ export component CardComando inherits Rectangle {
         border-radius: Tema.raggio-m;
         border-width: root.lettura ? 1px : 0px;
         border-color: Tema.filo;
-        background: root.card.acceso ? Tema.primario : root.lettura ? transparent : Tema.g3;
+        background: root.luce-accesa ? Tema.luce-accesa : root.card.acceso ? Tema.primario : root.lettura ? transparent : Tema.g3;
 
         Icona {
             x: 8px;

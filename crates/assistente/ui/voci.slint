@@ -270,7 +270,7 @@ export enum TipoCardUi { interruttore, scena, lettura, lancio }
 
 // Una card dei Comandi. `stato`: la parola sotto il nome («Accesa», «Non disponibile»; per un
 // sensore numerico il nome stesso); `valore`: «80 %» accanto alla parola, o il numero grande di
-// una lettura («21,5°»); `acceso`: riquadro bianco; `toccabile`: un tocco manda un comando;
+// una lettura («21,5°»); `acceso`: riquadro bianco (una luce: giallo, con card gialla); `toccabile`: un tocco manda un comando;
 // `tenue`: non disponibile o casa scollegata; `errore`: «Non riuscito». `iniziale` e `tinta` (indice
 // in `Tema.colore-collegamento`) servono solo al lancio. `narratore`: il nome intero per Narrator.
 export struct CardUi {
