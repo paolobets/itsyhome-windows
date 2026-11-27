@@ -625,6 +625,20 @@ pub struct Ponte {
     filtro_casa: RefCell<Option<String>>,
     filtro_mostrato: RefCell<String>,
     filtro_richiesto: RefCell<Option<String>>,
+    /// La guardia dei pulsanti che nascono sotto il clic (revisione finale di F3, I1; come
+    /// `ARMAMENTO_CONSENTI` dei permessi: confronto di istanti, nessun timer). `azione_casa_dal`:
+    /// «Spegni tutte» e «Spegni la stanza» da un clic valgono solo da quest'istante, spostato di
+    /// `GUARDIA_CASA` in avanti ogni volta che nasce un'azione nuova nella testata della pagina Casa
+    /// (`azione_casa_mostrata`, `None` a pagina appena aperta) o nella carta di Casa
+    /// (`azione_carta_casa`): «Riprova» che diventa «Spegni tutte» alla connessione, un'azione che
+    /// compare. `card_casa_dal`: il tocco di una card della Casa vale solo da quest'istante,
+    /// spostato quando la pagina passa da uno stato senza card (il «Riprova» dello stato, il primo
+    /// avvio) a quello pieno (`stato_casa_mostrato`).
+    pub(crate) azione_casa_dal: Cell<Instant>,
+    azione_casa_mostrata: RefCell<Option<SharedString>>,
+    azione_carta_casa: Cell<&'static str>,
+    pub(crate) card_casa_dal: Cell<Instant>,
+    stato_casa_mostrato: Cell<Option<crate::TipoStatoPaginaUi>>,
     /// I riassunti dei moduli seguono i dati solo a pannello aperto (Task 14h): da chiuso nessuno li
     /// guarda (la pillola mostra umore e voci in attesa).
     modelli_vivi: Cell<bool>,
@@ -853,6 +867,11 @@ pub fn collega(
         filtro_casa: RefCell::new(None),
         filtro_mostrato: RefCell::new(String::new()),
         filtro_richiesto: RefCell::new(None),
+        azione_casa_dal: Cell::new(Instant::now()),
+        azione_casa_mostrata: RefCell::new(None),
+        azione_carta_casa: Cell::new(""),
+        card_casa_dal: Cell::new(Instant::now()),
+        stato_casa_mostrato: Cell::new(None),
         modelli_vivi: Cell::new(false),
         pensa_da: Cell::new(None),
         righe: Rc::new(VecModel::default()),
@@ -1592,8 +1611,10 @@ impl Ponte {
         };
         eprintln!("collegamento «{nome}» non aperto: {errore}");
         *self.errore_collegamento.borrow_mut() = Some(format!("{} · «{nome}» non aperto: {errore}", adesso_hh_mm()));
-        // La frase nel sotto della sintesi della pagina Collegamenti (se è aperta).
-        *self.errore_lancio.borrow_mut() = Some(format!("«{nome}» non si è aperto: il dettaglio è in Impostazioni › Informazioni"));
+        // La frase nel sotto della sintesi della pagina Collegamenti (se è aperta): l'indicazione
+        // di recupero prima del nome, perché l'ellissi del sotto tagli il nome e non lei; niente
+        // glifi («›» è vietato nei testi: revisione finale di F3).
+        *self.errore_lancio.borrow_mut() = Some(format!("Non si è aperto: dettagli in Impostazioni, scheda Informazioni · «{nome}»"));
         self.scrivi_pagina_collegamenti();
         if let Some(f) = self.finestra.borrow().upgrade() {
             self.riempi_impostazioni(&f);
@@ -2333,7 +2354,8 @@ impl Ponte {
                 self.casa.archivia_notifica(id);
             }
         } else if voce == ID_BATTERIA && pulsante == PULSANTE_HO_CAPITO {
-            // Zitta fino alla ricarica: il glifo nella vista PC continua a dire com'è la batteria.
+            // Zitta fino alla ricarica: la carta Batteria della pagina PC (tinta «Guarda» a 20 % o
+            // meno) e la carta del PC nella Panoramica continuano a dire com'è la batteria.
             self.batteria.borrow_mut().zittisci();
             self.togli_voce(voce);
         } else if voce.starts_with(PREFISSO_BT) && pulsante == PULSANTE_HO_CAPITO {

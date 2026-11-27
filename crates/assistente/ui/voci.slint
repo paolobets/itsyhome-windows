@@ -241,8 +241,10 @@ export struct LimiteUi {
     narratore: string,
 }
 
-// La riga di sintesi in cima alla pagina Agenti: titolo e sotto-testo, due limiti, la spesa API
-// del mese con la nota e l'azione «Dettagli» (solo con la chiave da amministratore).
+// La testata di ogni pagina (Agenti, Casa, Collegamenti, PC; `TestataPagina`): tono (gli occhietti
+// se non è calmo né vuoto), titolo e sotto-testo, e un'azione. Solo Agenti usa i due limiti, la
+// spesa API del mese con la nota e l'azione «Dettagli» (solo con la chiave da amministratore); le
+// altre pagine li lasciano vuoti.
 export struct SintesiUi {
     tono: TonoModuloUi,
     titolo: string,
@@ -316,7 +318,8 @@ export struct StatoPaginaUi {
 // Una misura del PC (CPU, Memoria, Disco, Batteria o GPU): quattro posti fissi, `presente` falso =
 // il posto resta vuoto (né batteria né GPU). `etichetta` è «CPU», «Memoria»: l'aspetto maiuscolo lo
 // fa Slint. Senza dato `valore` è «—», `unita` e `frazione` non ci sono e `dettaglio` dice il
-// motivo («Lettura in corso», «Non letta»). `tono`: calmo, attivo oltre la soglia, fatto in carica.
+// motivo («Lettura in corso», «Non letta»). `tono`: calmo, attivo oltre la soglia, fatto in carica,
+// guarda la batteria scollegata a 20 % o meno.
 // `narratore`: il nome intero per Narrator (mai l'etichetta maiuscola).
 export struct MisuraUi {
     presente: bool,
@@ -340,7 +343,8 @@ export enum TipoRigaMisuraUi { stato, interruttore, cursore, rimandi }
 // è ancora stata letta); `errore`: il testo di un cambio rifiutato da Windows, vuoto altrimenti.
 // `giu` e `su`: il traffico del Wi-Fi acceso («1,2 MB/s», «0,3 MB/s»), vuoti altrimenti; le frecce
 // le disegna Slint, le parole «giù» e «su» stanno solo nel `narratore`. `avviso`: il valore va nella
-// tinta d'avviso (la batteria di un dispositivo Bluetooth sotto il 20 %, Task 7, giro 1).
+// tinta d'avviso (la batteria di un dispositivo Bluetooth a 20 % o meno, Task 7, giro 1, con la
+// soglia della pillola dalla revisione finale di F3).
 export struct RigaMisuraUi {
     id: string,
     tipo: TipoRigaMisuraUi,

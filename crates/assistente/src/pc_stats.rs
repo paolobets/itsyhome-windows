@@ -67,9 +67,14 @@ pub enum TintaBatteria {
     Attenzione,
 }
 
-/// Da questa percentuale in giù (scollegata) il glifo vira all'informazione (blu; ≤: a 20%
-/// esatti il glifo è già blu, mentre la voce parte solo sotto il 20%). L'ambra è l'attenzione (≤ 10).
-pub const SOGLIA_BATTERIA_INFO: f32 = 20.0;
+/// La soglia unica della batteria scarica, ≤ 20 % (revisione finale di F3): il portatile
+/// scollegato (glifo blu, carta del PC e carta Batteria della pagina PC in «Guarda») e il
+/// dispositivo Bluetooth connesso (avviso nella pillola, tinta della riga della pagina PC). Sta qui
+/// perché compila ovunque (`sistema::batterie_bt` esiste solo su Windows e nei test).
+pub const SOGLIA_BATTERIA_SCARICA: u8 = 20;
+/// La stessa soglia in percento decimale, per la batteria del portatile (scollegata: a 20 % esatti
+/// il glifo è già blu, mentre la voce parte solo sotto il 20 %). L'ambra è l'attenzione (≤ 10).
+pub const SOGLIA_BATTERIA_INFO: f32 = SOGLIA_BATTERIA_SCARICA as f32;
 /// Una voce «informazione» già presente sparisce solo da questa percentuale in su.
 pub const SOGLIA_BATTERIA_INFO_FINE: f32 = 22.0;
 
@@ -355,6 +360,14 @@ impl Campionatore {
         self.campioni >= 2
     }
 
+    /// Vero finché il traffico della rete non è ancora una differenza fra due letture (revisione
+    /// finale di F3, «assenza ≠ zero»): al primo campione con le reti, e al primo dopo una pausa
+    /// della rete (pagina PC lasciata), il campione porta 0 B/s, che non è un dato. Come la CPU,
+    /// la rete diventa «pronta» al campione dopo.
+    pub fn rete_in_attesa(&self) -> bool {
+        self.campioni_rete < 2
+    }
+
     /// Un campione delle fonti chieste adesso: dischi e reti solo se `fonti` li vuole (a zero
     /// altrimenti: l'interfaccia, allora, non li mostra).
     pub fn campiona(&mut self, fonti: Fonti) -> StatPc {
@@ -381,6 +394,10 @@ impl Campionatore {
             }
             rete_pronta = self.campioni_rete > 0;
             self.campioni_rete = self.campioni_rete.saturating_add(1);
+        } else {
+            // Senza la rete chiesta i contatori non si rinfrescano: al ritorno il primo campione
+            // conterrebbe i byte di tutta la pausa divisi per un solo intervallo. Si riparte da capo.
+            self.campioni_rete = 0;
         }
         let (rete_giu_bps, rete_su_bps) = if rete_pronta {
             ((giu as f64 / secondi) as u64, (su as f64 / secondi) as u64)
@@ -762,6 +779,25 @@ mod test {
         let s = c.campiona(Fonti { disco: true, ..Fonti::default() });
         assert!(c.legge_dischi());
         assert!(s.disco_usato <= s.disco_totale);
+    }
+
+    /// Revisione finale di F3 («0 B/s» al primo campione): il traffico è una differenza fra due
+    /// letture, quindi la rete è in attesa al primo campione e pronta dal secondo; una pausa della
+    /// rete (pagina PC lasciata) la rimette in attesa per un campione.
+    #[test]
+    fn rete_pronta_al_secondo_campione() {
+        let mut c = Campionatore::new(Fonti::TUTTE);
+        assert!(c.rete_in_attesa());
+        let s = c.campiona(Fonti::TUTTE);
+        assert!(c.rete_in_attesa(), "il primo campione non ha ancora il traffico");
+        assert_eq!((s.rete_giu_bps, s.rete_su_bps), (0, 0), "lo zero del primo campione non è un dato");
+        c.campiona(Fonti::TUTTE);
+        assert!(!c.rete_in_attesa(), "dal secondo sì");
+        c.campiona(Fonti::default());
+        c.campiona(Fonti::TUTTE);
+        assert!(c.rete_in_attesa(), "dopo una pausa della rete, di nuovo un campione d'attesa");
+        c.campiona(Fonti::TUTTE);
+        assert!(!c.rete_in_attesa());
     }
 
     #[test]

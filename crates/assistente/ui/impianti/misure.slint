@@ -78,7 +78,9 @@ export component CartaMisura inherits Rectangle {
         font-family: Tema.carattere-mono;
         font-weight: 500;
         font-size: 28px;
-        color: Tema.testo;
+        // La batteria scarica (tono «guarda», revisione finale di F3): il valore nel suo colore,
+        // come la barra; la parola la dice il dettaglio («A batteria»).
+        color: root.misura.tono == TonoModuloUi.guarda ? Tema.guarda : Tema.testo;
         accessible-role: none;
     }
 
@@ -133,7 +135,8 @@ export component CartaMisura inherits Rectangle {
     }
 
     // La barra: l'occupato (il carico, la carica); il colore dice il tono (al lavoro oltre la
-    // soglia, in carica), la parola la dice il dettaglio. Senza dato la traccia vuota.
+    // soglia, in carica, scarica a 20 % o meno), la parola la dice il dettaglio. Senza dato la
+    // traccia vuota.
     Rectangle {
         x: root.margine;
         y: 72px;
@@ -147,7 +150,8 @@ export component CartaMisura inherits Rectangle {
             width: parent.width * min(max(root.misura.frazione, 0), 1);
             border-radius: 2px;
             background: root.misura.tono == TonoModuloUi.attivo ? Tema.attivo
-                : root.misura.tono == TonoModuloUi.fatto ? Tema.fatto : Tema.testo;
+                : root.misura.tono == TonoModuloUi.fatto ? Tema.fatto
+                : root.misura.tono == TonoModuloUi.guarda ? Tema.guarda : Tema.testo;
         }
     }
 }
@@ -266,7 +270,7 @@ component Rimando inherits Rectangle {
 
 // Una riga della pagina PC, 372 × 36: icona 16, nome 13 e, a destra, quello che la riga fa.
 // - interruttore (Wi-Fi, Bluetooth): il valore («Casa», «Mouse finto 5 %», «Spento», «Non presente»;
-//   la batteria Bluetooth sotto il 20 % in tinta d'avviso),
+//   la batteria Bluetooth a 20 % o meno in tinta d'avviso),
 //   il traffico del Wi-Fi acceso e l'interruttore; per Narrator un `switch` col nome intero, acceso
 //   = `checked`, non attivabile se la radio manca o non è letta. Un rifiuto di Windows prende il
 //   posto del valore, in `Tema.errore`.
@@ -381,7 +385,8 @@ export component RigaMisura inherits Rectangle {
         vertical-alignment: center;
         overflow: elide;
         font-size: Tema.testo-piccolo;
-        // La batteria Bluetooth sotto il 20 %: la tinta d'avviso della riga «CUFFIE» di M2.
+        // La batteria Bluetooth a 20 % o meno (la soglia dell'avviso nella pillola): la tinta
+        // d'avviso della riga «CUFFIE» di M2.
         color: root.riga.errore != "" ? Tema.errore : root.riga.avviso ? Tema.colore-livello(LivelloUi.informazione) : Tema.testo-2;
         accessible-role: none;
     }

@@ -218,10 +218,11 @@ fn aggiorna_ora(ponte: &Ponte, pannello: &Pannello) {
 }
 
 /// Il campione ha letto le fonti lente (dischi, reti e GPU): erano chieste tutte (solo a pagina PC
-/// aperta) e la GPU non aspetta il suo primo valore (appena accesa dà `None` per un campione: non
-/// è «nessuna GPU»). È da qui che la pagina PC decide il quarto posto (ridisegno F3, Task 7).
-fn lente_lette(chieste: Fonti, gpu_in_attesa: bool) -> bool {
-    chieste == Fonti::TUTTE && !gpu_in_attesa
+/// aperta) e nessuna aspetta il suo primo valore (`in_attesa`): la GPU appena accesa dà `None` per
+/// un campione (non è «nessuna GPU»), la rete al primo campione dà 0 B/s (non è «nessun traffico»,
+/// revisione finale di F3). È da qui che la pagina PC decide il quarto posto (ridisegno F3, Task 7).
+fn lente_lette(chieste: Fonti, in_attesa: bool) -> bool {
+    chieste == Fonti::TUTTE && !in_attesa
 }
 
 /// La tinta del glifo della batteria come la conosce l'interfaccia (la pillola).
@@ -403,7 +404,7 @@ impl Apertura {
                 let chieste = fonti_lette(&fonti);
                 let stat = campionatore.campiona(chieste);
                 let pronta = campionatore.cpu_pronta();
-                let lente = lente_lette(chieste, campionatore.gpu_in_attesa());
+                let lente = lente_lette(chieste, campionatore.gpu_in_attesa() || campionatore.rete_in_attesa());
                 let debole = debole.clone();
                 let consegnato = slint::invoke_from_event_loop(move || {
                     // Solo a pannello vivo: la carta del PC e, a pagina aperta, la pagina PC.
@@ -417,10 +418,11 @@ impl Apertura {
                     break;
                 }
                 // Svegliato prima del tempo da `ferma_campionamento` o da fonti cambiate
-                // (`aggiorna_fonti`). La GPU appena accesa ha il valore al campione dopo: poco
-                // tempo, come il secondo campione della CPU.
+                // (`aggiorna_fonti`). La GPU appena accesa e la rete appena chiesta hanno il valore
+                // al campione dopo: poco tempo, come il secondo campione della CPU.
                 std::thread::park_timeout(attesa);
-                attesa = if campionatore.gpu_in_attesa() { SECONDO_CAMPIONE } else { PERIODO_CAMPIONI };
+                let rete_attesa = fonti_lette(&fonti).rete && campionatore.rete_in_attesa();
+                attesa = if campionatore.gpu_in_attesa() || rete_attesa { SECONDO_CAMPIONE } else { PERIODO_CAMPIONI };
             }
         });
         match thread {

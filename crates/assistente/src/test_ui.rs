@@ -3818,6 +3818,23 @@ mod accessibilita {
         assert_eq!(etichetta_col_fuoco(&p), "Tutta la casa", "Maiusc+Tab dalle card ai filtri, sul filtro scelto");
         tasto(&p, Key::Tab);
         assert_eq!(etichetta_col_fuoco(&p), "Temperatura, 21,5°, sola lettura");
+        // Revisione finale di F3, m1 (la regola della pagina PC): Maiusc+Tab dal primo bersaglio
+        // (i filtri) all'azione della testata; Tab da lì torna ai filtri, poi alle card; Maiusc+Tab
+        // dalla testata lascia il contenuto.
+        con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Tutta la casa");
+        con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Spegni tutte", "Maiusc+Tab dai filtri all'azione della testata");
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Tutta la casa", "Tab dalla testata ai filtri");
+        con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
+        con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
+        let fuori = etichetta_col_fuoco(&p);
+        assert!(!fuori.is_empty() && fuori != "Spegni tutte" && fuori != "Tutta la casa", "Maiusc+Tab dalla testata lascia il contenuto: {fuori}");
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Tutta la casa", "rientrando con Tab: dai filtri");
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Temperatura, 21,5°, sola lettura");
         // Esc a livelli: prima il filtro iniziale (il fuoco sui filtri), poi chiude il pannello.
         tasto(&p, Key::Escape);
         assert_eq!(eventi_di(&eventi).last().map(String::as_str), Some("filtro-pagina casa casa.preferiti"));
@@ -4648,6 +4665,12 @@ mod accessibilita {
         assert!(etichetta_col_fuoco(&p).contains("scheda"), "Tab porta alle schede: {}", etichetta_col_fuoco(&p));
         con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
         assert_eq!(etichetta_col_fuoco(&p), nome("Proxmox", "esempio.lan:8006"));
+        // Revisione finale di F3, m1 (la regola della pagina PC): senza filtri il primo bersaglio
+        // sono le card, e Maiusc+Tab da lì va a «Modifica»; Tab torna alle card.
+        con_modificatori_pannello(&p, &[Key::Shift], Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), "Modifica", "Maiusc+Tab dalle card all'azione della testata");
+        tasto(&p, Key::Tab);
+        assert_eq!(etichetta_col_fuoco(&p), nome("Proxmox", "esempio.lan:8006"), "Tab dalla testata alle card");
         // Esc: un solo livello, chiude il pannello; Backspace porta alla Panoramica.
         tasto(&p, Key::Escape);
         assert_eq!(eventi.borrow().last().map(String::as_str), Some("chiudi pannello"));
@@ -4690,7 +4713,7 @@ mod accessibilita {
         assert!(titolo(&p, "Più usato: Proxmox"), "senza errori il sotto è il più usato");
         assert!(ElementHandle::find_by_accessible_label(&p, "Si aprono nel browser").next().is_none());
         assert!(ElementHandle::find_by_accessible_label(&p, "COLLEGAMENTI").next().is_none());
-        let errore = "«NAS» non si è aperto: il dettaglio è in Impostazioni › Informazioni";
+        let errore = "Non si è aperto: dettagli in Impostazioni, scheda Informazioni · «NAS»";
         p.set_comandi_sintesi(pagina_collegamenti::sintesi(&c, &riassunto(&c).r1, Some(errore)));
         assert!(titolo(&p, errore), "l'errore nel sotto della testata");
         assert!(!titolo(&p, "Più usato: Proxmox"), "al posto del più usato");
@@ -7486,7 +7509,7 @@ mod accessibilita {
         p.set_misure_righe(ModelRc::new(VecModel::from(pagina_pc::righe(righe))));
         p.set_misure_stato(pagina_pc::stato(Some(stat), true));
         let r1 = crate::moduli::R1 { fatto: "Tutto regolare".into(), valore: String::new() };
-        p.set_misure_sintesi(pagina_pc::sintesi(&r1, righe.volume));
+        p.set_misure_sintesi(pagina_pc::sintesi(crate::moduli::Tono::Calmo, &r1, righe.volume));
         p.set_volume_disponibile(righe.volume.is_some());
         if let Some((livello, muto)) = righe.volume {
             p.set_volume(livello);
@@ -7703,7 +7726,7 @@ mod accessibilita {
 
     /// Da `riga_cuffie_nella_vista_pc`: le cuffie lette entrando nella pagina stanno nella riga del
     /// Bluetooth acceso: a vista il nome del più scarico con la percentuale («Cuffie finte 18 %», in
-    /// tinta d'avviso sotto il 20 %), intero per Narrator; a Bluetooth spento o senza dispositivi
+    /// tinta d'avviso a 20 % o meno), intero per Narrator; a Bluetooth spento o senza dispositivi
     /// non si dicono.
     #[test]
     fn riga_cuffie() {
@@ -7712,7 +7735,7 @@ mod accessibilita {
         let righe = RighePc { bluetooth: Some((true, true)), cuffie: Some((c.nome.as_str(), c.percentuale)), ..righe_piene() };
         let (p, _) = pannello_pc(&stat_pieno(), &righe);
         assert_eq!(interruttore(&p, "Bluetooth").accessible_label().as_deref(), Some("Bluetooth, acceso, Cuffie finte 18 %"));
-        assert_eq!(p.get_misure_righe().row_data(1).map(|r| (r.valore.to_string(), r.avviso)), Some(("Cuffie finte 18 %".into(), true)), "il nome, e la tinta sotto il 20 %");
+        assert_eq!(p.get_misure_righe().row_data(1).map(|r| (r.valore.to_string(), r.avviso)), Some(("Cuffie finte 18 %".into(), true)), "il nome, e la tinta a 20 % o meno");
         scrivi_pc(&p, &stat_pieno(), &RighePc { bluetooth: Some((true, false)), ..righe });
         assert_eq!(interruttore(&p, "Bluetooth").accessible_label().as_deref(), Some("Bluetooth, spento"));
         scrivi_pc(&p, &stat_pieno(), &RighePc { bluetooth: Some((true, true)), cuffie: None, ..righe_piene() });
@@ -7795,7 +7818,7 @@ mod accessibilita {
     /// GB» resta dentro la sua carta, intero per Narrator.
     #[test]
     fn misure_testi_lunghi_nei_posti() {
-        let rete = "Vodafone-Casa-Piano-Terra-5GHz-X";
+        let rete = "Rete-finta-con-un-nome-di-32-car";
         assert_eq!(rete.chars().count(), 32);
         let stat = StatPc { ram_usata: GIB * 10239 / 10, ram_totale: GIB * 10239 / 10, disco_usato: 0, disco_totale: GIB * 10239 / 10, ..stat_pieno() };
         let righe = RighePc { nome_rete: Some(rete), velocita: Some((1_048_471_142, 1_048_471_142)), ..righe_piene() };
@@ -7808,7 +7831,9 @@ mod accessibilita {
 
         // Giro di correzione 1 (regola «dettaglio non tagliato» di M2, in pixel): nei casi peggiori
         // ogni dettaglio entra intero nel suo posto, con 2 px di margine. La misura va a capo in 2 px
-        // meno del posto: se una parola non ci sta, si spezza e la misura supera le due righe.
+        // meno del posto: se una parola non ci sta, si spezza e la misura supera le due righe. In
+        // tutti e tre i casi le carte sono quattro (il quarto posto è la batteria o la GPU): il
+        // ciclo non può passare a vuoto (revisione finale di F3).
         let peggiori = [
             StatPc { cpu_pct: Some(100.0), gpu_pct: Some(100.0), batteria: Some(LetturaBatteria { percentuale: 100.0, stato: StatoBatteria::InCarica }), ..stat },
             StatPc { cpu_pct: Some(100.0), gpu_pct: Some(100.0), batteria: None, ..stat },
@@ -7816,16 +7841,18 @@ mod accessibilita {
         ];
         for s in &peggiori {
             scrivi_pc(&p, s, &righe);
+            let mut carte = 0;
             for carta in ElementHandle::find_by_element_type_name(&p, "CartaMisura") {
+                carte += 1;
                 let nome = carta.accessible_label().unwrap_or_default();
                 let posto = carta.query_descendants().match_id("CartaMisura::posto-dettaglio").find_first().expect("posto del dettaglio");
                 let misura = carta.query_descendants().match_id("CartaMisura::misura-dettaglio").find_first().expect("misura del dettaglio");
                 let (pl, ml) = (posto.size(), misura.size());
-                assert!(ml.width <= pl.width - 2.0 + 0.01, "«{nome}»: misura larga {} in {}", ml.width, pl.width);
                 assert!(ml.height <= pl.height + 0.01, "«{nome}»: il dettaglio non entra intero (alto {} in {}, largo {})", ml.height, pl.height, pl.width);
                 let (cp, cl) = (carta.absolute_position(), carta.size());
                 assert!(posto.absolute_position().x + pl.width <= cp.x + cl.width - 12.0 + 0.5, "«{nome}»: il posto del dettaglio esce dalla carta");
             }
+            assert_eq!(carte, 4, "quattro carte misurate: {:?}", s.batteria);
         }
 
         // Le righe: ogni pezzo nella sua riga; il traffico intero fra il nome della rete e

@@ -258,8 +258,9 @@ type Azione = (&'static str, &'static str, bool, bool);
 /// `accese`: le luci accese **del filtro come si vedono adesso** (`luci_accese_del_filtro`: con
 /// l'ottimismo), per il «Spegni tutte» e il «Spegni la stanza» che spariscono al tocco. Azioni:
 /// «Spegni tutte» primaria (bianca, con l'icona) nei filtri della casa, «Spegni la stanza»
-/// secondaria in una stanza, «Riprova» o «Collega» secondarie a casa scollegata, che dice anche
-/// «dati delle 10:42». Niente «aggiornato ora»: servirebbe un orologio che lo rinfresca.
+/// secondaria in una stanza, «Riprova» o «Collega» secondarie a casa scollegata coi dati, che dice
+/// anche «dati delle 10:42» (senza dati l'azione è nello stato della pagina, una volta sola).
+/// Niente «aggiornato ora»: servirebbe un orologio che lo rinfresca.
 pub fn sintesi(stato: &StatoConnessione, r1: &R1, filtro: &str, menu: Option<&MenuData>, accese: usize, dati_delle: Option<&str>) -> SintesiUi {
     let (tono, titolo, sotto, azione): (Tono, String, String, Option<Azione>) = match (stato, menu) {
         (StatoConnessione::NonConfigurato, _) => (Tono::Vuoto, r1.fatto.clone(), String::new(), None),
@@ -278,10 +279,12 @@ pub fn sintesi(stato: &StatoConnessione, r1: &R1, filtro: &str, menu: Option<&Me
             None => (Tono::Calmo, r1.fatto.clone(), String::new(), (accese > 0).then_some((SPEGNI, "Spegni tutte", true, true))),
         },
         // Scollegata: Riprova se la casa non risponde, Collega se serve un passo nelle Impostazioni.
+        // Senza dati l'azione sta solo nello stato della pagina (fuori servizio, con lo stesso
+        // pulsante): un solo «Riprova», come Collegamenti nello stato vuoto (revisione finale di F3).
         _ => {
             let sotto = dati_delle.map_or_else(|| "nessun dato".to_owned(), |ora| format!("dati delle {ora}"));
             let azione = if riprovabile(stato) { (RIPROVA, "Riprova", false, false) } else { (COLLEGA, "Collega", false, false) };
-            (Tono::Fermo, r1.fatto.clone(), sotto, Some(azione))
+            (Tono::Fermo, r1.fatto.clone(), sotto, menu.map(|_| azione))
         }
     };
     let (azione_id, azione_testo, azione_primaria, con_icona) = azione.unwrap_or(("", "", false, false));
@@ -645,8 +648,13 @@ mod test {
         assert_eq!(v(&s), (TonoModuloUi::Fermo, "Scollegata".into(), "dati delle 10:42".into(), RIPROVA.into(), "Riprova".into(), false, false));
         let s = sintesi(&S::Disconnesso, &r1("Scollegata"), FILTRO_TUTTA, Some(&m), 4, Some("10:42"));
         assert_eq!((s.azione_id.as_str(), s.azione_testo.as_str(), s.azione_primaria), (COLLEGA, "Collega", false), "nessun «Spegni» a casa scollegata");
+        // Senza dati l'azione sta solo nello stato della pagina: un solo «Riprova» (o «Collega»).
         let s = sintesi(&S::TokenNonValido, &r1("Scollegata"), FILTRO_TUTTA, None, 0, None);
-        assert_eq!((s.sotto.as_str(), s.azione_id.as_str()), ("nessun dato", COLLEGA));
+        assert_eq!((s.sotto.as_str(), s.azione_id.as_str(), s.azione_testo.as_str()), ("nessun dato", "", ""));
+        assert_eq!(stato(&S::TokenNonValido, None).azione_id, COLLEGA, "l'azione è nello stato");
+        let s = sintesi(&S::Errore("timeout".into()), &r1("Scollegata"), FILTRO_TUTTA, None, 0, None);
+        assert_eq!((s.tono, s.azione_id.as_str()), (TonoModuloUi::Fermo, ""));
+        assert_eq!(stato(&S::Errore("timeout".into()), None).azione_id, RIPROVA, "un solo «Riprova», nello stato");
 
         // Non configurata e in connessione: nessuna azione (la pagina ha il suo stato).
         let s = sintesi(&S::NonConfigurato, &r1("Da collegare"), FILTRO_TUTTA, None, 0, None);

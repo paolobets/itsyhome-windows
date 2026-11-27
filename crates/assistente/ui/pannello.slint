@@ -670,7 +670,11 @@ export component Pannello inherits Window {
     // testata), poi la zona seguente; entrando nel contenuto si parte dal primo (all'indietro
     // dall'ultimo; senza righe azionabili dalla testata). Nei Comandi
     // Tab passa dai filtri alle card (Maiusc+Tab dalle scene alle card e dalle card ai filtri), poi
-    // lascia il contenuto; entrando si parte dai filtri (all'indietro dalle card).
+    // lascia il contenuto; entrando si parte dai filtri (all'indietro dalle card). La stessa regola
+    // del PC per l'azione della testata (revisione finale di F3, m1): Maiusc+Tab dal primo
+    // bersaglio del corpo (i filtri, le card senza filtri, il pulsante dello stato) va all'azione
+    // della testata («Spegni tutte», «Spegni la stanza», «Riprova», «Modifica»), Tab da lì torna al
+    // primo bersaglio, Maiusc+Tab da lì lascia il contenuto.
     function premi-tab(avanti: bool) {
         // Panoramica: l'ordine lo calcola Rust; un bersaglio che non c'è (il secondo pulsante di
         // una voce che ne ha uno) si salta.
@@ -689,19 +693,30 @@ export component Pannello inherits Window {
                 return;
             }
         }
-        if (zona == Zona.contenuto && pagina-comandi && comandi-pieno) {
+        if (zona == Zona.contenuto && pagina-comandi && comandi-qui) {
             let l = comandi-lato-valido;
-            if (avanti && l == 0 && n-card > 0) {
+            // Dall'azione della testata Tab entra nel corpo, dal primo bersaglio.
+            if (avanti && l < 0 && (comandi-pieno ? n-filtri + n-card + n-scene > 0 : comandi-stato-azione)) {
+                fuoco-filtro = comandi-filtro;
+                comandi-lato = !comandi-pieno || n-filtri > 0 ? 0 : n-card > 0 ? 1 : 2;
+                return;
+            }
+            if (comandi-pieno && avanti && l == 0 && n-card > 0) {
                 comandi-lato = 1;
                 return;
             }
-            if (!avanti && l == 2 && n-card > 0) {
+            if (comandi-pieno && !avanti && l == 2 && n-card > 0) {
                 comandi-lato = 1;
                 return;
             }
-            if (!avanti && l == 1 && n-filtri > 0) {
+            if (comandi-pieno && !avanti && l == 1 && n-filtri > 0) {
                 fuoco-filtro = comandi-filtro;
                 comandi-lato = 0;
+                return;
+            }
+            // Maiusc+Tab dal primo bersaglio del corpo all'azione della testata.
+            if (!avanti && l >= 0 && comandi-testata && (!comandi-pieno || l == 0 || (l == 1 && n-filtri == 0))) {
+                comandi-lato = -1;
                 return;
             }
         }

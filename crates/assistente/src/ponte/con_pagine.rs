@@ -13,9 +13,14 @@ use crate::moduli::pagina_casa::{self, FILTRO_ALTRO};
 use crate::moduli::pagina_pc::{self, Quarto, RighePc};
 use crate::moduli::{casa, collegamenti, pagina_collegamenti, pc};
 use crate::pc_stats::StatPc;
-use crate::{CardUi, FiltroUi, Pannello, SintesiUi, StatoPaginaUi};
+use crate::{CardUi, FiltroUi, Pannello, SintesiUi, StatoPaginaUi, TipoStatoPaginaUi};
 use casa_core::diagnosi::Contatore;
 use slint::{Model, ModelRc, SharedString};
+use std::time::{Duration, Instant};
+
+/// La guardia dei pulsanti della Casa che nascono sotto il clic (revisione finale di F3, I1): 600
+/// ms, come l'armamento di «Consenti» dei permessi. Vedi `Ponte::azione_casa_dal`.
+pub(crate) const GUARDIA_CASA: Duration = Duration::from_millis(600);
 
 /// Un campione del PC come lo consegna il thread del pannello: i numeri, la CPU pronta (è una
 /// differenza fra due letture) e le fonti lente lette (dischi, reti e GPU, solo a pagina PC aperta;
@@ -85,6 +90,10 @@ impl Ponte {
         }
         *self.filtro_casa.borrow_mut() = None;
         self.filtro_mostrato.borrow_mut().clear();
+        // La pagina Casa che si apre non ha ancora mostrato nulla: la sua prima testata e il suo
+        // primo stato non «nascono sotto il clic» (la guardia guarda solo i cambi a pagina aperta).
+        *self.azione_casa_mostrata.borrow_mut() = None;
+        self.stato_casa_mostrato.set(None);
         if !matches!(nuova, Some("casa" | "collegamenti")) {
             // I dati di nessuna pagina dei Comandi: l'impianto non mostra nulla finché una sua
             // pagina non riscrive.
@@ -123,11 +132,31 @@ impl Ponte {
     /// Una card o una scena toccata (clic, Invio, Narrator): il suo comando; in Collegamenti il
     /// lancio del collegamento. Va chiamata solo subito dopo il gesto dell'utente.
     pub fn tocca_card(&self, modulo: &str, id: &str) {
+        self.tocca_card_alle(modulo, id, Instant::now());
+    }
+
+    /// `tocca_card` all'istante `ora`. Una card della Casa toccata nei `GUARDIA_CASA` dopo che la
+    /// pagina è passata da uno stato senza card (il «Riprova» dello stato al centro, il primo
+    /// avvio) a quello pieno si ignora: il doppio clic su «Riprova» non accende una luce nata al suo
+    /// posto (revisione finale di F3, I1).
+    pub(crate) fn tocca_card_alle(&self, modulo: &str, id: &str, ora: Instant) {
         match modulo {
+            "casa" if ora < self.card_casa_dal.get() => {}
             "casa" => self.tocca(id),
             "collegamenti" => self.lancia_collegamento(id),
             _ => eprintln!("tocco di una pagina sconosciuta: {modulo} {id}"),
         }
+    }
+
+    /// Vero se «Spegni tutte» e «Spegni la stanza» da un clic valgono all'istante `ora`: sono
+    /// passati `GUARDIA_CASA` da quando è nata l'ultima azione della testata o della carta di Casa.
+    pub(super) fn azione_casa_armata(&self, ora: Instant) -> bool {
+        ora >= self.azione_casa_dal.get()
+    }
+
+    /// È nata un'azione nuova nella testata o nella carta di Casa: la guardia riparte.
+    pub(super) fn azione_casa_nata(&self) {
+        self.azione_casa_dal.set(Instant::now() + GUARDIA_CASA);
     }
 
     /// Un collegamento da aprire (la card della pagina, «Apri {nome}» della carta): il browser e,
@@ -244,6 +273,18 @@ impl Ponte {
             + aggiorna_modello(&self.comandi_card, pagina.card)
             + aggiorna_modello(&self.comandi_scene, pagina.scene);
         d.conta_n(Contatore::ui_righe, righe);
+        // La guardia di I1: un'azione della testata diversa da quella mostrata (e non vuota) nasce
+        // dove c'era l'altra («Riprova» → «Spegni tutte» alla connessione); le card nascono dove
+        // c'era lo stato (il suo «Riprova» al centro). La prima scrittura dopo l'apertura no.
+        let azione = pagina.sintesi.azione_id.clone();
+        let azione_prima = self.azione_casa_mostrata.replace(Some(azione.clone()));
+        if azione_prima.is_some_and(|a| a != azione) && !azione.is_empty() {
+            self.azione_casa_nata();
+        }
+        let stato_prima = self.stato_casa_mostrato.replace(Some(pagina.stato.tipo));
+        if stato_prima.is_some_and(|t| t != TipoStatoPaginaUi::Pieno) && pagina.stato.tipo == TipoStatoPaginaUi::Pieno {
+            self.card_casa_dal.set(Instant::now() + GUARDIA_CASA);
+        }
         let Some(p) = p else { return };
         scrivi_se_cambia(p.get_comandi_modulo(), SharedString::from("casa"), |v| p.set_comandi_modulo(v));
         scrivi_se_cambia(p.get_comandi_filtro(), pagina.indice, |v| p.set_comandi_filtro(v));
@@ -378,7 +419,9 @@ impl Ponte {
         let scelta = self.pc_quarto.get();
         let campione = self.pc_campione.borrow();
         let pronto = campione.as_ref().filter(|c| c.cpu_pronta).map(|c| &c.stat);
-        let sintesi = pagina_pc::sintesi(&pc::riassunto(pronto).r1, self.volume_pc());
+        // Titolo e tono della carta del PC: fuori soglia la testata ha gli occhietti (I2).
+        let carta = pc::riassunto(pronto);
+        let sintesi = pagina_pc::sintesi(carta.tono, &carta.r1, self.volume_pc());
         let (misure, righe, stato) = match campione.as_ref().filter(|_| scelta != Quarto::DaDecidere) {
             Some(c) => (
                 pagina_pc::misure(Some(&c.stat), c.cpu_pronta, c.lente_lette, scelta).to_vec(),
@@ -584,7 +627,10 @@ mod test {
             (s.sotto.to_string(), s.azione_id.to_string())
         };
         assert_eq!(sintesi(&p), ("2 accese su 3".into(), SPEGNI_STANZA.into()));
-        ponte.azione_pagina("casa", SPEGNI_STANZA, "");
+        // I clic arrivano passata la guardia dei pulsanti appena nati (revisione finale di F3, I1:
+        // `la_guardia_della_casa_ferma_il_secondo_clic`).
+        let dopo = |ponte: &Ponte, azione: &str| ponte.azione_pagina_alle("casa", azione, "", ponte.azione_casa_dal.get());
+        dopo(&ponte, SPEGNI_STANZA);
         let numero = |id: &str| ponte.ottimismo.borrow().numero(id);
         let (na, nb) = (numero("light.a").expect("light.a"), numero("light.b").expect("light.b"));
         assert!(numero("light.c").is_none(), "l'altra stanza non si tocca");
@@ -593,18 +639,101 @@ mod test {
         assert_eq!(veri, Some(2), "il menu dice ancora due accese");
         assert_eq!(sintesi(&p), ("3 dispositivi".into(), "".into()), "il pulsante sparisce subito");
         // Il secondo clic nello stesso punto: nessun comando nuovo.
-        ponte.azione_pagina("casa", SPEGNI_STANZA, "");
+        dopo(&ponte, SPEGNI_STANZA);
         assert_eq!((numero("light.a"), numero("light.b")), (Some(na), Some(nb)));
         // Un comando fallito riporta la luce e il pulsante.
         ponte.ricevi(CasaEvento::Esito { entity_id: "light.b".into(), numero: nb, ok: false, errore: Some("guasto".into()) });
         assert_eq!(sintesi(&p), ("1 accesa su 3".into(), SPEGNI_STANZA.into()));
         // Fuori da una stanza «Spegni la stanza» non fa nulla.
         ponte.filtro_pagina("casa", FILTRO_TUTTA);
-        ponte.azione_pagina("casa", SPEGNI_STANZA, "");
+        dopo(&ponte, SPEGNI_STANZA);
         assert!(numero("light.c").is_none());
         // «Spegni tutte» della testata spegne il resto della casa.
-        ponte.azione_pagina("casa", SPEGNI, "");
+        dopo(&ponte, SPEGNI);
         assert!(numero("light.c").is_some());
+    }
+
+    /// Revisione finale di F3, I1: «Riprova» resta nella testata durante la riconnessione e alla
+    /// connessione lo stesso pulsante diventa «Spegni tutte» (in una stanza «Spegni la stanza»).
+    /// Un clic entro 600 ms dal cambio si ignora (nessun tocco, ottimismo vuoto), dalla pagina e
+    /// dalla carta; dopo i 600 ms passa. Il tempo è quello simulato (`*_alle`).
+    #[test]
+    fn la_guardia_della_casa_ferma_il_secondo_clic() {
+        use std::time::Duration;
+        let (_s, ponte, p, _t) = casa_aperta(casa_di_prova(false, false));
+        let numero = |id: &str| ponte.ottimismo.borrow().numero(id);
+        let nessun_tocco = || ["light.a", "light.b", "light.c"].iter().all(|id| numero(id).is_none());
+        ponte.ricevi(CasaEvento::Stato(StatoConnessione::Errore("timeout".into())));
+        ponte.ricevi(CasaEvento::Stato(StatoConnessione::InConnessione));
+        assert_eq!(p.get_comandi_sintesi().azione_id, RIPROVA, "«Riprova» durante la riconnessione");
+        ponte.ricevi(CasaEvento::Stato(StatoConnessione::Connesso));
+        assert_eq!(p.get_comandi_sintesi().azione_id, SPEGNI, "lo stesso pulsante è diventato «Spegni tutte»");
+        let dal = ponte.azione_casa_dal.get();
+        let appena_prima = dal - Duration::from_millis(1);
+        // Il secondo clic, entro i 600 ms: dalla testata e dalla carta, nessun tocco.
+        ponte.azione_pagina_alle("casa", SPEGNI, "", appena_prima);
+        ponte.azione_modulo_alle("casa", SPEGNI, appena_prima);
+        assert!(nessun_tocco(), "dentro i 600 ms: ottimismo vuoto");
+        assert_eq!(p.get_comandi_sintesi().azione_id, SPEGNI, "nulla è cambiato");
+        // Passati i 600 ms: spegne.
+        ponte.azione_pagina_alle("casa", SPEGNI, "", dal);
+        assert!(numero("light.a").is_some() && numero("light.b").is_some() && numero("light.c").is_some());
+    }
+
+    /// Come `la_guardia_della_casa_ferma_il_secondo_clic`, in una stanza: «Riprova» che alla
+    /// connessione diventa «Spegni la stanza».
+    #[test]
+    fn la_guardia_della_casa_in_una_stanza() {
+        use std::time::Duration;
+        let (_s, ponte, p, _t) = casa_aperta(casa_di_prova(false, false));
+        let numero = |id: &str| ponte.ottimismo.borrow().numero(id);
+        ponte.filtro_pagina("casa", "a0");
+        ponte.ricevi(CasaEvento::Stato(StatoConnessione::Errore("timeout".into())));
+        assert_eq!(p.get_comandi_sintesi().azione_id, RIPROVA);
+        ponte.ricevi(CasaEvento::Stato(StatoConnessione::Connesso));
+        assert_eq!(p.get_comandi_sintesi().azione_id, SPEGNI_STANZA);
+        let dal = ponte.azione_casa_dal.get();
+        ponte.azione_pagina_alle("casa", SPEGNI_STANZA, "", dal - Duration::from_millis(1));
+        assert!(numero("light.a").is_none() && numero("light.b").is_none(), "dentro i 600 ms: nessun tocco");
+        ponte.azione_pagina_alle("casa", SPEGNI_STANZA, "", dal + Duration::from_millis(1));
+        assert!(numero("light.a").is_some() && numero("light.b").is_some(), "dopo: la stanza si spegne");
+        assert!(numero("light.c").is_none(), "l'altra stanza no");
+    }
+
+    /// Revisione finale di F3, I1 (caso affine): a casa scollegata senza dati il «Riprova» dello
+    /// stato sta al centro della pagina; alla connessione lì nascono le card. Un tocco su una card
+    /// entro 600 ms dal passaggio allo stato pieno si ignora, dopo passa. Una pagina già piena che
+    /// cambia dati non arma nulla.
+    #[test]
+    fn la_guardia_delle_card_nate_al_posto_dello_stato() {
+        use std::time::Duration;
+        let (_s, ponte, pillola, cartella) = ponte_di_prova();
+        let _tieni = (pillola, cartella);
+        let p = Pannello::new().expect("pannello");
+        ponte.riempi(&p);
+        ponte.pannello_aperto(&p);
+        // Il ponte di prova parte coi dati: qui la casa non ne ha ancora.
+        *ponte.menu.borrow_mut() = None;
+        p.set_vista("casa".into());
+        ponte.vista_pagina("casa");
+        ponte.ricevi(CasaEvento::Stato(StatoConnessione::Errore("timeout".into())));
+        let s = p.get_comandi_stato();
+        assert_eq!((s.tipo, s.azione_id.as_str()), (TipoStatoPaginaUi::FuoriServizio, RIPROVA), "il «Riprova» dello stato");
+        assert_eq!(p.get_comandi_sintesi().azione_id, "", "uno solo: la testata non lo ripete");
+        let prima = ponte.card_casa_dal.get();
+        ponte.ricevi(CasaEvento::Stato(StatoConnessione::Connesso));
+        ponte.ricevi(CasaEvento::Dati(Arc::new(casa_di_prova(false, false))));
+        assert_eq!(p.get_comandi_stato().tipo, TipoStatoPaginaUi::Pieno);
+        let dal = ponte.card_casa_dal.get();
+        assert!(dal > prima, "il passaggio allo stato pieno arma la guardia");
+        let numero = |id: &str| ponte.ottimismo.borrow().numero(id);
+        ponte.tocca_card_alle("casa", "light.a", dal - Duration::from_millis(1));
+        assert!(numero("light.a").is_none(), "dentro i 600 ms: nessun tocco");
+        ponte.tocca_card_alle("casa", "light.a", dal);
+        assert!(numero("light.a").is_some(), "dopo: il tocco passa");
+        // Dati nuovi a pagina piena: nessuna guardia nuova.
+        ponte.ricevi(CasaEvento::Dati(Arc::new(casa_di_prova(false, true))));
+        assert_eq!(ponte.card_casa_dal.get(), dal);
     }
 
     /// Requisito b del Task 4b: con i dati presenti, a ogni tentativo di riconnessione (casa-core
@@ -672,8 +801,11 @@ mod test {
         ponte.tocca_card("collegamenti", "nas");
         ponte.tocca_card("collegamenti", "nas");
         assert_eq!((chiusure.get(), lanci(&ponte)), (0, vec![0, 0, 0]), "nessuna chiusura, nessun lancio");
-        let frase = "«NAS» non si è aperto: il dettaglio è in Impostazioni › Informazioni";
+        let frase = "Non si è aperto: dettagli in Impostazioni, scheda Informazioni · «NAS»";
         assert_eq!(sotto(&p), frase);
+        // L'indicazione di recupero sta in testa (l'ellissi del sotto taglia il nome, non lei) e
+        // nessun glifo vietato.
+        assert!(frase.starts_with("Non si è aperto: dettagli in Impostazioni") && !frase.contains('›'));
         assert_eq!(p.get_comandi_sintesi().tono, crate::TonoModuloUi::Errore);
         assert!(ponte.errore_collegamento.borrow().as_deref().is_some_and(|e| e.contains("ShellExecuteW: 2")), "il dettaglio per le Impostazioni c'è ancora");
         assert_eq!(p.get_comandi_modulo(), "collegamenti");
@@ -704,11 +836,11 @@ mod test {
         let (_s, ponte, p, _t) = collegamenti_aperti();
         ponte.su_apri_url(|_| Err("ShellExecuteW: 2".into()));
         ponte.tocca_card("collegamenti", "router");
-        assert!(sotto(&p).starts_with("«Router» non si è aperto"), "{}", sotto(&p));
+        assert!(sotto(&p).starts_with("Non si è aperto") && sotto(&p).ends_with("«Router»"), "{}", sotto(&p));
         // Lasciare la pagina e tornarci a pannello aperto non la toglie (è ancora vero).
         ponte.vista_pagina("panoramica");
         ponte.vista_pagina("collegamenti");
-        assert!(sotto(&p).starts_with("«Router» non si è aperto"), "{}", sotto(&p));
+        assert!(sotto(&p).starts_with("Non si è aperto") && sotto(&p).ends_with("«Router»"), "{}", sotto(&p));
         ponte.pannello_chiuso();
         assert!(ponte.errore_lancio.borrow().is_none());
         let p = Pannello::new().expect("pannello");

@@ -4,8 +4,9 @@
 //
 // `TestataPagina`: occhietti del tono (se non è calmo né vuoto), titolo Inter 700 18 e sotto 13
 // tenue a sinistra; a destra i limiti a barra (`.lim` della bozza), la spesa in mono e un pulsante
-// d'azione 32 r9 neutro. Lo spazio che manca lo cede prima il sotto, poi il titolo (ellissi); il
-// gruppo di destra mai. Alta 40 (la Coda la tiene a 28 fino a F5, pre-flight C11).
+// d'azione 32 r9 neutro. Lo spazio che manca lo cede prima il sotto, poi il gruppo di destra fino
+// a lasciare al titolo il suo spazio garantito (`spazio-titolo`), poi il titolo (ellissi); l'azione
+// mai. Alta 40 (la Coda la tiene a 28 fino a F5, pre-flight C11).
 //
 // `StatoPagina`: una pagina senza elenco (scollegata, vuota): una frase, un sotto e al più un
 // pulsante, centrati nel corpo sotto la testata.
@@ -159,7 +160,8 @@ export component TestataPagina inherits Rectangle {
         color: Tema.testo-tenue;
     }
 
-    // A destra, mai accorciato: limiti, spesa, azione.
+    // A destra: limiti, spesa, azione. Si accorcia fino a `massimo-destra` (lo spazio garantito al
+    // titolo): prima le barre dei limiti, poi un po' l'importo; l'azione mai.
     destra := HorizontalLayout {
         x: root.width - self.width;
         y: (parent.height - self.height) / 2;

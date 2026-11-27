@@ -110,7 +110,7 @@ mod test {
         assert_eq!(s.titolo.as_str(), riassunto(&c).r1.fatto, "il titolo è quello della carta");
 
         // L'errore dell'ultimo lancio prende il posto del sotto; uno vuoto no.
-        let e = "«NAS» non si è aperto: il dettaglio è in Impostazioni › Informazioni";
+        let e = "Non si è aperto: dettagli in Impostazioni, scheda Informazioni · «NAS»";
         let s = sintesi(&c, &r1, Some(e));
         assert_eq!((s.titolo.as_str(), s.sotto.as_str(), s.tono), ("2 collegamenti", e, TonoModuloUi::Errore));
         assert_eq!(s.azione_testo.as_str(), "Modifica", "«Modifica» resta");

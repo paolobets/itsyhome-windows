@@ -2868,10 +2868,18 @@ mod test {
         // Vista chiusa: gli eventi non scrivono nulla nel pannello.
         manda(&p, ev("a", TipoEvento::UserPromptSubmit));
         assert_eq!(pannello.get_elenco_righe().row_count(), 0, "vista chiusa: nessun lavoro");
-        // (Non `== SintesiUi::default()`: la sintesi ha un'`Image` e una vuota non è uguale a se
-        // stessa, quel confronto non potrebbe mai riuscire.)
+        // Il confronto pieno, come prima di F3 (revisione finale di F3): ogni campo è quello di
+        // partenza. La destrutturazione senza `..` obbliga a nominarli tutti (un campo nuovo non
+        // compila finché non si confronta). L'icona dell'azione resta fuori: un'`Image` vuota non è
+        // uguale nemmeno alla sua copia (provato: `assert_eq!` con l'icona clonata fallisce).
         let sintesi = pannello.get_elenco_sintesi();
-        assert!(sintesi.titolo.is_empty() && sintesi.sotto.is_empty() && !sintesi.l1.presente && !sintesi.l2.presente, "né la sintesi: {sintesi:?}");
+        let crate::SintesiUi { tono, titolo, sotto, l1, l2, spesa, spesa_nota, azione_id, azione_testo, azione_primaria, azione_icona: _ } = sintesi.clone();
+        let vuota = crate::SintesiUi::default();
+        assert_eq!(
+            (tono, titolo, sotto, l1, l2, spesa, spesa_nota, azione_id, azione_testo, azione_primaria),
+            (vuota.tono, vuota.titolo, vuota.sotto, vuota.l1, vuota.l2, vuota.spesa, vuota.spesa_nota, vuota.azione_id, vuota.azione_testo, vuota.azione_primaria),
+            "né la sintesi: {sintesi:?}"
+        );
         // Si apre: le righe ci sono, di colpo.
         p.vista_claude(true);
         let righe = pannello.get_elenco_righe();

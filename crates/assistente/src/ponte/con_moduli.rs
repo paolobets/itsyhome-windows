@@ -16,6 +16,7 @@ use crate::orologio::adesso_unix;
 use crate::pannello::schede_ui;
 use crate::{Pannello, TonoModuloUi};
 use slint::ModelRc;
+use std::time::Instant;
 
 /// Scrive il tono dell'isola solo se cambia.
 fn scrivi_tono_isola(p: &Pannello, tono: TonoModuloUi) {
@@ -136,7 +137,15 @@ impl Ponte {
     /// Il riassunto passa al registro; vero se è cambiato. Uno fuori misura resta sullo stderr (il
     /// registro tiene quello di prima).
     fn moduli_accetta(&self, id: &'static str, r: Riassunto) -> bool {
+        // La guardia di I1 (revisione finale di F3): un'azione nuova sulla carta di Casa nasce dove
+        // c'era l'altra («Riprova» → «Spegni tutte» alla connessione, nella stessa casella).
+        let azione = (id == "casa").then(|| r.azione.as_ref().map_or("", |a| a.id));
         let esito = self.registro.borrow_mut().aggiorna(id, r);
+        if let (Some(azione), Ok(_)) = (azione, &esito) {
+            if self.azione_carta_casa.replace(azione) != azione && !azione.is_empty() {
+                self.azione_casa_nata();
+            }
+        }
         esito.unwrap_or_else(|e| {
             eprintln!("riassunto scartato: {e}");
             false
@@ -163,6 +172,13 @@ impl Ponte {
     /// Il bottone d'azione di una carta (`azione-modulo` del pannello): gli id delle azioni sono
     /// quelli dei moduli (`agenti::TERMINALE`…). Va chiamata solo subito dopo il gesto dell'utente.
     pub fn azione_modulo(&self, modulo: &str, azione: &str) {
+        self.azione_modulo_alle(modulo, azione, Instant::now());
+    }
+
+    /// `azione_modulo` all'istante `ora`. «Spegni tutte» nei `GUARDIA_CASA` dopo che è nata
+    /// un'azione della carta o della testata di Casa si ignora: il secondo clic su «Riprova» che
+    /// intanto è diventato «Spegni tutte» non spegne la casa (revisione finale di F3, I1).
+    pub(crate) fn azione_modulo_alle(&self, modulo: &str, azione: &str, ora: Instant) {
         match (modulo, azione) {
             ("agenti", agenti::TERMINALE) => {
                 // La sessione di cui parla la carta, come il clic sulla sua riga nella vista.
@@ -176,7 +192,11 @@ impl Ponte {
                 }
             }
             ("agenti", agenti::COLLEGA) => apri_alla_sezione(SEZIONE_CLAUDE, || self.chiedi_impostazioni()),
-            ("casa", casa::SPEGNI) => self.spegni_tutte(),
+            ("casa", casa::SPEGNI) => {
+                if self.azione_casa_armata(ora) {
+                    self.spegni_tutte();
+                }
+            }
             ("casa", casa::RIPROVA) => self.riprova_casa(),
             ("casa", casa::COLLEGA) => apri_alla_sezione(SEZIONE_CASA, || self.chiedi_impostazioni()),
             ("collegamenti", collegamenti::APRI) => {
@@ -203,12 +223,22 @@ impl Ponte {
     /// Impostazioni sulla scheda Collegamenti, come «Aggiungi» della carta. Nella pagina PC (Task 7)
     /// «Muto» mette o toglie il muto.
     pub fn azione_pagina(&self, modulo: &str, azione: &str, riga: &str) {
+        self.azione_pagina_alle(modulo, azione, riga, Instant::now());
+    }
+
+    /// `azione_pagina` all'istante `ora`: «Spegni tutte» e «Spegni la stanza» passano dalla guardia
+    /// di `azione_modulo_alle` (revisione finale di F3, I1).
+    pub(crate) fn azione_pagina_alle(&self, modulo: &str, azione: &str, riga: &str, ora: Instant) {
         match (modulo, azione) {
             ("agenti", agenti::TERMINALE) => self.claude_apri_terminale(riga),
             ("agenti", agenti::COLLEGA) => self.azione_modulo(modulo, azione),
             ("agenti", pagina_agenti::DETTAGLI) => self.claude_apri_dettagli(),
-            ("casa", casa::SPEGNI | casa::RIPROVA | casa::COLLEGA) => self.azione_modulo(modulo, azione),
-            ("casa", pagina_casa::SPEGNI_STANZA) => self.spegni_la_stanza_scelta(),
+            ("casa", casa::SPEGNI | casa::RIPROVA | casa::COLLEGA) => self.azione_modulo_alle(modulo, azione, ora),
+            ("casa", pagina_casa::SPEGNI_STANZA) => {
+                if self.azione_casa_armata(ora) {
+                    self.spegni_la_stanza_scelta();
+                }
+            }
             ("collegamenti", pagina_collegamenti::MODIFICA | collegamenti::AGGIUNGI) => {
                 apri_alla_sezione(SEZIONE_COLLEGAMENTI, || self.chiedi_impostazioni());
             }
@@ -508,7 +538,9 @@ mod test {
             vec![],
             vec![vec![luce("light.a", true), luce("light.b", false), luce("light.c", true)]],
         ))));
-        ponte.azione_modulo("casa", casa::SPEGNI);
+        // Il clic arriva passata la guardia del pulsante appena nato (revisione finale di F3, I1:
+        // «Spegni tutte» è appena comparso sulla carta coi dati nuovi).
+        ponte.azione_modulo_alle("casa", casa::SPEGNI, ponte.azione_casa_dal.get());
         let numeri: Vec<Option<u64>> = ["light.a", "light.b", "light.c"].iter().map(|id| ponte.ottimismo.borrow().numero(id)).collect();
         assert!(numeri[0].is_some() && numeri[2].is_some(), "un comando per ogni luce accesa: {numeri:?}");
         assert_ne!(numeri[0], numeri[2]);

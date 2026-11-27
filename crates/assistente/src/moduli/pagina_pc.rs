@@ -6,8 +6,7 @@ use super::registro::tono_ui;
 use super::{Tono, R1};
 use crate::pannello::icona;
 use super::pc::SOGLIA_CARICO;
-use crate::pc_stats::{formatta_byte, StatPc, StatoBatteria};
-use crate::sistema::batterie_bt::{accorcia, NOME_MASSIMO};
+use crate::pc_stats::{formatta_byte, StatPc, StatoBatteria, SOGLIA_BATTERIA_INFO, SOGLIA_BATTERIA_SCARICA};
 use crate::{MisuraUi, RigaMisuraUi, SintesiUi, StatoPaginaUi, TipoRigaMisuraUi, TipoStatoPaginaUi};
 
 /// «Muto» / «Riattiva l'audio»: l'azione della testata (l'audio del PC).
@@ -25,8 +24,18 @@ const NON_LETTA: &str = "Non letta";
 /// Il rifiuto di Windows a un cambio di Wi-Fi o Bluetooth (la pagina giusta di Windows è già aperta).
 const RIFIUTO: &str = "Non riuscito: apro le Impostazioni di Windows";
 const GIB: f64 = (1u64 << 30) as f64;
-/// Sotto questa percentuale la batteria del dispositivo Bluetooth è in tinta d'avviso.
-const SOGLIA_AVVISO_BT: u8 = 20;
+/// Oltre tanti caratteri il nome del dispositivo Bluetooth nella riga si accorcia con «…» (stava in
+/// `sistema::batterie_bt`, che esiste solo su Windows e nei test: qui compila ovunque).
+const NOME_MASSIMO: usize = 16;
+
+/// Accorcia a `massimo` caratteri con «…» (mai a metà di un carattere).
+fn accorcia(nome: &str, massimo: usize) -> String {
+    if nome.chars().count() <= massimo {
+        return nome.to_string();
+    }
+    let testa: String = nome.chars().take(massimo.saturating_sub(1)).collect();
+    format!("{}…", testa.trim_end())
+}
 
 /// Un percento intero 0..100 (il valore è finito: chi chiama lo ha già controllato).
 fn percento(v: f32) -> u32 {
@@ -191,15 +200,21 @@ pub fn decidi_quarto(stat: &StatPc, lente_lette: bool) -> Quarto {
 }
 
 /// Il quarto posto già deciso. Se il suo dato manca in un campione il posto resta, con «—» e
-/// «Non letta»: mai vuoto, mai l'altra misura.
-fn quarto(stat: Option<&StatPc>, scelta: Quarto) -> MisuraUi {
+/// «Non letta»: mai vuoto, mai l'altra misura. La GPU di un campione senza fonti lente
+/// (`lente_lette` falso: la pagina appena riaperta nello stesso pannello, il lettore che si
+/// riaccende) è «Lettura in corso», come il disco: non è ancora stata letta, non «Non letta».
+/// La batteria scollegata a `SOGLIA_BATTERIA_INFO` o meno è «Guarda», come la carta del PC nella
+/// Panoramica (revisione finale di F3, I2): barra e valore nel suo colore, occhietti in testata.
+fn quarto(stat: Option<&StatPc>, scelta: Quarto, lente_lette: bool) -> MisuraUi {
     match scelta {
         Quarto::DaDecidere | Quarto::Vuoto => vuota(),
         Quarto::Batteria => match stat.and_then(|s| s.batteria).filter(|b| b.percentuale.is_finite()) {
             Some(b) => {
+                let scarica = b.scollegata() && b.percentuale <= SOGLIA_BATTERIA_INFO;
                 let (dettaglio, tono) = match b.stato {
                     StatoBatteria::InCarica => ("In carica", Tono::Fatto),
                     StatoBatteria::Piena => ("Carica", Tono::Fatto),
+                    StatoBatteria::Scarica if scarica => ("A batteria", Tono::Guarda),
                     StatoBatteria::Scarica => ("A batteria", Tono::Calmo),
                     StatoBatteria::Sconosciuto => ("", Tono::Calmo),
                 };
@@ -209,7 +224,7 @@ fn quarto(stat: Option<&StatPc>, scelta: Quarto) -> MisuraUi {
         },
         Quarto::Gpu => match buono(stat.and_then(|s| s.gpu_pct)) {
             Some(g) => in_percento("gpu", "GPU", g, String::new(), Tono::Calmo),
-            None => assente("gpu", "GPU", if stat.is_some() { NON_LETTA } else { IN_CORSO }),
+            None => assente("gpu", "GPU", if stat.is_some() && lente_lette { NON_LETTA } else { IN_CORSO }),
         },
     }
 }
@@ -221,7 +236,7 @@ fn quarto(stat: Option<&StatPc>, scelta: Quarto) -> MisuraUi {
 /// batteria al quarto posto la GPU, se si legge, sta nel dettaglio della CPU.
 pub fn misure(stat: Option<&StatPc>, cpu_pronta: bool, lente_lette: bool, scelta: Quarto) -> [MisuraUi; 4] {
     let gpu = buono(stat.and_then(|s| s.gpu_pct)).filter(|_| scelta == Quarto::Batteria);
-    [cpu(stat, cpu_pronta, gpu), memoria(stat), disco(stat, lente_lette), quarto(stat, scelta)]
+    [cpu(stat, cpu_pronta, gpu), memoria(stat), disco(stat, lente_lette), quarto(stat, scelta, lente_lette)]
 }
 
 /// Quello che il ponte sa del PC per le righe: tutto già letto, niente di Windows qui dentro (la
@@ -325,8 +340,9 @@ pub fn righe(r: &RighePc) -> Vec<RigaMisuraUi> {
         let pct = pct.min(100);
         (format!("{} {pct} %", accorcia(nome, NOME_MASSIMO)), format!("{nome} {pct} %"))
     });
-    // La tinta d'avviso sotto il 20 % (come la riga «CUFFIE» di M2): solo se la riga mostra la batteria.
-    let scarica = r.cuffie.is_some_and(|(_, pct)| pct < SOGLIA_AVVISO_BT) && r.bluetooth.is_some_and(|(presente, acceso)| presente && acceso);
+    // La tinta d'avviso a `SOGLIA_BATTERIA_SCARICA` o meno, la stessa soglia dell'avviso nella
+    // pillola (a 20 % esatti avvisano tutte e due): solo se la riga mostra la batteria.
+    let scarica = r.cuffie.is_some_and(|(_, pct)| pct <= SOGLIA_BATTERIA_SCARICA) && r.bluetooth.is_some_and(|(presente, acceso)| presente && acceso);
     let mut v = vec![
         radio(WIFI, "Wi-Fi", r.wifi, wifi, traffico(r.velocita), r.errore_radio == Some(WIFI)),
         RigaMisuraUi { avviso: scarica, ..radio(BLUETOOTH, "Bluetooth", r.bluetooth, cuffie, None, r.errore_radio == Some(BLUETOOTH)) },
@@ -343,17 +359,19 @@ pub fn righe(r: &RighePc) -> Vec<RigaMisuraUi> {
     v
 }
 
-/// La sintesi in cima alla pagina: il titolo è `r1.fatto` della carta; l'azione è «Muto» (o
-/// «Riattiva l'audio» da muto) e c'è solo con un'uscita audio. Secondaria e senza icona: in F3 la
-/// sola azione primaria è «Spegni tutte» di Casa.
-pub fn sintesi(r1: &R1, volume: Option<(f32, bool)>) -> SintesiUi {
+/// La sintesi in cima alla pagina: il titolo è `r1.fatto` della carta e il tono è quello della
+/// carta (`tono`, da `pc::riassunto`: con CPU, RAM o batteria fuori soglia «Guarda», e la testata
+/// mostra gli occhietti, revisione finale di F3, I2); l'azione è «Muto» (o «Riattiva l'audio» da
+/// muto) e c'è solo con un'uscita audio. Secondaria e senza icona: in F3 la sola azione primaria è
+/// «Spegni tutte» di Casa.
+pub fn sintesi(tono: Tono, r1: &R1, volume: Option<(f32, bool)>) -> SintesiUi {
     let (azione_id, azione_testo) = match volume {
         Some((_, true)) => (MUTO, "Riattiva l'audio"),
         Some((_, false)) => (MUTO, "Muto"),
         None => ("", ""),
     };
     SintesiUi {
-        tono: tono_ui(Tono::Calmo),
+        tono: tono_ui(tono),
         titolo: r1.fatto.as_str().into(),
         azione_id: azione_id.into(),
         azione_testo: azione_testo.into(),
@@ -414,7 +432,7 @@ mod test {
             nome_rete: Some("Casa"),
             wifi: Some((true, true)),
             bluetooth: Some((true, true)),
-            cuffie: Some(("Cuffie di Paolo", 70)),
+            cuffie: Some(("Cuffie finte", 70)),
             volume: Some((0.4, false)),
             errore_radio: None,
         }
@@ -487,6 +505,12 @@ mod test {
         let m = super::misure(Some(&stat()), true, true, Quarto::Gpu);
         assert_eq!((m[3].presente, m[3].id.as_str(), m[3].valore.as_str(), m[3].unita.as_str(), m[3].frazione, m[3].dettaglio.as_str()), (true, "gpu", "—", "", 0.0, "Non letta"));
         assert_eq!(m[3].narratore.as_str(), "GPU, non letta");
+        // Revisione finale di F3, m2: la pagina riaperta nello stesso pannello riceve campioni senza
+        // fonti lente finché il lettore non si riaccende: la GPU è «Lettura in corso», come il
+        // disco, non «Non letta».
+        let m = super::misure(Some(&stat()), true, false, Quarto::Gpu);
+        assert_eq!((m[3].id.as_str(), m[3].valore.as_str(), m[3].dettaglio.as_str()), ("gpu", "—", "Lettura in corso"));
+        assert_eq!((m[2].dettaglio.as_str(), m[3].narratore.as_str()), ("Lettura in corso", "GPU, lettura in corso"));
         // GPU scelta, poi un campione con la batteria: sempre la GPU, e la CPU non porta «GPU» nel dettaglio.
         let s = StatPc { gpu_pct: Some(40.0), ..con_batteria(84.0, StatoBatteria::InCarica) };
         let m = super::misure(Some(&s), true, true, Quarto::Gpu);
@@ -544,6 +568,31 @@ mod test {
         senza(&misure(Some(&stat()), true, false)[2], "Lettura in corso");
     }
 
+    /// Revisione finale di F3, I2: la batteria scollegata a 20 % o meno è «Guarda» nella carta
+    /// Batteria e nella sintesi (il tono di `pc::riassunto`, come la carta della Panoramica, e con
+    /// lui gli occhietti in testata); a 21 % niente. In carica, anche al 18 %, resta «fatto» e la
+    /// sintesi calma.
+    #[test]
+    fn batteria_scarica_guarda_in_pagina() {
+        let pagina = |percentuale: f32, stato: StatoBatteria| {
+            let s = con_batteria(percentuale, stato);
+            let carta = misure(Some(&s), true, true)[3].tono;
+            let r = super::super::pc::riassunto(Some(&s));
+            (carta, sintesi(r.tono, &r.r1, None).tono)
+        };
+        assert_eq!(pagina(20.0, StatoBatteria::Scarica), (TonoModuloUi::Guarda, TonoModuloUi::Guarda), "20 % compreso");
+        assert_eq!(pagina(5.0, StatoBatteria::Scarica), (TonoModuloUi::Guarda, TonoModuloUi::Guarda));
+        assert_eq!(pagina(21.0, StatoBatteria::Scarica), (TonoModuloUi::Calmo, TonoModuloUi::Calmo), "21 %: niente");
+        assert_eq!(pagina(18.0, StatoBatteria::InCarica), (TonoModuloUi::Fatto, TonoModuloUi::Calmo));
+        // Il valore e la parola restano: «18», «A batteria».
+        let m = misure(Some(&con_batteria(18.0, StatoBatteria::Scarica)), true, true);
+        assert_eq!((m[3].valore.as_str(), m[3].dettaglio.as_str()), ("18", "A batteria"));
+        // La CPU oltre la soglia porta «Guarda» anche nella sintesi della pagina.
+        let carica = StatPc { cpu_pct: Some(91.0), ..stat() };
+        let r = super::super::pc::riassunto(Some(&carica));
+        assert_eq!(sintesi(r.tono, &r.r1, None).tono, TonoModuloUi::Guarda);
+    }
+
     /// CPU o RAM da 85 % in su sono «attivo»; sotto, calmo. La batteria in carica è «fatto».
     #[test]
     fn soglia_e_carica() {
@@ -559,8 +608,11 @@ mod test {
         assert_eq!(tono(10.0, 84, None).1, TonoModuloUi::Calmo);
         assert_eq!(tono(10.0, 10, Some((50.0, StatoBatteria::InCarica))).2, TonoModuloUi::Fatto);
         assert_eq!(tono(10.0, 10, Some((50.0, StatoBatteria::Scarica))).2, TonoModuloUi::Calmo);
-        // La batteria scarica non è «attivo»: non è carico di lavoro.
-        assert_eq!(tono(10.0, 10, Some((5.0, StatoBatteria::Scarica))).2, TonoModuloUi::Calmo);
+        // La batteria scarica non è «attivo» (non è carico di lavoro): è «guarda», da 20 % in giù
+        // (revisione finale di F3, I2).
+        assert_eq!(tono(10.0, 10, Some((5.0, StatoBatteria::Scarica))).2, TonoModuloUi::Guarda);
+        assert_eq!(tono(10.0, 10, Some((20.0, StatoBatteria::Scarica))).2, TonoModuloUi::Guarda);
+        assert_eq!(tono(10.0, 10, Some((21.0, StatoBatteria::Scarica))).2, TonoModuloUi::Calmo);
     }
 
     /// Windows con tutto; senza Wi-Fi «Non presente» e non attivabile; senza volume nessun cursore;
@@ -579,14 +631,15 @@ mod test {
         assert_eq!(r[0].narratore.as_str(), "Wi-Fi, acceso, Casa, 1,2 MB/s giù, 307,2 KB/s su");
         assert!(r[1..].iter().all(|k| k.giu.is_empty() && k.su.is_empty()));
         // Un nome rete di 32 caratteri sta tutto nel suo campo: il traffico non ne fa parte.
-        let lungo = "Vodafone-Casa-Piano-Terra-5GHz-X";
+        let lungo = "Rete-finta-con-un-nome-di-32-car";
+        assert_eq!(lungo.chars().count(), 32);
         let l = righe(&RighePc { nome_rete: Some(lungo), ..tutto() });
         assert_eq!((l[0].valore.as_str(), l[0].giu.as_str()), (lungo, "1,2 MB/s"));
         // Il traffico di una radio spenta non si mostra.
         let s = righe(&RighePc { wifi: Some((true, false)), ..tutto() });
         assert_eq!((s[0].giu.as_str(), s[0].su.as_str(), s[0].narratore.as_str()), ("", "", "Wi-Fi, spento"));
-        assert_eq!((r[1].nome.as_str(), r[1].valore.as_str(), r[1].acceso, r[1].attiva), ("Bluetooth", "Cuffie di Paolo 70 %", true, true));
-        assert_eq!(r[1].narratore.as_str(), "Bluetooth, acceso, Cuffie di Paolo 70 %");
+        assert_eq!((r[1].nome.as_str(), r[1].valore.as_str(), r[1].acceso, r[1].attiva), ("Bluetooth", "Cuffie finte 70 %", true, true));
+        assert_eq!(r[1].narratore.as_str(), "Bluetooth, acceso, Cuffie finte 70 %");
         assert_eq!((r[2].nome.as_str(), r[2].valore.as_str(), r[2].acceso, r[2].attiva), ("Volume", "40 %", true, true));
         assert_eq!(r[2].narratore.as_str(), "Volume 40 %");
         assert_eq!((r[3].nome.as_str(), r[3].attiva), ("Windows", true));
@@ -645,14 +698,16 @@ mod test {
     #[test]
     fn sintesi_e_stato() {
         let r1 = R1 { fatto: "Tutto regolare".into(), valore: String::new() };
-        let s = sintesi(&r1, Some((0.4, false)));
+        let s = sintesi(Tono::Calmo, &r1, Some((0.4, false)));
         assert_eq!((s.titolo.as_str(), s.azione_id.as_str(), s.azione_testo.as_str(), s.azione_primaria), ("Tutto regolare", MUTO, "Muto", false));
-        let s = sintesi(&r1, Some((0.4, true)));
+        assert_eq!(s.tono, TonoModuloUi::Calmo);
+        let s = sintesi(Tono::Calmo, &r1, Some((0.4, true)));
         assert_eq!((s.azione_id.as_str(), s.azione_testo.as_str()), (MUTO, "Riattiva l'audio"));
-        let s = sintesi(&r1, None);
+        let s = sintesi(Tono::Calmo, &r1, None);
         assert_eq!((s.titolo.as_str(), s.azione_id.as_str(), s.azione_testo.as_str()), ("Tutto regolare", "", ""));
         let r1 = R1 { fatto: "CPU 91 %".into(), valore: String::new() };
-        assert_eq!(sintesi(&r1, None).titolo.as_str(), "CPU 91 %");
+        let s = sintesi(Tono::Guarda, &r1, None);
+        assert_eq!((s.titolo.as_str(), s.tono), ("CPU 91 %", TonoModuloUi::Guarda), "il tono della carta");
 
         let primo = stato(None, false);
         assert_eq!((primo.tipo, primo.frase.as_str(), primo.azione_id.as_str()), (TipoStatoPaginaUi::PrimoAvvio, "Lettura in corso", ""));
@@ -705,7 +760,8 @@ mod test {
     /// Giro di correzione 1 del Task 7 (I2 e tinta, decisioni del controllore): la riga del
     /// Bluetooth dice il nome del dispositivo più scarico, non «Cuffie»: un mouse al 5 % e le cuffie
     /// al 60 % danno il mouse. Il nome lungo si accorcia, la percentuale resta intera; Narrator
-    /// legge il nome intero. Sotto il 20 % il valore è in tinta d'avviso (19 sì, 20 no).
+    /// legge il nome intero. A 20 % o meno il valore è in tinta d'avviso (20 sì, 21 no), la stessa
+    /// soglia dell'avviso nella pillola (revisione finale di F3).
     #[test]
     fn bluetooth_col_dispositivo_piu_scarico() {
         use crate::sistema::batterie_bt::{riga_cuffie, LetturaBt};
@@ -720,10 +776,15 @@ mod test {
         let r = righe(&RighePc { cuffie: Some((lungo, 70)), ..tutto() });
         assert!(r[1].valore.ends_with("… 70 %") && r[1].valore.chars().count() <= 16 + " 70 %".len(), "{}", r[1].valore);
         assert_eq!(r[1].narratore.as_str(), format!("Bluetooth, acceso, {lungo} 70 %"));
-        // La tinta d'avviso sotto il 20 %.
+        // La tinta d'avviso a 20 % o meno, come l'avviso della pillola (`da_avvisare`).
         let avviso = |pct: u8| righe(&RighePc { cuffie: Some(("Cuffie finte", pct)), ..tutto() })[1].avviso;
-        assert!(avviso(19) && avviso(5));
-        assert!(!avviso(20) && !avviso(70));
+        assert!(avviso(20) && avviso(19) && avviso(5));
+        assert!(!avviso(21) && !avviso(70));
+        use crate::sistema::batterie_bt::da_avvisare;
+        let pillola = |pct: u8| !da_avvisare(&[bt("Cuffie finte", pct)], &Default::default(), "2026-11-24").is_empty();
+        for pct in [5, 19, 20, 21, 25, 70] {
+            assert_eq!(avviso(pct), pillola(pct), "{pct} %: la riga e la pillola dicono lo stesso");
+        }
         // Solo sul Bluetooth acceso con le cuffie: mai sulle altre righe né a radio spenta.
         let r = righe(&RighePc { cuffie: Some(("Cuffie finte", 5)), ..tutto() });
         assert!(r.iter().filter(|k| k.avviso).count() == 1 && r[1].avviso);
@@ -804,7 +865,7 @@ mod test {
         }
         let r1 = R1 { fatto: "Tutto regolare".into(), valore: String::new() };
         for v in [Some((0.4, false)), Some((0.4, true)), None] {
-            let s = sintesi(&r1, v);
+            let s = sintesi(Tono::Calmo, &r1, v);
             testi.extend([s.titolo.to_string(), s.sotto.to_string(), s.azione_testo.to_string()]);
         }
         let primo = stato(None, false);

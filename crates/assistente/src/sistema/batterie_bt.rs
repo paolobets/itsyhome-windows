@@ -50,8 +50,9 @@ use std::collections::HashMap;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-/// Sotto o a questa percentuale (dispositivo connesso) si avvisa.
-pub const SOGLIA_BT: u8 = 20;
+/// Sotto o a questa percentuale (dispositivo connesso) si avvisa: la soglia unica della batteria
+/// scarica, la stessa della tinta della riga Bluetooth nella pagina PC.
+pub const SOGLIA_BT: u8 = crate::pc_stats::SOGLIA_BATTERIA_SCARICA;
 /// La voce già presente resta fino a questa percentuale (isteresi): sopra, sparisce.
 pub const SOGLIA_BT_FINE: u8 = 25;
 /// Ogni quanto si rilegge, a interruttore acceso.
@@ -60,8 +61,6 @@ pub const PERIODO_BT: Duration = Duration::from_secs(15 * 60);
 pub const PRIMA_LETTURA_BT: Duration = Duration::from_secs(60);
 /// Le impronte avvisate da più di tanti giorni si tolgono a ogni salvataggio.
 pub const GIORNI_IMPRONTE: i64 = 7;
-/// Oltre tanti caratteri il nome nella riga della vista PC si accorcia con «…».
-pub const NOME_MASSIMO: usize = 16;
 
 /// Un dispositivo Bluetooth con la batteria leggibile. `nome` si vede solo nella vista PC e nel
 /// titolo dell'avviso: mai nei log. `impronta` è l'unica cosa che si salva.
@@ -175,22 +174,13 @@ pub fn unifica(letture: Vec<LetturaBt>) -> Vec<LetturaBt> {
 
 /// Il dispositivo nella riga del Bluetooth della pagina PC («Mouse finto 5 %»; ridisegno F3, Task 7):
 /// il connesso con la batteria più bassa, qualunque sia. La pagina accorcia il nome a vista
-/// (`NOME_MASSIMO`) e lo dà intero a Narrator; sotto il 20 % la tinta d'avviso. «+N» e l'elenco
-/// della riga «CUFFIE» di M2 non ci sono più.
+/// (`moduli::pagina_pc`, che compila ovunque) e lo dà intero a Narrator; a `SOGLIA_BT` o meno la
+/// tinta d'avviso. «+N» e l'elenco della riga «CUFFIE» di M2 non ci sono più.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RigaCuffie {
     /// Il nome intero.
     pub nome: String,
     pub percentuale: u8,
-}
-
-/// Accorcia a `massimo` caratteri con «…» (mai a metà di un carattere).
-pub fn accorcia(nome: &str, massimo: usize) -> String {
-    if nome.chars().count() <= massimo {
-        return nome.to_string();
-    }
-    let testa: String = nome.chars().take(massimo.saturating_sub(1)).collect();
-    format!("{}…", testa.trim_end())
 }
 
 /// La riga da mostrare, `None` se nessun dispositivo connesso ha la batteria leggibile.
