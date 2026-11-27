@@ -2,16 +2,19 @@
 //!
 //! Timer:
 //! - uno solo fisso, ogni 5 s: schermo intero (con l'isteresi), pillola rimessa sopra e al suo
-//!   posto (cambi di area di lavoro o di risoluzione senza eventi di finestra), inattività, «Non
-//!   disturbare» di Windows (F4, `non_disturbare::windows_attivo`) e, solo su Windows, l'elenco
-//!   dei monitor nel menu (sottomenu «Schermo»: si ricostruisce solo se cambia);
+//!   posto (cambi di area di lavoro o di risoluzione senza eventi di finestra), inattività e, solo
+//!   su Windows, l'elenco dei monitor nel menu (sottomenu «Schermo»: si ricostruisce solo se cambia);
+//!   «Non disturbare» di Windows non passa da qui: lo segue il thread `non-disturbare` (F4,
+//!   `non_disturbare::OsservaNonDisturbare`), che consegna solo i cambi;
 //! - una sveglia singola quando un cambio di schermo intero aspetta conferma (3 s / 1,5 s);
 //! - il sondaggio del mouse ogni 100 ms SOLO mentre la pillola è ritirata e visibile (la linea
 //!   lascia passare i clic, quindi non riceve eventi del mouse).
 
 #[cfg(windows)]
 use super::menu::{comando, schermi_del_menu, voci_pannello, Comando, MenuIsola, Voce};
-use super::non_disturbare::{self, NonDisturbare};
+#[cfg(windows)]
+use super::non_disturbare::OsservaNonDisturbare;
+use super::non_disturbare::NonDisturbare;
 use super::ritirata::{self, Ritirata, SONDAGGIO_MOUSE};
 use super::scorciatoie::{self, Scorciatoia, Scorciatoie};
 #[cfg(windows)]
@@ -47,6 +50,9 @@ pub struct Servizi {
     bloccante: Cell<bool>,
     /// «Non disturbare»: interruttore del menu (fino all'uscita, D2), schermo intero, Windows.
     non_disturbare: Cell<NonDisturbare>,
+    /// Il thread che segue «Non disturbare» di Windows (nasce al primo giro, muore in `spegni`).
+    #[cfg(windows)]
+    osserva_nd: RefCell<Option<OsservaNonDisturbare>>,
     controllo: slint::Timer,
     conferma: slint::Timer,
     mouse: slint::Timer,
@@ -93,6 +99,8 @@ pub fn avvia(pillola: &Pillola, apertura: Rc<Apertura>, ponte: Rc<Ponte>) {
         mostrata: Cell::new(Visibilita::Pillola),
         bloccante: Cell::new(false),
         non_disturbare: Cell::new(NonDisturbare::default()),
+        #[cfg(windows)]
+        osserva_nd: RefCell::new(None),
         controllo: slint::Timer::default(),
         conferma: slint::Timer::default(),
         mouse: slint::Timer::default(),
@@ -124,6 +132,7 @@ pub fn avvia(pillola: &Pillola, apertura: Rc<Apertura>, ponte: Rc<Ponte>) {
         #[cfg(windows)]
         {
             *s.gancio.borrow_mut() = primo_piano::ascolta(primo_piano_cambiato);
+            *s.osserva_nd.borrow_mut() = Some(OsservaNonDisturbare::avvia(non_disturbare_di_windows));
         }
         let (gestore, non_attive) = scorciatoie::registra(al_tasto);
         *s.scorciatoie.borrow_mut() = gestore;
@@ -144,6 +153,7 @@ pub fn spegni() {
         {
             // Il gancio si toglie sul thread che lo ha messo (questo): `Drop` chiama UnhookWinEvent.
             s.gancio.borrow_mut().take();
+            s.osserva_nd.borrow_mut().take();
             s.tray.borrow_mut().take();
             s.menu.borrow_mut().take();
         }
@@ -245,6 +255,19 @@ fn al_comando(c: Comando) {
             let _ = slint::quit_event_loop();
         }
     }
+}
+
+/// «Non disturbare» di Windows letto dal thread `non-disturbare` (chiamata da lì): passa al ciclo
+/// eventi e da lì al ponte. `None` (non si sa) vale spento.
+#[cfg(windows)]
+fn non_disturbare_di_windows(letto: Option<bool>) {
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(s) = servizi() else { return };
+        let mut nd = s.non_disturbare.get();
+        nd.da_lettura_windows(letto);
+        s.non_disturbare.set(nd);
+        s.ponte.non_disturbare(nd.attivo());
+    });
 }
 
 /// «Non disturbare» del menu (vassoio o «⋯»): inverte l'interruttore manuale, che vale fino
@@ -416,13 +439,6 @@ impl Servizi {
     fn controlla(&self) {
         #[cfg(windows)]
         self.schermi_nel_menu(self.monitor());
-        // «Non disturbare» di Windows (se si sa): lo passa al ponte `applica`, chiamata dal
-        // controllo dello schermo intero qui sotto.
-        if let Some(acceso) = non_disturbare::windows_attivo() {
-            let mut nd = self.non_disturbare.get();
-            nd.da_windows(acceso);
-            self.non_disturbare.set(nd);
-        }
         self.controlla_schermo_intero();
         if let Some(p) = self.pillola.upgrade() {
             // «Effetti di animazione» cambiato mentre l'app gira: lo prendono qui la pillola e,
