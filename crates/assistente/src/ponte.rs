@@ -721,6 +721,10 @@ pub struct Ponte {
     /// La pillola si vede (`Visibilita::Pillola`, la dicono i servizi di sistema): i lati
     /// campionano solo allora.
     pillola_mostrata: Cell<bool>,
+    /// «Non disturbare» acceso (lo dicono i servizi di sistema: interruttore, schermo intero o
+    /// Windows). Usato dal Task 6 di F4, che lo passa all'arbitro della pillola.
+    #[allow(dead_code)]
+    non_disturbare: Cell<bool>,
     /// Claude Code (M3, Task 4 e 7A): le sessioni, il tubo protetto (solo se collegato), la
     /// sveglia singola alla prossima scadenza di una sessione, il timer da un secondo del testo di
     /// attività (acceso solo mentre serve: `attivita_serve`).
@@ -909,6 +913,7 @@ pub fn collega(
         sveglia_ottimismo: slint::Timer::default(),
         traccia_tocco: std::env::var_os("ITSYHOME_TRACCIA_TOCCO").is_some_and(|v| v == "1"),
         pillola_mostrata: Cell::new(true),
+        non_disturbare: Cell::new(false),
         claude_sessioni: RefCell::new(Sessioni::new()),
         claude_ascolto: RefCell::new(None),
         claude_limiti: RefCell::new(None),
@@ -1225,6 +1230,17 @@ impl Ponte {
         // La rete segue gli stessi bisogni (lato «Rete» scelto e pillola visibile e sveglia).
         #[cfg(windows)]
         self.aggiorna_rete(visibile && !dorme);
+    }
+
+    /// I servizi di sistema dicono se «Non disturbare» è acceso. Per ora si tiene e basta: lo
+    /// passa all'arbitro il Task 6 di F4.
+    pub fn non_disturbare(&self, attivo: bool) {
+        self.non_disturbare.set(attivo);
+    }
+
+    /// C'è un permesso bloccante fra le voci in attesa? A schermo intero passa solo lui (D1).
+    pub fn bloccante_in_attesa(&self) -> bool {
+        livello_massimo(&self.attese.borrow()) == Some(Livello::Bloccante)
     }
 
     /// I servizi di sistema dicono se la pillola si vede (`Visibilita::Pillola`).

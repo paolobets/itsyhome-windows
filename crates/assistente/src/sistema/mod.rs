@@ -18,6 +18,7 @@ pub mod inattivita;
 pub mod istanza;
 pub mod menu;
 pub mod movimento;
+pub mod non_disturbare;
 pub mod notifiche;
 #[cfg(windows)]
 pub mod primo_piano;
@@ -43,12 +44,20 @@ pub enum Visibilita {
     Nascosta,
 }
 
-/// La pillola sparisce sotto un'app a schermo intero (sul suo monitor) e mentre il pannello è
-/// aperto (al suo posto c'è il pannello); altrimenti è la linea se ritirata, sennò la pillola.
-/// Il pannello aperto non si tocca mai: questa decisione riguarda solo la pillola.
-pub fn pillola_visibile(schermo_intero: bool, pannello_aperto: bool, ritirata: bool) -> Visibilita {
-    if schermo_intero || pannello_aperto {
+/// La pillola sparisce mentre il pannello è aperto (al suo posto c'è il pannello) e sotto un'app
+/// a schermo intero (sul suo monitor), salvo un permesso bloccante in attesa (`bloccante`, D1 di
+/// F4): allora compare, larga, finché c'è, anche se era ritirata (sotto un video la linea non
+/// c'era). Altrimenti è la linea se ritirata, sennò la pillola. Il pannello aperto non si tocca
+/// mai: questa decisione riguarda solo la pillola.
+pub fn pillola_visibile(schermo_intero: bool, pannello_aperto: bool, ritirata: bool, bloccante: bool) -> Visibilita {
+    if pannello_aperto {
         Visibilita::Nascosta
+    } else if schermo_intero {
+        if bloccante {
+            Visibilita::Pillola
+        } else {
+            Visibilita::Nascosta
+        }
     } else if ritirata {
         Visibilita::Linea
     } else {
@@ -152,25 +161,38 @@ mod test {
     fn nascosta_a_schermo_intero() {
         // Pannello chiuso: sparisce, anche ritirata. Pannello aperto: la pillola è comunque
         // nascosta (c'è il pannello), e il pannello resta.
-        assert_eq!(pillola_visibile(true, false, false), Visibilita::Nascosta);
-        assert_eq!(pillola_visibile(true, false, true), Visibilita::Nascosta);
-        assert_eq!(pillola_visibile(true, true, false), Visibilita::Nascosta);
+        assert_eq!(pillola_visibile(true, false, false, false), Visibilita::Nascosta);
+        assert_eq!(pillola_visibile(true, false, true, false), Visibilita::Nascosta);
+        assert_eq!(pillola_visibile(true, true, false, false), Visibilita::Nascosta);
     }
 
     #[test]
     fn visibile_normalmente() {
-        assert_eq!(pillola_visibile(false, false, false), Visibilita::Pillola);
+        assert_eq!(pillola_visibile(false, false, false, false), Visibilita::Pillola);
+        assert_eq!(pillola_visibile(false, false, false, true), Visibilita::Pillola);
     }
 
     #[test]
     fn pannello_aperto_pillola_nascosta() {
-        assert_eq!(pillola_visibile(false, true, false), Visibilita::Nascosta);
-        assert_eq!(pillola_visibile(false, true, true), Visibilita::Nascosta);
+        assert_eq!(pillola_visibile(false, true, false, false), Visibilita::Nascosta);
+        assert_eq!(pillola_visibile(false, true, true, false), Visibilita::Nascosta);
+        // Col pannello aperto il bloccante si vede lì: la pillola resta nascosta.
+        assert_eq!(pillola_visibile(false, true, false, true), Visibilita::Nascosta);
+        assert_eq!(pillola_visibile(true, true, true, true), Visibilita::Nascosta);
     }
 
     #[test]
     fn ritirata_mostra_la_linea() {
-        assert_eq!(pillola_visibile(false, false, true), Visibilita::Linea);
+        assert_eq!(pillola_visibile(false, false, true, false), Visibilita::Linea);
+    }
+
+    /// Review Focus 1 (D1): a schermo intero passa solo il bloccante, e larga (la pillola, mai la
+    /// linea: sotto un video la linea non c'era); senza bloccante resta nascosta.
+    #[test]
+    fn bloccante_passa_lo_schermo_intero() {
+        assert_eq!(pillola_visibile(true, false, false, true), Visibilita::Pillola);
+        assert_eq!(pillola_visibile(true, false, false, false), Visibilita::Nascosta);
+        assert_eq!(pillola_visibile(true, false, true, true), Visibilita::Pillola, "ritirata: il bloccante non resta sulla linea");
     }
 
     use Visibilita::{Linea, Nascosta, Pillola};

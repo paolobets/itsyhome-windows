@@ -2,14 +2,16 @@
 //!
 //! Timer:
 //! - uno solo fisso, ogni 5 s: schermo intero (con l'isteresi), pillola rimessa sopra e al suo
-//!   posto (cambi di area di lavoro o di risoluzione senza eventi di finestra), inattività e, solo
-//!   su Windows, l'elenco dei monitor nel menu (sottomenu «Schermo»: si ricostruisce solo se cambia);
+//!   posto (cambi di area di lavoro o di risoluzione senza eventi di finestra), inattività, «Non
+//!   disturbare» di Windows (F4, `non_disturbare::windows_attivo`) e, solo su Windows, l'elenco
+//!   dei monitor nel menu (sottomenu «Schermo»: si ricostruisce solo se cambia);
 //! - una sveglia singola quando un cambio di schermo intero aspetta conferma (3 s / 1,5 s);
 //! - il sondaggio del mouse ogni 100 ms SOLO mentre la pillola è ritirata e visibile (la linea
 //!   lascia passare i clic, quindi non riceve eventi del mouse).
 
 #[cfg(windows)]
 use super::menu::{comando, schermi_del_menu, voci_pannello, Comando, MenuIsola, Voce};
+use super::non_disturbare::{self, NonDisturbare};
 use super::ritirata::{self, Ritirata, SONDAGGIO_MOUSE};
 use super::scorciatoie::{self, Scorciatoia, Scorciatoie};
 #[cfg(windows)]
@@ -40,6 +42,11 @@ pub struct Servizi {
     ritirata: RefCell<Ritirata>,
     /// Come si vede adesso la pillola.
     mostrata: Cell<Visibilita>,
+    /// C'era un bloccante in attesa all'ultima `applica`: quando arriva o sparisce, la
+    /// visibilità si ricalcola subito (a schermo intero passa solo lui, D1).
+    bloccante: Cell<bool>,
+    /// «Non disturbare»: interruttore del menu (fino all'uscita, D2), schermo intero, Windows.
+    non_disturbare: Cell<NonDisturbare>,
     controllo: slint::Timer,
     conferma: slint::Timer,
     mouse: slint::Timer,
@@ -84,6 +91,8 @@ pub fn avvia(pillola: &Pillola, apertura: Rc<Apertura>, ponte: Rc<Ponte>) {
         isteresi: RefCell::new(IsteresiSchermoIntero::default()),
         ritirata: RefCell::new(Ritirata::default()),
         mostrata: Cell::new(Visibilita::Pillola),
+        bloccante: Cell::new(false),
+        non_disturbare: Cell::new(NonDisturbare::default()),
         controllo: slint::Timer::default(),
         conferma: slint::Timer::default(),
         mouse: slint::Timer::default(),
@@ -106,7 +115,7 @@ pub fn avvia(pillola: &Pillola, apertura: Rc<Apertura>, ponte: Rc<Ponte>) {
     slint::Timer::single_shot(Duration::ZERO, || {
         let Some(s) = servizi() else { return };
         #[cfg(windows)]
-        match MenuIsola::crea(al_comando, s.ritirata.borrow().attiva()) {
+        match MenuIsola::crea(al_comando, s.ritirata.borrow().attiva(), s.non_disturbare.get().manuale()) {
             Ok(m) => *s.menu.borrow_mut() = Some(m),
             Err(e) => eprintln!("menu dell'isola non creato: {e}"),
         }
@@ -180,13 +189,14 @@ pub fn voci_del_menu(finestra: &slint::Window) -> Vec<Voce> {
     let Some(s) = servizi() else { return Vec::new() };
     let monitor = finestre::elenco_monitor(finestra);
     let ritirata = s.ritirata.borrow().attiva();
+    let non_disturbare = s.non_disturbare.get().manuale();
     if s.menu.borrow().is_none() {
         let schermi = monitor.map(|m| schermi_del_menu(&m, finestre::monitor_in_uso(&m))).unwrap_or_default();
-        return voci_pannello(ritirata, &schermi);
+        return voci_pannello(ritirata, &schermi, non_disturbare);
     }
     s.schermi_nel_menu(monitor);
     let menu = s.menu.borrow();
-    menu.as_ref().map(|m| m.voci_pannello(ritirata)).unwrap_or_default()
+    menu.as_ref().map(|m| m.voci_pannello(ritirata, non_disturbare)).unwrap_or_default()
 }
 
 /// Una voce del menu del pannello scelta (`id`: quello che Slint ha ricevuto da `voci_del_menu`).
@@ -230,10 +240,26 @@ fn al_comando(c: Comando) {
         }
         Comando::Ritirata => commuta_ritirata(),
         Comando::Schermo(i) => scegli_schermo(i),
+        Comando::NonDisturbare => commuta_non_disturbare(),
         Comando::Esci => {
             let _ = slint::quit_event_loop();
         }
     }
+}
+
+/// «Non disturbare» del menu (vassoio o «⋯»): inverte l'interruttore manuale, che vale fino
+/// all'uscita (non si salva, D2). La spunta del menu nativo segue; quella del «⋯» si rilegge a
+/// ogni apertura (`voci_del_menu`). Il pannello, se aperto, resta aperto.
+#[cfg(windows)]
+fn commuta_non_disturbare() {
+    let Some(s) = servizi() else { return };
+    let mut nd = s.non_disturbare.get();
+    nd.imposta_manuale(!nd.manuale());
+    s.non_disturbare.set(nd);
+    if let Some(m) = s.menu.borrow().as_ref() {
+        m.non_disturbare(nd.manuale());
+    }
+    s.ponte.non_disturbare(nd.attivo());
 }
 
 /// «Schermo» del menu: pillola e pannello (se aperto) vanno sul monitor `i` dell'elenco mostrato nel
@@ -316,9 +342,14 @@ pub fn voce_arrivata(livello: Livello) {
     }
 }
 
-/// Le voci in attesa sono cambiate: la linea prende il colore del livello più urgente.
+/// Le voci in attesa (o gli avanzamenti) sono cambiate: un bloccante arrivato o deciso rifà la
+/// visibilità (a schermo intero la pillola ricompare per lui e risparisce dopo, D1), e la linea
+/// prende il colore del livello più urgente.
 pub fn colora_linea() {
     let Some(s) = servizi() else { return };
+    if s.ponte.bloccante_in_attesa() != s.bloccante.get() {
+        s.applica();
+    }
     if s.mostrata.get() == Visibilita::Linea {
         if let Some(p) = s.pillola.upgrade() {
             pillola::colora_linea(&p, s.ponte.riempimento_linea());
@@ -364,8 +395,9 @@ impl Servizi {
         let Some(monitor) = monitor else { return };
         let schermi = schermi_del_menu(&monitor, finestre::monitor_in_uso(&monitor));
         let ritirata = self.ritirata.borrow().attiva();
+        let non_disturbare = self.non_disturbare.get().manuale();
         let esito = match self.menu.borrow_mut().as_mut() {
-            Some(m) => m.schermi(schermi, ritirata),
+            Some(m) => m.schermi(schermi, ritirata, non_disturbare),
             None => return,
         };
         match esito {
@@ -384,6 +416,13 @@ impl Servizi {
     fn controlla(&self) {
         #[cfg(windows)]
         self.schermi_nel_menu(self.monitor());
+        // «Non disturbare» di Windows (se si sa): lo passa al ponte `applica`, chiamata dal
+        // controllo dello schermo intero qui sotto.
+        if let Some(acceso) = non_disturbare::windows_attivo() {
+            let mut nd = self.non_disturbare.get();
+            nd.da_windows(acceso);
+            self.non_disturbare.set(nd);
+        }
         self.controlla_schermo_intero();
         if let Some(p) = self.pillola.upgrade() {
             // «Effetti di animazione» cambiato mentre l'app gira: lo prendono qui la pillola e,
@@ -426,11 +465,19 @@ impl Servizi {
     }
 
     /// Porta la pillola allo stato deciso da `pillola_visibile`. Il pannello aperto non si
-    /// tocca: la pillola, allora, l'ha già nascosta `Apertura`.
+    /// tocca: la pillola, allora, l'ha già nascosta `Apertura`. Lo schermo intero confermato
+    /// dall'isteresi accende anche «Non disturbare», che passa al ponte.
     fn applica(&self) {
         let Some(p) = self.pillola.upgrade() else { return };
         let aperto = self.apertura.aperto();
-        let nuova = pillola_visibile(self.isteresi.borrow().nascosta(), aperto, self.ritirata.borrow().attiva());
+        let schermo_intero = self.isteresi.borrow().nascosta();
+        let bloccante = self.ponte.bloccante_in_attesa();
+        self.bloccante.set(bloccante);
+        let mut nd = self.non_disturbare.get();
+        nd.da_schermo_intero(schermo_intero);
+        self.non_disturbare.set(nd);
+        self.ponte.non_disturbare(nd.attivo());
+        let nuova = pillola_visibile(schermo_intero, aperto, self.ritirata.borrow().attiva(), bloccante);
         let prima = self.mostrata.replace(nuova);
         #[cfg(windows)]
         if let Some(m) = self.menu.borrow().as_ref() {

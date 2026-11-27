@@ -7953,11 +7953,16 @@ mod accessibilita {
     /// Un pannello con il menu pronto (come lo riempie Rust a ogni apertura), il fuoco attivo e
     /// due contatori: gli id delle voci scelte e quante volte il pannello ha chiesto di chiudersi.
     fn pannello_con_menu(ritirata: bool, schermi: &[(String, bool)]) -> (Pannello, IdScelti, ChiusureChieste) {
+        pannello_con_menu_nd(ritirata, schermi, false)
+    }
+
+    /// Come `pannello_con_menu`, con la spunta di «Non disturbare» data.
+    fn pannello_con_menu_nd(ritirata: bool, schermi: &[(String, bool)], non_disturbare: bool) -> (Pannello, IdScelti, ChiusureChieste) {
         piattaforma_di_prova();
         let p = pannello();
         p.window().dispatch_event(slint::platform::WindowEvent::WindowActiveChanged(true));
         p.global::<crate::Fuochi>().set_pronti(true);
-        crate::pannello::riempi_menu(&p, &crate::sistema::menu::voci_pannello(ritirata, schermi));
+        crate::pannello::riempi_menu(&p, &crate::sistema::menu::voci_pannello(ritirata, schermi, non_disturbare));
         crate::pannello::collega_iniziali(&p);
         let scelte = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
         let s = scelte.clone();
@@ -7987,10 +7992,10 @@ mod accessibilita {
                 let (p, _, _) = pannello_con_menu(ritirata, &schermi);
                 assert!(riga_menu(&p, "Impostazioni").is_none(), "chiuso: nessuna voce");
                 apri_menu(&p);
-                let attese: Vec<String> = voci_pannello(ritirata, &schermi)
+                let attese: Vec<String> = voci_pannello(ritirata, &schermi, false)
                     .iter()
                     .map(|v| match v {
-                        Voce::Semplice(_, t) => t.clone(),
+                        Voce::Semplice(_, t) | Voce::Spunta { testo: t, .. } => t.clone(),
                         Voce::Schermo(_) => "Schermo".to_owned(),
                     })
                     .collect();
@@ -8021,6 +8026,7 @@ mod accessibilita {
             ("Impostazioni", Comando::Impostazioni),
             ("Informazioni", Comando::Informazioni),
             ("Ritira l'isola", Comando::Ritirata),
+            ("Non disturbare", Comando::NonDisturbare),
             ("Esci", Comando::Esci),
             ("Schermo principale", Comando::Schermo(0)),
             ("Schermo 2 · 2560×1440", Comando::Schermo(1)),
@@ -8045,6 +8051,21 @@ mod accessibilita {
         assert_eq!(comando(&scelte.borrow()[0]), Some(Comando::Ritirata));
     }
 
+    /// F4, Task 2: «Non disturbare» nel «⋯» è una casella per Narrator con la spunta
+    /// dell'interruttore (e la spunta disegnata solo se acceso).
+    #[test]
+    fn non_disturbare_nel_menu_e_una_casella_con_la_spunta() {
+        use i_slint_backend_testing::AccessibleRole;
+        for acceso in [false, true] {
+            let (p, _, _) = pannello_con_menu_nd(false, &[], acceso);
+            apri_menu(&p);
+            let riga = riga_menu(&p, "Non disturbare").expect("la voce «Non disturbare»");
+            assert_eq!(riga.accessible_role(), Some(AccessibleRole::Checkbox), "acceso {acceso}");
+            assert_eq!(riga.accessible_checkable(), Some(true));
+            assert_eq!(riga.accessible_checked(), Some(acceso), "la spunta segue l'interruttore");
+        }
+    }
+
     /// Da tastiera: Invio e Spazio attivano la voce col fuoco, che parte dalla prima.
     #[test]
     fn invio_e_spazio_attivano_la_voce_col_fuoco() {
@@ -8053,8 +8074,9 @@ mod accessibilita {
         for (tasto_scelta, giu, atteso) in [
             (Key::Return, 0, Comando::Impostazioni),
             (Key::Space, 1, Comando::Informazioni),
-            (Key::Return, 2, Comando::Ritirata),
-            (Key::Space, 3, Comando::Esci),
+            (Key::Return, 2, Comando::NonDisturbare),
+            (Key::Space, 3, Comando::Ritirata),
+            (Key::Return, 4, Comando::Esci),
         ] {
             let (p, scelte, _) = pannello_con_menu(false, &[]);
             apri_menu(&p);

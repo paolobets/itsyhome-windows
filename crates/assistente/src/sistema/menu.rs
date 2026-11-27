@@ -1,6 +1,7 @@
 //! Il menu dell'isola: «Apri», «Impostazioni», «Informazioni» (la schermata «About» con
 //! AboutSlint, richiesta dalla licenza Slint royalty-free 2.0, §2(a), «accessible from the top
-//! level menu»), «Ritira l'isola» / «Mostra l'isola», «Esci».
+//! level menu»), «Non disturbare» (voce a spunta, F4: l'interruttore manuale, fino all'uscita),
+//! «Ritira l'isola» / «Mostra l'isola», «Esci».
 //!
 //! Quello dell'icona nella barra è un menu nativo di Windows (`muda`, TrackPopupMenu) con tutte le
 //! voci, se l'utente l'ha accesa (Impostazioni › Sistema); Esc o un clic altrove lo chiudono. Le
@@ -43,8 +44,13 @@ pub enum Comando {
     Ritirata,
     /// Sposta pillola e pannello sul monitor di questa posizione dell'elenco mostrato nel menu.
     Schermo(usize),
+    /// Inverte l'interruttore manuale di «Non disturbare» (F4, Task 2).
+    NonDisturbare,
     Esci,
 }
+
+/// Testo della voce a spunta di «Non disturbare».
+pub const TESTO_NON_DISTURBARE: &str = "Non disturbare";
 
 /// Testo della voce della ritirata.
 pub fn testo_ritirata(ritirata: bool) -> &'static str {
@@ -70,6 +76,8 @@ pub struct VoceSchermo {
 #[cfg_attr(not(windows), allow(dead_code))]
 pub enum Voce {
     Semplice(Comando, String),
+    /// Una voce a spunta del primo livello («Non disturbare»): `scelto` = la spunta.
+    Spunta { comando: Comando, testo: String, scelto: bool },
     /// Il sottomenu «Schermo»: c'è solo con più di un monitor.
     Schermo(Vec<VoceSchermo>),
 }
@@ -84,9 +92,10 @@ pub fn schermi_del_menu(monitor: &[InfoMonitor], scelto: Option<usize>) -> Vec<(
 }
 
 /// Le voci del menu, in ordine. `schermi`: (testo, spunta) di ogni monitor; il sottomenu «Schermo»
-/// c'è solo con più di uno. Il separatore sta prima di «Esci».
+/// c'è solo con più di uno. `non_disturbare`: la spunta della voce omonima (l'interruttore
+/// manuale). Il separatore sta prima di «Esci».
 #[cfg_attr(not(windows), allow(dead_code))]
-pub fn voci(ritirata: bool, schermi: &[(String, bool)]) -> Vec<Voce> {
+pub fn voci(ritirata: bool, schermi: &[(String, bool)], non_disturbare: bool) -> Vec<Voce> {
     let semplice = |c, t: &str| Voce::Semplice(c, t.to_owned());
     let mut v = vec![semplice(Comando::Apri, "Apri"), semplice(Comando::Impostazioni, "Impostazioni"), semplice(Comando::Informazioni, "Informazioni")];
     if schermi.len() > 1 {
@@ -98,6 +107,7 @@ pub fn voci(ritirata: bool, schermi: &[(String, bool)]) -> Vec<Voce> {
                 .collect(),
         ));
     }
+    v.push(Voce::Spunta { comando: Comando::NonDisturbare, testo: TESTO_NON_DISTURBARE.to_owned(), scelto: non_disturbare });
     v.push(semplice(Comando::Ritirata, testo_ritirata(ritirata)));
     v.push(semplice(Comando::Esci, "Esci"));
     v
@@ -105,8 +115,8 @@ pub fn voci(ritirata: bool, schermi: &[(String, bool)]) -> Vec<Voce> {
 
 /// Le voci del menu del pannello («⋯»): le stesse, senza «Apri».
 #[cfg_attr(not(windows), allow(dead_code))]
-pub fn voci_pannello(ritirata: bool, schermi: &[(String, bool)]) -> Vec<Voce> {
-    let mut v = voci(ritirata, schermi);
+pub fn voci_pannello(ritirata: bool, schermi: &[(String, bool)], non_disturbare: bool) -> Vec<Voce> {
+    let mut v = voci(ritirata, schermi, non_disturbare);
     v.remove(0);
     v
 }
@@ -127,6 +137,7 @@ pub fn id(c: Comando) -> String {
         Comando::Informazioni => "informazioni".into(),
         Comando::Ritirata => "ritirata".into(),
         Comando::Schermo(i) => format!("schermo:{i}"),
+        Comando::NonDisturbare => "non_disturbare".into(),
         Comando::Esci => "esci".into(),
     }
 }
@@ -136,7 +147,7 @@ pub fn comando(id: &str) -> Option<Comando> {
     if let Some(i) = id.strip_prefix("schermo:") {
         return i.parse().ok().map(Comando::Schermo);
     }
-    [Comando::Apri, Comando::Impostazioni, Comando::Informazioni, Comando::Ritirata, Comando::Esci]
+    [Comando::Apri, Comando::Impostazioni, Comando::Informazioni, Comando::Ritirata, Comando::NonDisturbare, Comando::Esci]
         .into_iter()
         .find(|c| self::id(*c) == id)
 }
@@ -154,15 +165,19 @@ mod windows {
         /// nativo: lo disegna Slint dalle stesse voci (`voci_pannello`).
         menu: Menu,
         ritirata: MenuItem,
+        /// La voce a spunta di «Non disturbare».
+        non_disturbare: CheckMenuItem,
         /// I monitor con cui è costruito: (testo, spunta). Con più di uno c'è «Schermo».
         schermi: Vec<(String, bool)>,
     }
 
-    /// Un menu nativo con queste voci (separatore prima di «Esci») e la sua voce della ritirata.
-    pub(super) fn costruisci(voci: &[Voce]) -> Result<(Menu, MenuItem), String> {
+    /// Un menu nativo con queste voci (separatore prima di «Esci»), la sua voce della ritirata e
+    /// quella di «Non disturbare».
+    pub(super) fn costruisci(voci: &[Voce]) -> Result<(Menu, MenuItem, CheckMenuItem), String> {
         let errore = |e: tray_icon::menu::Error| e.to_string();
         let menu = Menu::new();
         let mut voce_ritirata = None;
+        let mut voce_non_disturbare = None;
         for v in voci {
             match v {
                 Voce::Semplice(c, testo) => {
@@ -175,6 +190,13 @@ mod windows {
                         voce_ritirata = Some(voce);
                     }
                 }
+                Voce::Spunta { comando, testo, scelto } => {
+                    let voce = CheckMenuItem::with_id(id(*comando), testo, true, *scelto, None);
+                    menu.append(&voce).map_err(errore)?;
+                    if *comando == Comando::NonDisturbare {
+                        voce_non_disturbare = Some(voce);
+                    }
+                }
                 Voce::Schermo(righe) => {
                     let sotto = Submenu::new("Schermo", true);
                     for r in righe {
@@ -185,13 +207,14 @@ mod windows {
             }
         }
         let ritirata = voce_ritirata.ok_or("voce della ritirata mancante")?;
-        Ok((menu, ritirata))
+        let non_disturbare = voce_non_disturbare.ok_or("voce di «Non disturbare» mancante")?;
+        Ok((menu, ritirata, non_disturbare))
     }
 
     impl MenuIsola {
         /// Crea il menu sul thread dell'interfaccia. `al_comando` è chiamata sul ciclo eventi.
-        pub fn crea(al_comando: fn(Comando), ritirata: bool) -> Result<MenuIsola, String> {
-            let m = Self::costruito(ritirata, Vec::new())?;
+        pub fn crea(al_comando: fn(Comando), ritirata: bool, non_disturbare: bool) -> Result<MenuIsola, String> {
+            let m = Self::costruito(ritirata, non_disturbare, Vec::new())?;
             MenuEvent::set_event_handler(Some(move |e: MenuEvent| {
                 if let Some(c) = comando(e.id().as_ref()) {
                     let _ = slint::invoke_from_event_loop(move || al_comando(c));
@@ -201,25 +224,25 @@ mod windows {
         }
 
         /// Il menu costruito per questi monitor.
-        fn costruito(ritirata: bool, schermi: Vec<(String, bool)>) -> Result<MenuIsola, String> {
-            let (menu, voce_ritirata) = costruisci(&voci(ritirata, &schermi))?;
-            Ok(MenuIsola { menu, ritirata: voce_ritirata, schermi })
+        fn costruito(ritirata: bool, non_disturbare: bool, schermi: Vec<(String, bool)>) -> Result<MenuIsola, String> {
+            let (menu, voce_ritirata, voce_non_disturbare) = costruisci(&voci(ritirata, &schermi, non_disturbare))?;
+            Ok(MenuIsola { menu, ritirata: voce_ritirata, non_disturbare: voce_non_disturbare, schermi })
         }
 
         /// Le voci del menu del «⋯» del pannello (Slint) coi monitor di questo momento: la fonte è
         /// la stessa del menu nativo (`voci_pannello`).
-        pub fn voci_pannello(&self, ritirata: bool) -> Vec<Voce> {
-            voci_pannello(ritirata, &self.schermi)
+        pub fn voci_pannello(&self, ritirata: bool, non_disturbare: bool) -> Vec<Voce> {
+            voci_pannello(ritirata, &self.schermi, non_disturbare)
         }
 
         /// Ricostruisce il menu se cambiano i monitor o la spunta (`schermi`: testo e spunta di
         /// ognuno). Ritorna `true` se l'ha ricostruito: chi tiene il menu dell'icona nella barra
         /// deve passarle quello nuovo (`menu()`).
-        pub fn schermi(&mut self, schermi: Vec<(String, bool)>, ritirata: bool) -> Result<bool, String> {
+        pub fn schermi(&mut self, schermi: Vec<(String, bool)>, ritirata: bool, non_disturbare: bool) -> Result<bool, String> {
             if schermi == self.schermi {
                 return Ok(false);
             }
-            *self = Self::costruito(ritirata, schermi)?;
+            *self = Self::costruito(ritirata, non_disturbare, schermi)?;
             Ok(true)
         }
 
@@ -232,6 +255,13 @@ mod windows {
             let testo = testo_ritirata(attiva);
             if self.ritirata.text() != testo {
                 self.ritirata.set_text(testo);
+            }
+        }
+
+        /// La spunta di «Non disturbare» (l'interruttore manuale), toccata solo se cambia.
+        pub fn non_disturbare(&self, acceso: bool) {
+            if self.non_disturbare.is_checked() != acceso {
+                self.non_disturbare.set_checked(acceso);
             }
         }
 
@@ -255,7 +285,7 @@ mod test {
     fn testi(voci: &[Voce]) -> Vec<String> {
         voci.iter()
             .map(|v| match v {
-                Voce::Semplice(_, t) => t.clone(),
+                Voce::Semplice(_, t) | Voce::Spunta { testo: t, .. } => t.clone(),
                 Voce::Schermo(_) => "Schermo".to_owned(),
             })
             .collect()
@@ -263,25 +293,54 @@ mod test {
 
     #[test]
     fn le_voci_del_menu_e_la_ritirata() {
-        assert_eq!(testi(&voci(false, &[])), ["Apri", "Impostazioni", "Informazioni", "Ritira l'isola", "Esci"]);
-        assert_eq!(voci(true, &[])[3], Voce::Semplice(Comando::Ritirata, "Mostra l'isola".into()));
+        assert_eq!(
+            testi(&voci(false, &[], false)),
+            ["Apri", "Impostazioni", "Informazioni", "Non disturbare", "Ritira l'isola", "Esci"]
+        );
+        assert_eq!(voci(true, &[], false)[4], Voce::Semplice(Comando::Ritirata, "Mostra l'isola".into()));
     }
 
     #[test]
     fn il_menu_del_pannello_senza_apri_con_impostazioni_in_testa() {
         // Task 14i: dal «⋯» del pannello (già aperto) niente «Apri»; il resto come nel menu dell'icona nella barra.
-        assert_eq!(testi(&voci_pannello(false, &[])), ["Impostazioni", "Informazioni", "Ritira l'isola", "Esci"]);
-        assert_eq!(voci_pannello(true, &[])[2], Voce::Semplice(Comando::Ritirata, "Mostra l'isola".into()));
+        assert_eq!(
+            testi(&voci_pannello(false, &[], false)),
+            ["Impostazioni", "Informazioni", "Non disturbare", "Ritira l'isola", "Esci"]
+        );
+        assert_eq!(voci_pannello(true, &[], false)[3], Voce::Semplice(Comando::Ritirata, "Mostra l'isola".into()));
+    }
+
+    /// F4, Task 2: «Non disturbare» a spunta, una volta sola, fra «Schermo» (se c'è) e «Ritira
+    /// l'isola», nei due menu (unica fonte); la spunta segue l'interruttore.
+    #[test]
+    fn menu_ha_non_disturbare_con_la_spunta() {
+        let voce = |scelto| Voce::Spunta { comando: Comando::NonDisturbare, testo: "Non disturbare".into(), scelto };
+        for schermi in [Vec::new(), due_schermi()] {
+            for acceso in [true, false] {
+                for v in [voci(false, &schermi, acceso), voci_pannello(true, &schermi, acceso)] {
+                    let posti: Vec<usize> = v.iter().enumerate().filter(|(_, x)| **x == voce(acceso)).map(|(i, _)| i).collect();
+                    assert_eq!(posti.len(), 1, "una volta sola, con la spunta {acceso}: {:?}", testi(&v));
+                    let i = posti[0];
+                    assert!(matches!(v[i + 1], Voce::Semplice(Comando::Ritirata, _)), "subito prima della ritirata: {:?}", testi(&v));
+                    let prima = &v[i - 1];
+                    if schermi.len() > 1 {
+                        assert!(matches!(prima, Voce::Schermo(_)), "subito dopo «Schermo»: {:?}", testi(&v));
+                    } else {
+                        assert_eq!(*prima, Voce::Semplice(Comando::Informazioni, "Informazioni".into()));
+                    }
+                }
+            }
+        }
     }
 
     #[test]
     fn schermo_solo_con_piu_monitor() {
         // Un monitor solo, o nessuno: niente «Schermo». Con due: il sottomenu fra «Informazioni» e
-        // «Ritira l'isola», una voce per monitor e la spunta sul preferito.
-        assert!(!testi(&voci(false, &[])).contains(&"Schermo".to_owned()));
-        assert!(!testi(&voci(false, &[("Schermo principale".into(), true)])).contains(&"Schermo".to_owned()));
-        let v = voci(false, &due_schermi());
-        assert_eq!(testi(&v), ["Apri", "Impostazioni", "Informazioni", "Schermo", "Ritira l'isola", "Esci"]);
+        // «Non disturbare», una voce per monitor e la spunta sul preferito.
+        assert!(!testi(&voci(false, &[], false)).contains(&"Schermo".to_owned()));
+        assert!(!testi(&voci(false, &[("Schermo principale".into(), true)], false)).contains(&"Schermo".to_owned()));
+        let v = voci(false, &due_schermi(), false);
+        assert_eq!(testi(&v), ["Apri", "Impostazioni", "Informazioni", "Schermo", "Non disturbare", "Ritira l'isola", "Esci"]);
         assert_eq!(
             v[3],
             Voce::Schermo(vec![
@@ -291,8 +350,8 @@ mod test {
         );
         // Anche nel menu del pannello.
         assert_eq!(
-            testi(&voci_pannello(false, &due_schermi())),
-            ["Impostazioni", "Informazioni", "Schermo", "Ritira l'isola", "Esci"]
+            testi(&voci_pannello(false, &due_schermi(), false)),
+            ["Impostazioni", "Informazioni", "Schermo", "Non disturbare", "Ritira l'isola", "Esci"]
         );
     }
 
@@ -319,7 +378,7 @@ mod test {
     fn il_filo_sta_solo_prima_di_esci() {
         // In tutti e due i menu (nativo della tray e Slint del pannello): un solo filo, prima di «Esci».
         for schermi in [Vec::new(), due_schermi()] {
-            for v in [voci(false, &schermi), voci_pannello(false, &schermi)] {
+            for v in [voci(false, &schermi, false), voci_pannello(false, &schermi, true)] {
                 let con_filo: Vec<String> =
                     v.iter().filter(|x| separatore_prima(x)).map(|x| testi(std::slice::from_ref(x))[0].clone()).collect();
                 assert_eq!(con_filo, ["Esci"]);
@@ -334,9 +393,11 @@ mod test {
     #[test]
     fn il_menu_nativo_della_tray_ha_il_filo_prima_di_esci() {
         use windows_sys::Win32::UI::WindowsAndMessaging::{GetMenuItemCount, GetMenuState, MF_BYPOSITION, MF_SEPARATOR};
-        for schermi in [Vec::new(), due_schermi()] {
-            let voci = voci(false, &schermi);
-            let (menu, _) = super::windows::costruisci(&voci).expect("menu creato");
+        for (schermi, non_disturbare) in [(Vec::new(), false), (due_schermi(), true)] {
+            let voci = voci(false, &schermi, non_disturbare);
+            let (menu, _, voce_nd) = super::windows::costruisci(&voci).expect("menu creato");
+            assert_eq!(voce_nd.is_checked(), non_disturbare, "la spunta nativa di «Non disturbare»");
+            assert_eq!(voce_nd.text(), TESTO_NON_DISTURBARE);
             let hmenu = tray_icon::menu::ContextMenu::hpopupmenu(&menu);
             // SAFETY: letture del menu vivo appena creato, sullo stesso thread.
             unsafe {
@@ -352,14 +413,15 @@ mod test {
 
     #[test]
     fn ogni_voce_torna_al_suo_comando() {
-        let mut tutti: Vec<Comando> = voci(false, &due_schermi())
+        let mut tutti: Vec<Comando> = voci(false, &due_schermi(), false)
             .into_iter()
             .flat_map(|v| match v {
-                Voce::Semplice(c, _) => vec![c],
+                Voce::Semplice(c, _) | Voce::Spunta { comando: c, .. } => vec![c],
                 Voce::Schermo(righe) => righe.into_iter().map(|r| r.comando).collect(),
             })
             .collect();
         assert!(tutti.contains(&Comando::Schermo(0)) && tutti.contains(&Comando::Schermo(1)));
+        assert!(tutti.contains(&Comando::NonDisturbare));
         tutti.push(Comando::Schermo(12));
         for c in tutti {
             assert_eq!(comando(&id(c)), Some(c));

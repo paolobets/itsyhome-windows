@@ -279,9 +279,26 @@ pub(crate) fn modelli_menu(voci: &[Voce]) -> (Vec<VoceMenuUi>, Vec<SchermoMenuUi
                 testo: testo.as_str().into(),
                 separatore: menu::separatore_prima(v),
                 sotto: false,
+                spunta: false,
+                scelto: false,
+            }),
+            Voce::Spunta { comando, testo, scelto } => principali.push(VoceMenuUi {
+                id: menu::id(*comando).into(),
+                testo: testo.as_str().into(),
+                separatore: false,
+                sotto: false,
+                spunta: true,
+                scelto: *scelto,
             }),
             Voce::Schermo(righe) => {
-                principali.push(VoceMenuUi { id: "schermo".into(), testo: "Schermo".into(), separatore: false, sotto: true });
+                principali.push(VoceMenuUi {
+                    id: "schermo".into(),
+                    testo: "Schermo".into(),
+                    separatore: false,
+                    sotto: true,
+                    spunta: false,
+                    scelto: false,
+                });
                 schermi = righe
                     .iter()
                     .map(|r| SchermoMenuUi { id: menu::id(r.comando).into(), testo: r.testo.as_str().into(), scelto: r.scelto })
@@ -776,23 +793,30 @@ mod test {
         // filo prima di «Esci», le righe e la spunta di «Schermo».
         use crate::sistema::menu::{comando, voci_pannello, Comando};
         let schermi = vec![("Schermo principale".to_owned(), false), ("Schermo 2 · 2560×1440".to_owned(), true)];
-        let (voci, righe, scelto) = modelli_menu(&voci_pannello(false, &schermi));
+        let (voci, righe, scelto) = modelli_menu(&voci_pannello(false, &schermi, true));
         let testi: Vec<_> = voci.iter().map(|v| v.testo.to_string()).collect();
-        assert_eq!(testi, ["Impostazioni", "Informazioni", "Schermo", "Ritira l'isola", "Esci"]);
+        assert_eq!(testi, ["Impostazioni", "Informazioni", "Schermo", "Non disturbare", "Ritira l'isola", "Esci"]);
         let con_filo: Vec<_> = voci.iter().filter(|v| v.separatore).map(|v| v.testo.to_string()).collect();
         assert_eq!(con_filo, ["Esci"]);
         assert_eq!(voci.iter().filter(|v| v.sotto).count(), 1);
         assert!(voci[2].sotto);
         assert_eq!(comando(&voci[0].id), Some(Comando::Impostazioni));
-        assert_eq!(comando(&voci[3].id), Some(Comando::Ritirata));
-        assert_eq!(comando(&voci[4].id), Some(Comando::Esci));
+        assert_eq!(comando(&voci[3].id), Some(Comando::NonDisturbare));
+        assert_eq!(comando(&voci[4].id), Some(Comando::Ritirata));
+        assert_eq!(comando(&voci[5].id), Some(Comando::Esci));
         assert_eq!(comando(&voci[2].id), None, "«Schermo» apre il sottomenu, non è un comando");
+        // «Non disturbare» è l'unica voce a spunta, con la spunta dell'interruttore.
+        assert_eq!(voci.iter().filter(|v| v.spunta).map(|v| (v.testo.to_string(), v.scelto)).collect::<Vec<_>>(), [("Non disturbare".to_owned(), true)]);
         assert_eq!(righe.iter().map(|r| comando(&r.id)).collect::<Vec<_>>(), [Some(Comando::Schermo(0)), Some(Comando::Schermo(1))]);
         assert_eq!(righe.iter().map(|r| r.scelto).collect::<Vec<_>>(), [false, true]);
         assert_eq!(scelto, 1);
         // Un monitor solo: niente «Schermo» e nessuna riga.
-        let (voci, righe, scelto) = modelli_menu(&voci_pannello(true, &[("Schermo principale".to_owned(), true)]));
-        assert_eq!(voci.iter().map(|v| v.testo.to_string()).collect::<Vec<_>>(), ["Impostazioni", "Informazioni", "Mostra l'isola", "Esci"]);
+        let (voci, righe, scelto) = modelli_menu(&voci_pannello(true, &[("Schermo principale".to_owned(), true)], false));
+        assert_eq!(
+            voci.iter().map(|v| v.testo.to_string()).collect::<Vec<_>>(),
+            ["Impostazioni", "Informazioni", "Non disturbare", "Mostra l'isola", "Esci"]
+        );
+        assert!(!voci[2].scelto, "interruttore spento: niente spunta");
         assert!(righe.is_empty() && scelto == -1);
     }
 

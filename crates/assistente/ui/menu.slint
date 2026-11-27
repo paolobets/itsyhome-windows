@@ -1,7 +1,8 @@
 // Il menu «⋯» del pannello (RC-58, Task 8): scuro, dentro il pannello (nessuna finestra nuova),
 // con le stesse voci e lo stesso ordine di `voci_pannello` di Rust (unica fonte, la usa anche la
 // tray) e il sottomenu «Schermo» come secondo menu accanto al primo, a sinistra (lo schermo
-// scelto ha la spunta). Il menu della tray resta quello nativo di Windows.
+// scelto ha la spunta). «Non disturbare» (F4) è una voce a spunta del primo livello (casella per
+// Narrator). Il menu della tray resta quello nativo di Windows.
 //
 // Da tastiera (i tasti arrivano da `tasti` del pannello, che li passa a `tasto`): ↑/↓ (e Tab,
 // Maiusc+Tab) girano intorno, Invio e Spazio attivano, → apre «Schermo» e ← lo chiude, Esc chiude un
@@ -15,7 +16,7 @@ import { Anello, Fuoco } from "componenti.slint";
 import { VoceMenuUi, SchermoMenuUi } from "voci.slint";
 
 // Una riga del menu: capsula tenue sotto il mouse, più chiara con il fuoco logico, anello da
-// tastiera, spunta a sinistra (solo gli schermi), freccia a destra (solo «Schermo»).
+// tastiera, spunta a sinistra (gli schermi e le voci a spunta), freccia a destra (solo «Schermo»).
 component RigaMenu inherits Rectangle {
     in property <string> testo;
     // Il filo sopra la riga (prima di «Esci»).
@@ -23,6 +24,8 @@ component RigaMenu inherits Rectangle {
     in property <bool> con-sotto;
     in property <bool> sotto-aperto;
     in property <bool> e-schermo;
+    // Voce a spunta del primo livello («Non disturbare»).
+    in property <bool> con-spunta;
     in property <bool> scelto;
     in property <bool> evidenziata;
     in property <bool> anello;
@@ -50,9 +53,10 @@ component RigaMenu inherits Rectangle {
         background: root.evidenziata ? Tema.menu-scelta : (area.has-hover || root.sotto-aperto) ? Tema.menu-sopra : transparent;
 
         // Il fuoco vero (Narrator): le voci sono pulsanti (quella con il sottomenu si espande), le
-        // righe degli schermi sono a scelta singola, con la spunta sullo schermo di adesso. Il
-        // ruolo non può cambiare a runtime: due Fuoco, uno solo c'è (e-schermo non cambia mai).
-        if !root.e-schermo: Fuoco {
+        // righe degli schermi sono a scelta singola, con la spunta sullo schermo di adesso, e le
+        // voci a spunta sono caselle. Il ruolo non può cambiare a runtime: tre Fuoco, uno solo
+        // c'è (e-schermo e con-spunta non cambiano mai per una riga).
+        if !root.e-schermo && !root.con-spunta: Fuoco {
             chiede: root.chiede-fuoco;
             accessible-role: button;
             accessible-label: root.testo;
@@ -68,8 +72,16 @@ component RigaMenu inherits Rectangle {
             accessible-checked: root.scelto;
             accessible-action-default => { root.premuta(false); }
         }
+        if root.con-spunta: Fuoco {
+            chiede: root.chiede-fuoco;
+            accessible-role: checkbox;
+            accessible-label: root.testo;
+            accessible-checkable: true;
+            accessible-checked: root.scelto;
+            accessible-action-default => { root.premuta(false); }
+        }
 
-        if root.e-schermo && root.scelto: Image {
+        if (root.e-schermo || root.con-spunta) && root.scelto: Image {
             source: Icone.spunta;
             x: 10px;
             y: (parent.height - self.height) / 2;
@@ -81,7 +93,7 @@ component RigaMenu inherits Rectangle {
         }
 
         Text {
-            x: root.e-schermo ? 32px : 12px;
+            x: (root.e-schermo || root.con-spunta) ? 32px : 12px;
             width: parent.width - self.x - (root.con-sotto ? 30px : 12px);
             height: parent.height;
             text: root.testo;
@@ -306,6 +318,8 @@ export component MenuScuro inherits Rectangle {
                 testo: v.testo;
                 separatore: v.separatore;
                 con-sotto: v.sotto;
+                con-spunta: v.spunta;
+                scelto: v.scelto;
                 sotto-aperto: v.sotto && root.sotto-aperto;
                 evidenziata: root.fuoco == i && !root.sotto-aperto;
                 anello: root.anello;

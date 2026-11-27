@@ -74,6 +74,9 @@ windows = { version = "0.62.2", features = [
     "Networking_Connectivity",
     "Foundation",
     "Foundation_Collections",
+    # «Non disturbare» di Windows (F4, Task 2): `ToastNotificationManagerForUser.NotificationMode`,
+    # l'unica API documentata che lo dice (vedi `sistema::non_disturbare`).
+    "UI_Notifications",
 ] }
 # `#[implement]` (callback COM di Core Audio): la macro scrive `::windows_core`, quindi serve come
 # dipendenza diretta (stessa versione di `windows`, già nel Cargo.lock).
