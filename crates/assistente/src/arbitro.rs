@@ -139,7 +139,8 @@ impl Arbitro {
     }
 
     /// Fra quanto la scelta cambierà da sola (fine dei 20 s dell'attenzione larga, fine della
-    /// sfumatura di un fatto); `None` se nulla scade: solo allora serve una sveglia.
+    /// sfumatura di un fatto); `None` se nulla scade: solo allora serve una sveglia. Va chiamata
+    /// **dopo** `scegli`: «larga» è solo l'attenzione che `scegli` ha già scelto.
     pub fn prossimo_cambio(&self, attese: &Attese, fatti: &[Fatto], ora: Instant) -> Option<Duration> {
         let attenzioni = attese
             .ordinate()
@@ -297,10 +298,13 @@ mod test {
         let t = Instant::now();
         let mut arb = Arbitro::default();
         let at = [attivita("agenti", "x", t)];
-        let a = attese(vec![di(Fonte::Casa, "a", Livello::Attenzione, t)]);
+        let mut a = attese(vec![di(Fonte::Casa, "a", Livello::Attenzione, t)]);
         assert_eq!(arb.scegli(&a, &at, &[], true, t + S(1)), Mostra::Riposo { puntino: Some(Livello::Attenzione) });
-        // L'attenzione arrivata in ND non ha consumato i 10 minuti di Casa: fuori da ND allarga.
-        assert_eq!(arb.scegli(&a, &at, &[], false, t + S(2)), Mostra::Attenzione { voce_id: "a".into() });
+        // L'attenzione arrivata in ND non ha consumato i 10 minuti di Casa: una seconda voce di
+        // Casa, 3 minuti dopo e fuori da ND, allarga (se l'allargamento fosse registrato in ND,
+        // sarebbe bloccata).
+        a.metti(di(Fonte::Casa, "a2", Livello::Attenzione, t + S(180)));
+        assert_eq!(arb.scegli(&a, &at, &[], false, t + S(180)), Mostra::Attenzione { voce_id: "a2".into() });
 
         let b = attese(vec![di(Fonte::Claude, "b", Livello::Bloccante, t), di(Fonte::Casa, "a", Livello::Attenzione, t)]);
         assert_eq!(arb.scegli(&b, &at, &[], true, t + S(3)), Mostra::Bloccante { voce_id: "b".into(), altri: 0 });
