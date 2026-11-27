@@ -442,6 +442,8 @@ impl Ponte {
 
 #[cfg(test)]
 mod test {
+    use super::GUARDIA_CASA;
+    use std::time::Instant;
     use crate::moduli::casa::{RIPROVA, SPEGNI};
     use crate::moduli::pagina_casa::{FILTRO_LUCI, FILTRO_PREFERITI, FILTRO_TUTTA, SPEGNI_STANZA};
     use crate::moduli::pagina_collegamenti::MODIFICA;
@@ -666,11 +668,19 @@ mod test {
         ponte.ricevi(CasaEvento::Stato(StatoConnessione::Errore("timeout".into())));
         ponte.ricevi(CasaEvento::Stato(StatoConnessione::InConnessione));
         assert_eq!(p.get_comandi_sintesi().azione_id, RIPROVA, "«Riprova» durante la riconnessione");
+        let prima = Instant::now();
         ponte.ricevi(CasaEvento::Stato(StatoConnessione::Connesso));
         assert_eq!(p.get_comandi_sintesi().azione_id, SPEGNI, "lo stesso pulsante è diventato «Spegni tutte»");
+        // La guardia è scattata al cambio d'azione (seconda revisione, I-a: leggere `dal` e basta
+        // non prova nulla, passerebbe anche senza guardia).
         let dal = ponte.azione_casa_dal.get();
+        assert!(dal >= prima + GUARDIA_CASA, "il cambio d'azione sposta la guardia di 600 ms");
+        // Il secondo clic subito dopo, all'ora vera: nessun tocco.
+        ponte.azione_pagina("casa", SPEGNI, "");
+        ponte.azione_modulo("casa", SPEGNI);
+        assert!(nessun_tocco(), "subito dopo il cambio: ottimismo vuoto");
         let appena_prima = dal - Duration::from_millis(1);
-        // Il secondo clic, entro i 600 ms: dalla testata e dalla carta, nessun tocco.
+        // Ancora entro i 600 ms: dalla testata e dalla carta, nessun tocco.
         ponte.azione_pagina_alle("casa", SPEGNI, "", appena_prima);
         ponte.azione_modulo_alle("casa", SPEGNI, appena_prima);
         assert!(nessun_tocco(), "dentro i 600 ms: ottimismo vuoto");
@@ -690,14 +700,47 @@ mod test {
         ponte.filtro_pagina("casa", "a0");
         ponte.ricevi(CasaEvento::Stato(StatoConnessione::Errore("timeout".into())));
         assert_eq!(p.get_comandi_sintesi().azione_id, RIPROVA);
+        let prima = Instant::now();
         ponte.ricevi(CasaEvento::Stato(StatoConnessione::Connesso));
         assert_eq!(p.get_comandi_sintesi().azione_id, SPEGNI_STANZA);
         let dal = ponte.azione_casa_dal.get();
+        assert!(dal >= prima + GUARDIA_CASA, "il cambio d'azione sposta la guardia di 600 ms");
+        ponte.azione_pagina("casa", SPEGNI_STANZA, "");
+        assert!(numero("light.a").is_none() && numero("light.b").is_none(), "subito dopo: nessun tocco");
         ponte.azione_pagina_alle("casa", SPEGNI_STANZA, "", dal - Duration::from_millis(1));
         assert!(numero("light.a").is_none() && numero("light.b").is_none(), "dentro i 600 ms: nessun tocco");
         ponte.azione_pagina_alle("casa", SPEGNI_STANZA, "", dal + Duration::from_millis(1));
         assert!(numero("light.a").is_some() && numero("light.b").is_some(), "dopo: la stanza si spegne");
         assert!(numero("light.c").is_none(), "l'altra stanza no");
+    }
+
+    /// Seconda revisione, I-a: la carta di Casa nella Panoramica, con la pagina Casa chiusa.
+    /// «Riprova» della carta diventa «Spegni tutte» alla connessione, nella stessa casella: il
+    /// cambio arma la guardia (senza la pagina), un clic subito dopo o entro 600 ms non spegne
+    /// nulla, dopo sì.
+    #[test]
+    fn la_guardia_della_carta_a_pagina_chiusa() {
+        use std::time::Duration;
+        let (_s, ponte, p, _t) = casa_aperta(casa_di_prova(false, false));
+        p.set_vista("panoramica".into());
+        ponte.vista_pagina("panoramica");
+        assert_eq!(p.get_comandi_card().row_count(), 0, "la pagina Casa è chiusa");
+        let carta = || ponte.modello_moduli.iter().find(|m| m.id == "casa").map(|m| m.azione_id.to_string()).unwrap_or_default();
+        let numero = |id: &str| ponte.ottimismo.borrow().numero(id);
+        let nessun_tocco = || ["light.a", "light.b", "light.c"].iter().all(|id| numero(id).is_none());
+        ponte.ricevi(CasaEvento::Stato(StatoConnessione::Errore("timeout".into())));
+        assert_eq!(carta(), RIPROVA);
+        let prima = Instant::now();
+        ponte.ricevi(CasaEvento::Stato(StatoConnessione::Connesso));
+        assert_eq!(carta(), SPEGNI, "la carta dice «Spegni tutte» nella stessa casella");
+        let dal = ponte.azione_casa_dal.get();
+        assert!(dal >= prima + GUARDIA_CASA, "il cambio sulla carta arma la guardia anche a pagina chiusa");
+        ponte.azione_modulo("casa", SPEGNI);
+        assert!(nessun_tocco(), "subito dopo: nessun tocco");
+        ponte.azione_modulo_alle("casa", SPEGNI, dal - Duration::from_millis(1));
+        assert!(nessun_tocco(), "entro i 600 ms: nessun tocco");
+        ponte.azione_modulo_alle("casa", SPEGNI, dal);
+        assert!(numero("light.a").is_some() && numero("light.b").is_some() && numero("light.c").is_some(), "dopo: spegne");
     }
 
     /// Revisione finale di F3, I1 (caso affine): a casa scollegata senza dati il «Riprova» dello
