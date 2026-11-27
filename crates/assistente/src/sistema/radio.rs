@@ -99,7 +99,8 @@ pub enum TipoRadio {
 }
 
 /// Una radio presente e se è accesa (`RadioState::On`). Una radio che manca non è nell'elenco.
-#[cfg(any(windows, test))]
+/// Solo Windows: la usano il thread `radio` e il ponte, e i loro test (tutti `cfg(windows)`).
+#[cfg(windows)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StatoRadio {
     pub tipo: TipoRadio,
