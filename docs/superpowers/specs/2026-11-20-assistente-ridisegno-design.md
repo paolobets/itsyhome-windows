@@ -464,6 +464,27 @@ misure di chiusura nel CHANGELOG («Ridisegno F2, chiusura»). Ciò che il piano
 - **Rimandati**: il campo `r1` del contratto (arriva in F3, con le pagine con sintesi); la pillola inerte; elenco completo in
   `docs/superpowers/plans/2026-11-20-assistente-ridisegno-f1-rimandati.md` («Dopo F2»).
 
+**F3 fatta (27/11/2026, ramo `v3-assistente`; prova dal vivo con Paolo fatta).** Impianto Comandi (Casa e Collegamenti) e
+impianto Misure (PC) sono dentro, con le vecchie viste tolte; campo `r1` del contratto; carta Agenti allineata («1 ti aspetta»);
+misure di chiusura e prova dal vivo nel CHANGELOG («Ridisegno F3»). Ciò che il piano ha deciso diversamente da questa spec:
+- **Decisioni di Paolo (24/11)**: «★ Preferiti» solo se c'è un preferito che non è una scena, altrimenti la pagina si apre
+  su «Tutta la casa»; le scene in una fila «SCENE» in fondo a ogni filtro tranne «Luci accese» (nessun filtro «Scene»);
+  misure del PC CPU · Memoria · Disco (GB liberi) · Batteria, senza batteria la GPU al quarto posto, senza tutte e due il
+  posto resta vuoto; misure alte 84 con due file sempre visibili (Wi-Fi · Bluetooth con gli interruttori, Volume · rimandi
+  a Windows).
+- **Decisioni di Paolo nella prova dal vivo (27/11)**: le **luci accese sono gialle** (bordo, fondo e riquadro dell'icona
+  nella tinta della luce; le prese restano col primario); la colonna dei filtri resta **senza etichetta**; i nomi delle card
+  restano quelli di Home Assistant.
+- **C14(d)**: la carta di un modulo e il suo `r1` possono dire cose diverse fuori dal caso del permesso (la carta è il
+  riassunto per la Panoramica, `r1` il titolo della pagina); coincidono solo dove il permesso lo richiede.
+- **Guardia di 600 ms anche per le azioni della Casa**: «Spegni tutte» e «Spegni la stanza» da un clic, e il tocco di una
+  card, si ignorano nei 600 ms dopo che l'azione o le card nascono sotto il puntatore (azione rumorosa che non deve partire
+  per un clic dato a «Riprova»). Il clic ignorato non dà segni.
+- **Una sola soglia della batteria scarica** (≤ 20 %) per pillola, carta, pagina PC e riga Bluetooth; la batteria scarica
+  è «Guarda». Etichetta «Disco» (non «Disco C:»); la riga Bluetooth dice il nome del dispositivo più scarico, accorciato a
+  vista e intero per Narrator. Niente «aggiornato ora» né «piena alle…» della bozza (vorrebbero un orologio, §3).
+- **Rimandati**: elenco in `docs/superpowers/plans/2026-11-20-assistente-ridisegno-f1-rimandati.md` («Dopo F3»).
+
 **Scelte del coordinatore sulle fette (20/11).**
 - *Coda minima e via la riga «In attesa» già in F1*: le voci non bloccanti devono restare raggiungibili in ogni fetta
   da F1 a F5, così ognuna lascia isola completa; la Coda minima usa l'impianto Elenco, che F2 poi riusa.

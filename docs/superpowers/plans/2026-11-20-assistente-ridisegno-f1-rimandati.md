@@ -163,3 +163,21 @@ Il 24/11/2026 Paolo ha installato la build 2cb8de4, ha provato il permesso dalla
 - Subito dopo l'apertura dalla pillola un Invio nega (il fuoco è su «Nega»; nei primi 600 ms lo ferma la guardia).
 - Esc nel permesso di Agenti chiude il pannello; col touchscreen un tocco non decide un permesso (usa Ctrl+Invio o il mouse): se Paolo usa il touchscreen va rivisto.
 - Scelte del coordinatore da confermare o togliere: «Torna all'elenco» come pulsante per il mouse (costo: un pulsante da togliere); l'etichetta sopra il campo secondo lo strumento («TERMINALE», «FILE», «INDIRIZZO», «RICERCA»); senza chiave da amministratore la nota della spesa in chiaro nella testata.
+
+## Dopo F3 (27/11/2026)
+
+Registro di lavoro `.superpowers/sdd/2026-11-24-assistente-ridisegno-f3/`. Revisione finale chiusa (C1, I1, I2, m1–m4 e gli 8 rimandati col «SÌ» corretti in 1895111 ed e399600); prova dal vivo con Paolo fatta il 27/11 (luci accese gialle in 12a7ca2).
+
+### Rimandati della fetta (smistati «NO» nella revisione finale)
+
+- **Agenti**: «{n} permessi» conta le sessioni, non i permessi (da decidere con Paolo); `Registro::r1` solo `cfg(test)`; asserzioni-eco in `sintesi_per_stato`; `letter-spacing` della testata non provato.
+- **Test instabile**: `claude-hook aiutante::eseguibile_vero_in_silenzio_senza_aprire_il_tubo` (soglia di 300 ms) può fallire sotto carico, anche in CI: lavoro a parte.
+- **Casa / Comandi**: `colonne-comandi` e `chip-per-riga` ripetuti fra pannello e impianto; sotto-regole di tastiera senza test (Invio sul filtro già scelto, ↑ nei filtri, Tab sui filtri); salto di griglia e fuoco quando cambia l'indice con lo stesso filtro; «Non raggiungibile» per un istante durante una connessione voluta coi dati vecchi; nessun test per «Riprova»/«Collega» in `con_moduli`; commenti vecchi «vista Casa», «vista PC» fuori da `pagina_casa.rs`.
+- **Collegamenti**: blocco Slint copiato da Casa (da estrarre se arriva una terza pagina sui Comandi); Narrator «Modifica» invece di «Modifica i collegamenti».
+- **PC / Misure**: `radio_ricevute` azzera il valore voluto di entrambe le radio; la percentuale Bluetooth può sparire sotto l'ellissi con nomi molto larghi; `pc::riassunto` calcolato due volte per campione; chevron invece di frecce (decide Paolo); Maiusc+Tab debole in `misure_senza_radio_ne_volume`; commento «CUFFIE» in `batterie_bt.rs`.
+- **Misure**: la Panoramica ferma ridisegna 3 fotogrammi ogni ~2 s (la carta PC), non confrontata con la partenza; la pagina PC sale di ~1 MB nelle prime dieci aperture e poi si assesta (come prima di F3).
+
+### Da provare dal vivo (restano da F2)
+
+- Permesso negato e concesso da Agenti, pillola, Coda e Panoramica con una sessione vera di Claude Code; permesso lungo; doppio clic vero su «Nega»; tocco, penna e touchpad; Narrator con UI Automation vera; anello del fuoco a 125 e 150 %.
+- Pillola inerte durante l'armamento: con la pillola nuova in F4.
