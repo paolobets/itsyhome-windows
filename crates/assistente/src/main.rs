@@ -1,6 +1,9 @@
 // In release niente console: l'assistente vive solo nella pillola.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+// Usato dal Task 6 (cablaggio nel ponte): fino ad allora nessuno lo chiama.
+#[allow(dead_code)]
+mod arbitro;
 mod attenzione;
 mod avvio;
 mod claude;

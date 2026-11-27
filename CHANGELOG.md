@@ -9,6 +9,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 > **Nota sul trasporto di M3.** Le sezioni «Task 1», «Task 2», «Task 4», «Task 6» e «Task 7» qui sotto raccontano il primo giro, con hook HTTP su `127.0.0.1`, porta, codice segreto, variabile `ISOLA_HOOK_TOKEN`, `assistente --barra-stato` e «Rigenera il codice». **Nulla di tutto ciò è mai stato rilasciato**: i Task 7A/7B (18/11) lo hanno sostituito con l'aiutante `isola-hook.exe` e un tubo con nome riservato all'utente (spec M3 §10). Le sezioni restano come storia.
 
+### Added (Ridisegno F4, Task 1: l'arbitro della pillola)
+- **`arbitro.rs`, funzione pura** che decide cosa mostra la pillola: bloccante (il più vecchio, con «+N») → attenzione nuova → fatto non visto → attività del primo modulo (a parità la più recente) → riposo col puntino. Con «Non disturbare» passa solo il bloccante. Una nuova attività sostituisce il fatto dello stesso modulo. Il limite di 10 minuti per riallargare è **per modulo**, e un'attenzione arrivata in Non disturbare non lo consuma. `prossimo_cambio` dice quando scade la sveglia (20 s dell'attenzione, 2,8 s della sfumatura del fatto). `Fatto` porta `visto_alle: Option<Instant>` al posto di un `visto: bool`.
+- Non ancora usato (cablaggio nel Task 6, `#[allow(dead_code)]`); `ALLARGATA_PER` resta in `attenzione.rs` fino ad allora; `Attese::vista` ora `pub(crate)`. 10 test, la regola dei 10 minuti vista fallire con una mutazione.
+
 ### Changed (Ridisegno F3, chiusura: prova dal vivo con Paolo, 27/11/2026)
 - **Prova dal vivo** sull'isola di Paolo (exe di 2c97fde, impronte verificate, vecchie exe in `prima-f3`): pagina Casa (apertura su «Tutta la casa» senza preferiti, luce accesa e spenta dalla card, «Spegni la stanza», «Spegni tutte», «Luci accese»), Collegamenti, PC e Agenti: «tutto ok».
 - **Le luci accese della Casa sono gialle** (richiesta di Paolo): la card di una luce accesa ha bordo, fondo e riquadro dell'icona nella tinta della luce (`Tema.luce-accesa`, `luce-bordo`, `luce-card`); le prese accese restano col primario. Test sul disegno vero (`comandi_luce_accesa_gialla`), visto fallire togliendo il giallo.

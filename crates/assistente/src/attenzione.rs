@@ -196,7 +196,7 @@ impl Attese {
         self.viste.extend(self.voci.iter().map(|v| v.id.clone()));
     }
 
-    fn vista(&self, id: &str) -> bool {
+    pub(crate) fn vista(&self, id: &str) -> bool {
         self.viste.contains(id)
     }
 }
